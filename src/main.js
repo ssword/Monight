@@ -1,41 +1,242 @@
+import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
+import { open } from '@tauri-apps/plugin-dialog';
+import { PDFViewer } from './scripts/pdf-viewer';
 import './styles/main.css';
+import './styles/pdf-viewer.css';
+// Global PDF viewer instance
+let pdfViewer = null;
 async function getAppInfo() {
-    try {
-        const name = 'Monight (墨页)';
-        const version = '1.0.0';
-        const tauriVersion = '2.0';
-        return { name, version, tauriVersion };
+  try {
+    const name = 'Monight (墨页)';
+    const version = '1.0.0';
+    const tauriVersion = '2.0';
+    return { name, version, tauriVersion };
+  } catch (error) {
+    console.error('Failed to get app info:', error);
+    return { name: 'Monight', version: '1.0.0', tauriVersion: 'Unknown' };
+  }
+}
+// Show splash screen
+function showSplash() {
+  const splash = document.getElementById('splash-container');
+  const viewer = document.getElementById('viewer-container');
+  if (splash) splash.classList.remove('hidden');
+  if (viewer) viewer.classList.add('hidden');
+}
+// Show PDF viewer
+function showViewer() {
+  const splash = document.getElementById('splash-container');
+  const viewer = document.getElementById('viewer-container');
+  if (splash) splash.classList.add('hidden');
+  if (viewer) viewer.classList.remove('hidden');
+}
+// Open PDF file dialog
+async function openPDFFile() {
+  try {
+    const selected = await open({
+      multiple: false,
+      filters: [
+        {
+          name: 'PDF',
+          extensions: ['pdf'],
+        },
+      ],
+    });
+    if (selected && typeof selected === 'string') {
+      await loadPDF(selected);
     }
-    catch (error) {
-        console.error('Failed to get app info:', error);
-        return { name: 'Monight', version: '1.0.0', tauriVersion: 'Unknown' };
+  } catch (error) {
+    console.error('Error opening file:', error);
+    alert(`Failed to open file: ${error instanceof Error ? error.message : 'Unknown error'}`);
+  }
+}
+// Load PDF file
+async function loadPDF(filePath) {
+  try {
+    // Read PDF file from Rust backend
+    const pdfData = await invoke('read_pdf_file', { path: filePath });
+    const fileName = await invoke('get_file_name', { path: filePath });
+    // Convert to Uint8Array
+    const uint8Array = new Uint8Array(pdfData);
+    // Initialize viewer if needed
+    if (!pdfViewer) {
+      pdfViewer = new PDFViewer('pdf-container');
     }
+    // Load PDF
+    await pdfViewer.loadPDF(uint8Array, fileName, filePath);
+    // Show viewer
+    showViewer();
+    // Update UI
+    updateUI();
+  } catch (error) {
+    console.error('Error loading PDF:', error);
+    alert(`Failed to load PDF: ${error instanceof Error ? error.message : 'Unknown error'}`);
+  }
+}
+// Update UI based on viewer state
+function updateUI() {
+  if (!pdfViewer) return;
+  const state = pdfViewer.getState();
+  // Update page info
+  const pageInput = document.getElementById('page-input');
+  const pageCount = document.getElementById('page-count');
+  if (pageInput) {
+    pageInput.value = state.currentPage.toString();
+    pageInput.max = state.totalPages.toString();
+  }
+  if (pageCount) {
+    pageCount.textContent = state.totalPages.toString();
+  }
+  // Update zoom info
+  const zoomInfo = document.getElementById('zoom-info');
+  if (zoomInfo) {
+    zoomInfo.textContent = `${Math.round(state.zoom * 100)}%`;
+  }
+  // Update file name
+  const fileName = document.getElementById('file-name');
+  if (fileName) {
+    fileName.textContent = state.fileName || 'No file loaded';
+  }
+  // Update button states
+  const prevBtn = document.getElementById('prev-page');
+  const nextBtn = document.getElementById('next-page');
+  if (prevBtn) {
+    prevBtn.disabled = state.currentPage <= 1;
+  }
+  if (nextBtn) {
+    nextBtn.disabled = state.currentPage >= state.totalPages;
+  }
+}
+// Setup event listeners
+function setupEventListeners() {
+  // Open file button
+  const openBtn = document.getElementById('open-file');
+  openBtn?.addEventListener('click', openPDFFile);
+  // Navigation buttons
+  const prevBtn = document.getElementById('prev-page');
+  const nextBtn = document.getElementById('next-page');
+  prevBtn?.addEventListener('click', async () => {
+    if (pdfViewer) {
+      await pdfViewer.previousPage();
+      updateUI();
+    }
+  });
+  nextBtn?.addEventListener('click', async () => {
+    if (pdfViewer) {
+      await pdfViewer.nextPage();
+      updateUI();
+    }
+  });
+  // Page input
+  const pageInput = document.getElementById('page-input');
+  pageInput?.addEventListener('change', async () => {
+    if (pdfViewer) {
+      const pageNum = Number.parseInt(pageInput.value, 10);
+      const state = pdfViewer.getState();
+      if (pageNum >= 1 && pageNum <= state.totalPages) {
+        await pdfViewer.goToPage(pageNum);
+        updateUI();
+      } else {
+        pageInput.value = state.currentPage.toString();
+      }
+    }
+  });
+  // Zoom buttons
+  const zoomInBtn = document.getElementById('zoom-in');
+  const zoomOutBtn = document.getElementById('zoom-out');
+  const fitWidthBtn = document.getElementById('fit-width');
+  const fitPageBtn = document.getElementById('fit-page');
+  zoomInBtn?.addEventListener('click', async () => {
+    if (pdfViewer) {
+      await pdfViewer.zoomIn();
+      updateUI();
+    }
+  });
+  zoomOutBtn?.addEventListener('click', async () => {
+    if (pdfViewer) {
+      await pdfViewer.zoomOut();
+      updateUI();
+    }
+  });
+  fitWidthBtn?.addEventListener('click', async () => {
+    if (pdfViewer) {
+      await pdfViewer.fitToWidth();
+      updateUI();
+    }
+  });
+  fitPageBtn?.addEventListener('click', async () => {
+    if (pdfViewer) {
+      await pdfViewer.fitToPage();
+      updateUI();
+    }
+  });
+  // Keyboard shortcuts
+  document.addEventListener('keydown', async (e) => {
+    // Ctrl+O: Open file
+    if (e.ctrlKey && e.key === 'o') {
+      e.preventDefault();
+      await openPDFFile();
+      return;
+    }
+    // Only handle other shortcuts if PDF is loaded
+    if (!pdfViewer) return;
+    // Arrow keys: Navigate pages
+    if (e.key === 'ArrowLeft') {
+      e.preventDefault();
+      await pdfViewer.previousPage();
+      updateUI();
+    } else if (e.key === 'ArrowRight') {
+      e.preventDefault();
+      await pdfViewer.nextPage();
+      updateUI();
+    }
+    // Ctrl+Plus: Zoom in
+    else if (e.ctrlKey && (e.key === '+' || e.key === '=')) {
+      e.preventDefault();
+      await pdfViewer.zoomIn();
+      updateUI();
+    }
+    // Ctrl+Minus: Zoom out
+    else if (e.ctrlKey && e.key === '-') {
+      e.preventDefault();
+      await pdfViewer.zoomOut();
+      updateUI();
+    }
+    // Ctrl+0: Reset zoom
+    else if (e.ctrlKey && e.key === '0') {
+      e.preventDefault();
+      await pdfViewer.setZoom(1.0);
+      updateUI();
+    }
+  });
 }
 async function initializeApp() {
-    try {
-        // Get app information
-        const info = await getAppInfo();
-        // Update version display
-        const versionElement = document.getElementById('version-info');
-        if (versionElement) {
-            versionElement.textContent = `v${info.version} • Tauri ${info.tauriVersion}`;
-        }
-        // Get current window
-        const currentWindow = getCurrentWebviewWindow();
-        // Show window after initialization
-        await currentWindow.show();
-        await currentWindow.setFocus();
-        console.log(`${info.name} initialized successfully!`);
+  try {
+    // Get app information
+    const info = await getAppInfo();
+    // Update version display
+    const versionElement = document.getElementById('version-info');
+    if (versionElement) {
+      versionElement.textContent = `v${info.version} • Tauri ${info.tauriVersion}`;
     }
-    catch (error) {
-        console.error('Initialization error:', error);
-    }
+    // Setup event listeners
+    setupEventListeners();
+    // Show splash screen initially
+    showSplash();
+    // Get current window
+    const currentWindow = getCurrentWebviewWindow();
+    // Show window after initialization
+    await currentWindow.show();
+    await currentWindow.setFocus();
+    console.log(`${info.name} initialized successfully!`);
+  } catch (error) {
+    console.error('Initialization error:', error);
+  }
 }
 // Wait for DOM to be ready
 if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', initializeApp);
-}
-else {
-    initializeApp();
+  document.addEventListener('DOMContentLoaded', initializeApp);
+} else {
+  initializeApp();
 }

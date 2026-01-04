@@ -5,18 +5,72 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Monight (墨页)</title>
     <link rel="stylesheet" href="/src/styles/main.css" />
+    <link rel="stylesheet" href="/src/styles/pdf-viewer.css" />
     <meta http-equiv="Content-Security-Policy"
-          content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'" />
+          content="default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'" />
 </head>
 <body>
     <div id="app">
-        <div class="splash-screen">
+        <!-- Splash screen shown when no PDF is loaded -->
+        <div id="splash-container">
             <h1 class="app-title">Monight</h1>
             <h2 class="app-subtitle">墨页</h2>
             <p class="app-version" id="version-info">Loading...</p>
-            <div class="loading-indicator">
-                <div class="spinner"></div>
+            <button id="splash-open-btn" class="splash-open-btn">Open PDF File</button>
+            <p class="hint-text">Press Cmd+O to open a PDF file</p>
+        </div>
+
+        <!-- PDF viewer container (hidden initially) -->
+        <div id="viewer-container" class="hidden">
+            <!-- Toolbar with controls -->
+            <div id="toolbar">
+                <!-- Navigation group -->
+                <div class="toolbar-group">
+                    <button id="prev-page" class="toolbar-btn" title="Previous Page (Left Arrow)">
+                        <span>◀</span>
+                    </button>
+                    <div class="page-controls">
+                        <input type="number" id="page-input" class="page-input" value="1" min="1" />
+                        <span class="page-separator">/</span>
+                        <span id="page-count">0</span>
+                    </div>
+                    <button id="next-page" class="toolbar-btn" title="Next Page (Right Arrow)">
+                        <span>▶</span>
+                    </button>
+                </div>
+
+                <!-- Zoom group -->
+                <div class="toolbar-group">
+                    <button id="zoom-out" class="toolbar-btn" title="Zoom Out (Ctrl+-)">
+                        <span>−</span>
+                    </button>
+                    <span id="zoom-info" class="zoom-info">100%</span>
+                    <button id="zoom-in" class="toolbar-btn" title="Zoom In (Ctrl++)">
+                        <span>+</span>
+                    </button>
+                    <button id="fit-width" class="toolbar-btn" title="Fit to Width">
+                        <span>⬌</span>
+                    </button>
+                    <button id="fit-page" class="toolbar-btn" title="Fit to Page">
+                        <span>⬍</span>
+                    </button>
+                </div>
+
+                <!-- File info -->
+                <div class="toolbar-group file-info">
+                    <span id="file-name" class="file-name">No file loaded</span>
+                </div>
+
+                <!-- Actions -->
+                <div class="toolbar-group">
+                    <button id="open-file" class="toolbar-btn" title="Open PDF (Ctrl+O)">
+                        <span>📂</span>
+                    </button>
+                </div>
             </div>
+
+            <!-- PDF canvas container -->
+            <div id="pdf-container"></div>
         </div>
     </div>
     <script type="module" src="/src/main.ts"></script>
