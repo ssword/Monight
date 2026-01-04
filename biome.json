@@ -7,13 +7,7 @@
   },
   "files": {
     "ignoreUnknown": false,
-    "ignore": [
-      "node_modules",
-      "dist",
-      "target",
-      "src-tauri/target",
-      "*.min.js"
-    ]
+    "ignore": ["node_modules", "dist", "target", "src-tauri/target", "*.min.js"]
   },
   "formatter": {
     "enabled": true,

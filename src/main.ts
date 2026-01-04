@@ -1,4 +1,4 @@
-import { getCurrent } from '@tauri-apps/api/window';
+import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 import './styles/main.css';
 
 interface AppInfo {
@@ -32,7 +32,7 @@ async function initializeApp(): Promise<void> {
     }
 
     // Get current window
-    const currentWindow = getCurrent();
+    const currentWindow = getCurrentWebviewWindow();
 
     // Show window after initialization
     await currentWindow.show();
