@@ -3,8 +3,11 @@ import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 import { open } from '@tauri-apps/plugin-dialog';
 import { PDFViewer } from './scripts/pdf-viewer';
 import { PRESETS, buildFilterCSS } from './scripts/filters';
+import { SliderManager } from './scripts/sliders';
 import './styles/main.css';
 import './styles/pdf-viewer.css';
+import './styles/configurator.css';
+import 'nouislider/dist/nouislider.css';
 
 interface AppInfo {
   name: string;
@@ -14,6 +17,9 @@ interface AppInfo {
 
 // Global PDF viewer instance
 let pdfViewer: PDFViewer | null = null;
+
+// Global slider manager instance
+let sliderManager: SliderManager | null = null;
 
 // Detect if we're on macOS
 const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
@@ -102,6 +108,16 @@ async function loadPDF(filePath: string): Promise<void> {
     // Apply default dark mode filter
     pdfViewer.applyFilter(buildFilterCSS(PRESETS.default));
 
+    // Initialize slider manager if needed
+    if (!sliderManager) {
+      sliderManager = new SliderManager((settings) => {
+        if (pdfViewer) {
+          const filterCSS = buildFilterCSS(settings);
+          pdfViewer.applyFilter(filterCSS);
+        }
+      });
+    }
+
     // Update UI
     updateUI();
   } catch (error) {
@@ -150,6 +166,24 @@ function updateUI(): void {
   }
 }
 
+// Toggle dark mode configurator panel
+function toggleDarkConfigurator(): void {
+  const panel = document.getElementById('darkConfigurator');
+  if (!panel) return;
+
+  const isHidden = panel.classList.contains('hidden');
+
+  if (isHidden) {
+    panel.classList.remove('hidden');
+    // Initialize sliders on first open
+    if (sliderManager && !sliderManager.isInitialized()) {
+      sliderManager.initialize();
+    }
+  } else {
+    panel.classList.add('hidden');
+  }
+}
+
 // Setup preset button handlers
 function setupPresetButtons(): void {
   const buttons = document.querySelectorAll('.preset-btn');
@@ -158,6 +192,15 @@ function setupPresetButtons(): void {
     btn.addEventListener('click', () => {
       // Extract preset name from button ID (e.g., 'preset-default' -> 'default')
       const presetName = btn.id.replace('preset-', '');
+
+      // Handle custom button - toggle panel
+      if (presetName === 'custom') {
+        toggleDarkConfigurator();
+        // Update active button state
+        buttons.forEach((b) => b.classList.remove('active'));
+        btn.classList.add('active');
+        return;
+      }
 
       // Get preset settings
       const settings = PRESETS[presetName];
@@ -172,6 +215,11 @@ function setupPresetButtons(): void {
       // Apply to PDF viewer
       if (pdfViewer) {
         pdfViewer.applyFilter(filterCSS);
+      }
+
+      // Update slider positions if initialized
+      if (sliderManager?.isInitialized()) {
+        sliderManager.setPreset(settings);
       }
 
       // Update active button state
@@ -270,6 +318,12 @@ function setupEventListeners(): void {
 
   // Setup preset buttons
   setupPresetButtons();
+
+  // Close configurator button
+  const closeConfigBtn = document.getElementById('close-configurator');
+  closeConfigBtn?.addEventListener('click', () => {
+    toggleDarkConfigurator();
+  });
 
   // Keyboard shortcuts - use both document and window to ensure capture
   const handleKeyDown = async (e: KeyboardEvent) => {

@@ -6,6 +6,7 @@
     <title>Monight (墨页)</title>
     <link rel="stylesheet" href="/src/styles/main.css" />
     <link rel="stylesheet" href="/src/styles/pdf-viewer.css" />
+    <link rel="stylesheet" href="/src/styles/configurator.css" />
     <meta http-equiv="Content-Security-Policy"
           content="default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'" />
 </head>
@@ -70,6 +71,9 @@
                     <button id="preset-sepia" class="preset-btn" title="Sepia Mode">
                         <span>Sepia</span>
                     </button>
+                    <button id="preset-custom" class="preset-btn" title="Custom Dark Mode">
+                        <span>Custom</span>
+                    </button>
                 </div>
 
                 <!-- File info -->
@@ -87,6 +91,42 @@
 
             <!-- PDF canvas container -->
             <div id="pdf-container"></div>
+        </div>
+
+        <!-- Dark Mode Configurator Overlay -->
+        <div id="darkConfigurator" class="dark-configurator hidden">
+            <div class="configurator-panel">
+                <div class="configurator-header">
+                    <h3>Custom Dark Mode</h3>
+                    <button id="close-configurator" class="close-btn">✕</button>
+                </div>
+                <div class="configurator-content">
+                    <div class="slider-group">
+                        <label>Darkness</label>
+                        <div id="brightnessSlider" class="slider"></div>
+                    </div>
+                    <div class="slider-group">
+                        <label>Grayscale</label>
+                        <div id="grayscaleSlider" class="slider"></div>
+                    </div>
+                    <div class="slider-group">
+                        <label>Inversion</label>
+                        <div id="invertSlider" class="slider"></div>
+                    </div>
+                    <div class="slider-group">
+                        <label>Sepia</label>
+                        <div id="sepiaSlider" class="slider"></div>
+                    </div>
+                    <div class="slider-group">
+                        <label>Hue</label>
+                        <div id="hueSlider" class="slider"></div>
+                    </div>
+                    <div class="slider-group">
+                        <label>Brightness</label>
+                        <div id="extraBrightnessSlider" class="slider"></div>
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
     <script type="module" src="/src/main.ts"></script>

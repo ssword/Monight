@@ -1,0 +1,217 @@
+/* Import noUiSlider base styles */
+@import 'nouislider/dist/nouislider.css';
+
+/* Dark Configurator Overlay */
+.dark-configurator {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-color: rgba(0, 0, 0, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  backdrop-filter: blur(4px);
+}
+
+.dark-configurator.hidden {
+  display: none;
+}
+
+/* Configurator Panel */
+.configurator-panel {
+  background-color: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  width: 400px;
+  max-width: 90%;
+  max-height: 80vh;
+  overflow-y: auto;
+  animation: slideIn 0.2s ease-out;
+}
+
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: translateY(-20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Configurator Header */
+.configurator-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border-color);
+  background-color: var(--bg-primary);
+  border-radius: 8px 8px 0 0;
+}
+
+.configurator-header h3 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.close-btn {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  font-size: 24px;
+  cursor: pointer;
+  padding: 0;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  transition: all 0.2s ease;
+}
+
+.close-btn:hover {
+  background-color: var(--bg-secondary);
+  color: var(--text-primary);
+}
+
+.close-btn:active {
+  transform: scale(0.95);
+}
+
+/* Configurator Content */
+.configurator-content {
+  padding: 20px;
+}
+
+/* Slider Group */
+.slider-group {
+  margin-bottom: 24px;
+}
+
+.slider-group:last-child {
+  margin-bottom: 0;
+}
+
+.slider-group label {
+  display: block;
+  margin-bottom: 12px;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-primary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.slider {
+  margin: 0 8px;
+}
+
+/* Customize noUiSlider for dark theme */
+.noUi-target {
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  box-shadow: none;
+  border-radius: 4px;
+}
+
+.noUi-connect {
+  background: var(--accent-color);
+}
+
+.noUi-handle {
+  background: var(--bg-secondary);
+  border: 2px solid var(--accent-color);
+  border-radius: 50%;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  cursor: pointer;
+}
+
+.noUi-handle:hover {
+  background: var(--accent-color);
+}
+
+.noUi-handle:active {
+  transform: scale(1.1);
+}
+
+.noUi-handle::before,
+.noUi-handle::after {
+  display: none;
+}
+
+/* Tooltip styling */
+.noUi-tooltip {
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  color: var(--text-primary);
+  font-size: 12px;
+  font-family: 'Monaco', 'Courier New', monospace;
+  padding: 4px 8px;
+  border-radius: 4px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+/* Horizontal slider specific styles */
+.noUi-horizontal {
+  height: 8px;
+}
+
+.noUi-horizontal .noUi-handle {
+  width: 20px;
+  height: 20px;
+  top: -7px;
+  right: -10px;
+}
+
+/* Active state */
+.noUi-active {
+  box-shadow: 0 0 0 4px rgba(74, 158, 255, 0.2);
+}
+
+/* Scrollbar for panel */
+.configurator-panel::-webkit-scrollbar {
+  width: 8px;
+}
+
+.configurator-panel::-webkit-scrollbar-track {
+  background: var(--bg-primary);
+  border-radius: 0 8px 8px 0;
+}
+
+.configurator-panel::-webkit-scrollbar-thumb {
+  background: var(--border-color);
+  border-radius: 4px;
+}
+
+.configurator-panel::-webkit-scrollbar-thumb:hover {
+  background: var(--text-secondary);
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .configurator-panel {
+    width: 95%;
+    max-height: 90vh;
+  }
+
+  .configurator-header {
+    padding: 12px 16px;
+  }
+
+  .configurator-content {
+    padding: 16px;
+  }
+
+  .slider-group {
+    margin-bottom: 20px;
+  }
+}
