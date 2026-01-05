@@ -2,6 +2,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 import { open } from '@tauri-apps/plugin-dialog';
 import { PDFViewer } from './scripts/pdf-viewer';
+import { PRESETS, buildFilterCSS } from './scripts/filters';
 import './styles/main.css';
 import './styles/pdf-viewer.css';
 
@@ -98,6 +99,9 @@ async function loadPDF(filePath: string): Promise<void> {
     // Show viewer
     showViewer();
 
+    // Apply default dark mode filter
+    pdfViewer.applyFilter(buildFilterCSS(PRESETS.default));
+
     // Update UI
     updateUI();
   } catch (error) {
@@ -144,6 +148,39 @@ function updateUI(): void {
   if (nextBtn) {
     nextBtn.disabled = state.currentPage >= state.totalPages;
   }
+}
+
+// Setup preset button handlers
+function setupPresetButtons(): void {
+  const buttons = document.querySelectorAll('.preset-btn');
+
+  buttons.forEach((btn) => {
+    btn.addEventListener('click', () => {
+      // Extract preset name from button ID (e.g., 'preset-default' -> 'default')
+      const presetName = btn.id.replace('preset-', '');
+
+      // Get preset settings
+      const settings = PRESETS[presetName];
+      if (!settings) {
+        console.error(`Unknown preset: ${presetName}`);
+        return;
+      }
+
+      // Build CSS filter string
+      const filterCSS = buildFilterCSS(settings);
+
+      // Apply to PDF viewer
+      if (pdfViewer) {
+        pdfViewer.applyFilter(filterCSS);
+      }
+
+      // Update active button state
+      buttons.forEach((b) => b.classList.remove('active'));
+      btn.classList.add('active');
+
+      console.log(`Applied preset: ${presetName}`);
+    });
+  });
 }
 
 // Setup event listeners
@@ -230,6 +267,9 @@ function setupEventListeners(): void {
       updateUI();
     }
   });
+
+  // Setup preset buttons
+  setupPresetButtons();
 
   // Keyboard shortcuts - use both document and window to ensure capture
   const handleKeyDown = async (e: KeyboardEvent) => {

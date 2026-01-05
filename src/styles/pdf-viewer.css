@@ -196,6 +196,52 @@
   }
 }
 
+/* Preset Buttons */
+.preset-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.preset-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 32px;
+  padding: 0 12px;
+  background-color: transparent;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.preset-btn:hover {
+  background-color: var(--bg-primary);
+  border-color: var(--accent-color);
+}
+
+.preset-btn:active {
+  background-color: var(--border-color);
+  transform: scale(0.98);
+}
+
+.preset-btn.active {
+  background-color: var(--accent-color);
+  border-color: var(--accent-color);
+  color: #ffffff;
+}
+
+.preset-btn.active:hover {
+  background-color: #3a8eef;
+  border-color: #3a8eef;
+}
+
 /* Dark mode optimizations for PDF canvas */
 #pdf-canvas {
   image-rendering: auto;

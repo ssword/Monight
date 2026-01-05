@@ -195,6 +195,11 @@ export class PDFViewer {
     await this.renderPage(this.state.currentPage);
   }
 
+  applyFilter(filterCSS: string): void {
+    if (!this.canvas) return;
+    this.canvas.style.filter = filterCSS;
+  }
+
   getState(): Readonly<ViewState> {
     return { ...this.state };
   }
