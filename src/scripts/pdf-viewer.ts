@@ -29,21 +29,22 @@ export class PDFViewer {
     filePath: '',
   };
   private renderTask: RenderTask | null = null;
+  private canvasId: string;
 
-  constructor(containerId: string) {
+  constructor(containerId: string, canvasId: string = 'pdf-canvas') {
     const container = document.getElementById(containerId);
     if (!container) {
       throw new Error(`Container element '${containerId}' not found`);
     }
     this.container = container;
+    this.canvasId = canvasId;
     this.initializeCanvas();
   }
 
   private initializeCanvas(): void {
     // Create canvas element for PDF rendering
     this.canvas = document.createElement('canvas');
-    this.canvas.id = 'pdf-canvas';
-    this.container.innerHTML = '';
+    this.canvas.id = this.canvasId;
     this.container.appendChild(this.canvas);
   }
 
@@ -202,6 +203,10 @@ export class PDFViewer {
 
   getState(): Readonly<ViewState> {
     return { ...this.state };
+  }
+
+  getCanvas(): HTMLCanvasElement | null {
+    return this.canvas;
   }
 
   destroy(): void {

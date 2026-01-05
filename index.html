@@ -7,6 +7,7 @@
     <link rel="stylesheet" href="/src/styles/main.css" />
     <link rel="stylesheet" href="/src/styles/pdf-viewer.css" />
     <link rel="stylesheet" href="/src/styles/configurator.css" />
+    <link rel="stylesheet" href="/src/styles/tabs.css" />
     <meta http-equiv="Content-Security-Policy"
           content="default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'" />
 </head>
@@ -87,6 +88,14 @@
                         <span>📂</span>
                     </button>
                 </div>
+            </div>
+
+            <!-- Tab Bar -->
+            <div id="tab-bar" class="tab-bar hidden">
+                <div id="tab-container" class="tab-list">
+                    <!-- Tabs rendered dynamically -->
+                </div>
+                <button id="new-tab-btn" class="new-tab-btn" title="Open New PDF (Ctrl+T)">+</button>
             </div>
 
             <!-- PDF canvas container -->

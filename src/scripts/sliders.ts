@@ -117,7 +117,12 @@ export class SliderManager {
     if (!slider) return 0;
 
     const value = slider.get();
-    return typeof value === 'string' ? Number(value) : Number(value[0]);
+    if (typeof value === 'string') {
+      return Number(value);
+    } else if (Array.isArray(value)) {
+      return Number(value[0]);
+    }
+    return Number(value);
   }
 
   /**

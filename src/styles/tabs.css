@@ -1,0 +1,165 @@
+/* Tab Bar Container */
+#tab-bar {
+  display: flex;
+  align-items: center;
+  background-color: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-color);
+  height: 40px;
+  flex-shrink: 0;
+  overflow: hidden;
+}
+
+#tab-bar.hidden {
+  display: none;
+}
+
+/* Tab List (Scrollable) */
+.tab-list {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-color) var(--bg-secondary);
+}
+
+.tab-list::-webkit-scrollbar {
+  height: 4px;
+}
+
+.tab-list::-webkit-scrollbar-track {
+  background: var(--bg-secondary);
+}
+
+.tab-list::-webkit-scrollbar-thumb {
+  background: var(--border-color);
+  border-radius: 2px;
+}
+
+.tab-list::-webkit-scrollbar-thumb:hover {
+  background: var(--text-secondary);
+}
+
+/* Individual Tab */
+.tab {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background-color: var(--bg-secondary);
+  border-right: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  cursor: pointer;
+  user-select: none;
+  min-width: 120px;
+  max-width: 200px;
+  height: 100%;
+  transition: all 0.2s ease;
+  position: relative;
+}
+
+.tab:hover {
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+}
+
+.tab.active {
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+  border-bottom: 2px solid var(--accent-color);
+}
+
+/* Tab Title */
+.tab-title {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  direction: rtl;
+  text-align: left;
+}
+
+/* Tab Close Button */
+.tab-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  background: none;
+  border: none;
+  border-radius: 3px;
+  color: var(--text-secondary);
+  font-size: 16px;
+  cursor: pointer;
+  padding: 0;
+  opacity: 0;
+  transition: all 0.2s ease;
+  flex-shrink: 0;
+}
+
+.tab:hover .tab-close {
+  opacity: 1;
+}
+
+.tab-close:hover {
+  background-color: var(--border-color);
+  color: var(--text-primary);
+}
+
+.tab-close:active {
+  transform: scale(0.9);
+}
+
+.tab.active .tab-close {
+  opacity: 1;
+}
+
+/* New Tab Button */
+.new-tab-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 100%;
+  background-color: var(--bg-secondary);
+  border: none;
+  border-left: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  font-size: 20px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  flex-shrink: 0;
+}
+
+.new-tab-btn:hover {
+  background-color: var(--bg-primary);
+  color: var(--accent-color);
+}
+
+.new-tab-btn:active {
+  transform: scale(0.95);
+}
+
+/* Responsive Adjustments */
+@media (max-width: 768px) {
+  #tab-bar {
+    height: 44px;
+  }
+
+  .tab {
+    min-width: 100px;
+    max-width: 150px;
+    padding: 8px 10px;
+  }
+
+  .tab-title {
+    font-size: 12px;
+  }
+
+  .new-tab-btn {
+    width: 44px;
+  }
+}

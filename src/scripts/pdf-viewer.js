@@ -2,7 +2,7 @@ import * as pdfjsLib from 'pdfjs-dist';
 // Configure PDF.js worker
 pdfjsLib.GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.min.mjs', import.meta.url).toString();
 export class PDFViewer {
-    constructor(containerId) {
+    constructor(containerId, canvasId = 'pdf-canvas') {
         this.canvas = null;
         this.pdfDoc = null;
         this.state = {
@@ -19,13 +19,13 @@ export class PDFViewer {
             throw new Error(`Container element '${containerId}' not found`);
         }
         this.container = container;
+        this.canvasId = canvasId;
         this.initializeCanvas();
     }
     initializeCanvas() {
         // Create canvas element for PDF rendering
         this.canvas = document.createElement('canvas');
-        this.canvas.id = 'pdf-canvas';
-        this.container.innerHTML = '';
+        this.canvas.id = this.canvasId;
         this.container.appendChild(this.canvas);
     }
     async loadPDF(pdfData, fileName, filePath) {
@@ -154,6 +154,9 @@ export class PDFViewer {
     }
     getState() {
         return { ...this.state };
+    }
+    getCanvas() {
+        return this.canvas;
     }
     destroy() {
         if (this.renderTask) {

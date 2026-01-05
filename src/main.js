@@ -1,14 +1,18 @@
 import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 import { open } from '@tauri-apps/plugin-dialog';
-import { PDFViewer } from './scripts/pdf-viewer';
 import { PRESETS, buildFilterCSS } from './scripts/filters';
+import { SliderManager } from './scripts/sliders';
+import { TabManager } from './scripts/tabs';
 import './styles/main.css';
 import './styles/pdf-viewer.css';
-// Global PDF viewer instance
-let pdfViewer = null;
-// Active filter preset
-let activePreset = 'default';
+import './styles/configurator.css';
+import './styles/tabs.css';
+import 'nouislider/dist/nouislider.css';
+// Global tab manager instance
+let tabManager = null;
+// Global slider manager instance
+let sliderManager = null;
 // Detect if we're on macOS
 const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
 console.log('Platform:', navigator.platform, 'isMac:', isMac);
@@ -48,7 +52,7 @@ async function openPDFFile() {
     try {
         console.log('Opening file dialog...');
         const selected = await open({
-            multiple: false,
+            multiple: true, // Enable multi-select
             filters: [
                 {
                     name: 'PDF',
@@ -57,50 +61,111 @@ async function openPDFFile() {
             ],
         });
         console.log('File dialog result:', selected);
-        if (selected && typeof selected === 'string') {
-            console.log('Selected file:', selected);
-            await loadPDF(selected);
+        if (!selected) {
+            console.log('No file selected');
+            return;
         }
-        else {
-            console.log('No file selected or invalid selection');
+        // Handle single or multiple files
+        const files = Array.isArray(selected) ? selected : [selected];
+        for (const filePath of files) {
+            // Check if already open
+            if (tabManager?.isFileOpen(filePath)) {
+                console.log(`File already open: ${filePath}`);
+                continue;
+            }
+            // Load PDF data
+            const pdfData = await invoke('read_pdf_file', { path: filePath });
+            const fileName = await invoke('get_file_name', { path: filePath });
+            // Create tab (TabManager handles viewer creation)
+            await tabManager?.createTab(filePath, fileName, new Uint8Array(pdfData));
+            console.log(`Opened PDF: ${fileName}`);
         }
+        // Update tab bar visibility
+        updateTabBarVisibility();
     }
     catch (error) {
         console.error('Error opening file:', error);
         alert(`Failed to open file: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
 }
-// Load PDF file
-async function loadPDF(filePath) {
-    try {
-        // Read PDF file from Rust backend
-        const pdfData = await invoke('read_pdf_file', { path: filePath });
-        const fileName = await invoke('get_file_name', { path: filePath });
-        // Convert to Uint8Array
-        const uint8Array = new Uint8Array(pdfData);
-        // Initialize viewer if needed
-        if (!pdfViewer) {
-            pdfViewer = new PDFViewer('pdf-container');
+// Update tab bar visibility
+function updateTabBarVisibility() {
+    const tabBar = document.getElementById('tab-bar');
+    if (!tabBar)
+        return;
+    const hasTab = (tabManager?.size ?? 0) > 0;
+    if (hasTab) {
+        tabBar.classList.remove('hidden');
+    }
+    else {
+        tabBar.classList.add('hidden');
+    }
+}
+// Restore tab state (filters, page, zoom)
+async function restoreTabState(tab) {
+    const viewer = tabManager?.getViewerForTab(tab.id);
+    if (!viewer)
+        return;
+    // Apply saved filter
+    viewer.applyFilter(buildFilterCSS(tab.filterSettings));
+    // Restore page and zoom
+    await viewer.goToPage(tab.currentPage);
+    await viewer.setZoom(tab.zoom);
+    // Update slider if initialized
+    if (sliderManager?.isInitialized()) {
+        sliderManager.setPreset(tab.filterSettings);
+    }
+    // Update preset button active state
+    updateActivePresetButton(tab.filterSettings);
+}
+// Save current tab state
+function saveCurrentTabState() {
+    const activeTab = tabManager?.getActiveTab();
+    if (!activeTab)
+        return;
+    const viewer = tabManager?.getViewerForTab(activeTab.id);
+    if (!viewer)
+        return;
+    const state = viewer.getState();
+    // Save state to tab
+    activeTab.currentPage = state.currentPage;
+    activeTab.zoom = state.zoom;
+    // Save current filter if sliders initialized
+    if (sliderManager?.isInitialized()) {
+        activeTab.filterSettings = sliderManager.getCurrentSettings();
+    }
+}
+// Update active preset button based on settings
+function updateActivePresetButton(settings) {
+    const buttons = document.querySelectorAll('.preset-btn');
+    // Check if settings match any preset
+    let matchedPreset = null;
+    for (const [presetName, presetSettings] of Object.entries(PRESETS)) {
+        if (JSON.stringify(presetSettings) === JSON.stringify(settings)) {
+            matchedPreset = presetName;
+            break;
         }
-        // Load PDF
-        await pdfViewer.loadPDF(uint8Array, fileName, filePath);
-        // Show viewer
-        showViewer();
-        // Apply default dark mode filter
-        pdfViewer.applyFilter(buildFilterCSS(PRESETS.default));
-        // Update UI
-        updateUI();
     }
-    catch (error) {
-        console.error('Error loading PDF:', error);
-        alert(`Failed to load PDF: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    }
+    // Update button states
+    buttons.forEach((btn) => {
+        const presetName = btn.id.replace('preset-', '');
+        if (presetName === matchedPreset) {
+            btn.classList.add('active');
+        }
+        else {
+            btn.classList.remove('active');
+        }
+    });
 }
 // Update UI based on viewer state
 function updateUI() {
-    if (!pdfViewer)
+    const activeTab = tabManager?.getActiveTab();
+    if (!activeTab)
         return;
-    const state = pdfViewer.getState();
+    const viewer = tabManager?.getViewerForTab(activeTab.id);
+    if (!viewer)
+        return;
+    const state = viewer.getState();
     // Update page info
     const pageInput = document.getElementById('page-input');
     const pageCount = document.getElementById('page-count');
@@ -119,7 +184,7 @@ function updateUI() {
     // Update file name
     const fileName = document.getElementById('file-name');
     if (fileName) {
-        fileName.textContent = state.fileName || 'No file loaded';
+        fileName.textContent = activeTab.title || 'No file loaded';
     }
     // Update button states
     const prevBtn = document.getElementById('prev-page');
@@ -131,6 +196,23 @@ function updateUI() {
         nextBtn.disabled = state.currentPage >= state.totalPages;
     }
 }
+// Toggle dark mode configurator panel
+function toggleDarkConfigurator() {
+    const panel = document.getElementById('darkConfigurator');
+    if (!panel)
+        return;
+    const isHidden = panel.classList.contains('hidden');
+    if (isHidden) {
+        panel.classList.remove('hidden');
+        // Initialize sliders on first open
+        if (sliderManager && !sliderManager.isInitialized()) {
+            sliderManager.initialize();
+        }
+    }
+    else {
+        panel.classList.add('hidden');
+    }
+}
 // Setup preset button handlers
 function setupPresetButtons() {
     const buttons = document.querySelectorAll('.preset-btn');
@@ -138,6 +220,14 @@ function setupPresetButtons() {
         btn.addEventListener('click', () => {
             // Extract preset name from button ID (e.g., 'preset-default' -> 'default')
             const presetName = btn.id.replace('preset-', '');
+            // Handle custom button - toggle panel
+            if (presetName === 'custom') {
+                toggleDarkConfigurator();
+                // Update active button state
+                buttons.forEach((b) => b.classList.remove('active'));
+                btn.classList.add('active');
+                return;
+            }
             // Get preset settings
             const settings = PRESETS[presetName];
             if (!settings) {
@@ -146,15 +236,23 @@ function setupPresetButtons() {
             }
             // Build CSS filter string
             const filterCSS = buildFilterCSS(settings);
-            // Apply to PDF viewer
-            if (pdfViewer) {
-                pdfViewer.applyFilter(filterCSS);
+            // Apply to active tab's PDF viewer
+            const activeTab = tabManager?.getActiveTab();
+            if (activeTab) {
+                const viewer = tabManager?.getViewerForTab(activeTab.id);
+                if (viewer) {
+                    viewer.applyFilter(filterCSS);
+                    // Save filter to tab state
+                    activeTab.filterSettings = settings;
+                }
+            }
+            // Update slider positions if initialized
+            if (sliderManager?.isInitialized()) {
+                sliderManager.setPreset(settings);
             }
             // Update active button state
             buttons.forEach((b) => b.classList.remove('active'));
             btn.classList.add('active');
-            // Store active preset
-            activePreset = presetName;
             console.log(`Applied preset: ${presetName}`);
         });
     });
@@ -184,29 +282,44 @@ function setupEventListeners() {
     const prevBtn = document.getElementById('prev-page');
     const nextBtn = document.getElementById('next-page');
     prevBtn?.addEventListener('click', async () => {
-        if (pdfViewer) {
-            await pdfViewer.previousPage();
-            updateUI();
+        const activeTab = tabManager?.getActiveTab();
+        if (activeTab) {
+            const viewer = tabManager?.getViewerForTab(activeTab.id);
+            if (viewer) {
+                await viewer.previousPage();
+                saveCurrentTabState();
+                updateUI();
+            }
         }
     });
     nextBtn?.addEventListener('click', async () => {
-        if (pdfViewer) {
-            await pdfViewer.nextPage();
-            updateUI();
+        const activeTab = tabManager?.getActiveTab();
+        if (activeTab) {
+            const viewer = tabManager?.getViewerForTab(activeTab.id);
+            if (viewer) {
+                await viewer.nextPage();
+                saveCurrentTabState();
+                updateUI();
+            }
         }
     });
     // Page input
     const pageInput = document.getElementById('page-input');
     pageInput?.addEventListener('change', async () => {
-        if (pdfViewer) {
-            const pageNum = Number.parseInt(pageInput.value, 10);
-            const state = pdfViewer.getState();
-            if (pageNum >= 1 && pageNum <= state.totalPages) {
-                await pdfViewer.goToPage(pageNum);
-                updateUI();
-            }
-            else {
-                pageInput.value = state.currentPage.toString();
+        const activeTab = tabManager?.getActiveTab();
+        if (activeTab) {
+            const viewer = tabManager?.getViewerForTab(activeTab.id);
+            if (viewer) {
+                const pageNum = Number.parseInt(pageInput.value, 10);
+                const state = viewer.getState();
+                if (pageNum >= 1 && pageNum <= state.totalPages) {
+                    await viewer.goToPage(pageNum);
+                    saveCurrentTabState();
+                    updateUI();
+                }
+                else {
+                    pageInput.value = state.currentPage.toString();
+                }
             }
         }
     });
@@ -216,31 +329,61 @@ function setupEventListeners() {
     const fitWidthBtn = document.getElementById('fit-width');
     const fitPageBtn = document.getElementById('fit-page');
     zoomInBtn?.addEventListener('click', async () => {
-        if (pdfViewer) {
-            await pdfViewer.zoomIn();
-            updateUI();
+        const activeTab = tabManager?.getActiveTab();
+        if (activeTab) {
+            const viewer = tabManager?.getViewerForTab(activeTab.id);
+            if (viewer) {
+                await viewer.zoomIn();
+                saveCurrentTabState();
+                updateUI();
+            }
         }
     });
     zoomOutBtn?.addEventListener('click', async () => {
-        if (pdfViewer) {
-            await pdfViewer.zoomOut();
-            updateUI();
+        const activeTab = tabManager?.getActiveTab();
+        if (activeTab) {
+            const viewer = tabManager?.getViewerForTab(activeTab.id);
+            if (viewer) {
+                await viewer.zoomOut();
+                saveCurrentTabState();
+                updateUI();
+            }
         }
     });
     fitWidthBtn?.addEventListener('click', async () => {
-        if (pdfViewer) {
-            await pdfViewer.fitToWidth();
-            updateUI();
+        const activeTab = tabManager?.getActiveTab();
+        if (activeTab) {
+            const viewer = tabManager?.getViewerForTab(activeTab.id);
+            if (viewer) {
+                await viewer.fitToWidth();
+                saveCurrentTabState();
+                updateUI();
+            }
         }
     });
     fitPageBtn?.addEventListener('click', async () => {
-        if (pdfViewer) {
-            await pdfViewer.fitToPage();
-            updateUI();
+        const activeTab = tabManager?.getActiveTab();
+        if (activeTab) {
+            const viewer = tabManager?.getViewerForTab(activeTab.id);
+            if (viewer) {
+                await viewer.fitToPage();
+                saveCurrentTabState();
+                updateUI();
+            }
         }
     });
     // Setup preset buttons
     setupPresetButtons();
+    // New tab button
+    const newTabBtn = document.getElementById('new-tab-btn');
+    newTabBtn?.addEventListener('click', () => {
+        openPDFFile();
+    });
+    // Close configurator button
+    const closeConfigBtn = document.getElementById('close-configurator');
+    closeConfigBtn?.addEventListener('click', () => {
+        toggleDarkConfigurator();
+    });
     // Keyboard shortcuts - use both document and window to ensure capture
     const handleKeyDown = async (e) => {
         console.log('Key pressed:', e.key, 'Meta:', e.metaKey, 'Ctrl:', e.ctrlKey);
@@ -254,36 +397,82 @@ function setupEventListeners() {
             await openPDFFile();
             return;
         }
-        // Only handle other shortcuts if PDF is loaded
-        if (!pdfViewer)
+        // Cmd/Ctrl+W: Close tab
+        if (modifierKey && e.key === 'w') {
+            e.preventDefault();
+            const activeTab = tabManager?.getActiveTab();
+            if (activeTab) {
+                await tabManager?.closeTab(activeTab.id);
+                updateTabBarVisibility();
+            }
+            return;
+        }
+        // Cmd/Ctrl+Tab: Next tab
+        if (modifierKey && e.key === 'Tab') {
+            e.preventDefault();
+            if (e.shiftKey) {
+                await tabManager?.switchToPrevious();
+            }
+            else {
+                await tabManager?.switchToNext();
+            }
+            return;
+        }
+        // Cmd/Ctrl+Shift+T: Reopen closed tab
+        if (modifierKey && e.shiftKey && e.key.toLowerCase() === 't') {
+            e.preventDefault();
+            const filePath = await tabManager?.reopenLastClosed();
+            if (filePath) {
+                // TODO: Implement reopening from file path
+                console.log(`Reopening: ${filePath}`);
+            }
+            return;
+        }
+        // Cmd/Ctrl+1-9: Switch to tab position
+        if (modifierKey && e.key >= '1' && e.key <= '9') {
+            e.preventDefault();
+            await tabManager?.switchToPosition(parseInt(e.key));
+            return;
+        }
+        // Only handle other shortcuts if tab is active
+        const activeTab = tabManager?.getActiveTab();
+        if (!activeTab)
+            return;
+        const viewer = tabManager?.getViewerForTab(activeTab.id);
+        if (!viewer)
             return;
         // Arrow keys: Navigate pages
         if (e.key === 'ArrowLeft') {
             e.preventDefault();
-            await pdfViewer.previousPage();
+            await viewer.previousPage();
+            saveCurrentTabState();
             updateUI();
         }
         else if (e.key === 'ArrowRight') {
             e.preventDefault();
-            await pdfViewer.nextPage();
+            await viewer.nextPage();
+            saveCurrentTabState();
             updateUI();
         }
         // Cmd/Ctrl+Plus: Zoom in
         else if (modifierKey && (e.key === '+' || e.key === '=')) {
             e.preventDefault();
-            await pdfViewer.zoomIn();
+            await viewer.zoomIn();
+            saveCurrentTabState();
             updateUI();
         }
         // Cmd/Ctrl+Minus: Zoom out
         else if (modifierKey && e.key === '-') {
             e.preventDefault();
-            await pdfViewer.zoomOut();
+            await viewer.zoomOut();
+            saveCurrentTabState();
             updateUI();
         }
         // Cmd/Ctrl+0: Reset zoom
         else if (modifierKey && e.key === '0') {
             e.preventDefault();
-            await pdfViewer.setZoom(1.0);
+            await viewer.setZoom(1.0);
+            saveCurrentTabState();
             updateUI();
         }
     };
@@ -320,6 +509,33 @@ async function initializeApp() {
         if (versionElement) {
             versionElement.textContent = `v${info.version} • Tauri ${info.tauriVersion}`;
         }
+        // Initialize tab manager
+        tabManager = new TabManager(async (tab) => {
+            if (tab) {
+                // Tab activated - restore its state
+                await restoreTabState(tab);
+                updateUI();
+                showViewer();
+            }
+            else {
+                // No tabs - show splash
+                showSplash();
+            }
+            updateTabBarVisibility();
+        });
+        // Initialize slider manager
+        sliderManager = new SliderManager((settings) => {
+            const activeTab = tabManager?.getActiveTab();
+            if (activeTab) {
+                const viewer = tabManager?.getViewerForTab(activeTab.id);
+                if (viewer) {
+                    const filterCSS = buildFilterCSS(settings);
+                    viewer.applyFilter(filterCSS);
+                    // Save filter to tab state
+                    activeTab.filterSettings = settings;
+                }
+            }
+        });
         // Setup event listeners
         setupEventListeners();
         // Update keyboard hints for platform

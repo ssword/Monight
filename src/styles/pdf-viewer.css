@@ -136,11 +136,22 @@
   align-items: flex-start;
   padding: 20px;
   background-color: var(--bg-primary);
+  position: relative;
 }
 
-/* PDF Canvas */
+/* PDF Canvas - support multiple canvases */
+#pdf-container canvas {
+  display: none; /* Hidden by default, shown by TabManager */
+  position: absolute;
+  top: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+  background-color: white;
+}
+
+/* Legacy selector for backwards compatibility */
 #pdf-canvas {
-  display: block;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
   background-color: white;
 }
