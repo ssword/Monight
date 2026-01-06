@@ -2,10 +2,12 @@ import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 import { listen } from '@tauri-apps/api/event';
 import { open } from '@tauri-apps/plugin-dialog';
+import { LogicalSize } from '@tauri-apps/api/window';
 import { PRESETS, buildFilterCSS } from './scripts/filters';
 import { SliderManager } from './scripts/sliders';
 import { TabManager } from './scripts/tabs';
 import { SettingsManager } from './scripts/settings';
+import { KeybindManager } from './scripts/keybind-manager';
 import './styles/main.css';
 import './styles/pdf-viewer.css';
 import './styles/configurator.css';
@@ -17,6 +19,8 @@ let tabManager = null;
 let sliderManager = null;
 // Global settings manager instance
 let settingsManager = null;
+// Global keybind manager instance
+let keybindManager = null;
 // Detect if we're on macOS
 const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
 console.log('Platform:', navigator.platform, 'isMac:', isMac);
@@ -86,6 +90,10 @@ async function openPDFFile() {
         }
         // Update tab bar visibility
         updateTabBarVisibility();
+        // Update print menu state (enable after first PDF loaded)
+        await updatePrintMenuState();
+        // Ensure window is at minimum comfortable viewing size
+        await ensureMinimumViewingSize();
     }
     catch (error) {
         console.error('Error opening file:', error);
@@ -103,6 +111,33 @@ function updateTabBarVisibility() {
     }
     else {
         tabBar.classList.add('hidden');
+    }
+}
+// Update print menu state based on whether a PDF is loaded
+async function updatePrintMenuState() {
+    const hasPDF = (tabManager?.size ?? 0) > 0;
+    try {
+        await invoke('set_print_enabled', { enabled: hasPDF });
+        console.log(`Print menu ${hasPDF ? 'enabled' : 'disabled'}`);
+    }
+    catch (error) {
+        console.error('Failed to update print menu state:', error);
+    }
+}
+// Ensure window is at minimum comfortable viewing size for PDFs
+async function ensureMinimumViewingSize() {
+    const currentWindow = getCurrentWebviewWindow();
+    const size = await currentWindow.innerSize();
+    const minWidth = 1000;
+    const minHeight = 650;
+    // Only resize if window is smaller than minimum
+    if (size.width < minWidth || size.height < minHeight) {
+        // Calculate new size, maintaining aspect ratio if needed
+        const newWidth = Math.max(size.width, minWidth);
+        const newHeight = Math.max(size.height, minHeight);
+        await currentWindow.setSize(new LogicalSize(newWidth, newHeight));
+        await currentWindow.center();
+        console.log(`Window resized to ${newWidth}x${newHeight}`);
     }
 }
 // Restore tab state (filters, page, zoom)
@@ -394,113 +429,16 @@ function setupEventListeners() {
     closeConfigBtn?.addEventListener('click', () => {
         toggleDarkConfigurator();
     });
-    // Keyboard shortcuts - use both document and window to ensure capture
+    // Keyboard shortcuts - use KeybindManager for dynamic keybind handling
     const handleKeyDown = async (e) => {
-        console.log('Key pressed:', e.key, 'Meta:', e.metaKey, 'Ctrl:', e.ctrlKey);
-        // Use metaKey (Cmd) on Mac, ctrlKey on other platforms
-        const modifierKey = isMac ? e.metaKey : e.ctrlKey;
-        // Cmd/Ctrl+O: Open file
-        if (modifierKey && e.key === 'o') {
-            console.log('Cmd/Ctrl+O detected, opening file dialog...');
+        if (!keybindManager)
+            return;
+        const actionId = keybindManager.matchEvent(e);
+        if (actionId) {
+            console.log(`Keybind matched: ${actionId}`);
             e.preventDefault();
             e.stopPropagation();
-            await openPDFFile();
-            return;
-        }
-        // Cmd/Ctrl+P: Print
-        if (modifierKey && e.key === 'p') {
-            console.log('Cmd/Ctrl+P detected, opening print dialog...');
-            e.preventDefault();
-            e.stopPropagation();
-            await printCurrentPDF();
-            return;
-        }
-        // Cmd/Ctrl+,: Settings (macOS standard)
-        // Alt+S: Settings (Windows/Linux)
-        if ((isMac && modifierKey && e.key === ',') || (!isMac && e.altKey && e.key.toLowerCase() === 's')) {
-            console.log('Settings shortcut detected...');
-            e.preventDefault();
-            e.stopPropagation();
-            await openSettings();
-            return;
-        }
-        // Cmd/Ctrl+W: Close tab
-        if (modifierKey && e.key === 'w') {
-            e.preventDefault();
-            const activeTab = tabManager?.getActiveTab();
-            if (activeTab) {
-                await tabManager?.closeTab(activeTab.id);
-                updateTabBarVisibility();
-            }
-            return;
-        }
-        // Cmd/Ctrl+Tab: Next tab
-        if (modifierKey && e.key === 'Tab') {
-            e.preventDefault();
-            if (e.shiftKey) {
-                await tabManager?.switchToPrevious();
-            }
-            else {
-                await tabManager?.switchToNext();
-            }
-            return;
-        }
-        // Cmd/Ctrl+Shift+T: Reopen closed tab
-        if (modifierKey && e.shiftKey && e.key.toLowerCase() === 't') {
-            e.preventDefault();
-            const filePath = await tabManager?.reopenLastClosed();
-            if (filePath) {
-                // TODO: Implement reopening from file path
-                console.log(`Reopening: ${filePath}`);
-            }
-            return;
-        }
-        // Cmd/Ctrl+1-9: Switch to tab position
-        if (modifierKey && e.key >= '1' && e.key <= '9') {
-            e.preventDefault();
-            await tabManager?.switchToPosition(parseInt(e.key));
-            return;
-        }
-        // Only handle other shortcuts if tab is active
-        const activeTab = tabManager?.getActiveTab();
-        if (!activeTab)
-            return;
-        const viewer = tabManager?.getViewerForTab(activeTab.id);
-        if (!viewer)
-            return;
-        // Arrow keys: Navigate pages
-        if (e.key === 'ArrowLeft') {
-            e.preventDefault();
-            await viewer.previousPage();
-            saveCurrentTabState();
-            updateUI();
-        }
-        else if (e.key === 'ArrowRight') {
-            e.preventDefault();
-            await viewer.nextPage();
-            saveCurrentTabState();
-            updateUI();
-        }
-        // Cmd/Ctrl+Plus: Zoom in
-        else if (modifierKey && (e.key === '+' || e.key === '=')) {
-            e.preventDefault();
-            await viewer.zoomIn();
-            saveCurrentTabState();
-            updateUI();
-        }
-        // Cmd/Ctrl+Minus: Zoom out
-        else if (modifierKey && e.key === '-') {
-            e.preventDefault();
-            await viewer.zoomOut();
-            saveCurrentTabState();
-            updateUI();
-        }
-        // Cmd/Ctrl+0: Reset zoom
-        else if (modifierKey && e.key === '0') {
-            e.preventDefault();
-            await viewer.setZoom(1.0);
-            saveCurrentTabState();
-            updateUI();
+            await keybindManager.handleEvent(e);
         }
     };
     // Add to both document and window for maximum compatibility
@@ -559,6 +497,188 @@ async function openSettings() {
         alert(`Failed to open settings: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
 }
+// Register all keybind actions with the KeybindManager
+function registerKeybindActions() {
+    if (!keybindManager) {
+        console.error('KeybindManager not initialized');
+        return;
+    }
+    // File operations
+    keybindManager.registerAction('openFile', async (_e) => {
+        await openPDFFile();
+    });
+    keybindManager.registerAction('print', async (_e) => {
+        await printCurrentPDF();
+    });
+    keybindManager.registerAction('openSettings', async (_e) => {
+        await openSettings();
+    });
+    // Tab management
+    keybindManager.registerAction('closeTab', async (_e) => {
+        const activeTab = tabManager?.getActiveTab();
+        if (activeTab) {
+            await tabManager?.closeTab(activeTab.id);
+            updateTabBarVisibility();
+        }
+    });
+    keybindManager.registerAction('reopenTab', async (_e) => {
+        const filePath = await tabManager?.reopenLastClosed();
+        if (filePath) {
+            // Load and open the file
+            try {
+                const pdfData = await invoke('read_pdf_file', { path: filePath });
+                const fileName = await invoke('get_file_name', { path: filePath });
+                await tabManager?.createTab(filePath, fileName, new Uint8Array(pdfData));
+                updateTabBarVisibility();
+            }
+            catch (error) {
+                console.error('Error reopening tab:', error);
+            }
+        }
+    });
+    keybindManager.registerAction('nextTab', async (_e) => {
+        await tabManager?.switchToNext();
+    });
+    keybindManager.registerAction('previousTab', async (_e) => {
+        await tabManager?.switchToPrevious();
+    });
+    keybindManager.registerAction('switchToTab', async (_e, data) => {
+        const position = data ? parseInt(data) : 1;
+        await tabManager?.switchToPosition(position);
+    });
+    // PDF navigation (requires active tab)
+    keybindManager.registerAction('nextPage', async (_e) => {
+        const activeTab = tabManager?.getActiveTab();
+        if (activeTab) {
+            const viewer = tabManager?.getViewerForTab(activeTab.id);
+            if (viewer) {
+                await viewer.nextPage();
+                saveCurrentTabState();
+                updateUI();
+            }
+        }
+    });
+    keybindManager.registerAction('previousPage', async (_e) => {
+        const activeTab = tabManager?.getActiveTab();
+        if (activeTab) {
+            const viewer = tabManager?.getViewerForTab(activeTab.id);
+            if (viewer) {
+                await viewer.previousPage();
+                saveCurrentTabState();
+                updateUI();
+            }
+        }
+    });
+    keybindManager.registerAction('firstPage', async (_e) => {
+        const activeTab = tabManager?.getActiveTab();
+        if (activeTab) {
+            const viewer = tabManager?.getViewerForTab(activeTab.id);
+            if (viewer) {
+                await viewer.firstPage();
+                saveCurrentTabState();
+                updateUI();
+            }
+        }
+    });
+    keybindManager.registerAction('lastPage', async (_e) => {
+        const activeTab = tabManager?.getActiveTab();
+        if (activeTab) {
+            const viewer = tabManager?.getViewerForTab(activeTab.id);
+            if (viewer) {
+                await viewer.lastPage();
+                saveCurrentTabState();
+                updateUI();
+            }
+        }
+    });
+    // Zoom
+    keybindManager.registerAction('zoomIn', async (_e) => {
+        const activeTab = tabManager?.getActiveTab();
+        if (activeTab) {
+            const viewer = tabManager?.getViewerForTab(activeTab.id);
+            if (viewer) {
+                await viewer.zoomIn();
+                saveCurrentTabState();
+                updateUI();
+            }
+        }
+    });
+    keybindManager.registerAction('zoomOut', async (_e) => {
+        const activeTab = tabManager?.getActiveTab();
+        if (activeTab) {
+            const viewer = tabManager?.getViewerForTab(activeTab.id);
+            if (viewer) {
+                await viewer.zoomOut();
+                saveCurrentTabState();
+                updateUI();
+            }
+        }
+    });
+    keybindManager.registerAction('resetZoom', async (_e) => {
+        const activeTab = tabManager?.getActiveTab();
+        if (activeTab) {
+            const viewer = tabManager?.getViewerForTab(activeTab.id);
+            if (viewer) {
+                await viewer.setZoom(1.0);
+                saveCurrentTabState();
+                updateUI();
+            }
+        }
+    });
+    // Fit modes
+    keybindManager.registerAction('fitToWidth', async (_e) => {
+        const activeTab = tabManager?.getActiveTab();
+        if (activeTab) {
+            const viewer = tabManager?.getViewerForTab(activeTab.id);
+            if (viewer) {
+                await viewer.fitToWidth();
+                saveCurrentTabState();
+                updateUI();
+            }
+        }
+    });
+    keybindManager.registerAction('fitToPage', async (_e) => {
+        const activeTab = tabManager?.getActiveTab();
+        if (activeTab) {
+            const viewer = tabManager?.getViewerForTab(activeTab.id);
+            if (viewer) {
+                await viewer.fitToPage();
+                saveCurrentTabState();
+                updateUI();
+            }
+        }
+    });
+    // Rotation
+    keybindManager.registerAction('rotateRight', async (_e) => {
+        const activeTab = tabManager?.getActiveTab();
+        if (activeTab) {
+            const viewer = tabManager?.getViewerForTab(activeTab.id);
+            if (viewer) {
+                await viewer.rotateClockwise();
+                saveCurrentTabState();
+                updateUI();
+            }
+        }
+    });
+    keybindManager.registerAction('rotateLeft', async (_e) => {
+        const activeTab = tabManager?.getActiveTab();
+        if (activeTab) {
+            const viewer = tabManager?.getViewerForTab(activeTab.id);
+            if (viewer) {
+                await viewer.rotateCounterClockwise();
+                saveCurrentTabState();
+                updateUI();
+            }
+        }
+    });
+    // Fullscreen
+    keybindManager.registerAction('toggleFullscreen', async (_e) => {
+        const currentWindow = getCurrentWebviewWindow();
+        const isFullscreen = await currentWindow.isFullscreen();
+        await currentWindow.setFullscreen(!isFullscreen);
+    });
+    console.log('All keybind actions registered');
+}
 async function initializeApp() {
     try {
         console.log('Initializing app...');
@@ -566,6 +686,17 @@ async function initializeApp() {
         settingsManager = new SettingsManager();
         const settings = await settingsManager.load();
         console.log('Settings loaded:', settings);
+        // Initialize keybind manager
+        keybindManager = new KeybindManager(isMac);
+        // Register all action handlers
+        registerKeybindActions();
+        // Load keybinds from settings
+        // Override Settings keybind for macOS with Cmd+,
+        if (isMac && settings.keybinds.Settings) {
+            settings.keybinds.Settings.binds = ['Cmd+,'];
+        }
+        keybindManager.loadFromSettings(settings);
+        console.log('KeybindManager initialized with settings keybinds');
         // Get app information
         const info = await getAppInfo();
         // Update version display
@@ -586,6 +717,8 @@ async function initializeApp() {
                 showSplash();
             }
             updateTabBarVisibility();
+            // Update print menu state
+            await updatePrintMenuState();
         });
         // Initialize slider manager
         sliderManager = new SliderManager((settings) => {
@@ -638,6 +771,10 @@ async function initializeApp() {
             }
             // Update UI
             updateTabBarVisibility();
+            // Update print menu state
+            await updatePrintMenuState();
+            // Ensure window is at minimum comfortable viewing size
+            await ensureMinimumViewingSize();
         });
         // Visual feedback for drag operations
         await listen('tauri://file-drop-hover', async () => {
@@ -683,6 +820,10 @@ async function initializeApp() {
                 }
                 // Update UI
                 updateTabBarVisibility();
+                // Update print menu state
+                await updatePrintMenuState();
+                // Ensure window is at minimum comfortable viewing size
+                await ensureMinimumViewingSize();
             }
             catch (error) {
                 console.error('Error opening CLI files:', error);
@@ -731,10 +872,46 @@ async function initializeApp() {
                 }
             }
         });
+        await listen('menu-toggle-fullscreen', async () => {
+            console.log('Menu toggle fullscreen event received');
+            const currentWindow = getCurrentWebviewWindow();
+            const isFullscreen = await currentWindow.isFullscreen();
+            await currentWindow.setFullscreen(!isFullscreen);
+            console.log(`Fullscreen ${!isFullscreen ? 'enabled' : 'disabled'}`);
+        });
+        await listen('menu-close-tab', async () => {
+            console.log('Menu close tab event received');
+            const activeTab = tabManager?.getActiveTab();
+            if (activeTab) {
+                await tabManager?.closeTab(activeTab.id);
+                updateTabBarVisibility();
+            }
+        });
+        // Listen for keybinds changed event from settings window
+        await listen('keybinds-changed', async () => {
+            console.log('Keybinds changed event received, reloading keybinds...');
+            if (settingsManager && keybindManager) {
+                const settings = await settingsManager.load();
+                // Override Settings keybind for macOS with Cmd+,
+                if (isMac && settings.keybinds.Settings) {
+                    settings.keybinds.Settings.binds = ['Cmd+,'];
+                }
+                keybindManager.loadFromSettings(settings);
+                console.log('Keybinds reloaded successfully');
+            }
+        });
         // Show splash screen initially
         showSplash();
         // Get current window
         const currentWindow = getCurrentWebviewWindow();
+        // Maximize on open if setting is enabled
+        if (settingsManager) {
+            const settings = await settingsManager.load();
+            if (settings.general.maximizeOnOpen) {
+                await currentWindow.maximize();
+                console.log('Window maximized on startup');
+            }
+        }
         // Show window after initialization
         await currentWindow.show();
         await currentWindow.setFocus();

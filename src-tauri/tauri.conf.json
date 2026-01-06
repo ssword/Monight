@@ -33,7 +33,6 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -51,7 +50,29 @@
         "description": "Portable Document Format",
         "role": "Viewer",
         "mimeType": "application/pdf"
+      },
+      {
+        "ext": ["xdp"],
+        "name": "XFA Document",
+        "description": "XML Forms Architecture",
+        "role": "Viewer",
+        "mimeType": "application/vnd.adobe.xdp+xml"
+      },
+      {
+        "ext": ["fdf"],
+        "name": "FDF Document",
+        "description": "Forms Data Format",
+        "role": "Viewer",
+        "mimeType": "application/vnd.fdf"
+      },
+      {
+        "ext": ["xfdf"],
+        "name": "XFDF Document",
+        "description": "XML Forms Data Format",
+        "role": "Viewer",
+        "mimeType": "application/vnd.adobe.xfdf"
       }
-    ]
+    ],
+    "targets": ["deb", "rpm", "appimage", "dmg", "nsis", "msi"]
   }
 }

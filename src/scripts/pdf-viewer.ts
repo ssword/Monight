@@ -155,6 +155,26 @@ export class PDFViewer {
     await this.renderPage(pageNum);
   }
 
+  async firstPage(): Promise<void> {
+    await this.renderPage(1);
+  }
+
+  async lastPage(): Promise<void> {
+    if (this.pdfDoc) {
+      await this.renderPage(this.state.totalPages);
+    }
+  }
+
+  async rotateClockwise(): Promise<void> {
+    this.state.rotation = (this.state.rotation + 90) % 360;
+    await this.renderPage(this.state.currentPage);
+  }
+
+  async rotateCounterClockwise(): Promise<void> {
+    this.state.rotation = (this.state.rotation - 90 + 360) % 360;
+    await this.renderPage(this.state.currentPage);
+  }
+
   async zoomIn(): Promise<void> {
     this.state.zoom = Math.min(this.state.zoom + 0.25, 5.0);
     await this.renderPage(this.state.currentPage);

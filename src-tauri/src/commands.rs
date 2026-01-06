@@ -12,8 +12,8 @@ pub async fn read_pdf_file(path: String) -> Result<Vec<u8>, String> {
 
     // Validate file extension
     match file_path.extension().and_then(|e| e.to_str()) {
-        Some("pdf") => {}
-        _ => return Err("Invalid file type. Only PDF files are supported.".to_string()),
+        Some("pdf") | Some("xdp") | Some("fdf") | Some("xfdf") => {}
+        _ => return Err("Invalid file type. Only PDF, XDP, FDF, and XFDF files are supported.".to_string()),
     }
 
     // Read file contents
@@ -52,8 +52,15 @@ pub async fn open_settings(app: AppHandle) -> Result<(), String> {
     // Get main window to use as parent
     let main_window = app.get_webview_window("main").ok_or("Main window not found")?;
 
+    // Determine the URL based on whether we're in development or production
+    #[cfg(debug_assertions)]
+    let url = WebviewUrl::External("http://localhost:1420/settings.html".parse().unwrap());
+
+    #[cfg(not(debug_assertions))]
+    let url = WebviewUrl::App("settings.html".into());
+
     // Create settings window
-    WebviewWindowBuilder::new(&app, "settings", WebviewUrl::App("settings.html".into()))
+    WebviewWindowBuilder::new(&app, "settings", url)
         .title("Settings - Monight")
         .parent(&main_window)
         .map_err(|e| e.to_string())?
@@ -64,6 +71,18 @@ pub async fn open_settings(app: AppHandle) -> Result<(), String> {
         .map_err(|e| e.to_string())?;
 
     Ok(())
+}
+
+/// Enable or disable the Print menu item
+#[command]
+pub fn set_print_enabled(app: AppHandle, enabled: bool) {
+    if let Some(menu) = app.menu() {
+        if let Some(item) = menu.get("print") {
+            if let Some(menu_item) = item.as_menuitem() {
+                menu_item.set_enabled(enabled).ok();
+            }
+        }
+    }
 }
 
 #[cfg(test)]

@@ -1,7 +1,7 @@
 // Prevents additional console window on Windows in release builds
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use tauri::{Manager, Emitter};
+use tauri::{Manager, Emitter, Listener};
 use clap::Parser;
 use serde::Serialize;
 
@@ -40,6 +40,7 @@ pub fn run() {
             commands::get_file_name,
             commands::get_file_directory,
             commands::open_settings,
+            commands::set_print_enabled,
         ])
         .setup(|app| {
             // Parse command line arguments
@@ -49,6 +50,31 @@ pub fn run() {
             // Create and set application menu
             let menu = menu::create_menu(app.handle())?;
             app.set_menu(menu)?;
+
+            // Handle files opened via file association (double-click in OS)
+            // macOS/iOS/Windows send tauri://file-open event
+            #[cfg(any(target_os = "macos", target_os = "ios", target_os = "windows"))]
+            {
+                let window_for_open = window.clone();
+                app.handle().listen("tauri://file-open", move |event| {
+                    let file_path = event.payload();
+
+                    // Validate and canonicalize the path
+                    if let Ok(canonical) = std::fs::canonicalize(file_path) {
+                        // Check if file exists and has supported extension
+                        if canonical.exists() {
+                            let ext = canonical.extension().and_then(|e| e.to_str());
+                            if ext == Some("pdf") || ext == Some("xdp") || ext == Some("fdf") || ext == Some("xfdf") {
+                                let payload = CliPayload {
+                                    files: vec![canonical.to_string_lossy().to_string()],
+                                    page: None,
+                                };
+                                let _ = window_for_open.emit("cli-open-files", payload);
+                            }
+                        }
+                    }
+                });
+            }
 
             // If files were provided via CLI, emit event to frontend
             if !cli.files.is_empty() {

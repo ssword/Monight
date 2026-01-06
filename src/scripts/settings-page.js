@@ -1,7 +1,15 @@
 import { SettingsManager } from './settings';
+import { KeybindManager } from './keybind-manager';
+import { KeybindEditor } from './keybind-editor';
+import { emit } from '@tauri-apps/api/event';
 // Initialize settings manager
 const settingsManager = new SettingsManager();
 let currentSettings;
+// Detect platform
+const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
+// Initialize keybind manager and editor
+const keybindManager = new KeybindManager(isMac);
+let keybindEditor = null;
 // Switch between settings panels
 function initializePanelSwitching() {
     const sidebarItems = document.querySelectorAll('.sidebar-item');
@@ -85,27 +93,150 @@ function renderKeybinds() {
     if (!container)
         return;
     container.innerHTML = '';
-    Object.entries(currentSettings.keybinds).forEach(([_id, config]) => {
+    Object.entries(currentSettings.keybinds).forEach(([actionId, config]) => {
         const keybindItem = document.createElement('div');
         keybindItem.className = 'keybind-item';
+        // Header with name and edit button
         const keybindHeader = document.createElement('div');
         keybindHeader.className = 'keybind-header';
         const keybindName = document.createElement('div');
         keybindName.className = 'keybind-name';
         keybindName.textContent = config.displayName;
+        const editButton = document.createElement('button');
+        editButton.className = 'btn btn-secondary btn-sm';
+        editButton.textContent = 'Edit';
+        editButton.onclick = () => startEditingKeybind(actionId, config);
         keybindHeader.appendChild(keybindName);
+        keybindHeader.appendChild(editButton);
+        // Keybinds display
         const keybindKeys = document.createElement('div');
         keybindKeys.className = 'keybind-keys';
-        config.binds.forEach((bind) => {
-            const keyBadge = document.createElement('span');
-            keyBadge.className = 'key-badge';
-            keyBadge.textContent = bind.replace('CmdOrCtrl', navigator.platform.includes('Mac') ? 'Cmd' : 'Ctrl');
-            keybindKeys.appendChild(keyBadge);
-        });
+        if (config.binds.length === 0) {
+            const noneBadge = document.createElement('span');
+            noneBadge.className = 'key-badge none';
+            noneBadge.textContent = 'None';
+            keybindKeys.appendChild(noneBadge);
+        }
+        else {
+            config.binds.forEach((bind, index) => {
+                const wrapper = document.createElement('div');
+                wrapper.className = 'key-badge-wrapper';
+                const keyBadge = document.createElement('span');
+                keyBadge.className = 'key-badge';
+                keyBadge.textContent = formatKeybindForDisplay(bind);
+                keyBadge.style.cursor = 'pointer';
+                keyBadge.onclick = () => startEditingKeybind(actionId, config, index);
+                // Remove button for this binding
+                const removeBtn = document.createElement('button');
+                removeBtn.className = 'keybind-remove';
+                removeBtn.innerHTML = '×';
+                removeBtn.title = 'Remove this keybind';
+                removeBtn.onclick = (e) => {
+                    e.stopPropagation();
+                    removeKeybind(actionId, index);
+                };
+                wrapper.appendChild(keyBadge);
+                wrapper.appendChild(removeBtn);
+                keybindKeys.appendChild(wrapper);
+            });
+            // Add binding button
+            const addBtn = document.createElement('button');
+            addBtn.className = 'keybind-add';
+            addBtn.textContent = '+ Add binding';
+            addBtn.onclick = () => addKeybind(actionId);
+            keybindKeys.appendChild(addBtn);
+        }
         keybindItem.appendChild(keybindHeader);
         keybindItem.appendChild(keybindKeys);
         container.appendChild(keybindItem);
     });
+}
+// Format keybind for display
+function formatKeybindForDisplay(bind) {
+    return bind
+        .replace('CmdOrCtrl', isMac ? 'Cmd' : 'Ctrl')
+        .replace(/\+/g, ' + ')
+        .replace('Plus', '+')
+        .replace('Minus', '-')
+        .replace('ArrowRight', '→')
+        .replace('ArrowLeft', '←')
+        .replace('ArrowUp', '↑')
+        .replace('ArrowDown', '↓');
+}
+// Start editing a keybind
+function startEditingKeybind(actionId, config, bindIndex = 0) {
+    if (!keybindEditor) {
+        keybindEditor = new KeybindEditor(keybindManager, currentSettings, isMac);
+    }
+    const currentBind = config.binds[bindIndex] || '';
+    keybindEditor.startRecording(currentBind, async (newKeybind) => {
+        // Check for conflicts
+        const conflict = keybindEditor?.findConflict(newKeybind, actionId);
+        if (conflict) {
+            const confirmed = confirm(`This key combination is already used for "${conflict.displayName}".\n\n` +
+                `Do you want to replace it?`);
+            if (!confirmed)
+                return;
+            // Clear the conflicting keybind
+            currentSettings.keybinds[conflict.actionId].binds =
+                currentSettings.keybinds[conflict.actionId].binds.filter(b => b !== newKeybind);
+        }
+        // Update settings
+        if (config.binds[bindIndex]) {
+            config.binds[bindIndex] = newKeybind;
+        }
+        else {
+            config.binds.push(newKeybind);
+        }
+        await settingsManager.set('keybinds', currentSettings.keybinds);
+        renderKeybinds();
+        // Notify main window to reload keybinds
+        notifyMainKeybindsChanged();
+    }, () => {
+        // Cancelled - do nothing
+    });
+}
+// Remove a keybind
+async function removeKeybind(actionId, index) {
+    currentSettings.keybinds[actionId].binds.splice(index, 1);
+    await settingsManager.set('keybinds', currentSettings.keybinds);
+    renderKeybinds();
+    notifyMainKeybindsChanged();
+}
+// Add a new keybind
+function addKeybind(actionId) {
+    if (!keybindEditor) {
+        keybindEditor = new KeybindEditor(keybindManager, currentSettings, isMac);
+    }
+    keybindEditor.startRecording('', async (newKeybind) => {
+        // Check for conflicts
+        const conflict = keybindEditor?.findConflict(newKeybind, actionId);
+        if (conflict) {
+            const confirmed = confirm(`This key combination is already used for "${conflict.displayName}".\n\n` +
+                `Do you want to replace it?`);
+            if (!confirmed)
+                return;
+            // Clear the conflicting keybind
+            currentSettings.keybinds[conflict.actionId].binds =
+                currentSettings.keybinds[conflict.actionId].binds.filter(b => b !== newKeybind);
+        }
+        // Add new binding
+        currentSettings.keybinds[actionId].binds.push(newKeybind);
+        await settingsManager.set('keybinds', currentSettings.keybinds);
+        renderKeybinds();
+        notifyMainKeybindsChanged();
+    }, () => { });
+}
+// Notify main window that keybinds have changed
+async function notifyMainKeybindsChanged() {
+    try {
+        // Emit event to main window to reload keybinds
+        await emit('keybinds-changed');
+        console.log('Emitted keybinds-changed event to main window');
+    }
+    catch (error) {
+        console.error('Error emitting keybinds-changed event:', error);
+    }
 }
 // Initialize settings page
 async function init() {

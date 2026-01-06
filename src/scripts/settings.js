@@ -56,6 +56,110 @@ export const DEFAULT_SETTINGS = {
             binds: ['CmdOrCtrl+0'],
             action: 'resetZoom',
         },
+        Settings: {
+            displayName: 'Open Settings',
+            binds: ['Alt+S'], // Default to Alt+S, will be overridden with Cmd+, on Mac during init
+            action: 'openSettings',
+        },
+        NextPage: {
+            displayName: 'Next Page',
+            binds: ['ArrowRight', 'ArrowDown'],
+            action: 'nextPage',
+        },
+        PreviousPage: {
+            displayName: 'Previous Page',
+            binds: ['ArrowLeft', 'ArrowUp'],
+            action: 'previousPage',
+        },
+        FirstPage: {
+            displayName: 'First Page',
+            binds: ['Home'],
+            action: 'firstPage',
+        },
+        LastPage: {
+            displayName: 'Last Page',
+            binds: ['End'],
+            action: 'lastPage',
+        },
+        FitToWidth: {
+            displayName: 'Fit to Width',
+            binds: ['CmdOrCtrl+Shift+W'],
+            action: 'fitToWidth',
+        },
+        FitToPage: {
+            displayName: 'Fit to Page',
+            binds: ['CmdOrCtrl+Shift+P'],
+            action: 'fitToPage',
+        },
+        RotateClockwise: {
+            displayName: 'Rotate Right',
+            binds: ['CmdOrCtrl+R'],
+            action: 'rotateRight',
+        },
+        RotateCounterClockwise: {
+            displayName: 'Rotate Left',
+            binds: ['CmdOrCtrl+Shift+R'],
+            action: 'rotateLeft',
+        },
+        SwitchToTab1: {
+            displayName: 'Switch to Tab 1',
+            binds: ['CmdOrCtrl+1'],
+            action: 'switchToTab',
+            data: '1',
+        },
+        SwitchToTab2: {
+            displayName: 'Switch to Tab 2',
+            binds: ['CmdOrCtrl+2'],
+            action: 'switchToTab',
+            data: '2',
+        },
+        SwitchToTab3: {
+            displayName: 'Switch to Tab 3',
+            binds: ['CmdOrCtrl+3'],
+            action: 'switchToTab',
+            data: '3',
+        },
+        SwitchToTab4: {
+            displayName: 'Switch to Tab 4',
+            binds: ['CmdOrCtrl+4'],
+            action: 'switchToTab',
+            data: '4',
+        },
+        SwitchToTab5: {
+            displayName: 'Switch to Tab 5',
+            binds: ['CmdOrCtrl+5'],
+            action: 'switchToTab',
+            data: '5',
+        },
+        SwitchToTab6: {
+            displayName: 'Switch to Tab 6',
+            binds: ['CmdOrCtrl+6'],
+            action: 'switchToTab',
+            data: '6',
+        },
+        SwitchToTab7: {
+            displayName: 'Switch to Tab 7',
+            binds: ['CmdOrCtrl+7'],
+            action: 'switchToTab',
+            data: '7',
+        },
+        SwitchToTab8: {
+            displayName: 'Switch to Tab 8',
+            binds: ['CmdOrCtrl+8'],
+            action: 'switchToTab',
+            data: '8',
+        },
+        SwitchToTab9: {
+            displayName: 'Switch to Last Tab',
+            binds: ['CmdOrCtrl+9'],
+            action: 'switchToTab',
+            data: '9',
+        },
+        Fullscreen: {
+            displayName: 'Toggle Fullscreen',
+            binds: ['F11'],
+            action: 'toggleFullscreen',
+        },
     },
 };
 /**

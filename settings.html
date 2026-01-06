@@ -251,6 +251,125 @@
             color: #e0e0e0;
             font-family: monospace;
         }
+
+        .key-badge.none {
+            color: #a0a0a0;
+            font-style: italic;
+        }
+
+        .key-badge-wrapper {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .keybind-remove {
+            background: #d32f2f;
+            border: none;
+            color: white;
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            cursor: pointer;
+            font-size: 14px;
+            line-height: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: background 0.2s;
+        }
+
+        .keybind-remove:hover {
+            background: #f44336;
+        }
+
+        .keybind-add {
+            background: transparent;
+            border: 1px dashed #007acc;
+            color: #007acc;
+            padding: 4px 10px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            transition: all 0.2s;
+        }
+
+        .keybind-add:hover {
+            background: rgba(0, 122, 204, 0.1);
+        }
+
+        .btn-sm {
+            padding: 4px 12px;
+            font-size: 13px;
+        }
+
+        /* Keybind Capture Modal */
+        .modal {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.7);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+        }
+
+        .modal.hidden {
+            display: none;
+        }
+
+        .modal-content {
+            background: #2d2d2d;
+            padding: 30px;
+            border-radius: 8px;
+            min-width: 400px;
+            text-align: center;
+        }
+
+        .modal-content h3 {
+            margin-bottom: 20px;
+            color: #ffffff;
+        }
+
+        .keybind-capture-box {
+            background: #1e1e1e;
+            border: 2px solid #007acc;
+            border-radius: 4px;
+            padding: 20px;
+            margin: 20px 0;
+            font-family: monospace;
+            font-size: 18px;
+            min-height: 60px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: border-color 0.3s;
+        }
+
+        .keybind-capture-box.recording {
+            animation: pulse 1.5s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { border-color: #007acc; }
+            50% { border-color: #0098ff; }
+        }
+
+        .modal-actions {
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+            margin-top: 20px;
+        }
+
+        .capture-hint {
+            color: #a0a0a0;
+            font-size: 13px;
+            margin-top: 15px;
+        }
     </style>
 </head>
 <body>
@@ -370,6 +489,21 @@
                     </div>
                 </div>
             </div>
+        </div>
+    </div>
+
+    <!-- Keybind Capture Modal -->
+    <div id="keybind-capture-modal" class="modal hidden">
+        <div class="modal-content">
+            <h3>Press New Key Combination</h3>
+            <div id="keybind-capture-display" class="keybind-capture-box">
+                Press keys...
+            </div>
+            <div class="modal-actions">
+                <button class="btn btn-secondary" id="cancel-keybind">Cancel</button>
+                <button class="btn btn-secondary" id="clear-keybind">Clear</button>
+            </div>
+            <p class="capture-hint">Press Escape to cancel, Enter to save</p>
         </div>
     </div>
 
