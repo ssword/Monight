@@ -1,10 +1,102 @@
 use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem, Submenu},
-    AppHandle, Manager, Wry, Emitter,
+    AppHandle, Emitter, Manager, Wry,
 };
 
 // Import for opening URLs in browser
 use tauri_plugin_opener::OpenerExt;
+
+fn build_file_menu(
+    app: &AppHandle,
+    settings_label: &str,
+    settings_shortcut: &str,
+) -> Result<Submenu<Wry>, tauri::Error> {
+    Submenu::with_items(
+        app,
+        "File",
+        true,
+        &[
+            &MenuItem::with_id(app, "open", "Open...", true, Some("CmdOrCtrl+O"))?,
+            &MenuItem::with_id(app, "print", "Print", true, Some("CmdOrCtrl+P"))?,
+            &PredefinedMenuItem::separator(app)?,
+            &MenuItem::with_id(app, "settings", settings_label, true, Some(settings_shortcut))?,
+            &PredefinedMenuItem::separator(app)?,
+            &PredefinedMenuItem::close_window(app, Some("Close"))?,
+        ],
+    )
+}
+
+fn build_edit_menu(app: &AppHandle) -> Result<Submenu<Wry>, tauri::Error> {
+    Submenu::with_items(
+        app,
+        "Edit",
+        true,
+        &[
+            &PredefinedMenuItem::undo(app, None)?,
+            &PredefinedMenuItem::redo(app, None)?,
+            &PredefinedMenuItem::separator(app)?,
+            &PredefinedMenuItem::cut(app, None)?,
+            &PredefinedMenuItem::copy(app, None)?,
+            &PredefinedMenuItem::paste(app, None)?,
+            &PredefinedMenuItem::select_all(app, None)?,
+        ],
+    )
+}
+
+fn build_view_menu(app: &AppHandle) -> Result<Submenu<Wry>, tauri::Error> {
+    Submenu::with_items(
+        app,
+        "View",
+        true,
+        &[
+            &MenuItem::with_id(app, "zoom_in", "Zoom In", true, Some("CmdOrCtrl+Plus"))?,
+            &MenuItem::with_id(app, "zoom_out", "Zoom Out", true, Some("CmdOrCtrl+-"))?,
+            &MenuItem::with_id(app, "reset_zoom", "Reset Zoom", true, Some("CmdOrCtrl+0"))?,
+            &PredefinedMenuItem::separator(app)?,
+            &MenuItem::with_id(
+                app,
+                "toggle_fullscreen",
+                "Toggle Fullscreen",
+                true,
+                Some("F11"),
+            )?,
+        ],
+    )
+}
+
+fn build_window_menu(app: &AppHandle) -> Result<Submenu<Wry>, tauri::Error> {
+    Submenu::with_items(
+        app,
+        "Window",
+        true,
+        &[
+            &MenuItem::with_id(app, "close_tab", "Close Tab", true, Some("CmdOrCtrl+W"))?,
+            &PredefinedMenuItem::separator(app)?,
+            &PredefinedMenuItem::minimize(app, None)?,
+            &PredefinedMenuItem::maximize(app, None)?,
+        ],
+    )
+}
+
+fn build_help_menu(app: &AppHandle) -> Result<Submenu<Wry>, tauri::Error> {
+    Submenu::with_items(
+        app,
+        "Help",
+        true,
+        &[
+            &MenuItem::with_id(app, "learn_more", "Learn More", true, None::<&str>)?,
+            &MenuItem::with_id(app, "license", "License", true, None::<&str>)?,
+            &MenuItem::with_id(app, "bugs", "Report Bug", true, None::<&str>)?,
+            &MenuItem::with_id(app, "contact", "Contact", true, None::<&str>)?,
+        ],
+    )
+}
+
+fn emit_to_main(app: &AppHandle, event: &str) {
+    if let Some(window) = app.get_webview_window("main") {
+        window.emit(event, ()).ok();
+    }
+}
 
 /// Create the application menu
 pub fn create_menu(app: &AppHandle) -> Result<Menu<Wry>, tauri::Error> {
@@ -12,75 +104,11 @@ pub fn create_menu(app: &AppHandle) -> Result<Menu<Wry>, tauri::Error> {
     #[cfg(target_os = "macos")]
     {
         // On macOS, add settings with Cmd+, shortcut to File menu
-        let file_menu = Submenu::with_items(
-            app,
-            "File",
-            true,
-            &[
-                &MenuItem::with_id(app, "open", "Open...", true, Some("CmdOrCtrl+O"))?,
-                &MenuItem::with_id(app, "print", "Print", true, Some("CmdOrCtrl+P"))?,
-                &PredefinedMenuItem::separator(app)?,
-                &MenuItem::with_id(app, "settings", "Settings...", true, Some("Cmd+,"))?,
-                &PredefinedMenuItem::separator(app)?,
-                &PredefinedMenuItem::close_window(app, Some("Close"))?,
-            ],
-        )?;
-
-        // Edit menu
-        let edit_menu = Submenu::with_items(
-            app,
-            "Edit",
-            true,
-            &[
-                &PredefinedMenuItem::undo(app, None)?,
-                &PredefinedMenuItem::redo(app, None)?,
-                &PredefinedMenuItem::separator(app)?,
-                &PredefinedMenuItem::cut(app, None)?,
-                &PredefinedMenuItem::copy(app, None)?,
-                &PredefinedMenuItem::paste(app, None)?,
-                &PredefinedMenuItem::select_all(app, None)?,
-            ],
-        )?;
-
-        // View menu
-        let view_menu = Submenu::with_items(
-            app,
-            "View",
-            true,
-            &[
-                &MenuItem::with_id(app, "zoom_in", "Zoom In", true, Some("CmdOrCtrl+Plus"))?,
-                &MenuItem::with_id(app, "zoom_out", "Zoom Out", true, Some("CmdOrCtrl+-"))?,
-                &MenuItem::with_id(app, "reset_zoom", "Reset Zoom", true, Some("CmdOrCtrl+0"))?,
-                &PredefinedMenuItem::separator(app)?,
-                &MenuItem::with_id(app, "toggle_fullscreen", "Toggle Fullscreen", true, Some("F11"))?,
-            ],
-        )?;
-
-        // Window menu
-        let window_menu = Submenu::with_items(
-            app,
-            "Window",
-            true,
-            &[
-                &MenuItem::with_id(app, "close_tab", "Close Tab", true, Some("CmdOrCtrl+W"))?,
-                &PredefinedMenuItem::separator(app)?,
-                &PredefinedMenuItem::minimize(app, None)?,
-                &PredefinedMenuItem::maximize(app, None)?,
-            ],
-        )?;
-
-        // Help menu
-        let help_menu = Submenu::with_items(
-            app,
-            "Help",
-            true,
-            &[
-                &MenuItem::with_id(app, "learn_more", "Learn More", true, None::<&str>)?,
-                &MenuItem::with_id(app, "license", "License", true, None::<&str>)?,
-                &MenuItem::with_id(app, "bugs", "Report Bug", true, None::<&str>)?,
-                &MenuItem::with_id(app, "contact", "Contact", true, None::<&str>)?,
-            ],
-        )?;
+        let file_menu = build_file_menu(app, "Settings...", "Cmd+,")?;
+        let edit_menu = build_edit_menu(app)?;
+        let view_menu = build_view_menu(app)?;
+        let window_menu = build_window_menu(app)?;
+        let help_menu = build_help_menu(app)?;
 
         Menu::with_items(
             app,
@@ -97,77 +125,11 @@ pub fn create_menu(app: &AppHandle) -> Result<Menu<Wry>, tauri::Error> {
     #[cfg(not(target_os = "macos"))]
     {
         // On Windows/Linux, add settings with Alt+S to File menu
-        let settings_item = MenuItem::with_id(app, "settings", "Settings", true, Some("Alt+S"))?;
-
-        let file_menu_with_settings = Submenu::with_items(
-            app,
-            "File",
-            true,
-            &[
-                &MenuItem::with_id(app, "open", "Open...", true, Some("CmdOrCtrl+O"))?,
-                &MenuItem::with_id(app, "print", "Print", true, Some("CmdOrCtrl+P"))?,
-                &PredefinedMenuItem::separator(app)?,
-                &settings_item,
-                &PredefinedMenuItem::separator(app)?,
-                &PredefinedMenuItem::close_window(app, Some("Close"))?,
-            ],
-        )?;
-
-        // Edit menu
-        let edit_menu = Submenu::with_items(
-            app,
-            "Edit",
-            true,
-            &[
-                &PredefinedMenuItem::undo(app, None)?,
-                &PredefinedMenuItem::redo(app, None)?,
-                &PredefinedMenuItem::separator(app)?,
-                &PredefinedMenuItem::cut(app, None)?,
-                &PredefinedMenuItem::copy(app, None)?,
-                &PredefinedMenuItem::paste(app, None)?,
-                &PredefinedMenuItem::select_all(app, None)?,
-            ],
-        )?;
-
-        // View menu
-        let view_menu = Submenu::with_items(
-            app,
-            "View",
-            true,
-            &[
-                &MenuItem::with_id(app, "zoom_in", "Zoom In", true, Some("CmdOrCtrl+Plus"))?,
-                &MenuItem::with_id(app, "zoom_out", "Zoom Out", true, Some("CmdOrCtrl+-"))?,
-                &MenuItem::with_id(app, "reset_zoom", "Reset Zoom", true, Some("CmdOrCtrl+0"))?,
-                &PredefinedMenuItem::separator(app)?,
-                &MenuItem::with_id(app, "toggle_fullscreen", "Toggle Fullscreen", true, Some("F11"))?,
-            ],
-        )?;
-
-        // Window menu
-        let window_menu = Submenu::with_items(
-            app,
-            "Window",
-            true,
-            &[
-                &MenuItem::with_id(app, "close_tab", "Close Tab", true, Some("CmdOrCtrl+W"))?,
-                &PredefinedMenuItem::separator(app)?,
-                &PredefinedMenuItem::minimize(app, None)?,
-                &PredefinedMenuItem::maximize(app, None)?,
-            ],
-        )?;
-
-        // Help menu
-        let help_menu = Submenu::with_items(
-            app,
-            "Help",
-            true,
-            &[
-                &MenuItem::with_id(app, "learn_more", "Learn More", true, None::<&str>)?,
-                &MenuItem::with_id(app, "license", "License", true, None::<&str>)?,
-                &MenuItem::with_id(app, "bugs", "Report Bug", true, None::<&str>)?,
-                &MenuItem::with_id(app, "contact", "Contact", true, None::<&str>)?,
-            ],
-        )?;
+        let file_menu_with_settings = build_file_menu(app, "Settings", "Alt+S")?;
+        let edit_menu = build_edit_menu(app)?;
+        let view_menu = build_view_menu(app)?;
+        let window_menu = build_window_menu(app)?;
+        let help_menu = build_help_menu(app)?;
 
         Menu::with_items(
             app,
@@ -187,15 +149,11 @@ pub fn handle_menu_event(app: &AppHandle, event_id: &str) {
     match event_id {
         "open" => {
             // Emit event to frontend to open file dialog
-            if let Some(window) = app.get_webview_window("main") {
-                window.emit("menu-open", ()).ok();
-            }
+            emit_to_main(app, "menu-open");
         }
         "print" => {
             // Emit event to frontend to print
-            if let Some(window) = app.get_webview_window("main") {
-                window.emit("menu-print", ()).ok();
-            }
+            emit_to_main(app, "menu-print");
         }
         "settings" => {
             // Open settings window using the command
@@ -207,29 +165,19 @@ pub fn handle_menu_event(app: &AppHandle, event_id: &str) {
             });
         }
         "zoom_in" => {
-            if let Some(window) = app.get_webview_window("main") {
-                window.emit("menu-zoom-in", ()).ok();
-            }
+            emit_to_main(app, "menu-zoom-in");
         }
         "zoom_out" => {
-            if let Some(window) = app.get_webview_window("main") {
-                window.emit("menu-zoom-out", ()).ok();
-            }
+            emit_to_main(app, "menu-zoom-out");
         }
         "reset_zoom" => {
-            if let Some(window) = app.get_webview_window("main") {
-                window.emit("menu-reset-zoom", ()).ok();
-            }
+            emit_to_main(app, "menu-reset-zoom");
         }
         "toggle_fullscreen" => {
-            if let Some(window) = app.get_webview_window("main") {
-                window.emit("menu-toggle-fullscreen", ()).ok();
-            }
+            emit_to_main(app, "menu-toggle-fullscreen");
         }
         "close_tab" => {
-            if let Some(window) = app.get_webview_window("main") {
-                window.emit("menu-close-tab", ()).ok();
-            }
+            emit_to_main(app, "menu-close-tab");
         }
         "learn_more" => {
             // Open GitHub repo in browser (placeholder URL)
