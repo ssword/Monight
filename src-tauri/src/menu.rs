@@ -4,7 +4,7 @@ use tauri::{
 };
 
 // Import for opening URLs in browser
-use tauri_plugin_shell::ShellExt;
+use tauri_plugin_opener::OpenerExt;
 
 /// Create the application menu
 pub fn create_menu(app: &AppHandle) -> Result<Menu<Wry>, tauri::Error> {
@@ -233,19 +233,25 @@ pub fn handle_menu_event(app: &AppHandle, event_id: &str) {
         }
         "learn_more" => {
             // Open GitHub repo in browser (placeholder URL)
-            let _ = app.shell().open("https://github.com/yourusername/yourrepo", None);
+            let _ = app.opener().open_url("https://github.com/yourusername/yourrepo", None::<&str>);
         }
         "license" => {
             // Open LICENSE file in browser (placeholder URL)
-            let _ = app.shell().open("https://github.com/yourusername/yourrepo/blob/master/LICENSE", None);
+            let _ = app.opener().open_url(
+                "https://github.com/yourusername/yourrepo/blob/master/LICENSE",
+                None::<&str>,
+            );
         }
         "bugs" => {
             // Open GitHub issues in browser (placeholder URL)
-            let _ = app.shell().open("https://github.com/yourusername/yourrepo/issues", None);
+            let _ = app.opener().open_url(
+                "https://github.com/yourusername/yourrepo/issues",
+                None::<&str>,
+            );
         }
         "contact" => {
             // Open email client (placeholder email)
-            let _ = app.shell().open("mailto:your-email@example.com", None);
+            let _ = app.opener().open_url("mailto:your-email@example.com", None::<&str>);
         }
         _ => {}
     }

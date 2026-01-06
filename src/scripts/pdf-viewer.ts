@@ -16,6 +16,63 @@ interface ViewState {
   filePath: string;
 }
 
+// Align canvas size to PDF.js viewer rounding to avoid subpixel blur.
+const calcRound = (() => {
+  const element = document.createElement('div');
+  element.style.width = 'round(down, calc(1.6666666666666665 * 792px), 1px)';
+  return element.style.width === 'calc(1320px)' ? Math.fround : (value: number) => value;
+})();
+
+const floorToDivide = (value: number, div: number): number => value - (value % div);
+
+const approximateFraction = (x: number): [number, number] => {
+  if (Math.floor(x) === x) {
+    return [x, 1];
+  }
+
+  const xInv = 1 / x;
+  const limit = 8;
+  if (xInv > limit) {
+    return [1, limit];
+  }
+  if (Math.floor(xInv) === xInv) {
+    return [1, xInv];
+  }
+
+  const x_ = x > 1 ? xInv : x;
+  let a = 0;
+  let b = 1;
+  let c = 1;
+  let d = 1;
+
+  while (true) {
+    const p = a + c;
+    const q = b + d;
+    if (q > limit) {
+      break;
+    }
+    if (x_ <= p / q) {
+      c = p;
+      d = q;
+    } else {
+      a = p;
+      b = q;
+    }
+  }
+
+  const left = x_ - a / b;
+  const right = c / d - x_;
+  if (left < right) {
+    return x_ === x ? [a, b] : [b, a];
+  }
+  return x_ === x ? [c, d] : [d, c];
+};
+
+const getOutputScale = (): { sx: number; sy: number } => {
+  const pixelRatio = window.devicePixelRatio || 1;
+  return { sx: pixelRatio, sy: pixelRatio };
+};
+
 export class PDFViewer {
   private container: HTMLElement;
   private canvas: HTMLCanvasElement | null = null;
@@ -102,19 +159,37 @@ export class PDFViewer {
         rotation: this.state.rotation,
       });
 
-      // Set canvas dimensions
+      // Set canvas dimensions with device pixel ratio for sharp rendering
       const context = this.canvas.getContext('2d');
       if (!context) {
         throw new Error('Could not get canvas context');
       }
 
-      this.canvas.width = viewport.width;
-      this.canvas.height = viewport.height;
+      const outputScale = getOutputScale();
+      const sfx = approximateFraction(outputScale.sx);
+      const sfy = approximateFraction(outputScale.sy);
+
+      const canvasWidth = floorToDivide(calcRound(viewport.width * outputScale.sx), sfx[0]);
+      const canvasHeight = floorToDivide(calcRound(viewport.height * outputScale.sy), sfy[0]);
+      const pageWidth = floorToDivide(calcRound(viewport.width), sfx[1]);
+      const pageHeight = floorToDivide(calcRound(viewport.height), sfy[1]);
+
+      this.canvas.width = canvasWidth;
+      this.canvas.height = canvasHeight;
+      this.canvas.style.width = `${pageWidth}px`;
+      this.canvas.style.height = `${pageHeight}px`;
+
+      outputScale.sx = canvasWidth / pageWidth;
+      outputScale.sy = canvasHeight / pageHeight;
 
       // Render page
       this.renderTask = page.render({
         canvasContext: context,
-        viewport: viewport,
+        viewport,
+        transform:
+          outputScale.sx !== 1 || outputScale.sy !== 1
+            ? [outputScale.sx, 0, 0, outputScale.sy, 0, 0]
+            : undefined,
       } as unknown as Parameters<PDFPageProxy['render']>[0]);
 
       await this.renderTask.promise;
