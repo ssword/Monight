@@ -1,5 +1,5 @@
 use std::path::Path;
-use tauri::command;
+use tauri::{command, AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
 
 /// Read a PDF file from the filesystem and return as byte array
 #[command]
@@ -38,6 +38,32 @@ pub fn get_file_directory(path: String) -> String {
         .and_then(|p| p.to_str())
         .unwrap_or("")
         .to_string()
+}
+
+/// Open settings window
+#[command]
+pub async fn open_settings(app: AppHandle) -> Result<(), String> {
+    // Check if settings window already exists
+    if let Some(window) = app.get_webview_window("settings") {
+        window.set_focus().map_err(|e| e.to_string())?;
+        return Ok(());
+    }
+
+    // Get main window to use as parent
+    let main_window = app.get_webview_window("main").ok_or("Main window not found")?;
+
+    // Create settings window
+    WebviewWindowBuilder::new(&app, "settings", WebviewUrl::App("settings.html".into()))
+        .title("Settings - Monight")
+        .parent(&main_window)
+        .map_err(|e| e.to_string())?
+        .inner_size(700.0, 500.0)
+        .resizable(false)
+        .center()
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    Ok(())
 }
 
 #[cfg(test)]

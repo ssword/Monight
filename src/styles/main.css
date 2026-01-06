@@ -135,3 +135,37 @@ body.pdf-loaded {
 ::-webkit-scrollbar-thumb:hover {
   background: var(--border-color);
 }
+
+/* Drag and drop feedback */
+body.drag-over {
+  outline: 3px dashed #4a9eff;
+  outline-offset: -10px;
+  background-color: rgba(74, 158, 255, 0.05);
+  transition: all 0.2s ease;
+}
+
+body.drag-over #splash-container,
+body.drag-over #viewer-container {
+  pointer-events: none;
+  opacity: 0.8;
+}
+
+/* Print styles */
+@media print {
+  #toolbar,
+  #tab-bar,
+  #darkConfigurator {
+    display: none !important;
+  }
+
+  #pdf-container {
+    width: 100% !important;
+    height: 100% !important;
+    overflow: visible !important;
+  }
+
+  canvas {
+    page-break-inside: avoid;
+    max-width: 100% !important;
+  }
+}

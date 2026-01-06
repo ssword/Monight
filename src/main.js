@@ -1,9 +1,11 @@
 import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
+import { listen } from '@tauri-apps/api/event';
 import { open } from '@tauri-apps/plugin-dialog';
 import { PRESETS, buildFilterCSS } from './scripts/filters';
 import { SliderManager } from './scripts/sliders';
 import { TabManager } from './scripts/tabs';
+import { SettingsManager } from './scripts/settings';
 import './styles/main.css';
 import './styles/pdf-viewer.css';
 import './styles/configurator.css';
@@ -13,6 +15,8 @@ import 'nouislider/dist/nouislider.css';
 let tabManager = null;
 // Global slider manager instance
 let sliderManager = null;
+// Global settings manager instance
+let settingsManager = null;
 // Detect if we're on macOS
 const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
 console.log('Platform:', navigator.platform, 'isMac:', isMac);
@@ -278,6 +282,12 @@ function setupEventListeners() {
         console.log('Open button clicked');
         openPDFFile();
     });
+    // Print button
+    const printBtn = document.getElementById('print-file');
+    printBtn?.addEventListener('click', () => {
+        console.log('Print button clicked');
+        printCurrentPDF();
+    });
     // Navigation buttons
     const prevBtn = document.getElementById('prev-page');
     const nextBtn = document.getElementById('next-page');
@@ -397,6 +407,23 @@ function setupEventListeners() {
             await openPDFFile();
             return;
         }
+        // Cmd/Ctrl+P: Print
+        if (modifierKey && e.key === 'p') {
+            console.log('Cmd/Ctrl+P detected, opening print dialog...');
+            e.preventDefault();
+            e.stopPropagation();
+            await printCurrentPDF();
+            return;
+        }
+        // Cmd/Ctrl+,: Settings (macOS standard)
+        // Alt+S: Settings (Windows/Linux)
+        if ((isMac && modifierKey && e.key === ',') || (!isMac && e.altKey && e.key.toLowerCase() === 's')) {
+            console.log('Settings shortcut detected...');
+            e.preventDefault();
+            e.stopPropagation();
+            await openSettings();
+            return;
+        }
         // Cmd/Ctrl+W: Close tab
         if (modifierKey && e.key === 'w') {
             e.preventDefault();
@@ -488,6 +515,9 @@ function updateKeyboardHints() {
     const openBtn = document.getElementById('open-file');
     if (openBtn)
         openBtn.title = `Open PDF (${modKey}+O)`;
+    const printBtn = document.getElementById('print-file');
+    if (printBtn)
+        printBtn.title = `Print (${modKey}+P)`;
     const zoomInBtn = document.getElementById('zoom-in');
     if (zoomInBtn)
         zoomInBtn.title = `Zoom In (${modKey}++)`;
@@ -499,9 +529,43 @@ function updateKeyboardHints() {
     if (hintText)
         hintText.textContent = `Press ${modKey}+O to open a PDF file`;
 }
+// Print current PDF
+async function printCurrentPDF() {
+    const activeTab = tabManager?.getActiveTab();
+    if (!activeTab) {
+        alert('No PDF is currently open.');
+        return;
+    }
+    const viewer = tabManager?.getViewerForTab(activeTab.id);
+    if (!viewer) {
+        alert('PDF viewer not available.');
+        return;
+    }
+    try {
+        await viewer.print();
+    }
+    catch (error) {
+        console.error('Print error:', error);
+        alert(`Failed to print: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+}
+// Open settings window
+async function openSettings() {
+    try {
+        await invoke('open_settings');
+    }
+    catch (error) {
+        console.error('Error opening settings:', error);
+        alert(`Failed to open settings: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+}
 async function initializeApp() {
     try {
         console.log('Initializing app...');
+        // Initialize settings manager
+        settingsManager = new SettingsManager();
+        const settings = await settingsManager.load();
+        console.log('Settings loaded:', settings);
         // Get app information
         const info = await getAppInfo();
         // Update version display
@@ -540,6 +604,133 @@ async function initializeApp() {
         setupEventListeners();
         // Update keyboard hints for platform
         updateKeyboardHints();
+        // Listen for file drop events
+        await listen('tauri://file-drop', async (event) => {
+            console.log('File drop detected:', event.payload);
+            const pdfFiles = event.payload.filter((f) => f.toLowerCase().endsWith('.pdf'));
+            if (pdfFiles.length === 0) {
+                alert('Please drop PDF files only.');
+                return;
+            }
+            // Process each PDF file
+            for (const filePath of pdfFiles) {
+                try {
+                    // Check if already open
+                    if (tabManager?.isFileOpen(filePath)) {
+                        console.log(`File already open: ${filePath}`);
+                        continue;
+                    }
+                    // Load PDF data using existing backend commands
+                    const pdfData = await invoke('read_pdf_file', {
+                        path: filePath,
+                    });
+                    const fileName = await invoke('get_file_name', {
+                        path: filePath,
+                    });
+                    // Create tab using existing TabManager
+                    await tabManager?.createTab(filePath, fileName, new Uint8Array(pdfData));
+                    console.log(`Opened dropped PDF: ${fileName}`);
+                }
+                catch (error) {
+                    console.error(`Error opening dropped file ${filePath}:`, error);
+                    alert(`Failed to open ${filePath}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+                }
+            }
+            // Update UI
+            updateTabBarVisibility();
+        });
+        // Visual feedback for drag operations
+        await listen('tauri://file-drop-hover', async () => {
+            document.body.classList.add('drag-over');
+        });
+        await listen('tauri://file-drop-cancelled', async () => {
+            document.body.classList.remove('drag-over');
+        });
+        // Listen for CLI file open events
+        await listen('cli-open-files', async (event) => {
+            console.log('CLI open files event:', event.payload);
+            const { files, page } = event.payload;
+            try {
+                // Open each file
+                for (const filePath of files) {
+                    // Check if already open
+                    if (tabManager?.isFileOpen(filePath)) {
+                        console.log(`File already open: ${filePath}`);
+                        continue;
+                    }
+                    // Load PDF data
+                    const pdfData = await invoke('read_pdf_file', {
+                        path: filePath,
+                    });
+                    const fileName = await invoke('get_file_name', {
+                        path: filePath,
+                    });
+                    // Create tab
+                    await tabManager?.createTab(filePath, fileName, new Uint8Array(pdfData));
+                    console.log(`Opened CLI PDF: ${fileName}`);
+                }
+                // Navigate to specific page if provided (applies to first/active tab)
+                if (page && page > 0) {
+                    const activeTab = tabManager?.getActiveTab();
+                    if (activeTab) {
+                        const viewer = tabManager?.getViewerForTab(activeTab.id);
+                        if (viewer) {
+                            await viewer.goToPage(page);
+                            updateUI();
+                            console.log(`Navigated to page ${page}`);
+                        }
+                    }
+                }
+                // Update UI
+                updateTabBarVisibility();
+            }
+            catch (error) {
+                console.error('Error opening CLI files:', error);
+                alert(`Failed to open files: ${error instanceof Error ? error.message : 'Unknown error'}`);
+            }
+        });
+        // Listen for menu events
+        await listen('menu-open', async () => {
+            console.log('Menu open event received');
+            await openPDFFile();
+        });
+        await listen('menu-print', async () => {
+            console.log('Menu print event received');
+            await printCurrentPDF();
+        });
+        await listen('menu-zoom-in', async () => {
+            const activeTab = tabManager?.getActiveTab();
+            if (activeTab) {
+                const viewer = tabManager?.getViewerForTab(activeTab.id);
+                if (viewer) {
+                    await viewer.zoomIn();
+                    saveCurrentTabState();
+                    updateUI();
+                }
+            }
+        });
+        await listen('menu-zoom-out', async () => {
+            const activeTab = tabManager?.getActiveTab();
+            if (activeTab) {
+                const viewer = tabManager?.getViewerForTab(activeTab.id);
+                if (viewer) {
+                    await viewer.zoomOut();
+                    saveCurrentTabState();
+                    updateUI();
+                }
+            }
+        });
+        await listen('menu-reset-zoom', async () => {
+            const activeTab = tabManager?.getActiveTab();
+            if (activeTab) {
+                const viewer = tabManager?.getViewerForTab(activeTab.id);
+                if (viewer) {
+                    await viewer.setZoom(1.0);
+                    saveCurrentTabState();
+                    updateUI();
+                }
+            }
+        });
         // Show splash screen initially
         showSplash();
         // Get current window

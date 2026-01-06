@@ -158,6 +158,62 @@ export class PDFViewer {
     getCanvas() {
         return this.canvas;
     }
+    getPdfDocument() {
+        return this.pdfDoc;
+    }
+    async print() {
+        if (!this.pdfDoc) {
+            throw new Error('No PDF document loaded');
+        }
+        try {
+            // Get the raw PDF data
+            const pdfData = await this.pdfDoc.getData();
+            // Create a Blob from the PDF data (convert to regular Uint8Array)
+            const blob = new Blob([new Uint8Array(pdfData)], { type: 'application/pdf' });
+            // Create a blob URL
+            const blobUrl = URL.createObjectURL(blob);
+            // Create a hidden iframe to load the PDF
+            const iframe = document.createElement('iframe');
+            iframe.style.position = 'fixed';
+            iframe.style.top = '0';
+            iframe.style.left = '0';
+            iframe.style.width = '100%';
+            iframe.style.height = '100%';
+            iframe.style.border = 'none';
+            iframe.style.visibility = 'hidden';
+            iframe.src = blobUrl;
+            document.body.appendChild(iframe);
+            // Wait for iframe to load, then print
+            iframe.onload = () => {
+                try {
+                    // Focus the iframe and trigger print
+                    iframe.contentWindow?.focus();
+                    iframe.contentWindow?.print();
+                    // Clean up after a delay
+                    setTimeout(() => {
+                        document.body.removeChild(iframe);
+                        URL.revokeObjectURL(blobUrl);
+                    }, 1000);
+                }
+                catch (error) {
+                    console.error('Error triggering print:', error);
+                    document.body.removeChild(iframe);
+                    URL.revokeObjectURL(blobUrl);
+                    throw error;
+                }
+            };
+            // Handle iframe load errors
+            iframe.onerror = () => {
+                document.body.removeChild(iframe);
+                URL.revokeObjectURL(blobUrl);
+                throw new Error('Failed to load PDF for printing');
+            };
+        }
+        catch (error) {
+            console.error('Error printing PDF:', error);
+            throw error;
+        }
+    }
     destroy() {
         if (this.renderTask) {
             this.renderTask.cancel();

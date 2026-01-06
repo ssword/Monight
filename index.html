@@ -9,7 +9,7 @@
     <link rel="stylesheet" href="/src/styles/configurator.css" />
     <link rel="stylesheet" href="/src/styles/tabs.css" />
     <meta http-equiv="Content-Security-Policy"
-          content="default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'" />
+          content="default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; frame-src blob:; img-src 'self' blob: data:" />
 </head>
 <body>
     <div id="app">
@@ -84,6 +84,9 @@
 
                 <!-- Actions -->
                 <div class="toolbar-group">
+                    <button id="print-file" class="toolbar-btn" title="Print (Ctrl+P)">
+                        <span>🖨</span>
+                    </button>
                     <button id="open-file" class="toolbar-btn" title="Open PDF (Ctrl+O)">
                         <span>📂</span>
                     </button>
