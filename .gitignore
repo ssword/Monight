@@ -45,3 +45,7 @@ coverage/
 *.njsproj
 *.sln
 *.sw?
+
+# AI related docuemnts
+agents.md
+
