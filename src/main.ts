@@ -1,7 +1,7 @@
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
-import { buildFilterCSS } from './scripts/filters';
+import { PRESETS, buildFilterCSS, type FilterSettings } from './scripts/filters';
 import { KeybindManager } from './scripts/keybind-manager';
-import { SettingsManager } from './scripts/settings';
+import { SettingsManager, type MoonightSettings } from './scripts/settings';
 import { SliderManager } from './scripts/sliders';
 import { TabManager, type TabData } from './scripts/tabs';
 import { setupEventListeners } from './app/dom-events';
@@ -42,6 +42,7 @@ let sliderManager: SliderManager | null = null;
 
 // Global settings manager instance
 let settingsManager: SettingsManager | null = null;
+let currentSettings: MoonightSettings | null = null;
 
 // Global keybind manager instance
 let keybindManager: KeybindManager | null = null;
@@ -64,18 +65,62 @@ async function getAppInfo(): Promise<AppInfo> {
   }
 }
 
+const applyWindowAfterOpen = async (): Promise<void> => {
+  if (currentSettings?.general.maximizeOnOpen) {
+    const currentWindow = getCurrentWebviewWindow();
+    await currentWindow.maximize();
+  }
+  await ensureMinimumViewingSize();
+};
+
 const refreshAfterOpen = async (): Promise<void> => {
   updateTabBarVisibility(tabManager);
   await updatePrintMenuState(tabManager);
-  await ensureMinimumViewingSize();
+  await applyWindowAfterOpen();
 };
 
 const openPdfAndRefresh = async (): Promise<void> => {
   if (!tabManager) return;
-  const opened = await openPDFFile(tabManager);
+  const opened = await openPDFFile(tabManager, getInitialFilterSettings());
   if (opened > 0) {
     await refreshAfterOpen();
   }
+};
+
+const getInitialFilterSettings = (): FilterSettings => {
+  if (!currentSettings) {
+    return { ...PRESETS.default };
+  }
+
+  if (currentSettings.general.rememberLastFilter && currentSettings.lastFilter) {
+    return { ...currentSettings.lastFilter };
+  }
+
+  const preset = PRESETS[currentSettings.general.defaultDarkMode];
+  return { ...(preset ?? PRESETS.default) };
+};
+
+let lastFilterSaveTimer: number | null = null;
+
+const scheduleLastFilterSave = (settings: FilterSettings): void => {
+  const manager = settingsManager;
+  if (!manager || !currentSettings?.general.rememberLastFilter) return;
+
+  currentSettings = { ...currentSettings, lastFilter: settings };
+
+  if (lastFilterSaveTimer !== null) {
+    clearTimeout(lastFilterSaveTimer);
+  }
+
+  lastFilterSaveTimer = window.setTimeout(async () => {
+    try {
+      await manager.set('lastFilter', settings);
+    } catch (error) {
+      console.error('Failed to save last filter settings:', error);
+    } finally {
+      lastFilterSaveTimer = null;
+    }
+  }, 250);
 };
 
 async function initializeApp(): Promise<void> {
@@ -85,6 +130,7 @@ async function initializeApp(): Promise<void> {
     // Initialize settings manager
     settingsManager = new SettingsManager();
     const settings = await settingsManager.load();
+    currentSettings = settings;
     console.log('Settings loaded:', settings);
 
     // Initialize tab manager
@@ -113,6 +159,7 @@ async function initializeApp(): Promise<void> {
           viewer.applyFilter(filterCSS);
           // Save filter to tab state
           activeTab.filterSettings = filterSettings;
+          scheduleLastFilterSave(filterSettings);
         }
       }
     });
@@ -131,6 +178,7 @@ async function initializeApp(): Promise<void> {
       openPdfAndRefresh,
       printCurrentPDF: () => printCurrentPDF(tabManager),
       openSettings,
+      getInitialFilterSettings,
       updateTabBarVisibility: updateTabBar,
       saveCurrentTabState: saveStateForTab,
       updateUI: updateUIForTab,
@@ -160,6 +208,7 @@ async function initializeApp(): Promise<void> {
       keybindManager,
       openPdfAndRefresh,
       printCurrentPDF: () => printCurrentPDF(tabManager),
+      onPresetApplied: scheduleLastFilterSave,
       saveCurrentTabState: saveStateForTab,
       updateUI: updateUIForTab,
     });
@@ -174,9 +223,22 @@ async function initializeApp(): Promise<void> {
       keybindManager,
       isMac,
       openPdfAndRefresh,
+      getInitialFilterSettings,
+      reloadSettings: async () => {
+        if (!settingsManager) return;
+        const updated = await settingsManager.load();
+        if (isMac && updated.keybinds.Settings) {
+          updated.keybinds.Settings.binds = ['Cmd+,'];
+        }
+        currentSettings = updated;
+        if (!updated.general.rememberLastFilter && lastFilterSaveTimer !== null) {
+          clearTimeout(lastFilterSaveTimer);
+          lastFilterSaveTimer = null;
+        }
+      },
+      applyWindowAfterOpen,
       updateTabBarVisibility: updateTabBar,
       updatePrintMenuState: () => updatePrintMenuState(tabManager),
-      ensureMinimumViewingSize,
       updateUI: updateUIForTab,
       saveCurrentTabState: saveStateForTab,
       printCurrentPDF: () => printCurrentPDF(tabManager),

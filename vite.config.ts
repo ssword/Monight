@@ -1,3 +1,4 @@
+import { resolve } from 'path';
 import { defineConfig } from 'vite';
 
 // https://vitejs.dev/config/
@@ -16,6 +17,10 @@ export default defineConfig({
     minify: !process.env.TAURI_DEBUG ? 'esbuild' : false,
     sourcemap: !!process.env.TAURI_DEBUG,
     rollupOptions: {
+      input: {
+        main: resolve(__dirname, 'index.html'),
+        settings: resolve(__dirname, 'settings.html'),
+      },
       output: {
         assetFileNames: (assetInfo) => {
           if (assetInfo.name === 'pdf.worker.min.mjs') {

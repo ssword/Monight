@@ -1,5 +1,6 @@
 import { listen } from '@tauri-apps/api/event';
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
+import type { FilterSettings } from '../scripts/filters';
 import type { KeybindManager } from '../scripts/keybind-manager';
 import type { SettingsManager } from '../scripts/settings';
 import type { TabManager } from '../scripts/tabs';
@@ -12,9 +13,11 @@ interface TauriListenerContext {
   keybindManager: KeybindManager | null;
   isMac: boolean;
   openPdfAndRefresh: () => Promise<void>;
+  getInitialFilterSettings: () => FilterSettings;
+  reloadSettings: () => Promise<void>;
+  applyWindowAfterOpen: () => Promise<void>;
   updateTabBarVisibility: () => void;
   updatePrintMenuState: () => Promise<void>;
-  ensureMinimumViewingSize: () => Promise<void>;
   updateUI: () => void;
   saveCurrentTabState: () => void;
   printCurrentPDF: () => Promise<void>;
@@ -26,9 +29,11 @@ export async function setupTauriListeners({
   keybindManager,
   isMac,
   openPdfAndRefresh,
+  getInitialFilterSettings,
+  reloadSettings,
+  applyWindowAfterOpen,
   updateTabBarVisibility,
   updatePrintMenuState,
-  ensureMinimumViewingSize,
   updateUI,
   saveCurrentTabState,
   printCurrentPDF,
@@ -46,10 +51,12 @@ export async function setupTauriListeners({
     }
 
     try {
+      const initialFilterSettings = getInitialFilterSettings();
       await openFiles(pdfFiles, {
         tabManager,
         continueOnError: true,
         onError: (message) => alert(message),
+        initialFilterSettings,
       });
     } catch (error) {
       console.error('Error opening dropped files:', error);
@@ -61,8 +68,7 @@ export async function setupTauriListeners({
     // Update print menu state
     await updatePrintMenuState();
 
-    // Ensure window is at minimum comfortable viewing size
-    await ensureMinimumViewingSize();
+    await applyWindowAfterOpen();
   });
 
   // Visual feedback for drag operations
@@ -84,8 +90,9 @@ export async function setupTauriListeners({
       const { files, page } = event.payload;
 
       try {
+        const initialFilterSettings = getInitialFilterSettings();
         // Open each file
-        await openFiles(files, { tabManager });
+        await openFiles(files, { tabManager, initialFilterSettings });
 
         // Navigate to specific page if provided (applies to first/active tab)
         if (page && page > 0) {
@@ -102,8 +109,7 @@ export async function setupTauriListeners({
         // Update print menu state
         await updatePrintMenuState();
 
-        // Ensure window is at minimum comfortable viewing size
-        await ensureMinimumViewingSize();
+        await applyWindowAfterOpen();
       } catch (error) {
         console.error('Error opening CLI files:', error);
         alert(
@@ -177,5 +183,10 @@ export async function setupTauriListeners({
       keybindManager.loadFromSettings(settings);
       console.log('Keybinds reloaded successfully');
     }
+  });
+
+  await listen('settings-changed', async () => {
+    console.log('Settings changed event received, reloading settings...');
+    await reloadSettings();
   });
 }

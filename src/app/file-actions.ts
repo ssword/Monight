@@ -2,6 +2,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 import { open } from '@tauri-apps/plugin-dialog';
 import { LogicalSize } from '@tauri-apps/api/window';
+import type { FilterSettings } from '../scripts/filters';
 import type { TabManager } from '../scripts/tabs';
 import { withActiveViewer } from './viewer-helpers';
 
@@ -9,11 +10,12 @@ interface OpenFilesOptions {
   tabManager: TabManager;
   continueOnError?: boolean;
   onError?: (message: string) => void;
+  initialFilterSettings?: FilterSettings;
 }
 
 export async function openFiles(
   filePaths: string[],
-  { tabManager, continueOnError = false, onError }: OpenFilesOptions,
+  { tabManager, continueOnError = false, onError, initialFilterSettings }: OpenFilesOptions,
 ): Promise<number> {
   let opened = 0;
 
@@ -30,7 +32,12 @@ export async function openFiles(
       const fileName: string = await invoke('get_file_name', { path: filePath });
 
       // Create tab (TabManager handles viewer creation)
-      await tabManager.createTab(filePath, fileName, new Uint8Array(pdfData));
+      await tabManager.createTab(
+        filePath,
+        fileName,
+        new Uint8Array(pdfData),
+        initialFilterSettings,
+      );
       opened += 1;
 
       console.log(`Opened PDF: ${fileName}`);
@@ -50,7 +57,10 @@ export async function openFiles(
 }
 
 // Open PDF file dialog
-export async function openPDFFile(tabManager: TabManager | null): Promise<number> {
+export async function openPDFFile(
+  tabManager: TabManager | null,
+  initialFilterSettings?: FilterSettings,
+): Promise<number> {
   if (!tabManager) return 0;
   console.log('openPDFFile() called');
   try {
@@ -74,7 +84,7 @@ export async function openPDFFile(tabManager: TabManager | null): Promise<number
 
     // Handle single or multiple files
     const files = Array.isArray(selected) ? selected : [selected];
-    return await openFiles(files, { tabManager });
+    return await openFiles(files, { tabManager, initialFilterSettings });
   } catch (error) {
     console.error('Error opening file:', error);
     alert(`Failed to open file: ${error instanceof Error ? error.message : 'Unknown error'}`);

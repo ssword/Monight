@@ -1,4 +1,4 @@
-import { PRESETS, buildFilterCSS } from '../scripts/filters';
+import { PRESETS, buildFilterCSS, type FilterSettings } from '../scripts/filters';
 import type { SliderManager } from '../scripts/sliders';
 import type { TabManager } from '../scripts/tabs';
 
@@ -24,6 +24,7 @@ export function toggleDarkConfigurator(sliderManager: SliderManager | null): voi
 export function setupPresetButtons(
   tabManager: TabManager | null,
   sliderManager: SliderManager | null,
+  onPresetApplied?: (settings: FilterSettings) => void,
 ): void {
   const buttons = document.querySelectorAll('.preset-btn');
 
@@ -66,6 +67,8 @@ export function setupPresetButtons(
       if (sliderManager?.isInitialized()) {
         sliderManager.setPreset(settings);
       }
+
+      onPresetApplied?.(settings);
 
       // Update active button state
       buttons.forEach((b) => b.classList.remove('active'));

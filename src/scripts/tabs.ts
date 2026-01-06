@@ -36,8 +36,10 @@ export class TabManager {
     filePath: string,
     title: string,
     pdfData: Uint8Array,
+    filterSettings?: FilterSettings,
   ): Promise<TabData> {
     const id = crypto.randomUUID();
+    const initialFilterSettings = filterSettings ?? PRESETS.default;
 
     // Create tab data
     const tab: TabData = {
@@ -45,7 +47,7 @@ export class TabManager {
       title,
       filePath,
       pdfData,
-      filterSettings: { ...PRESETS.default },
+      filterSettings: { ...initialFilterSettings },
       currentPage: 1,
       zoom: 1.0,
       scrollPosition: 0,

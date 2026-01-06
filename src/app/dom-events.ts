@@ -1,3 +1,4 @@
+import type { FilterSettings } from '../scripts/filters';
 import type { KeybindManager } from '../scripts/keybind-manager';
 import type { SliderManager } from '../scripts/sliders';
 import type { TabManager } from '../scripts/tabs';
@@ -10,6 +11,7 @@ interface DomEventContext {
   keybindManager: KeybindManager | null;
   openPdfAndRefresh: () => Promise<void>;
   printCurrentPDF: () => Promise<void>;
+  onPresetApplied: (settings: FilterSettings) => void;
   saveCurrentTabState: () => void;
   updateUI: () => void;
 }
@@ -21,6 +23,7 @@ export function setupEventListeners({
   keybindManager,
   openPdfAndRefresh,
   printCurrentPDF,
+  onPresetApplied,
   saveCurrentTabState,
   updateUI,
 }: DomEventContext): void {
@@ -123,7 +126,7 @@ export function setupEventListeners({
   });
 
   // Setup preset buttons
-  setupPresetButtons(tabManager, sliderManager);
+  setupPresetButtons(tabManager, sliderManager, onPresetApplied);
 
   // New tab button
   const newTabBtn = document.getElementById('new-tab-btn');

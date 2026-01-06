@@ -6,7 +6,7 @@ use tauri::{
 // Import for opening URLs in browser
 use tauri_plugin_opener::OpenerExt;
 
-fn build_file_menu(
+fn build_file_menu_with_settings(
     app: &AppHandle,
     settings_label: &str,
     settings_shortcut: &str,
@@ -22,6 +22,42 @@ fn build_file_menu(
             &MenuItem::with_id(app, "settings", settings_label, true, Some(settings_shortcut))?,
             &PredefinedMenuItem::separator(app)?,
             &PredefinedMenuItem::close_window(app, Some("Close"))?,
+        ],
+    )
+}
+
+fn build_file_menu(app: &AppHandle) -> Result<Submenu<Wry>, tauri::Error> {
+    Submenu::with_items(
+        app,
+        "File",
+        true,
+        &[
+            &MenuItem::with_id(app, "open", "Open...", true, Some("CmdOrCtrl+O"))?,
+            &MenuItem::with_id(app, "print", "Print", true, Some("CmdOrCtrl+P"))?,
+            &PredefinedMenuItem::separator(app)?,
+            &PredefinedMenuItem::close_window(app, Some("Close"))?,
+        ],
+    )
+}
+
+#[cfg(target_os = "macos")]
+fn build_app_menu(app: &AppHandle) -> Result<Submenu<Wry>, tauri::Error> {
+    let app_name = app.package_info().name.clone();
+    Submenu::with_items(
+        app,
+        app_name,
+        true,
+        &[
+            &PredefinedMenuItem::about(app, None, None)?,
+            &PredefinedMenuItem::separator(app)?,
+            &MenuItem::with_id(app, "settings", "Settings...", true, Some("Cmd+,"))?,
+            &PredefinedMenuItem::separator(app)?,
+            &PredefinedMenuItem::services(app, None)?,
+            &PredefinedMenuItem::separator(app)?,
+            &PredefinedMenuItem::hide(app, None)?,
+            &PredefinedMenuItem::hide_others(app, None)?,
+            &PredefinedMenuItem::separator(app)?,
+            &PredefinedMenuItem::quit(app, None)?,
         ],
     )
 }
@@ -103,8 +139,9 @@ pub fn create_menu(app: &AppHandle) -> Result<Menu<Wry>, tauri::Error> {
     // Create menu with platform-specific Settings placement
     #[cfg(target_os = "macos")]
     {
-        // On macOS, add settings with Cmd+, shortcut to File menu
-        let file_menu = build_file_menu(app, "Settings...", "Cmd+,")?;
+        // On macOS, add settings with Cmd+, shortcut to the app menu
+        let app_menu = build_app_menu(app)?;
+        let file_menu = build_file_menu(app)?;
         let edit_menu = build_edit_menu(app)?;
         let view_menu = build_view_menu(app)?;
         let window_menu = build_window_menu(app)?;
@@ -113,6 +150,7 @@ pub fn create_menu(app: &AppHandle) -> Result<Menu<Wry>, tauri::Error> {
         Menu::with_items(
             app,
             &[
+                &app_menu,
                 &file_menu,
                 &edit_menu,
                 &view_menu,
@@ -125,7 +163,7 @@ pub fn create_menu(app: &AppHandle) -> Result<Menu<Wry>, tauri::Error> {
     #[cfg(not(target_os = "macos"))]
     {
         // On Windows/Linux, add settings with Alt+S to File menu
-        let file_menu_with_settings = build_file_menu(app, "Settings", "Alt+S")?;
+        let file_menu_with_settings = build_file_menu_with_settings(app, "Settings", "Alt+S")?;
         let edit_menu = build_edit_menu(app)?;
         let view_menu = build_view_menu(app)?;
         let window_menu = build_window_menu(app)?;

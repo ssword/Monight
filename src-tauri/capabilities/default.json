@@ -2,10 +2,11 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "enables the default permissions",
-  "windows": ["main"],
+  "windows": ["main", "settings"],
   "permissions": [
     "core:default",
     "dialog:default",
-    "dialog:allow-open"
+    "dialog:allow-open",
+    "store:default"
   ]
 }

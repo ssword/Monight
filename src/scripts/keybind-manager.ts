@@ -97,15 +97,16 @@ export class KeybindManager {
     for (const [actionId, config] of Object.entries(settings.keybinds)) {
       if (config.binds.length === 0) continue;
 
+      const actionKey = config.action || actionId;
       const parsed: ParsedKeybind[] = config.binds.map((bind) =>
         this.parseAccelerator(bind)
       );
 
-      this.keybinds.set(actionId, parsed);
+      this.keybinds.set(actionKey, parsed);
 
       // Store action data if present
       if (config.data) {
-        this.actionData.set(actionId, config.data);
+        this.actionData.set(actionKey, config.data);
       }
     }
 

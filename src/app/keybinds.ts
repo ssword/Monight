@@ -1,4 +1,5 @@
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
+import type { FilterSettings } from '../scripts/filters';
 import type { KeybindManager } from '../scripts/keybind-manager';
 import type { TabManager } from '../scripts/tabs';
 import { openFiles } from './file-actions';
@@ -10,6 +11,7 @@ interface KeybindContext {
   openPdfAndRefresh: () => Promise<void>;
   printCurrentPDF: () => Promise<void>;
   openSettings: () => Promise<void>;
+  getInitialFilterSettings: () => FilterSettings;
   updateTabBarVisibility: () => void;
   saveCurrentTabState: () => void;
   updateUI: () => void;
@@ -22,6 +24,7 @@ export function registerKeybindActions({
   openPdfAndRefresh,
   printCurrentPDF,
   openSettings,
+  getInitialFilterSettings,
   updateTabBarVisibility,
   saveCurrentTabState,
   updateUI,
@@ -58,7 +61,10 @@ export function registerKeybindActions({
     const filePath = await tabManager.reopenLastClosed();
     if (filePath) {
       try {
-        await openFiles([filePath], { tabManager });
+        await openFiles([filePath], {
+          tabManager,
+          initialFilterSettings: getInitialFilterSettings(),
+        });
         updateTabBarVisibility();
       } catch (error) {
         console.error('Error reopening tab:', error);

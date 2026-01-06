@@ -63,6 +63,16 @@ async function loadSettings(): Promise<void> {
   renderKeybinds();
 }
 
+// Notify main window that settings have changed
+async function notifyMainSettingsChanged(): Promise<void> {
+  try {
+    await emit('settings-changed');
+    console.log('Emitted settings-changed event to main window');
+  } catch (error) {
+    console.error('Error emitting settings-changed event:', error);
+  }
+}
+
 // Save setting when changed
 function setupSettingListeners(): void {
   // General settings
@@ -70,18 +80,21 @@ function setupSettingListeners(): void {
   maximizeOnOpen?.addEventListener('change', async () => {
     currentSettings.general.maximizeOnOpen = maximizeOnOpen.checked;
     await settingsManager.set('general', currentSettings.general);
+    await notifyMainSettingsChanged();
   });
 
   const displayThumbs = document.getElementById('displayThumbs') as HTMLInputElement;
   displayThumbs?.addEventListener('change', async () => {
     currentSettings.general.displayThumbs = displayThumbs.checked;
     await settingsManager.set('general', currentSettings.general);
+    await notifyMainSettingsChanged();
   });
 
   const rememberLastFilter = document.getElementById('rememberLastFilter') as HTMLInputElement;
   rememberLastFilter?.addEventListener('change', async () => {
     currentSettings.general.rememberLastFilter = rememberLastFilter.checked;
     await settingsManager.set('general', currentSettings.general);
+    await notifyMainSettingsChanged();
   });
 
   // Appearance settings
@@ -89,6 +102,7 @@ function setupSettingListeners(): void {
   defaultDarkMode?.addEventListener('change', async () => {
     currentSettings.general.defaultDarkMode = defaultDarkMode.value;
     await settingsManager.set('general', currentSettings.general);
+    await notifyMainSettingsChanged();
   });
 
   // Reset settings button
@@ -98,6 +112,8 @@ function setupSettingListeners(): void {
       await settingsManager.reset();
       currentSettings = await settingsManager.load();
       await loadSettings();
+      await notifyMainKeybindsChanged();
+      await notifyMainSettingsChanged();
     }
   });
 }
