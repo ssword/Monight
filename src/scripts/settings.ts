@@ -21,6 +21,7 @@ export interface MoonightSettings {
     displayThumbs: boolean;
     defaultDarkMode: string; // preset name
     rememberLastFilter: boolean;
+    defaultViewMode: 'single' | 'continuous';
   };
   keybinds: Record<string, KeybindConfig>;
   lastFilter?: FilterSettings;
@@ -36,6 +37,7 @@ export const DEFAULT_SETTINGS: MoonightSettings = {
     displayThumbs: true,
     defaultDarkMode: 'default',
     rememberLastFilter: true,
+    defaultViewMode: 'single',
   },
   keybinds: {
     OpenFile: {

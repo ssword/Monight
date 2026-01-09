@@ -89,6 +89,12 @@ export function updateUI(tabManager: TabManager | null): void {
     fileName.textContent = activeTab.title || 'No file loaded';
   }
 
+  // Update view mode icon
+  const viewModeIcon = document.getElementById('view-mode-icon');
+  if (viewModeIcon) {
+    viewModeIcon.textContent = state.viewMode === 'continuous' ? '⊞' : '⊟';
+  }
+
   // Update button states
   const prevBtn = document.getElementById('prev-page') as HTMLButtonElement;
   const nextBtn = document.getElementById('next-page') as HTMLButtonElement;

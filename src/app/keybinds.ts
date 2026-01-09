@@ -12,6 +12,7 @@ interface KeybindContext {
   printCurrentPDF: () => Promise<void>;
   openSettings: () => Promise<void>;
   getInitialFilterSettings: () => FilterSettings;
+  getInitialViewMode: () => 'single' | 'continuous';
   updateTabBarVisibility: () => void;
   saveCurrentTabState: () => void;
   updateUI: () => void;
@@ -25,6 +26,7 @@ export function registerKeybindActions({
   printCurrentPDF,
   openSettings,
   getInitialFilterSettings,
+  getInitialViewMode,
   updateTabBarVisibility,
   saveCurrentTabState,
   updateUI,
@@ -64,6 +66,7 @@ export function registerKeybindActions({
         await openFiles([filePath], {
           tabManager,
           initialFilterSettings: getInitialFilterSettings(),
+          initialViewMode: getInitialViewMode(),
         });
         updateTabBarVisibility();
       } catch (error) {

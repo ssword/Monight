@@ -14,6 +14,7 @@ interface TauriListenerContext {
   isMac: boolean;
   openPdfAndRefresh: () => Promise<void>;
   getInitialFilterSettings: () => FilterSettings;
+  getInitialViewMode: () => 'single' | 'continuous';
   reloadSettings: () => Promise<void>;
   applyWindowAfterOpen: () => Promise<void>;
   updateTabBarVisibility: () => void;
@@ -30,6 +31,7 @@ export async function setupTauriListeners({
   isMac,
   openPdfAndRefresh,
   getInitialFilterSettings,
+  getInitialViewMode,
   reloadSettings,
   applyWindowAfterOpen,
   updateTabBarVisibility,
@@ -52,11 +54,13 @@ export async function setupTauriListeners({
 
     try {
       const initialFilterSettings = getInitialFilterSettings();
+      const initialViewMode = getInitialViewMode();
       await openFiles(pdfFiles, {
         tabManager,
         continueOnError: true,
         onError: (message) => alert(message),
         initialFilterSettings,
+        initialViewMode,
       });
     } catch (error) {
       console.error('Error opening dropped files:', error);
@@ -91,8 +95,9 @@ export async function setupTauriListeners({
 
       try {
         const initialFilterSettings = getInitialFilterSettings();
+        const initialViewMode = getInitialViewMode();
         // Open each file
-        await openFiles(files, { tabManager, initialFilterSettings });
+        await openFiles(files, { tabManager, initialFilterSettings, initialViewMode });
 
         // Navigate to specific page if provided (applies to first/active tab)
         if (page && page > 0) {

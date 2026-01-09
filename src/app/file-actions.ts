@@ -11,11 +11,18 @@ interface OpenFilesOptions {
   continueOnError?: boolean;
   onError?: (message: string) => void;
   initialFilterSettings?: FilterSettings;
+  initialViewMode?: 'single' | 'continuous';
 }
 
 export async function openFiles(
   filePaths: string[],
-  { tabManager, continueOnError = false, onError, initialFilterSettings }: OpenFilesOptions,
+  {
+    tabManager,
+    continueOnError = false,
+    onError,
+    initialFilterSettings,
+    initialViewMode,
+  }: OpenFilesOptions,
 ): Promise<number> {
   let opened = 0;
 
@@ -37,6 +44,7 @@ export async function openFiles(
         fileName,
         new Uint8Array(pdfData),
         initialFilterSettings,
+        initialViewMode ?? 'single',
       );
       opened += 1;
 
@@ -60,6 +68,7 @@ export async function openFiles(
 export async function openPDFFile(
   tabManager: TabManager | null,
   initialFilterSettings?: FilterSettings,
+  initialViewMode?: 'single' | 'continuous',
 ): Promise<number> {
   if (!tabManager) return 0;
   console.log('openPDFFile() called');
@@ -84,7 +93,7 @@ export async function openPDFFile(
 
     // Handle single or multiple files
     const files = Array.isArray(selected) ? selected : [selected];
-    return await openFiles(files, { tabManager, initialFilterSettings });
+    return await openFiles(files, { tabManager, initialFilterSettings, initialViewMode });
   } catch (error) {
     console.error('Error opening file:', error);
     alert(`Failed to open file: ${error instanceof Error ? error.message : 'Unknown error'}`);

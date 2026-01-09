@@ -55,6 +55,12 @@ async function loadSettings(): Promise<void> {
   if (rememberLastFilter)
     rememberLastFilter.checked = currentSettings.general.rememberLastFilter;
 
+  const defaultContinuousScroll = document.getElementById(
+    'defaultContinuousScroll',
+  ) as HTMLInputElement;
+  if (defaultContinuousScroll)
+    defaultContinuousScroll.checked = currentSettings.general.defaultViewMode === 'continuous';
+
   // Appearance settings
   const defaultDarkMode = document.getElementById('defaultDarkMode') as HTMLSelectElement;
   if (defaultDarkMode) defaultDarkMode.value = currentSettings.general.defaultDarkMode;
@@ -93,6 +99,17 @@ function setupSettingListeners(): void {
   const rememberLastFilter = document.getElementById('rememberLastFilter') as HTMLInputElement;
   rememberLastFilter?.addEventListener('change', async () => {
     currentSettings.general.rememberLastFilter = rememberLastFilter.checked;
+    await settingsManager.set('general', currentSettings.general);
+    await notifyMainSettingsChanged();
+  });
+
+  const defaultContinuousScroll = document.getElementById(
+    'defaultContinuousScroll',
+  ) as HTMLInputElement;
+  defaultContinuousScroll?.addEventListener('change', async () => {
+    currentSettings.general.defaultViewMode = defaultContinuousScroll.checked
+      ? 'continuous'
+      : 'single';
     await settingsManager.set('general', currentSettings.general);
     await notifyMainSettingsChanged();
   });

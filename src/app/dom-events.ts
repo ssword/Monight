@@ -125,6 +125,30 @@ export function setupEventListeners({
     });
   });
 
+  // View mode toggle button
+  const toggleViewModeBtn = document.getElementById('toggle-view-mode');
+  toggleViewModeBtn?.addEventListener('click', () => {
+    withActiveViewer(tabManager, async (viewer, tab) => {
+      const currentMode = viewer.getState().viewMode;
+      const newMode = currentMode === 'single' ? 'continuous' : 'single';
+      await viewer.setViewMode(newMode);
+
+      // Update tab data
+      if (tab) {
+        tab.viewMode = newMode;
+      }
+
+      // Update button icon
+      const icon = document.getElementById('view-mode-icon');
+      if (icon) {
+        icon.textContent = newMode === 'continuous' ? '⊞' : '⊟';
+      }
+
+      saveCurrentTabState();
+      updateUI();
+    });
+  });
+
   // Setup preset buttons
   setupPresetButtons(tabManager, sliderManager, onPresetApplied);
 

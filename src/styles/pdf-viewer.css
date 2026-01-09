@@ -140,7 +140,8 @@
 }
 
 /* PDF Canvas - support multiple canvases */
-#pdf-container canvas {
+/* Only apply to direct children (single-page mode canvases) */
+#pdf-container > canvas {
   display: none; /* Hidden by default, shown by TabManager */
   position: absolute;
   top: 20px;
@@ -258,4 +259,48 @@
   image-rendering: auto;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+/* Continuous scroll styles */
+#pdf-container.continuous-scroll {
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+}
+
+#pdf-container .scroll-wrapper {
+  width: 100%;
+  position: relative;
+}
+
+/* Canvas positioning for continuous mode */
+#pdf-container.continuous-scroll .scroll-wrapper canvas {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  display: block;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+  background-color: white;
+}
+
+/* Hide the single-page canvas in continuous mode */
+#pdf-container.continuous-scroll > canvas {
+  display: none !important;
+}
+
+/* Keep single-page absolute positioning */
+#pdf-container:not(.continuous-scroll) canvas {
+  position: absolute;
+  top: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+/* Ensure proper display for single canvas in non-continuous mode */
+#pdf-container:not(.continuous-scroll) canvas[id^="pdf-canvas-"] {
+  display: none;
+}
+
+#pdf-container:not(.continuous-scroll) canvas[id^="pdf-canvas-"]:not([id*="-page-"]) {
+  display: block;
 }

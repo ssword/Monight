@@ -3,7 +3,7 @@ import type { SliderManager } from '../scripts/sliders';
 import type { TabData, TabManager } from '../scripts/tabs';
 import { updateActivePresetButton } from './ui';
 
-// Restore tab state (filters, page, zoom)
+// Restore tab state (filters, page, zoom, view mode)
 export async function restoreTabState(
   tabManager: TabManager | null,
   sliderManager: SliderManager | null,
@@ -11,6 +11,9 @@ export async function restoreTabState(
 ): Promise<void> {
   const viewer = tabManager?.getViewerForTab(tab.id);
   if (!viewer) return;
+
+  // Restore view mode first (before page/zoom)
+  await viewer.setViewMode(tab.viewMode);
 
   // Apply saved filter
   viewer.applyFilter(buildFilterCSS(tab.filterSettings));
@@ -26,6 +29,12 @@ export async function restoreTabState(
 
   // Update preset button active state
   updateActivePresetButton(tab.filterSettings);
+
+  // Update view mode button icon
+  const icon = document.getElementById('view-mode-icon');
+  if (icon) {
+    icon.textContent = tab.viewMode === 'continuous' ? '⊞' : '⊟';
+  }
 }
 
 // Save current tab state
@@ -44,6 +53,7 @@ export function saveCurrentTabState(
   // Save state to tab
   activeTab.currentPage = state.currentPage;
   activeTab.zoom = state.zoom;
+  activeTab.viewMode = state.viewMode;
 
   // Save current filter if sliders initialized
   if (sliderManager?.isInitialized()) {

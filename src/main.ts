@@ -81,7 +81,11 @@ const refreshAfterOpen = async (): Promise<void> => {
 
 const openPdfAndRefresh = async (): Promise<void> => {
   if (!tabManager) return;
-  const opened = await openPDFFile(tabManager, getInitialFilterSettings());
+  const opened = await openPDFFile(
+    tabManager,
+    getInitialFilterSettings(),
+    getInitialViewMode(),
+  );
   if (opened > 0) {
     await refreshAfterOpen();
   }
@@ -98,6 +102,14 @@ const getInitialFilterSettings = (): FilterSettings => {
 
   const preset = PRESETS[currentSettings.general.defaultDarkMode];
   return { ...(preset ?? PRESETS.default) };
+};
+
+const getInitialViewMode = (): 'single' | 'continuous' => {
+  if (!currentSettings) {
+    return 'single';
+  }
+
+  return currentSettings.general.defaultViewMode ?? 'single';
 };
 
 let lastFilterSaveTimer: number | null = null;
@@ -179,6 +191,7 @@ async function initializeApp(): Promise<void> {
       printCurrentPDF: () => printCurrentPDF(tabManager),
       openSettings,
       getInitialFilterSettings,
+      getInitialViewMode,
       updateTabBarVisibility: updateTabBar,
       saveCurrentTabState: saveStateForTab,
       updateUI: updateUIForTab,
@@ -224,6 +237,7 @@ async function initializeApp(): Promise<void> {
       isMac,
       openPdfAndRefresh,
       getInitialFilterSettings,
+      getInitialViewMode,
       reloadSettings: async () => {
         if (!settingsManager) return;
         const updated = await settingsManager.load();

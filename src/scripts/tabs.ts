@@ -12,7 +12,8 @@ export interface TabData {
   filterSettings: FilterSettings; // Current filter preset
   currentPage: number; // Current page number
   zoom: number; // Current zoom level
-  scrollPosition: number; // Scroll position (future use)
+  scrollPosition: number; // Scroll position
+  viewMode: 'single' | 'continuous'; // View mode
 }
 
 /**
@@ -37,6 +38,7 @@ export class TabManager {
     title: string,
     pdfData: Uint8Array,
     filterSettings?: FilterSettings,
+    viewMode: 'single' | 'continuous' = 'single',
   ): Promise<TabData> {
     const id = crypto.randomUUID();
     const initialFilterSettings = filterSettings ?? PRESETS.default;
@@ -51,6 +53,7 @@ export class TabManager {
       currentPage: 1,
       zoom: 1.0,
       scrollPosition: 0,
+      viewMode,
     };
 
     // Store tab
@@ -66,11 +69,8 @@ export class TabManager {
     // Store viewer
     this.pdfViewers.set(id, viewer);
 
-    // Hide canvas initially (will be shown when activated)
-    const canvas = viewer.getCanvas();
-    if (canvas) {
-      canvas.style.display = 'none';
-    }
+    // Hide viewer initially (will be shown when activated)
+    viewer.setVisible(false);
 
     // Render tabs UI
     this.renderTabs();
@@ -128,12 +128,9 @@ export class TabManager {
     const tab = this.tabs.get(id);
     if (!tab) return;
 
-    // Hide all canvases
+    // Show/hide all viewers (handles both single-page and continuous scroll modes)
     this.pdfViewers.forEach((viewer, viewerId) => {
-      const canvas = viewer.getCanvas();
-      if (canvas) {
-        canvas.style.display = viewerId === id ? 'block' : 'none';
-      }
+      viewer.setVisible(viewerId === id);
     });
 
     // Update active tab ID
