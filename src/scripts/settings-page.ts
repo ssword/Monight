@@ -1,8 +1,10 @@
+import { getName, getTauriVersion, getVersion } from '@tauri-apps/api/app';
 import { SettingsManager, type KeybindConfig } from './settings';
 import type { MoonightSettings } from './settings';
 import { KeybindManager } from './keybind-manager';
 import { KeybindEditor } from './keybind-editor';
 import { emit } from '@tauri-apps/api/event';
+import { version as pdfjsVersion } from 'pdfjs-dist';
 
 // Initialize settings manager
 const settingsManager = new SettingsManager();
@@ -67,6 +69,34 @@ async function loadSettings(): Promise<void> {
 
   // Render keybinds
   renderKeybinds();
+
+  // About panel version info
+  await updateAboutPanel();
+}
+
+async function updateAboutPanel(): Promise<void> {
+  const appName = document.getElementById('app-name');
+  const appVersion = document.getElementById('app-version');
+  const tauriVersion = document.getElementById('tauri-version');
+  const pdfjsVersionEl = document.getElementById('pdfjs-version');
+
+  try {
+    const [name, version, tauri] = await Promise.all([
+      getName(),
+      getVersion(),
+      getTauriVersion(),
+    ]);
+
+    if (appName) appName.textContent = name;
+    if (appVersion) appVersion.textContent = version;
+    if (tauriVersion) tauriVersion.textContent = tauri;
+  } catch (error) {
+    console.error('Failed to update About panel info:', error);
+  }
+
+  if (pdfjsVersionEl) {
+    pdfjsVersionEl.textContent = pdfjsVersion;
+  }
 }
 
 // Notify main window that settings have changed

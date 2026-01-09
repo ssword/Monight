@@ -1,3 +1,4 @@
+import { getName, getTauriVersion, getVersion } from '@tauri-apps/api/app';
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 import { PRESETS, buildFilterCSS, type FilterSettings } from './scripts/filters';
 import { KeybindManager } from './scripts/keybind-manager';
@@ -54,9 +55,11 @@ console.log('Platform:', navigator.platform, 'isMac:', isMac);
 
 async function getAppInfo(): Promise<AppInfo> {
   try {
-    const name = 'Monight (墨页)';
-    const version = '1.0.0';
-    const tauriVersion = '2.0';
+    const [name, version, tauriVersion] = await Promise.all([
+      getName(),
+      getVersion(),
+      getTauriVersion(),
+    ]);
 
     return { name, version, tauriVersion };
   } catch (error) {
