@@ -49,3 +49,6 @@ coverage/
 # AI related docuemnts
 agents.md
 
+.ace-tool/
+.claude/
+CLAUDE.md

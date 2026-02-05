@@ -1,3 +1,4 @@
+import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 import type { FilterSettings } from '../scripts/filters';
@@ -40,15 +41,56 @@ export async function setupTauriListeners({
   saveCurrentTabState,
   printCurrentPDF,
 }: TauriListenerContext): Promise<void> {
+  const isSupportedFile = (path: string): boolean => {
+    const ext = path.split('.').pop()?.toLowerCase();
+    return ext ? ['pdf', 'xdp', 'fdf', 'xfdf'].includes(ext) : false;
+  };
+
+  const handleCliOpenPayload = async (payload: { files: string[]; page: number | null }) => {
+    console.log('CLI open files event:', payload);
+    if (!tabManager) return;
+
+    const { files, page } = payload;
+
+    try {
+      const initialFilterSettings = getInitialFilterSettings();
+      const initialViewMode = getInitialViewMode();
+      // Open each file
+      await openFiles(files, { tabManager, initialFilterSettings, initialViewMode });
+
+      // Navigate to specific page if provided (applies to first/active tab)
+      if (page && page > 0) {
+        await withActiveViewer(tabManager, async (viewer) => {
+          await viewer.goToPage(page);
+          updateUI();
+          console.log(`Navigated to page ${page}`);
+        });
+      }
+
+      // Update UI
+      updateTabBarVisibility();
+
+      // Update print menu state
+      await updatePrintMenuState();
+
+      await applyWindowAfterOpen();
+    } catch (error) {
+      console.error('Error opening CLI files:', error);
+      alert(
+        `Failed to open files: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      );
+    }
+  };
+
   // Listen for file drop events
   await listen<string[]>('tauri://file-drop', async (event) => {
     console.log('File drop detected:', event.payload);
     if (!tabManager) return;
 
-    const pdfFiles = event.payload.filter((f) => f.toLowerCase().endsWith('.pdf'));
+    const pdfFiles = event.payload.filter((f) => isSupportedFile(f));
 
     if (pdfFiles.length === 0) {
-      alert('Please drop PDF files only.');
+      alert('Please drop PDF/XDP/FDF/XFDF files only.');
       return;
     }
 
@@ -85,44 +127,17 @@ export async function setupTauriListeners({
   });
 
   // Listen for CLI file open events
-  await listen<{ files: string[]; page: number | null }>(
-    'cli-open-files',
-    async (event) => {
-      console.log('CLI open files event:', event.payload);
-      if (!tabManager) return;
+  await listen<{ files: string[]; page: number | null }>('cli-open-files', async (event) => {
+    await handleCliOpenPayload(event.payload);
+  });
 
-      const { files, page } = event.payload;
-
-      try {
-        const initialFilterSettings = getInitialFilterSettings();
-        const initialViewMode = getInitialViewMode();
-        // Open each file
-        await openFiles(files, { tabManager, initialFilterSettings, initialViewMode });
-
-        // Navigate to specific page if provided (applies to first/active tab)
-        if (page && page > 0) {
-          await withActiveViewer(tabManager, async (viewer) => {
-            await viewer.goToPage(page);
-            updateUI();
-            console.log(`Navigated to page ${page}`);
-          });
-        }
-
-        // Update UI
-        updateTabBarVisibility();
-
-        // Update print menu state
-        await updatePrintMenuState();
-
-        await applyWindowAfterOpen();
-      } catch (error) {
-        console.error('Error opening CLI files:', error);
-        alert(
-          `Failed to open files: ${error instanceof Error ? error.message : 'Unknown error'}`,
-        );
-      }
-    },
+  // Pull any pending CLI payloads that were emitted before listeners were ready
+  const pendingPayload = await invoke<{ files: string[]; page: number | null } | null>(
+    'take_cli_payload',
   );
+  if (pendingPayload?.files?.length) {
+    await handleCliOpenPayload(pendingPayload);
+  }
 
   // Listen for menu events
   await listen('menu-open', async () => {

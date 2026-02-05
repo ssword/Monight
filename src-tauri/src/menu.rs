@@ -21,6 +21,27 @@ fn build_file_menu(app: &AppHandle) -> Result<Submenu<Wry>, tauri::Error> {
     )
 }
 
+#[cfg(not(target_os = "macos"))]
+fn build_file_menu_with_settings(
+    app: &AppHandle,
+    settings_label: &str,
+    settings_shortcut: &str,
+) -> Result<Submenu<Wry>, tauri::Error> {
+    Submenu::with_items(
+        app,
+        "File",
+        true,
+        &[
+            &MenuItem::with_id(app, "open", "Open...", true, Some("CmdOrCtrl+O"))?,
+            &MenuItem::with_id(app, "print", "Print", true, Some("CmdOrCtrl+P"))?,
+            &PredefinedMenuItem::separator(app)?,
+            &MenuItem::with_id(app, "settings", settings_label, true, Some(settings_shortcut))?,
+            &PredefinedMenuItem::separator(app)?,
+            &PredefinedMenuItem::close_window(app, Some("Close"))?,
+        ],
+    )
+}
+
 #[cfg(target_os = "macos")]
 fn build_app_menu(app: &AppHandle) -> Result<Submenu<Wry>, tauri::Error> {
     let app_name = app.package_info().name.clone();

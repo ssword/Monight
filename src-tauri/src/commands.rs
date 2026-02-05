@@ -1,5 +1,9 @@
 use std::path::Path;
-use tauri::{command, AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
+use tauri::{command, AppHandle, Manager, State, WebviewUrl, WebviewWindowBuilder};
+
+use crate::{
+    is_supported_extension, take_cli_payload_inner, CliPayload, PendingCliPayload,
+};
 
 /// Read a PDF file from the filesystem and return as byte array
 #[command]
@@ -11,9 +15,17 @@ pub async fn read_pdf_file(path: String) -> Result<Vec<u8>, String> {
     }
 
     // Validate file extension
-    match file_path.extension().and_then(|e| e.to_str()) {
-        Some("pdf") | Some("xdp") | Some("fdf") | Some("xfdf") => {}
-        _ => return Err("Invalid file type. Only PDF, XDP, FDF, and XFDF files are supported.".to_string()),
+    if !is_supported_extension(file_path) {
+        let ext = file_path.extension().and_then(|e| e.to_str()).unwrap_or("");
+        let ext_label = if ext.is_empty() {
+            "no extension".to_string()
+        } else {
+            format!(".{}", ext)
+        };
+        return Err(format!(
+            "Unsupported file type {}. Only PDF, XDP, FDF, and XFDF files are supported.",
+            ext_label
+        ));
     }
 
     // Read file contents
@@ -83,6 +95,39 @@ pub fn set_print_enabled(app: AppHandle, enabled: bool) {
             }
         }
     }
+}
+
+/// Get and clear any pending CLI-open payloads
+#[command]
+pub fn take_cli_payload(state: State<PendingCliPayload>) -> Option<CliPayload> {
+    take_cli_payload_inner(state.inner())
+}
+
+/// Validate and canonicalize a file path for opening
+#[command]
+pub fn validate_open_path(path: String) -> Result<String, String> {
+    let raw_path = Path::new(&path);
+    if !raw_path.exists() {
+        return Err(format!("File not found: {}", path));
+    }
+
+    let canonical = std::fs::canonicalize(raw_path)
+        .map_err(|e| format!("Invalid path: {} ({})", path, e))?;
+
+    if !is_supported_extension(&canonical) {
+        let ext = canonical.extension().and_then(|e| e.to_str()).unwrap_or("");
+        let ext_label = if ext.is_empty() {
+            "no extension".to_string()
+        } else {
+            format!(".{}", ext)
+        };
+        return Err(format!(
+            "Unsupported file type {}. Only PDF, XDP, FDF, and XFDF files are supported.",
+            ext_label
+        ));
+    }
+
+    Ok(canonical.to_string_lossy().to_string())
 }
 
 #[cfg(test)]

@@ -25,9 +25,11 @@ export class TabManager {
   private pdfViewers: Map<string, PDFViewer> = new Map();
   private closedHistory: string[] = [];
   private onTabChange: (tab: TabData | null) => void;
+  private onActiveViewerStateChange?: () => void;
 
-  constructor(onTabChange: (tab: TabData | null) => void) {
+  constructor(onTabChange: (tab: TabData | null) => void, onActiveViewerStateChange?: () => void) {
     this.onTabChange = onTabChange;
+    this.onActiveViewerStateChange = onActiveViewerStateChange;
   }
 
   /**
@@ -62,6 +64,10 @@ export class TabManager {
     // Create PDF viewer for this tab
     const canvasId = `pdf-canvas-${id}`;
     const viewer = new PDFViewer('pdf-container', canvasId);
+    viewer.setOnPageChange(() => {
+      if (this.activeTabId !== id) return;
+      this.onActiveViewerStateChange?.();
+    });
 
     // Load PDF
     await viewer.loadPDF(pdfData, title, filePath);

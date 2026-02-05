@@ -162,6 +162,9 @@ async function initializeApp(): Promise<void> {
       updateTabBarVisibility(tabManager);
       // Update print menu state
       await updatePrintMenuState(tabManager);
+    }, () => {
+      saveCurrentTabState(tabManager, sliderManager);
+      updateUI(tabManager);
     });
 
     // Initialize slider manager

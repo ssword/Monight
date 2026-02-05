@@ -28,19 +28,21 @@ export async function openFiles(
 
   for (const filePath of filePaths) {
     try {
+      const canonicalPath: string = await invoke('validate_open_path', { path: filePath });
+
       // Check if already open
-      if (tabManager.isFileOpen(filePath)) {
-        console.log(`File already open: ${filePath}`);
+      if (tabManager.isFileOpen(canonicalPath)) {
+        console.log(`File already open: ${canonicalPath}`);
         continue;
       }
 
       // Load PDF data
-      const pdfData: number[] = await invoke('read_pdf_file', { path: filePath });
-      const fileName: string = await invoke('get_file_name', { path: filePath });
+      const pdfData: number[] = await invoke('read_pdf_file', { path: canonicalPath });
+      const fileName: string = await invoke('get_file_name', { path: canonicalPath });
 
       // Create tab (TabManager handles viewer creation)
       await tabManager.createTab(
-        filePath,
+        canonicalPath,
         fileName,
         new Uint8Array(pdfData),
         initialFilterSettings,
@@ -78,8 +80,8 @@ export async function openPDFFile(
       multiple: true,
       filters: [
         {
-          name: 'PDF',
-          extensions: ['pdf'],
+          name: 'Documents',
+          extensions: ['pdf', 'xdp', 'fdf', 'xfdf'],
         },
       ],
     });

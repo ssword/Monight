@@ -89,6 +89,8 @@ export class PDFViewer {
   };
   private renderTask: RenderTask | null = null;
   private canvasId: string;
+  private currentFilterCSS = '';
+  private onPageChange: ((pageNum: number) => void) | null = null;
 
   // Continuous scroll properties
   private canvases: Map<number, HTMLCanvasElement> = new Map();
@@ -111,6 +113,10 @@ export class PDFViewer {
     this.canvasId = canvasId;
     this.initializeCanvas();
     this.handleScrollBound = this.handleScroll.bind(this);
+  }
+
+  setOnPageChange(handler: ((pageNum: number) => void) | null): void {
+    this.onPageChange = handler;
   }
 
   private initializeCanvas(): void {
@@ -211,7 +217,11 @@ export class PDFViewer {
       this.renderTask = null;
 
       // Update state
+      const prevPage = this.state.currentPage;
       this.state.currentPage = pageNum;
+      if (prevPage !== pageNum) {
+        this.onPageChange?.(pageNum);
+      }
 
       console.log(`Rendered page ${pageNum}/${this.state.totalPages}`);
     } catch (error: unknown) {
@@ -355,15 +365,17 @@ export class PDFViewer {
   }
 
   applyFilter(filterCSS: string): void {
+    this.currentFilterCSS = filterCSS;
+
+    if (this.canvas) {
+      this.canvas.style.filter = filterCSS;
+    }
+
     if (this.state.viewMode === 'continuous') {
       // Apply filter to all continuous canvases
       this.canvases.forEach((canvas) => {
         canvas.style.filter = filterCSS;
       });
-    } else {
-      // Apply filter to single canvas
-      if (!this.canvas) return;
-      this.canvas.style.filter = filterCSS;
     }
   }
 
@@ -474,7 +486,9 @@ export class PDFViewer {
 
     if (mode === 'continuous') {
       await this.initializeContinuousScroll();
-      await this.renderVisiblePages();
+      // Wait for layout to settle before rendering
+      await new Promise((resolve) => requestAnimationFrame(() => resolve(undefined)));
+      await this.renderVisiblePages(false, true);
       // Scroll to current page
       await this.scrollToPage(currentPage);
       // Ensure visibility is correct
@@ -629,13 +643,26 @@ export class PDFViewer {
     return visible;
   }
 
-  private async renderVisiblePages(forceRender = false): Promise<void> {
+  private async renderVisiblePages(forceRender = false, isInitialRender = false): Promise<void> {
     if (!this.pdfDoc || !this.scrollContainer) return;
 
     const visiblePageNums = this.calculateVisiblePages();
     const newVisiblePages = new Set(visiblePageNums);
 
     console.log(`Visible pages in continuous mode: ${Array.from(visiblePageNums).join(', ')}`);
+
+    // On initial render, ensure we render enough pages to fill the viewport
+    // This handles cases where layout hasn't settled yet
+    if (isInitialRender && visiblePageNums.length < 2) {
+      const minInitialPages = Math.min(3, this.state.totalPages);
+      for (let i = 1; i <= minInitialPages; i++) {
+        if (!visiblePageNums.includes(i)) {
+          visiblePageNums.push(i);
+          newVisiblePages.add(i);
+        }
+      }
+      console.log(`Initial render - rendering first ${minInitialPages} pages`);
+    }
 
     // Ensure at least the first page is rendered if no pages are visible
     if (visiblePageNums.length === 0) {
@@ -731,10 +758,7 @@ export class PDFViewer {
       outputScale.sy = canvasHeight / pageHeight;
 
       // Apply current filter
-      const currentFilter = this.canvas?.style.filter || '';
-      if (currentFilter) {
-        canvas.style.filter = currentFilter;
-      }
+      canvas.style.filter = this.currentFilterCSS;
 
       // Cancel previous render task for this page
       const prevTask = this.renderTasks.get(pageNum);
@@ -822,7 +846,10 @@ export class PDFViewer {
       const pageBottom = currentY + pageHeight + pageGap;
 
       if (focusY >= pageTop && focusY < pageBottom) {
-        this.state.currentPage = pageNum;
+        if (this.state.currentPage !== pageNum) {
+          this.state.currentPage = pageNum;
+          this.onPageChange?.(pageNum);
+        }
         return;
       }
 
@@ -871,6 +898,9 @@ export class PDFViewer {
 
     if (this.renderTask) {
       this.renderTask.cancel();
+    }
+    if (this.canvas && this.canvas.parentNode) {
+      this.canvas.parentNode.removeChild(this.canvas);
     }
     if (this.pdfDoc) {
       this.pdfDoc.destroy();
