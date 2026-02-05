@@ -1,5 +1,5 @@
+import { type FilterSettings, PRESETS } from './filters';
 import { PDFViewer } from './pdf-viewer';
-import { PRESETS, type FilterSettings } from './filters';
 
 /**
  * Data structure for a single tab

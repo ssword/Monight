@@ -76,9 +76,7 @@ export async function setupTauriListeners({
       await applyWindowAfterOpen();
     } catch (error) {
       console.error('Error opening CLI files:', error);
-      alert(
-        `Failed to open files: ${error instanceof Error ? error.message : 'Unknown error'}`,
-      );
+      alert(`Failed to open files: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   };
 

@@ -1,10 +1,10 @@
 import { getName, getTauriVersion, getVersion } from '@tauri-apps/api/app';
-import { SettingsManager, type KeybindConfig } from './settings';
-import type { MoonightSettings } from './settings';
-import { KeybindManager } from './keybind-manager';
-import { KeybindEditor } from './keybind-editor';
 import { emit } from '@tauri-apps/api/event';
 import { version as pdfjsVersion } from 'pdfjs-dist';
+import { KeybindEditor } from './keybind-editor';
+import { KeybindManager } from './keybind-manager';
+import type { MoonightSettings } from './settings';
+import { type KeybindConfig, SettingsManager } from './settings';
 
 // Initialize settings manager
 const settingsManager = new SettingsManager();
@@ -28,7 +28,9 @@ function initializePanelSwitching(): void {
       if (!panelId) return;
 
       // Update active states
-      sidebarItems.forEach((i) => i.classList.remove('active'));
+      sidebarItems.forEach((i) => {
+        i.classList.remove('active');
+      });
       item.classList.add('active');
 
       panels.forEach((panel) => {
@@ -54,8 +56,7 @@ async function loadSettings(): Promise<void> {
   if (displayThumbs) displayThumbs.checked = currentSettings.general.displayThumbs;
 
   const rememberLastFilter = document.getElementById('rememberLastFilter') as HTMLInputElement;
-  if (rememberLastFilter)
-    rememberLastFilter.checked = currentSettings.general.rememberLastFilter;
+  if (rememberLastFilter) rememberLastFilter.checked = currentSettings.general.rememberLastFilter;
 
   const defaultContinuousScroll = document.getElementById(
     'defaultContinuousScroll',
@@ -81,11 +82,7 @@ async function updateAboutPanel(): Promise<void> {
   const pdfjsVersionEl = document.getElementById('pdfjs-version');
 
   try {
-    const [name, version, tauri] = await Promise.all([
-      getName(),
-      getVersion(),
-      getTauriVersion(),
-    ]);
+    const [name, version, tauri] = await Promise.all([getName(), getVersion(), getTauriVersion()]);
 
     if (appName) appName.textContent = name;
     if (appVersion) appVersion.textContent = version;
@@ -270,14 +267,15 @@ function startEditingKeybind(actionId: string, config: KeybindConfig, bindIndex:
       if (conflict) {
         const confirmed = confirm(
           `This key combination is already used for "${conflict.displayName}".\n\n` +
-          `Do you want to replace it?`
+            `Do you want to replace it?`,
         );
 
         if (!confirmed) return;
 
         // Clear the conflicting keybind
-        currentSettings.keybinds[conflict.actionId].binds =
-          currentSettings.keybinds[conflict.actionId].binds.filter(b => b !== newKeybind);
+        currentSettings.keybinds[conflict.actionId].binds = currentSettings.keybinds[
+          conflict.actionId
+        ].binds.filter((b) => b !== newKeybind);
       }
 
       // Update settings
@@ -295,7 +293,7 @@ function startEditingKeybind(actionId: string, config: KeybindConfig, bindIndex:
     },
     () => {
       // Cancelled - do nothing
-    }
+    },
   );
 }
 
@@ -321,14 +319,15 @@ function addKeybind(actionId: string): void {
       if (conflict) {
         const confirmed = confirm(
           `This key combination is already used for "${conflict.displayName}".\n\n` +
-          `Do you want to replace it?`
+            `Do you want to replace it?`,
         );
 
         if (!confirmed) return;
 
         // Clear the conflicting keybind
-        currentSettings.keybinds[conflict.actionId].binds =
-          currentSettings.keybinds[conflict.actionId].binds.filter(b => b !== newKeybind);
+        currentSettings.keybinds[conflict.actionId].binds = currentSettings.keybinds[
+          conflict.actionId
+        ].binds.filter((b) => b !== newKeybind);
       }
 
       // Add new binding
@@ -337,7 +336,7 @@ function addKeybind(actionId: string): void {
       renderKeybinds();
       notifyMainKeybindsChanged();
     },
-    () => {}
+    () => {},
   );
 }
 

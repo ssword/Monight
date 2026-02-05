@@ -98,9 +98,7 @@ export class KeybindManager {
       if (config.binds.length === 0) continue;
 
       const actionKey = config.action || actionId;
-      const parsed: ParsedKeybind[] = config.binds.map((bind) =>
-        this.parseAccelerator(bind)
-      );
+      const parsed: ParsedKeybind[] = config.binds.map((bind) => this.parseAccelerator(bind));
 
       this.keybinds.set(actionKey, parsed);
 
@@ -110,9 +108,7 @@ export class KeybindManager {
       }
     }
 
-    console.log(
-      `KeybindManager loaded ${this.keybinds.size} actions with keybinds`
-    );
+    console.log(`KeybindManager loaded ${this.keybinds.size} actions with keybinds`);
   }
 
   /**

@@ -1,7 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
-import { open } from '@tauri-apps/plugin-dialog';
 import { LogicalSize } from '@tauri-apps/api/window';
+import { open } from '@tauri-apps/plugin-dialog';
 import type { FilterSettings } from '../scripts/filters';
 import type { TabManager } from '../scripts/tabs';
 import { withActiveViewer } from './viewer-helpers';
@@ -104,9 +104,7 @@ export async function openPDFFile(
 }
 
 // Update print menu state based on whether a PDF is loaded
-export async function updatePrintMenuState(
-  tabManager: TabManager | null,
-): Promise<void> {
+export async function updatePrintMenuState(tabManager: TabManager | null): Promise<void> {
   const hasPDF = (tabManager?.size ?? 0) > 0;
   try {
     await invoke('set_print_enabled', { enabled: hasPDF });

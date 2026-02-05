@@ -1,5 +1,5 @@
-import type { MoonightSettings } from './settings';
 import type { KeybindManager, ParsedKeybind } from './keybind-manager';
+import type { MoonightSettings } from './settings';
 
 /**
  * KeybindEditor - UI component for capturing and editing keyboard shortcuts
@@ -45,7 +45,7 @@ export class KeybindEditor {
   startRecording(
     currentKeybind: string,
     onCapture: (keybind: string) => void,
-    onCancel: () => void
+    onCancel: () => void,
   ): void {
     this.onKeybindCaptured = onCapture;
     this.onCancel = onCancel;
@@ -333,7 +333,10 @@ export class KeybindEditor {
   /**
    * Find conflicting action for a keybind
    */
-  findConflict(keybind: string, excludeAction?: string): { actionId: string; displayName: string } | null {
+  findConflict(
+    keybind: string,
+    excludeAction?: string,
+  ): { actionId: string; displayName: string } | null {
     if (!keybind || !this.currentSettings) return null;
 
     for (const [actionId, config] of Object.entries(this.currentSettings.keybinds)) {

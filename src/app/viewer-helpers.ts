@@ -6,9 +6,7 @@ export interface ActiveViewer {
   viewer: PDFViewer;
 }
 
-export const getActiveViewer = (
-  tabManager: TabManager | null,
-): ActiveViewer | null => {
+export const getActiveViewer = (tabManager: TabManager | null): ActiveViewer | null => {
   if (!tabManager) return null;
   const tab = tabManager.getActiveTab();
   if (!tab) return null;

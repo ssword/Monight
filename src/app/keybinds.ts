@@ -84,7 +84,7 @@ export function registerKeybindActions({
   });
 
   keybindManager.registerAction('switchToTab', async (_e, data) => {
-    const position = data ? parseInt(data) : 1;
+    const position = data ? parseInt(data, 10) : 1;
     await tabManager?.switchToPosition(position);
   });
 

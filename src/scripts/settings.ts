@@ -220,7 +220,7 @@ export class SettingsManager {
     try {
       const store = await this.initStore();
       const stored = await store.get<MoonightSettings>('settings');
-      if (stored && stored.version) {
+      if (stored?.version) {
         // Merge with defaults to handle new settings added in updates
         this.settings = this.mergeSettings(DEFAULT_SETTINGS, stored);
       }
@@ -255,10 +255,7 @@ export class SettingsManager {
   /**
    * Set a specific setting value and save
    */
-  async set<K extends keyof MoonightSettings>(
-    key: K,
-    value: MoonightSettings[K],
-  ): Promise<void> {
+  async set<K extends keyof MoonightSettings>(key: K, value: MoonightSettings[K]): Promise<void> {
     this.settings[key] = value;
     await this.save();
   }

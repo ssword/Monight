@@ -1,5 +1,5 @@
-import * as pdfjsLib from 'pdfjs-dist';
 import type { PDFDocumentProxy, PDFPageProxy, RenderTask } from 'pdfjs-dist';
+import * as pdfjsLib from 'pdfjs-dist';
 
 // Configure PDF.js worker
 pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
@@ -556,7 +556,7 @@ export class PDFViewer {
     this.canvases.clear();
 
     // Remove scroll container
-    if (this.scrollContainer && this.scrollContainer.parentNode) {
+    if (this.scrollContainer?.parentNode) {
       this.scrollContainer.parentNode.removeChild(this.scrollContainer);
       this.scrollContainer = null;
     }
@@ -610,7 +610,9 @@ export class PDFViewer {
 
     // Set minimum height to ensure scrolling works
     this.scrollContainer.style.minHeight = `${totalHeight}px`;
-    console.log(`Set scroll container min-height to ${totalHeight}px for ${this.state.totalPages} pages`);
+    console.log(
+      `Set scroll container min-height to ${totalHeight}px for ${this.state.totalPages} pages`,
+    );
   }
 
   private calculateVisiblePages(): number[] {
@@ -700,7 +702,7 @@ export class PDFViewer {
 
         // Remove canvas
         const canvas = this.canvases.get(pageNum);
-        if (canvas && canvas.parentNode) {
+        if (canvas?.parentNode) {
           canvas.parentNode.removeChild(canvas);
         }
         this.canvases.delete(pageNum);
@@ -899,7 +901,7 @@ export class PDFViewer {
     if (this.renderTask) {
       this.renderTask.cancel();
     }
-    if (this.canvas && this.canvas.parentNode) {
+    if (this.canvas?.parentNode) {
       this.canvas.parentNode.removeChild(this.canvas);
     }
     if (this.pdfDoc) {

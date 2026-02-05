@@ -1,10 +1,5 @@
 import { getName, getTauriVersion, getVersion } from '@tauri-apps/api/app';
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
-import { PRESETS, buildFilterCSS, type FilterSettings } from './scripts/filters';
-import { KeybindManager } from './scripts/keybind-manager';
-import { SettingsManager, type MoonightSettings } from './scripts/settings';
-import { SliderManager } from './scripts/sliders';
-import { TabManager, type TabData } from './scripts/tabs';
 import { setupEventListeners } from './app/dom-events';
 import {
   ensureMinimumViewingSize,
@@ -23,6 +18,11 @@ import {
   updateTabBarVisibility,
   updateUI,
 } from './app/ui';
+import { buildFilterCSS, type FilterSettings, PRESETS } from './scripts/filters';
+import { KeybindManager } from './scripts/keybind-manager';
+import { type MoonightSettings, SettingsManager } from './scripts/settings';
+import { SliderManager } from './scripts/sliders';
+import { type TabData, TabManager } from './scripts/tabs';
 import './styles/main.css';
 import './styles/pdf-viewer.css';
 import './styles/configurator.css';
@@ -84,11 +84,7 @@ const refreshAfterOpen = async (): Promise<void> => {
 
 const openPdfAndRefresh = async (): Promise<void> => {
   if (!tabManager) return;
-  const opened = await openPDFFile(
-    tabManager,
-    getInitialFilterSettings(),
-    getInitialViewMode(),
-  );
+  const opened = await openPDFFile(tabManager, getInitialFilterSettings(), getInitialViewMode());
   if (opened > 0) {
     await refreshAfterOpen();
   }
@@ -149,23 +145,26 @@ async function initializeApp(): Promise<void> {
     console.log('Settings loaded:', settings);
 
     // Initialize tab manager
-    tabManager = new TabManager(async (tab: TabData | null) => {
-      if (tab) {
-        // Tab activated - restore its state
-        await restoreTabState(tabManager, sliderManager, tab);
+    tabManager = new TabManager(
+      async (tab: TabData | null) => {
+        if (tab) {
+          // Tab activated - restore its state
+          await restoreTabState(tabManager, sliderManager, tab);
+          updateUI(tabManager);
+          showViewer();
+        } else {
+          // No tabs - show splash
+          showSplash();
+        }
+        updateTabBarVisibility(tabManager);
+        // Update print menu state
+        await updatePrintMenuState(tabManager);
+      },
+      () => {
+        saveCurrentTabState(tabManager, sliderManager);
         updateUI(tabManager);
-        showViewer();
-      } else {
-        // No tabs - show splash
-        showSplash();
-      }
-      updateTabBarVisibility(tabManager);
-      // Update print menu state
-      await updatePrintMenuState(tabManager);
-    }, () => {
-      saveCurrentTabState(tabManager, sliderManager);
-      updateUI(tabManager);
-    });
+      },
+    );
 
     // Initialize slider manager
     sliderManager = new SliderManager((filterSettings) => {

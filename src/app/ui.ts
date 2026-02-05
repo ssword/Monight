@@ -1,4 +1,4 @@
-import { PRESETS, type FilterSettings } from '../scripts/filters';
+import { type FilterSettings, PRESETS } from '../scripts/filters';
 import type { TabManager } from '../scripts/tabs';
 
 // Show splash screen

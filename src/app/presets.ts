@@ -1,4 +1,4 @@
-import { PRESETS, buildFilterCSS, type FilterSettings } from '../scripts/filters';
+import { buildFilterCSS, type FilterSettings, PRESETS } from '../scripts/filters';
 import type { SliderManager } from '../scripts/sliders';
 import type { TabManager } from '../scripts/tabs';
 
@@ -37,7 +37,9 @@ export function setupPresetButtons(
       if (presetName === 'custom') {
         toggleDarkConfigurator(sliderManager);
         // Update active button state
-        buttons.forEach((b) => b.classList.remove('active'));
+        buttons.forEach((b) => {
+          b.classList.remove('active');
+        });
         btn.classList.add('active');
         return;
       }
@@ -71,7 +73,9 @@ export function setupPresetButtons(
       onPresetApplied?.(settings);
 
       // Update active button state
-      buttons.forEach((b) => b.classList.remove('active'));
+      buttons.forEach((b) => {
+        b.classList.remove('active');
+      });
       btn.classList.add('active');
 
       console.log(`Applied preset: ${presetName}`);
