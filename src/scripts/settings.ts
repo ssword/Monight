@@ -31,13 +31,13 @@ export interface MoonightSettings {
  * Default settings
  */
 export const DEFAULT_SETTINGS: MoonightSettings = {
-  version: '1.0.0',
+  version: '1.0.3',
   general: {
-    maximizeOnOpen: false,
+    maximizeOnOpen: true,
     displayThumbs: true,
     defaultDarkMode: 'default',
     rememberLastFilter: true,
-    defaultViewMode: 'single',
+    defaultViewMode: 'continuous',
   },
   keybinds: {
     OpenFile: {
@@ -221,8 +221,12 @@ export class SettingsManager {
       const store = await this.initStore();
       const stored = await store.get<MoonightSettings>('settings');
       if (stored?.version) {
+        const { settings: migratedSettings, changed } = this.migrateSettings(stored);
         // Merge with defaults to handle new settings added in updates
-        this.settings = this.mergeSettings(DEFAULT_SETTINGS, stored);
+        this.settings = this.mergeSettings(DEFAULT_SETTINGS, migratedSettings);
+        if (changed) {
+          await this.save();
+        }
       }
       return this.settings;
     } catch (error) {
@@ -295,6 +299,31 @@ export class SettingsManager {
       ...stored,
       general: { ...defaults.general, ...stored.general },
       keybinds: { ...defaults.keybinds, ...stored.keybinds },
+    };
+  }
+
+  /**
+   * Apply one-time migrations for settings that previously used different defaults.
+   */
+  private migrateSettings(stored: MoonightSettings): {
+    settings: Partial<MoonightSettings>;
+    changed: boolean;
+  } {
+    if (stored.version !== '1.0.0') {
+      return { settings: stored, changed: false };
+    }
+
+    return {
+      settings: {
+        ...stored,
+        version: DEFAULT_SETTINGS.version,
+        general: {
+          ...stored.general,
+          maximizeOnOpen: true,
+          defaultViewMode: 'continuous',
+        },
+      },
+      changed: true,
     };
   }
 }

@@ -80,6 +80,7 @@ pub fn run() {
             commands::get_file_directory,
             commands::open_settings,
             commands::set_print_enabled,
+            commands::fit_main_window_for_pdf,
             commands::take_cli_payload,
             commands::validate_open_path,
         ])
@@ -131,6 +132,7 @@ pub fn run() {
                             files: valid_files,
                             page: None,
                         };
+                        let _ = commands::fit_main_window_for_pdf(app_handle_for_open.clone(), true);
                         store_pending_payload(&app_handle_for_open, payload.clone());
                         let _ = window_for_open.emit("cli-open-files", payload);
                     }
@@ -166,6 +168,7 @@ pub fn run() {
                     println!("Opening files from CLI: {:?}", payload.files);
 
                     // Store and emit event (frontend will also pull pending on ready)
+                    let _ = commands::fit_main_window_for_pdf(app_handle.clone(), true);
                     store_pending_payload(&app_handle, payload.clone());
                     window.emit("cli-open-files", payload)?;
                 }

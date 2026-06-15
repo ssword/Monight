@@ -13,6 +13,7 @@ interface KeybindContext {
   openSettings: () => Promise<void>;
   getInitialFilterSettings: () => FilterSettings;
   getInitialViewMode: () => 'single' | 'continuous';
+  applyWindowAfterOpen: () => Promise<void>;
   updateTabBarVisibility: () => void;
   saveCurrentTabState: () => void;
   updateUI: () => void;
@@ -27,6 +28,7 @@ export function registerKeybindActions({
   openSettings,
   getInitialFilterSettings,
   getInitialViewMode,
+  applyWindowAfterOpen,
   updateTabBarVisibility,
   saveCurrentTabState,
   updateUI,
@@ -69,6 +71,7 @@ export function registerKeybindActions({
           initialViewMode: getInitialViewMode(),
         });
         updateTabBarVisibility();
+        await applyWindowAfterOpen();
       } catch (error) {
         console.error('Error reopening tab:', error);
       }

@@ -1,6 +1,4 @@
 import { invoke } from '@tauri-apps/api/core';
-import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
-import { LogicalSize } from '@tauri-apps/api/window';
 import { open } from '@tauri-apps/plugin-dialog';
 import type { FilterSettings } from '../scripts/filters';
 import type { TabManager } from '../scripts/tabs';
@@ -12,6 +10,10 @@ interface OpenFilesOptions {
   onError?: (message: string) => void;
   initialFilterSettings?: FilterSettings;
   initialViewMode?: 'single' | 'continuous';
+}
+
+interface EnsureViewingSizeOptions {
+  fillAvailableHeight?: boolean;
 }
 
 export async function openFiles(
@@ -115,23 +117,10 @@ export async function updatePrintMenuState(tabManager: TabManager | null): Promi
 }
 
 // Ensure window is at minimum comfortable viewing size for PDFs
-export async function ensureMinimumViewingSize(): Promise<void> {
-  const currentWindow = getCurrentWebviewWindow();
-
-  const size = await currentWindow.innerSize();
-  const minWidth = 1000;
-  const minHeight = 650;
-
-  // Only resize if window is smaller than minimum
-  if (size.width < minWidth || size.height < minHeight) {
-    // Calculate new size, maintaining aspect ratio if needed
-    const newWidth = Math.max(size.width, minWidth);
-    const newHeight = Math.max(size.height, minHeight);
-
-    await currentWindow.setSize(new LogicalSize(newWidth, newHeight));
-    await currentWindow.center();
-    console.log(`Window resized to ${newWidth}x${newHeight}`);
-  }
+export async function ensureMinimumViewingSize({
+  fillAvailableHeight = false,
+}: EnsureViewingSizeOptions = {}): Promise<void> {
+  await invoke('fit_main_window_for_pdf', { fillAvailableHeight });
 }
 
 // Print current PDF

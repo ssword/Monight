@@ -1,9 +1,54 @@
 use std::path::Path;
-use tauri::{command, AppHandle, Manager, State, WebviewUrl, WebviewWindowBuilder};
-
-use crate::{
-    is_supported_extension, take_cli_payload_inner, CliPayload, PendingCliPayload,
+use tauri::{
+    command, AppHandle, Manager, PhysicalPosition, PhysicalSize, State, WebviewUrl,
+    WebviewWindowBuilder,
 };
+
+use crate::{is_supported_extension, take_cli_payload_inner, CliPayload, PendingCliPayload};
+
+const PDF_VIEW_MIN_WIDTH: f64 = 1000.0;
+const PDF_VIEW_MAX_WIDTH: f64 = 1320.0;
+const PDF_VIEW_MIN_HEIGHT: f64 = 650.0;
+const PDF_VIEW_WIDTH_RATIO: f64 = 0.62;
+const PDF_VIEW_EDGE_PADDING: f64 = 24.0;
+
+#[derive(Debug, PartialEq)]
+struct PdfWindowFrame {
+    width: u32,
+    height: u32,
+    x: i32,
+    y: i32,
+}
+
+fn scaled_pixels(value: f64, scale_factor: f64) -> u32 {
+    (value * scale_factor).round().max(1.0) as u32
+}
+
+fn calculate_pdf_window_frame(
+    work_x: i32,
+    work_y: i32,
+    available_width: u32,
+    available_height: u32,
+    scale_factor: f64,
+) -> PdfWindowFrame {
+    let min_width = scaled_pixels(PDF_VIEW_MIN_WIDTH, scale_factor).min(available_width.max(1));
+    let max_width = scaled_pixels(PDF_VIEW_MAX_WIDTH, scale_factor).min(available_width.max(1));
+    let edge_padding = scaled_pixels(PDF_VIEW_EDGE_PADDING, scale_factor);
+    let padded_max_width = available_width.saturating_sub(edge_padding).max(1);
+    let width = ((available_width as f64 * PDF_VIEW_WIDTH_RATIO).round() as u32).clamp(
+        min_width.min(padded_max_width),
+        max_width.min(padded_max_width),
+    );
+    let height = available_height.max(1);
+    let x = work_x + ((available_width.saturating_sub(width) / 2) as i32);
+
+    PdfWindowFrame {
+        width,
+        height,
+        x,
+        y: work_y,
+    }
+}
 
 /// Read a PDF file from the filesystem and return as byte array
 #[command]
@@ -62,7 +107,9 @@ pub async fn open_settings(app: AppHandle) -> Result<(), String> {
     }
 
     // Get main window to use as parent
-    let main_window = app.get_webview_window("main").ok_or("Main window not found")?;
+    let main_window = app
+        .get_webview_window("main")
+        .ok_or("Main window not found")?;
 
     // Determine the URL based on whether we're in development or production
     #[cfg(debug_assertions)]
@@ -97,6 +144,57 @@ pub fn set_print_enabled(app: AppHandle, enabled: bool) {
     }
 }
 
+/// Fit the main window for comfortable PDF reading.
+#[command]
+pub fn fit_main_window_for_pdf(app: AppHandle, fill_available_height: bool) -> Result<(), String> {
+    let window = app
+        .get_webview_window("main")
+        .ok_or("Main window not found")?;
+    let scale_factor = window.scale_factor().map_err(|e| e.to_string())?;
+
+    if !fill_available_height {
+        let size = window.inner_size().map_err(|e| e.to_string())?;
+        let width = size
+            .width
+            .max(scaled_pixels(PDF_VIEW_MIN_WIDTH, scale_factor));
+        let height = size
+            .height
+            .max(scaled_pixels(PDF_VIEW_MIN_HEIGHT, scale_factor));
+
+        if width != size.width || height != size.height {
+            window
+                .set_size(PhysicalSize::new(width, height))
+                .map_err(|e| e.to_string())?;
+            window.center().map_err(|e| e.to_string())?;
+        }
+
+        return Ok(());
+    }
+
+    let Some(monitor) = window.current_monitor().map_err(|e| e.to_string())? else {
+        window.maximize().map_err(|e| e.to_string())?;
+        return Ok(());
+    };
+
+    let work_area = monitor.work_area();
+    let frame = calculate_pdf_window_frame(
+        work_area.position.x,
+        work_area.position.y,
+        work_area.size.width,
+        work_area.size.height,
+        monitor.scale_factor(),
+    );
+
+    window
+        .set_size(PhysicalSize::new(frame.width, frame.height))
+        .map_err(|e| e.to_string())?;
+    window
+        .set_position(PhysicalPosition::new(frame.x, frame.y))
+        .map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
 /// Get and clear any pending CLI-open payloads
 #[command]
 pub fn take_cli_payload(state: State<PendingCliPayload>) -> Option<CliPayload> {
@@ -111,8 +209,8 @@ pub fn validate_open_path(path: String) -> Result<String, String> {
         return Err(format!("File not found: {}", path));
     }
 
-    let canonical = std::fs::canonicalize(raw_path)
-        .map_err(|e| format!("Invalid path: {} ({})", path, e))?;
+    let canonical =
+        std::fs::canonicalize(raw_path).map_err(|e| format!("Invalid path: {} ({})", path, e))?;
 
     if !is_supported_extension(&canonical) {
         let ext = canonical.extension().and_then(|e| e.to_str()).unwrap_or("");
@@ -148,5 +246,25 @@ mod tests {
             get_file_directory("/path/to/document.pdf".to_string()),
             "/path/to"
         );
+    }
+
+    #[test]
+    fn test_pdf_window_frame_uses_logical_width_on_retina() {
+        let frame = calculate_pdf_window_frame(0, 48, 3456, 2112, 2.0);
+
+        assert_eq!(frame.height, 2112);
+        assert_eq!(frame.width, 2143);
+        assert_eq!(frame.x, 656);
+        assert_eq!(frame.y, 48);
+    }
+
+    #[test]
+    fn test_pdf_window_frame_fits_small_displays() {
+        let frame = calculate_pdf_window_frame(0, 0, 900, 700, 1.0);
+
+        assert_eq!(frame.height, 700);
+        assert_eq!(frame.width, 876);
+        assert_eq!(frame.x, 12);
+        assert_eq!(frame.y, 0);
     }
 }

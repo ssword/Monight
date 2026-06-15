@@ -69,11 +69,9 @@ async function getAppInfo(): Promise<AppInfo> {
 }
 
 const applyWindowAfterOpen = async (): Promise<void> => {
-  if (currentSettings?.general.maximizeOnOpen) {
-    const currentWindow = getCurrentWebviewWindow();
-    await currentWindow.maximize();
-  }
-  await ensureMinimumViewingSize();
+  await ensureMinimumViewingSize({
+    fillAvailableHeight: currentSettings?.general.maximizeOnOpen ?? false,
+  });
 };
 
 const refreshAfterOpen = async (): Promise<void> => {
@@ -197,6 +195,7 @@ async function initializeApp(): Promise<void> {
       openSettings,
       getInitialFilterSettings,
       getInitialViewMode,
+      applyWindowAfterOpen,
       updateTabBarVisibility: updateTabBar,
       saveCurrentTabState: saveStateForTab,
       updateUI: updateUIForTab,
@@ -268,12 +267,6 @@ async function initializeApp(): Promise<void> {
 
     // Get current window
     const currentWindow = getCurrentWebviewWindow();
-
-    // Maximize on open if setting is enabled
-    if (settings.general.maximizeOnOpen) {
-      await currentWindow.maximize();
-      console.log('Window maximized on startup');
-    }
 
     // Show window after initialization
     await currentWindow.show();
