@@ -1,5 +1,7 @@
 import type { PDFDocumentProxy, PDFPageProxy, RenderTask } from 'pdfjs-dist';
 import * as pdfjsLib from 'pdfjs-dist';
+import { deriveScaledDimensions } from '../lib/dimensions';
+import { hasValueChanged } from '../lib/guards';
 
 // Configure PDF.js worker
 pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
@@ -105,6 +107,7 @@ export class PDFViewer {
   private renderTasks: Map<number, RenderTask> = new Map();
   private pageHeights: Map<number, number> = new Map();
   private pageWidths: Map<number, number> = new Map();
+  private baseDimensions: Map<number, { width: number; height: number }> = new Map();
   private scrollRafId: number | null = null;
   private visibleRenderLoop: Promise<void> | null = null;
   private queuedVisibleRender: VisibleRenderRequest | null = null;
@@ -152,6 +155,17 @@ export class PDFViewer {
       this.state.currentPage = 1;
       this.state.fileName = fileName;
       this.state.filePath = filePath;
+
+      // Cache base dimensions (scale=1, rotation=0) for all pages
+      this.baseDimensions.clear();
+      for (let pageNum = 1; pageNum <= this.pdfDoc.numPages; pageNum++) {
+        const page = await this.pdfDoc.getPage(pageNum);
+        const viewport = page.getViewport({ scale: 1.0, rotation: 0 });
+        this.baseDimensions.set(pageNum, {
+          width: viewport.width,
+          height: viewport.height,
+        });
+      }
 
       // Render first page
       await this.renderPage(1);
@@ -334,8 +348,11 @@ export class PDFViewer {
   }
 
   async setZoom(zoom: number): Promise<void> {
+    const clamped = Math.max(0.25, Math.min(zoom, 5.0));
+    if (!hasValueChanged(this.state.zoom, clamped)) return;
+
     const currentPage = this.state.currentPage;
-    this.state.zoom = Math.max(0.25, Math.min(zoom, 5.0));
+    this.state.zoom = clamped;
 
     if (this.state.viewMode === 'continuous') {
       await this.calculateAllPageDimensions();
@@ -349,11 +366,25 @@ export class PDFViewer {
   async fitToWidth(): Promise<void> {
     if (!this.pdfDoc || !this.canvas) return;
 
-    const page = await this.pdfDoc.getPage(this.state.currentPage);
-    const viewport = page.getViewport({ scale: 1.0 });
+    const base = this.baseDimensions.get(this.state.currentPage);
+    let baseWidth: number;
+    if (base) {
+      // Use cached base dimensions — derive the effective width accounting for rotation
+      const dims = deriveScaledDimensions({
+        baseWidth: base.width,
+        baseHeight: base.height,
+        zoom: 1.0,
+        rotation: this.state.rotation,
+      });
+      baseWidth = dims.width;
+    } else {
+      const page = await this.pdfDoc.getPage(this.state.currentPage);
+      const viewport = page.getViewport({ scale: 1.0, rotation: this.state.rotation });
+      baseWidth = viewport.width;
+    }
     const containerWidth = this.container.clientWidth - 40; // 20px padding each side
 
-    this.state.zoom = containerWidth / viewport.width;
+    this.state.zoom = containerWidth / baseWidth;
 
     if (this.state.viewMode === 'continuous') {
       await this.calculateAllPageDimensions();
@@ -366,13 +397,29 @@ export class PDFViewer {
   async fitToPage(): Promise<void> {
     if (!this.pdfDoc || !this.canvas) return;
 
-    const page = await this.pdfDoc.getPage(this.state.currentPage);
-    const viewport = page.getViewport({ scale: 1.0 });
+    const base = this.baseDimensions.get(this.state.currentPage);
+    let baseWidth: number;
+    let baseHeight: number;
+    if (base) {
+      const dims = deriveScaledDimensions({
+        baseWidth: base.width,
+        baseHeight: base.height,
+        zoom: 1.0,
+        rotation: this.state.rotation,
+      });
+      baseWidth = dims.width;
+      baseHeight = dims.height;
+    } else {
+      const page = await this.pdfDoc.getPage(this.state.currentPage);
+      const viewport = page.getViewport({ scale: 1.0, rotation: this.state.rotation });
+      baseWidth = viewport.width;
+      baseHeight = viewport.height;
+    }
     const containerWidth = this.container.clientWidth - 40;
     const containerHeight = this.container.clientHeight - 40;
 
-    const widthScale = containerWidth / viewport.width;
-    const heightScale = containerHeight / viewport.height;
+    const widthScale = containerWidth / baseWidth;
+    const heightScale = containerHeight / baseHeight;
 
     this.state.zoom = Math.min(widthScale, heightScale);
 
@@ -590,20 +637,34 @@ export class PDFViewer {
     this.renderedPages.clear();
     this.pageHeights.clear();
     this.pageWidths.clear();
+    this.baseDimensions.clear();
   }
 
   private async calculateAllPageDimensions(): Promise<void> {
     if (!this.pdfDoc) return;
 
     for (let pageNum = 1; pageNum <= this.state.totalPages; pageNum++) {
-      const page = await this.pdfDoc.getPage(pageNum);
-      const viewport = page.getViewport({
-        scale: this.state.zoom,
-        rotation: this.state.rotation,
-      });
-
-      this.pageWidths.set(pageNum, Math.floor(viewport.width));
-      this.pageHeights.set(pageNum, Math.floor(viewport.height));
+      const base = this.baseDimensions.get(pageNum);
+      if (base) {
+        // Derive from cached base dimensions (no page fetch needed)
+        const scaled = deriveScaledDimensions({
+          baseWidth: base.width,
+          baseHeight: base.height,
+          zoom: this.state.zoom,
+          rotation: this.state.rotation,
+        });
+        this.pageWidths.set(pageNum, Math.floor(scaled.width));
+        this.pageHeights.set(pageNum, Math.floor(scaled.height));
+      } else {
+        // Fallback: fetch from PDF.js (should only happen if cache wasn't populated)
+        const page = await this.pdfDoc.getPage(pageNum);
+        const viewport = page.getViewport({
+          scale: this.state.zoom,
+          rotation: this.state.rotation,
+        });
+        this.pageWidths.set(pageNum, Math.floor(viewport.width));
+        this.pageHeights.set(pageNum, Math.floor(viewport.height));
+      }
     }
 
     // Update scroll container height
