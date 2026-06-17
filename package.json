@@ -1,7 +1,7 @@
 {
   "name": "monight",
   "private": true,
-  "version": "1.0.3",
+  "version": "1.0.4",
   "type": "module",
   "description": "Monight (墨页) - A modern PDF reader built with Tauri",
   "scripts": {

@@ -64,7 +64,7 @@ async function getAppInfo(): Promise<AppInfo> {
     return { name, version, tauriVersion };
   } catch (error) {
     console.error('Failed to get app info:', error);
-    return { name: 'Monight', version: '1.0.0', tauriVersion: 'Unknown' };
+    return { name: 'Monight', version: '1.0.4', tauriVersion: 'Unknown' };
   }
 }
 

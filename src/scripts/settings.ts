@@ -31,7 +31,7 @@ export interface MoonightSettings {
  * Default settings
  */
 export const DEFAULT_SETTINGS: MoonightSettings = {
-  version: '1.0.3',
+  version: '1.0.4',
   general: {
     maximizeOnOpen: true,
     displayThumbs: true,
@@ -309,19 +309,26 @@ export class SettingsManager {
     settings: Partial<MoonightSettings>;
     changed: boolean;
   } {
-    if (stored.version !== '1.0.0') {
-      return { settings: stored, changed: false };
+    const migrated =
+      stored.version === '1.0.0'
+        ? {
+            ...stored,
+            general: {
+              ...stored.general,
+              maximizeOnOpen: true,
+              defaultViewMode: 'continuous' as const,
+            },
+          }
+        : stored;
+
+    if (migrated.version === DEFAULT_SETTINGS.version) {
+      return { settings: migrated, changed: false };
     }
 
     return {
       settings: {
-        ...stored,
+        ...migrated,
         version: DEFAULT_SETTINGS.version,
-        general: {
-          ...stored.general,
-          maximizeOnOpen: true,
-          defaultViewMode: 'continuous',
-        },
       },
       changed: true,
     };
