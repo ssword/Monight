@@ -51,3 +51,8 @@ agents.md
 .ace-tool/
 .claude/
 CLAUDE.md
+.serena/
+.agents/
+
+PERFORMANCE_PRD.md
+skills-lock.json
