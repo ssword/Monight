@@ -2,6 +2,12 @@ import type { PDFDocumentProxy, PDFPageProxy, RenderTask } from 'pdfjs-dist';
 import * as pdfjsLib from 'pdfjs-dist';
 import { deriveScaledDimensions } from '../lib/dimensions';
 import { hasValueChanged } from '../lib/guards';
+import {
+  buildOffsetArray,
+  currentPageAt,
+  positionAtPage,
+  visiblePageRange,
+} from '../lib/scroll-geometry';
 
 // Configure PDF.js worker
 pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
@@ -108,6 +114,7 @@ export class PDFViewer {
   private pageHeights: Map<number, number> = new Map();
   private pageWidths: Map<number, number> = new Map();
   private baseDimensions: Map<number, { width: number; height: number }> = new Map();
+  private offsetArray: number[] = [];
   private scrollRafId: number | null = null;
   private visibleRenderLoop: Promise<void> | null = null;
   private queuedVisibleRender: VisibleRenderRequest | null = null;
@@ -638,6 +645,7 @@ export class PDFViewer {
     this.pageHeights.clear();
     this.pageWidths.clear();
     this.baseDimensions.clear();
+    this.offsetArray = [];
   }
 
   private async calculateAllPageDimensions(): Promise<void> {
@@ -667,53 +675,47 @@ export class PDFViewer {
       }
     }
 
-    // Update scroll container height
+    // Build the cumulative offset array from page heights
+    const heights: number[] = [];
+    for (let pageNum = 1; pageNum <= this.state.totalPages; pageNum++) {
+      heights.push(this.pageHeights.get(pageNum) || 0);
+    }
+    this.offsetArray = buildOffsetArray(heights, this.pageGap, this.pagePadding);
+
+    // Update scroll container height using the precomputed total
     this.updateScrollContainerHeight();
   }
 
   private updateScrollContainerHeight(): void {
     if (!this.scrollContainer) return;
 
-    // Calculate total height needed for all pages
-    const pageGap = this.pageGap;
-    let totalHeight = this.pagePadding * 2;
-
-    for (let pageNum = 1; pageNum <= this.state.totalPages; pageNum++) {
-      const pageHeight = this.pageHeights.get(pageNum) || 0;
-      totalHeight += pageHeight;
-      if (pageNum < this.state.totalPages) {
-        totalHeight += pageGap;
-      }
-    }
-
+    // Total height is the last entry in the offset array
+    const totalHeight = this.offsetArray[this.offsetArray.length - 1] || 0;
     this.scrollContainer.style.minHeight = `${totalHeight}px`;
   }
 
   private calculateVisiblePages(bufferPages = this.renderBufferPages): number[] {
-    if (!this.scrollContainer) return [];
+    if (!this.scrollContainer || this.offsetArray.length === 0) return [];
 
     const scrollTop = this.container.scrollTop;
     const viewportHeight = this.container.clientHeight;
-    const scrollBottom = scrollTop + viewportHeight;
+
+    // Compute a pixel buffer from the average page height and bufferPages multiplier
+    const avgPageHeight =
+      this.state.totalPages > 0
+        ? (this.offsetArray[this.offsetArray.length - 1] -
+            2 * this.pagePadding -
+            (this.state.totalPages - 1) * this.pageGap) /
+          this.state.totalPages
+        : 0;
+    const bufferPx = avgPageHeight * bufferPages;
+
+    const [start, end] = visiblePageRange(this.offsetArray, scrollTop, viewportHeight, bufferPx);
 
     const visible: number[] = [];
-    let currentY = this.pagePadding;
-    const pageGap = this.pageGap;
-
-    for (let pageNum = 1; pageNum <= this.state.totalPages; pageNum++) {
-      const pageHeight = this.pageHeights.get(pageNum) || 0;
-      const pageTop = currentY;
-      const pageBottom = currentY + pageHeight;
-
-      const buffer = (this.pageHeights.get(pageNum) || 0) * bufferPages;
-
-      if (pageBottom + buffer >= scrollTop && pageTop - buffer <= scrollBottom) {
-        visible.push(pageNum);
-      }
-
-      currentY += pageHeight + pageGap;
+    for (let i = start; i <= end; i++) {
+      visible.push(i);
     }
-
     return visible;
   }
 
@@ -956,28 +958,15 @@ export class PDFViewer {
   }
 
   private updateCurrentPageFromScroll(): void {
-    if (!this.scrollContainer) return;
+    if (!this.scrollContainer || this.offsetArray.length === 0) return;
 
     const scrollTop = this.container.scrollTop;
     const focusY = scrollTop + this.pagePadding + 1;
 
-    let currentY = this.pagePadding;
-    const pageGap = this.pageGap;
-
-    for (let pageNum = 1; pageNum <= this.state.totalPages; pageNum++) {
-      const pageHeight = this.pageHeights.get(pageNum) || 0;
-      const pageTop = currentY;
-      const pageBottom = currentY + pageHeight + pageGap;
-
-      if (focusY >= pageTop && focusY < pageBottom) {
-        if (this.state.currentPage !== pageNum) {
-          this.state.currentPage = pageNum;
-          this.onPageChange?.(pageNum);
-        }
-        return;
-      }
-
-      currentY += pageHeight + pageGap;
+    const pageNum = currentPageAt(this.offsetArray, focusY);
+    if (this.state.currentPage !== pageNum) {
+      this.state.currentPage = pageNum;
+      this.onPageChange?.(pageNum);
     }
   }
 
@@ -997,14 +986,16 @@ export class PDFViewer {
   }
 
   private getPagePosition(pageNum: number): number {
+    if (this.offsetArray.length > 0) {
+      return positionAtPage(this.offsetArray, pageNum);
+    }
+    // Fallback for when offset array hasn't been built yet
     let yPos = this.pagePadding;
     const pageGap = this.pageGap;
-
     for (let i = 1; i < pageNum; i++) {
       yPos += this.pageHeights.get(i) || 0;
       yPos += pageGap;
     }
-
     return yPos;
   }
 
