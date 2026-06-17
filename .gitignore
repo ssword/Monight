@@ -33,7 +33,6 @@ src-tauri/target/
 .env.development.local
 
 # Tauri
-src-tauri/Cargo.lock
 src-tauri/WixTools/
 
 # Testing

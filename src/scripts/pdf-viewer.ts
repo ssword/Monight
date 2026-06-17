@@ -17,6 +17,11 @@ interface ViewState {
   viewMode: 'single' | 'continuous';
 }
 
+interface VisibleRenderRequest {
+  forceRender: boolean;
+  isInitialRender: boolean;
+}
+
 // Align canvas size to PDF.js viewer rounding to avoid subpixel blur.
 const calcRound = (() => {
   const element = document.createElement('div');
@@ -94,14 +99,19 @@ export class PDFViewer {
 
   // Continuous scroll properties
   private canvases: Map<number, HTMLCanvasElement> = new Map();
+  private renderedPages: Set<number> = new Set();
   private scrollContainer: HTMLDivElement | null = null;
   private visiblePages: Set<number> = new Set();
   private renderTasks: Map<number, RenderTask> = new Map();
   private pageHeights: Map<number, number> = new Map();
   private pageWidths: Map<number, number> = new Map();
   private scrollRafId: number | null = null;
+  private visibleRenderLoop: Promise<void> | null = null;
+  private queuedVisibleRender: VisibleRenderRequest | null = null;
   private readonly pageGap = 20;
   private readonly pagePadding = 20;
+  private readonly renderBufferPages = 2;
+  private readonly cleanupBufferPages = 5;
   private handleScrollBound: () => void;
 
   constructor(containerId: string, canvasId: string = 'pdf-canvas') {
@@ -180,8 +190,8 @@ export class PDFViewer {
         rotation: this.state.rotation,
       });
 
-      // Set canvas dimensions with device pixel ratio for sharp rendering
-      const context = this.canvas.getContext('2d');
+      const renderCanvas = document.createElement('canvas');
+      const context = renderCanvas.getContext('2d', { alpha: false });
       if (!context) {
         throw new Error('Could not get canvas context');
       }
@@ -195,16 +205,15 @@ export class PDFViewer {
       const pageWidth = floorToDivide(calcRound(viewport.width), sfx[1]);
       const pageHeight = floorToDivide(calcRound(viewport.height), sfy[1]);
 
-      this.canvas.width = canvasWidth;
-      this.canvas.height = canvasHeight;
-      this.canvas.style.width = `${pageWidth}px`;
-      this.canvas.style.height = `${pageHeight}px`;
+      renderCanvas.width = canvasWidth;
+      renderCanvas.height = canvasHeight;
+      context.fillStyle = '#ffffff';
+      context.fillRect(0, 0, canvasWidth, canvasHeight);
 
       outputScale.sx = canvasWidth / pageWidth;
       outputScale.sy = canvasHeight / pageHeight;
 
-      // Render page
-      this.renderTask = page.render({
+      const renderTask = page.render({
         canvasContext: context,
         viewport,
         transform:
@@ -212,9 +221,20 @@ export class PDFViewer {
             ? [outputScale.sx, 0, 0, outputScale.sy, 0, 0]
             : undefined,
       } as unknown as Parameters<PDFPageProxy['render']>[0]);
+      this.renderTask = renderTask;
 
-      await this.renderTask.promise;
+      await renderTask.promise;
+      if (this.renderTask !== renderTask || !this.canvas) {
+        return;
+      }
       this.renderTask = null;
+
+      this.canvas.width = canvasWidth;
+      this.canvas.height = canvasHeight;
+      this.canvas.style.width = `${pageWidth}px`;
+      this.canvas.style.height = `${pageHeight}px`;
+      const targetContext = this.canvas.getContext('2d', { alpha: false });
+      targetContext?.drawImage(renderCanvas, 0, 0);
 
       // Update state
       const prevPage = this.state.currentPage;
@@ -505,8 +525,6 @@ export class PDFViewer {
   private async initializeContinuousScroll(): Promise<void> {
     if (!this.pdfDoc) return;
 
-    console.log('Initializing continuous scroll mode...');
-
     // Hide single-page canvas
     if (this.canvas) {
       this.canvas.style.display = 'none';
@@ -517,16 +535,13 @@ export class PDFViewer {
       this.scrollContainer = document.createElement('div');
       this.scrollContainer.className = 'scroll-wrapper';
       this.container.appendChild(this.scrollContainer);
-      console.log('Created scroll-wrapper element');
     }
 
     // Add continuous-scroll class to container
     this.container.classList.add('continuous-scroll');
-    console.log('Added continuous-scroll class to container');
 
     // Calculate dimensions for all pages
     await this.calculateAllPageDimensions();
-    console.log('Calculated page dimensions');
 
     // Set up scroll listener
     this.container.addEventListener('scroll', this.handleScrollBound);
@@ -546,6 +561,7 @@ export class PDFViewer {
       if (task) task.cancel();
     });
     this.renderTasks.clear();
+    this.queuedVisibleRender = null;
 
     // Remove all continuous canvases
     this.canvases.forEach((canvas) => {
@@ -571,6 +587,7 @@ export class PDFViewer {
 
     // Clear state
     this.visiblePages.clear();
+    this.renderedPages.clear();
     this.pageHeights.clear();
     this.pageWidths.clear();
   }
@@ -608,14 +625,10 @@ export class PDFViewer {
       }
     }
 
-    // Set minimum height to ensure scrolling works
     this.scrollContainer.style.minHeight = `${totalHeight}px`;
-    console.log(
-      `Set scroll container min-height to ${totalHeight}px for ${this.state.totalPages} pages`,
-    );
   }
 
-  private calculateVisiblePages(): number[] {
+  private calculateVisiblePages(bufferPages = this.renderBufferPages): number[] {
     if (!this.scrollContainer) return [];
 
     const scrollTop = this.container.scrollTop;
@@ -631,8 +644,6 @@ export class PDFViewer {
       const pageTop = currentY;
       const pageBottom = currentY + pageHeight;
 
-      // Check if page is in viewport (with buffer)
-      const bufferPages = 1;
       const buffer = (this.pageHeights.get(pageNum) || 0) * bufferPages;
 
       if (pageBottom + buffer >= scrollTop && pageTop - buffer <= scrollBottom) {
@@ -646,12 +657,40 @@ export class PDFViewer {
   }
 
   private async renderVisiblePages(forceRender = false, isInitialRender = false): Promise<void> {
+    this.queuedVisibleRender = {
+      forceRender: (this.queuedVisibleRender?.forceRender ?? false) || forceRender,
+      isInitialRender: (this.queuedVisibleRender?.isInitialRender ?? false) || isInitialRender,
+    };
+
+    if (this.visibleRenderLoop) {
+      return this.visibleRenderLoop;
+    }
+
+    this.visibleRenderLoop = this.drainVisibleRenderQueue();
+    try {
+      await this.visibleRenderLoop;
+    } finally {
+      this.visibleRenderLoop = null;
+    }
+  }
+
+  private async drainVisibleRenderQueue(): Promise<void> {
+    while (this.queuedVisibleRender) {
+      const request = this.queuedVisibleRender;
+      this.queuedVisibleRender = null;
+      await this.renderVisiblePagesOnce(request.forceRender, request.isInitialRender);
+    }
+  }
+
+  private async renderVisiblePagesOnce(
+    forceRender = false,
+    isInitialRender = false,
+  ): Promise<void> {
     if (!this.pdfDoc || !this.scrollContainer) return;
 
-    const visiblePageNums = this.calculateVisiblePages();
-    const newVisiblePages = new Set(visiblePageNums);
-
-    console.log(`Visible pages in continuous mode: ${Array.from(visiblePageNums).join(', ')}`);
+    const renderBufferPages = forceRender ? this.cleanupBufferPages : this.renderBufferPages;
+    const visiblePageNums = this.calculateVisiblePages(renderBufferPages);
+    const pagesToKeep = new Set(this.calculateVisiblePages(this.cleanupBufferPages));
 
     // On initial render, ensure we render enough pages to fill the viewport
     // This handles cases where layout hasn't settled yet
@@ -660,60 +699,71 @@ export class PDFViewer {
       for (let i = 1; i <= minInitialPages; i++) {
         if (!visiblePageNums.includes(i)) {
           visiblePageNums.push(i);
-          newVisiblePages.add(i);
         }
+        pagesToKeep.add(i);
       }
-      console.log(`Initial render - rendering first ${minInitialPages} pages`);
     }
 
     // Ensure at least the first page is rendered if no pages are visible
     if (visiblePageNums.length === 0) {
       visiblePageNums.push(1);
-      newVisiblePages.add(1);
+      pagesToKeep.add(1);
+    }
+
+    if (forceRender) {
+      this.renderedPages.clear();
     }
 
     // Render new pages that came into view
     for (const pageNum of visiblePageNums) {
       this.updateCanvasPosition(pageNum);
-      if (forceRender || !this.visiblePages.has(pageNum)) {
-        await this.renderPageToContinuousCanvas(pageNum);
+      if (forceRender || !this.renderedPages.has(pageNum)) {
+        await this.renderPageToContinuousCanvas(pageNum, forceRender);
       }
     }
 
     // Cleanup pages that are no longer visible
-    this.cleanupInvisiblePages(newVisiblePages);
+    this.cleanupInvisiblePages(pagesToKeep);
 
-    this.visiblePages = newVisiblePages;
+    this.visiblePages = pagesToKeep;
 
     // Update current page based on scroll position
     this.updateCurrentPageFromScroll();
   }
 
-  private cleanupInvisiblePages(newVisiblePages: Set<number>): void {
-    // Remove canvases for pages no longer visible
-    this.visiblePages.forEach((pageNum) => {
-      if (!newVisiblePages.has(pageNum)) {
-        // Cancel render task if any
-        const task = this.renderTasks.get(pageNum);
-        if (task) {
-          task.cancel();
-          this.renderTasks.delete(pageNum);
-        }
-
-        // Remove canvas
-        const canvas = this.canvases.get(pageNum);
-        if (canvas?.parentNode) {
-          canvas.parentNode.removeChild(canvas);
-        }
-        this.canvases.delete(pageNum);
+  private cleanupInvisiblePages(pagesToKeep: Set<number>): void {
+    this.renderTasks.forEach((task, pageNum) => {
+      if (!pagesToKeep.has(pageNum)) {
+        task.cancel();
+        this.renderTasks.delete(pageNum);
       }
+    });
+
+    this.canvases.forEach((canvas, pageNum) => {
+      if (pagesToKeep.has(pageNum)) return;
+
+      if (canvas.parentNode) {
+        canvas.parentNode.removeChild(canvas);
+      }
+      this.canvases.delete(pageNum);
+      this.renderedPages.delete(pageNum);
     });
   }
 
-  private async renderPageToContinuousCanvas(pageNum: number): Promise<void> {
+  private async renderPageToContinuousCanvas(pageNum: number, forceRender = false): Promise<void> {
     if (!this.pdfDoc || !this.scrollContainer) return;
 
     try {
+      const activeTask = this.renderTasks.get(pageNum);
+      if (activeTask) {
+        if (!forceRender) {
+          await activeTask.promise;
+          return;
+        }
+        activeTask.cancel();
+        this.renderTasks.delete(pageNum);
+      }
+
       // Get page
       const page = await this.pdfDoc.getPage(pageNum);
 
@@ -723,23 +773,13 @@ export class PDFViewer {
         rotation: this.state.rotation,
       });
 
-      // Create canvas if it doesn't exist
-      let canvas = this.canvases.get(pageNum);
-      if (!canvas) {
-        canvas = document.createElement('canvas');
-        canvas.id = `${this.canvasId}-page-${pageNum}`;
-        canvas.dataset.pageNum = pageNum.toString();
-        canvas.style.display = 'block'; // Explicitly show canvas in continuous mode
-        this.canvases.set(pageNum, canvas);
-
-        // Insert canvas at correct position
-        this.insertCanvasAtPosition(canvas, pageNum);
-      }
-
-      this.updateCanvasPosition(pageNum);
+      const canvas = document.createElement('canvas');
+      canvas.id = `${this.canvasId}-page-${pageNum}`;
+      canvas.dataset.pageNum = pageNum.toString();
+      canvas.style.display = 'block';
 
       // Set canvas dimensions
-      const context = canvas.getContext('2d');
+      const context = canvas.getContext('2d', { alpha: false });
       if (!context) return;
 
       const outputScale = getOutputScale();
@@ -755,12 +795,15 @@ export class PDFViewer {
       canvas.height = canvasHeight;
       canvas.style.width = `${pageWidth}px`;
       canvas.style.height = `${pageHeight}px`;
+      canvas.style.top = `${this.getPagePosition(pageNum)}px`;
 
       outputScale.sx = canvasWidth / pageWidth;
       outputScale.sy = canvasHeight / pageHeight;
 
       // Apply current filter
       canvas.style.filter = this.currentFilterCSS;
+      context.fillStyle = '#ffffff';
+      context.fillRect(0, 0, canvasWidth, canvasHeight);
 
       // Cancel previous render task for this page
       const prevTask = this.renderTasks.get(pageNum);
@@ -781,9 +824,26 @@ export class PDFViewer {
       this.renderTasks.set(pageNum, renderTask);
 
       await renderTask.promise;
+
+      if (this.renderTasks.get(pageNum) !== renderTask || !this.scrollContainer) {
+        return;
+      }
+
       this.renderTasks.delete(pageNum);
 
-      console.log(`Rendered page ${pageNum} in continuous mode`);
+      if (!this.calculateVisiblePages(this.cleanupBufferPages).includes(pageNum)) {
+        return;
+      }
+
+      const previousCanvas = this.canvases.get(pageNum);
+      if (previousCanvas?.parentNode) {
+        previousCanvas.parentNode.replaceChild(canvas, previousCanvas);
+      } else {
+        this.insertCanvasAtPosition(canvas, pageNum);
+      }
+
+      this.canvases.set(pageNum, canvas);
+      this.renderedPages.add(pageNum);
     } catch (error: unknown) {
       if (
         error &&
@@ -791,7 +851,6 @@ export class PDFViewer {
         'name' in error &&
         error.name === 'RenderingCancelledException'
       ) {
-        console.log(`Rendering cancelled for page ${pageNum}`);
         return;
       }
       console.error(`Error rendering page ${pageNum}:`, error);
@@ -802,7 +861,9 @@ export class PDFViewer {
     if (!this.scrollContainer) return;
 
     // Find the correct position to insert
-    const existingCanvases = Array.from(this.scrollContainer.children) as HTMLCanvasElement[];
+    const existingCanvases = Array.from(
+      this.scrollContainer.querySelectorAll('canvas[data-page-num]'),
+    ) as HTMLCanvasElement[];
     let inserted = false;
 
     for (let i = 0; i < existingCanvases.length; i++) {

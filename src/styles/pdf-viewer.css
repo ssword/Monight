@@ -271,6 +271,7 @@
 #pdf-container .scroll-wrapper {
   width: 100%;
   position: relative;
+  contain: layout paint;
 }
 
 /* Canvas positioning for continuous mode */
@@ -281,6 +282,8 @@
   display: block;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
   background-color: white;
+  backface-visibility: hidden;
+  contain: paint;
 }
 
 /* Hide the single-page canvas in continuous mode */
