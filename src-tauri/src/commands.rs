@@ -50,9 +50,9 @@ fn calculate_pdf_window_frame(
     }
 }
 
-/// Read a PDF file from the filesystem and return as byte array
-#[command]
-pub async fn read_pdf_file(path: String) -> Result<Vec<u8>, String> {
+/// Read and validate a PDF file, returning raw bytes.
+/// This is the pure, testable core — no Tauri dependencies.
+pub(crate) fn read_pdf_bytes(path: String) -> Result<Vec<u8>, String> {
     // Validate file exists
     let file_path = Path::new(&path);
     if !file_path.exists() {
@@ -75,6 +75,13 @@ pub async fn read_pdf_file(path: String) -> Result<Vec<u8>, String> {
 
     // Read file contents
     std::fs::read(file_path).map_err(|e| format!("Failed to read file: {}", e))
+}
+
+/// Read a PDF file and return raw bytes via Tauri's binary response mechanism.
+#[command]
+pub async fn read_pdf_file(path: String) -> Result<tauri::ipc::Response, String> {
+    let bytes = read_pdf_bytes(path)?;
+    Ok(tauri::ipc::Response::new(bytes))
 }
 
 /// Extract filename from full path
@@ -266,5 +273,56 @@ mod tests {
         assert_eq!(frame.width, 876);
         assert_eq!(frame.x, 12);
         assert_eq!(frame.y, 0);
+    }
+
+    #[test]
+    fn test_read_pdf_bytes_returns_correct_content() {
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/sample.pdf");
+        let expected = std::fs::read(&fixture).expect("fixture should be readable");
+
+        let result = read_pdf_bytes(fixture.to_string_lossy().to_string());
+
+        assert!(result.is_ok(), "read_pdf_bytes should succeed for a valid PDF");
+        let bytes = result.unwrap();
+        assert_eq!(bytes.len(), expected.len());
+        assert_eq!(bytes, expected);
+    }
+
+    #[test]
+    fn test_read_pdf_bytes_rejects_unsupported_extension() {
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/readme.txt");
+
+        let result = read_pdf_bytes(fixture.to_string_lossy().to_string());
+
+        assert!(result.is_err(), "read_pdf_bytes should reject .txt files");
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("Unsupported file type"),
+            "error should mention unsupported type, got: {}",
+            err
+        );
+        assert!(
+            err.contains(".txt"),
+            "error should mention the actual extension, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_read_pdf_bytes_errors_for_missing_file() {
+        let missing = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/does_not_exist.pdf");
+
+        let result = read_pdf_bytes(missing.to_string_lossy().to_string());
+
+        assert!(result.is_err(), "read_pdf_bytes should fail for missing files");
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("File not found"),
+            "error should mention file not found, got: {}",
+            err
+        );
     }
 }
