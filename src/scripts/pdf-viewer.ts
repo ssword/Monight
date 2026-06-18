@@ -1,19 +1,13 @@
 import type { PDFDocumentProxy, PDFPageProxy, RenderTask } from 'pdfjs-dist';
-import * as pdfjsLib from 'pdfjs-dist';
 import { deriveScaledDimensions } from '../lib/dimensions';
 import { hasValueChanged } from '../lib/guards';
+import { getPdfEngine } from '../lib/pdf-engine';
 import {
   buildOffsetArray,
   currentPageAt,
   positionAtPage,
   visiblePageRange,
 } from '../lib/scroll-geometry';
-
-// Configure PDF.js worker
-pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
-  'pdfjs-dist/build/pdf.worker.min.mjs',
-  import.meta.url,
-).toString();
 
 interface ViewState {
   currentPage: number;
@@ -152,6 +146,9 @@ export class PDFViewer {
       if (this.renderTask) {
         this.renderTask.cancel();
       }
+
+      // Lazy-load the PDF engine on first document open
+      const pdfjsLib = await getPdfEngine();
 
       // Load PDF document
       const loadingTask = pdfjsLib.getDocument({ data: pdfData });
