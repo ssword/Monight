@@ -139,9 +139,8 @@
   position: relative;
 }
 
-/* PDF Canvas - support multiple canvases */
-/* Only apply to direct children (single-page mode canvases) */
-#pdf-container > canvas {
+/* PDF page surface: canvas, selectable text, and link overlays */
+#pdf-container > .pdf-page-surface {
   display: none; /* Hidden by default, shown by TabManager */
   position: absolute;
   top: 20px;
@@ -151,9 +150,8 @@
   background-color: white;
 }
 
-/* Legacy selector for backwards compatibility */
-#pdf-canvas {
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+#pdf-container .pdf-page-surface canvas {
+  display: block;
   background-color: white;
 }
 
@@ -254,11 +252,135 @@
   border-color: #3a8eef;
 }
 
-/* Dark mode optimizations for PDF canvas */
-#pdf-canvas {
+#pdf-container .pdf-page-surface canvas {
   image-rendering: auto;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+#pdf-container .textLayer {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  opacity: 1;
+  line-height: 1;
+  text-align: initial;
+  text-size-adjust: none;
+  transform-origin: 0 0;
+  z-index: 1;
+  --min-font-size: 1;
+  --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size));
+  --min-font-size-inv: calc(1 / var(--min-font-size));
+}
+
+#pdf-container .textLayer :is(span, br) {
+  position: absolute;
+  color: transparent;
+  white-space: pre;
+  cursor: text;
+  transform-origin: 0% 0%;
+}
+
+#pdf-container .textLayer > :not(.markedContent),
+#pdf-container .textLayer .markedContent span:not(.markedContent) {
+  z-index: 1;
+  --font-height: 0;
+  --scale-x: 1;
+  --rotate: 0deg;
+  font-size: calc(var(--text-scale-factor) * var(--font-height));
+  transform: rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv));
+}
+
+#pdf-container .textLayer .markedContent {
+  display: contents;
+}
+
+#pdf-container .textLayer ::selection {
+  background: color-mix(in srgb, AccentColor, transparent 75%);
+}
+
+#pdf-container .textLayer br::selection {
+  background: transparent;
+}
+
+#pdf-container .textLayer .endOfContent {
+  position: absolute;
+  inset: 100% 0 0;
+  z-index: 0;
+  display: block;
+  cursor: default;
+  user-select: none;
+}
+
+#pdf-container .annotationLayer {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  transform-origin: 0 0;
+}
+
+#pdf-container .annotationLayer section {
+  position: absolute;
+  box-sizing: border-box;
+  text-align: initial;
+  transform-origin: 0 0;
+  user-select: none;
+  pointer-events: auto;
+}
+
+#pdf-container .textLayer.selecting ~ .annotationLayer section {
+  pointer-events: none;
+}
+
+#pdf-container .annotationLayer .linkAnnotation > a {
+  position: absolute;
+  inset: 0;
+  display: block;
+  cursor: pointer;
+  outline: none;
+}
+
+#pdf-container .annotationLayer .linkAnnotation > a:hover {
+  background-color: rgba(255, 235, 59, 0.25);
+}
+
+.pdf-context-menu {
+  position: fixed;
+  z-index: 10000;
+  min-width: 160px;
+  padding: 4px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--bg-secondary);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+
+.pdf-context-menu button {
+  display: block;
+  width: 100%;
+  min-height: 30px;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.pdf-context-menu button:hover,
+.pdf-context-menu button:focus-visible {
+  background: var(--bg-primary);
+  outline: none;
+}
+
+.pdf-context-menu-separator {
+  height: 1px;
+  margin: 4px 2px;
+  background: var(--border-color);
 }
 
 /* Continuous scroll styles */
@@ -274,8 +396,8 @@
   contain: layout paint;
 }
 
-/* Canvas positioning for continuous mode */
-#pdf-container.continuous-scroll .scroll-wrapper canvas {
+/* Page positioning for continuous mode */
+#pdf-container.continuous-scroll .scroll-wrapper .pdf-page-surface {
   position: absolute;
   left: 50%;
   transform: translateX(-50%);
@@ -286,24 +408,24 @@
   contain: paint;
 }
 
-/* Hide the single-page canvas in continuous mode */
-#pdf-container.continuous-scroll > canvas {
+/* Hide the single-page surface in continuous mode */
+#pdf-container.continuous-scroll > .pdf-page-surface {
   display: none !important;
 }
 
 /* Keep single-page absolute positioning */
-#pdf-container:not(.continuous-scroll) canvas {
+#pdf-container:not(.continuous-scroll) > .pdf-page-surface {
   position: absolute;
   top: 20px;
   left: 50%;
   transform: translateX(-50%);
 }
 
-/* Ensure proper display for single canvas in non-continuous mode */
-#pdf-container:not(.continuous-scroll) canvas[id^="pdf-canvas-"] {
+/* Ensure proper display for single page surfaces in non-continuous mode */
+#pdf-container:not(.continuous-scroll) > .pdf-page-surface {
   display: none;
 }
 
-#pdf-container:not(.continuous-scroll) canvas[id^="pdf-canvas-"]:not([id*="-page-"]) {
+#pdf-container:not(.continuous-scroll) > .pdf-page-surface:not([data-page-num]) {
   display: block;
 }

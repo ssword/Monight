@@ -1,3 +1,4 @@
+import { invoke } from '@tauri-apps/api/core';
 import type { PDFDocumentProxy, PDFPageProxy, RenderTask } from 'pdfjs-dist';
 import * as pdfjsLib from 'pdfjs-dist';
 import { deriveScaledDimensions } from '../lib/dimensions';
@@ -28,6 +29,32 @@ interface ViewState {
 interface VisibleRenderRequest {
   forceRender: boolean;
   isInitialRender: boolean;
+}
+
+type PageViewport = ReturnType<PDFPageProxy['getViewport']>;
+type PdfDestination = string | unknown[];
+type TextLayerTask = InstanceType<typeof pdfjsLib.TextLayer>;
+
+interface LinkAnnotationData {
+  annotationType?: number;
+  rect?: number[];
+  url?: string;
+  unsafeUrl?: string;
+  dest?: PdfDestination;
+}
+
+interface PdfLinkTarget {
+  url?: string;
+  dest?: PdfDestination;
+}
+
+interface PageSurface {
+  wrapper: HTMLDivElement;
+  canvas: HTMLCanvasElement;
+  textLayer: HTMLDivElement;
+  linkLayer: HTMLDivElement;
+  textLayerTask: TextLayerTask | null;
+  layerEpoch: number;
 }
 
 // Align canvas size to PDF.js viewer rounding to avoid subpixel blur.
@@ -87,9 +114,18 @@ const getOutputScale = (): { sx: number; sy: number } => {
   return { sx: pixelRatio, sy: pixelRatio };
 };
 
+const isAbortLikeError = (error: unknown): boolean =>
+  Boolean(
+    error &&
+      typeof error === 'object' &&
+      'name' in error &&
+      (error as { name?: string }).name === 'AbortException',
+  );
+
 export class PDFViewer {
   private container: HTMLElement;
   private canvas: HTMLCanvasElement | null = null;
+  private singlePageSurface: PageSurface | null = null;
   private pdfDoc: PDFDocumentProxy | null = null;
   private state: ViewState = {
     currentPage: 1,
@@ -104,9 +140,17 @@ export class PDFViewer {
   private canvasId: string;
   private currentFilterCSS = '';
   private onPageChange: ((pageNum: number) => void) | null = null;
+  private readonly linkTargets = new WeakMap<HTMLElement, PdfLinkTarget>();
+  private contextMenu: HTMLDivElement | null = null;
+  private handleDocumentPointerDownBound: (event: PointerEvent) => void;
+  private handleDocumentPointerUpBound: () => void;
+  private handleDocumentKeyDownBound: (event: KeyboardEvent) => void;
+  private handleSelectionChangeBound: () => void;
+  private isPointerDown = false;
 
   // Continuous scroll properties
   private canvases: Map<number, HTMLCanvasElement> = new Map();
+  private pageSurfaces: Map<number, PageSurface> = new Map();
   private renderedPages: Set<number> = new Set();
   private scrollContainer: HTMLDivElement | null = null;
   private visiblePages: Set<number> = new Set();
@@ -133,6 +177,14 @@ export class PDFViewer {
     this.canvasId = canvasId;
     this.initializeCanvas();
     this.handleScrollBound = this.handleScroll.bind(this);
+    this.handleDocumentPointerDownBound = this.handleDocumentPointerDown.bind(this);
+    this.handleDocumentPointerUpBound = this.handleDocumentPointerUp.bind(this);
+    this.handleDocumentKeyDownBound = this.handleDocumentKeyDown.bind(this);
+    this.handleSelectionChangeBound = this.handleSelectionChange.bind(this);
+    document.addEventListener('pointerdown', this.handleDocumentPointerDownBound, true);
+    document.addEventListener('pointerup', this.handleDocumentPointerUpBound, true);
+    document.addEventListener('keydown', this.handleDocumentKeyDownBound);
+    document.addEventListener('selectionchange', this.handleSelectionChangeBound);
   }
 
   setOnPageChange(handler: ((pageNum: number) => void) | null): void {
@@ -140,10 +192,82 @@ export class PDFViewer {
   }
 
   private initializeCanvas(): void {
-    // Create canvas element for PDF rendering
-    this.canvas = document.createElement('canvas');
-    this.canvas.id = this.canvasId;
-    this.container.appendChild(this.canvas);
+    const surface = this.createPageSurface(this.canvasId);
+    this.singlePageSurface = surface;
+    this.canvas = surface.canvas;
+    this.container.appendChild(surface.wrapper);
+  }
+
+  private createPageSurface(canvasId: string, pageNum?: number): PageSurface {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'pdf-page-surface';
+    if (pageNum !== undefined) {
+      wrapper.dataset.pageNum = pageNum.toString();
+    }
+    wrapper.addEventListener('contextmenu', (event) => this.handlePageContextMenu(event));
+
+    const canvas = document.createElement('canvas');
+    canvas.id = canvasId;
+    canvas.style.filter = this.currentFilterCSS;
+    if (pageNum !== undefined) {
+      canvas.dataset.pageNum = pageNum.toString();
+    }
+
+    const textLayer = document.createElement('div');
+    textLayer.className = 'textLayer';
+    textLayer.addEventListener('mousedown', () => {
+      textLayer.classList.add('selecting');
+    });
+
+    const linkLayer = document.createElement('div');
+    linkLayer.className = 'annotationLayer pdf-link-layer';
+    linkLayer.setAttribute('aria-hidden', 'false');
+
+    wrapper.append(canvas, textLayer, linkLayer);
+
+    return {
+      wrapper,
+      canvas,
+      textLayer,
+      linkLayer,
+      textLayerTask: null,
+      layerEpoch: 0,
+    };
+  }
+
+  private configurePageSurface(
+    surface: PageSurface,
+    width: number,
+    height: number,
+    viewport: PageViewport,
+  ): void {
+    surface.wrapper.style.width = `${width}px`;
+    surface.wrapper.style.height = `${height}px`;
+    surface.wrapper.style.setProperty('--total-scale-factor', `${viewport.scale}`);
+    surface.wrapper.style.setProperty('--scale-round-x', '1px');
+    surface.wrapper.style.setProperty('--scale-round-y', '1px');
+    surface.textLayer.style.setProperty('--total-scale-factor', `${viewport.scale}`);
+    surface.linkLayer.style.width = `${width}px`;
+    surface.linkLayer.style.height = `${height}px`;
+  }
+
+  private resetPageLayers(surface: PageSurface): number {
+    surface.layerEpoch += 1;
+    if (surface.textLayerTask) {
+      surface.textLayerTask.cancel();
+      surface.textLayerTask = null;
+    }
+    surface.textLayer.replaceChildren();
+    surface.linkLayer.replaceChildren();
+    return surface.layerEpoch;
+  }
+
+  private disposePageSurface(surface: PageSurface | undefined | null): void {
+    if (!surface) return;
+    this.resetPageLayers(surface);
+    if (surface.wrapper.parentNode) {
+      surface.wrapper.parentNode.removeChild(surface.wrapper);
+    }
   }
 
   async loadPDF(pdfData: Uint8Array, fileName: string, filePath: string): Promise<void> {
@@ -186,8 +310,409 @@ export class PDFViewer {
     }
   }
 
+  private async renderInteractiveLayers(
+    page: PDFPageProxy,
+    viewport: PageViewport,
+    surface: PageSurface,
+    pageNum: number,
+  ): Promise<void> {
+    const layerEpoch = this.resetPageLayers(surface);
+    await Promise.all([
+      this.renderTextLayer(page, viewport, surface, layerEpoch),
+      this.renderLinkLayer(page, viewport, surface, pageNum, layerEpoch),
+    ]);
+  }
+
+  private async renderTextLayer(
+    page: PDFPageProxy,
+    viewport: PageViewport,
+    surface: PageSurface,
+    layerEpoch: number,
+  ): Promise<void> {
+    try {
+      const textContent = await page.getTextContent();
+      if (surface.layerEpoch !== layerEpoch) {
+        return;
+      }
+
+      const textLayer = new pdfjsLib.TextLayer({
+        textContentSource: textContent,
+        container: surface.textLayer,
+        viewport,
+      });
+      surface.textLayerTask = textLayer;
+      await textLayer.render();
+      if (surface.layerEpoch !== layerEpoch) {
+        textLayer.cancel();
+        return;
+      }
+
+      if (surface.textLayerTask === textLayer) {
+        surface.textLayerTask = null;
+      }
+    } catch (error) {
+      if (!isAbortLikeError(error)) {
+        console.error('Error rendering text layer:', error);
+      }
+    }
+  }
+
+  private async renderLinkLayer(
+    page: PDFPageProxy,
+    viewport: PageViewport,
+    surface: PageSurface,
+    pageNum: number,
+    layerEpoch: number,
+  ): Promise<void> {
+    try {
+      const annotations = (await page.getAnnotations({
+        intent: 'display',
+      })) as LinkAnnotationData[];
+      if (surface.layerEpoch !== layerEpoch) {
+        return;
+      }
+
+      for (const annotation of annotations) {
+        if (surface.layerEpoch !== layerEpoch) {
+          return;
+        }
+
+        if (annotation.annotationType !== pdfjsLib.AnnotationType.LINK || !annotation.rect) {
+          continue;
+        }
+
+        const target = this.getLinkTarget(annotation);
+        if (!target) {
+          continue;
+        }
+
+        const [x1, y1, x2, y2] = viewport.convertToViewportRectangle(annotation.rect);
+        const left = Math.min(x1, x2);
+        const top = Math.min(y1, y2);
+        const width = Math.max(Math.abs(x2 - x1), 1);
+        const height = Math.max(Math.abs(y2 - y1), 1);
+
+        const section = document.createElement('section');
+        section.className = 'linkAnnotation pdf-link-annotation';
+        section.style.left = `${left}px`;
+        section.style.top = `${top}px`;
+        section.style.width = `${width}px`;
+        section.style.height = `${height}px`;
+
+        const link = document.createElement('a');
+        link.href = target.url ?? `#page-${pageNum}`;
+        link.title = target.url ?? 'Internal PDF link';
+        link.setAttribute(
+          'aria-label',
+          target.url ? `Open ${target.url}` : 'Open internal PDF link',
+        );
+        link.dataset.pdfLink = 'true';
+        this.linkTargets.set(link, target);
+
+        link.addEventListener('click', (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          void this.activateLinkTarget(target);
+        });
+
+        section.appendChild(link);
+        surface.linkLayer.appendChild(section);
+      }
+    } catch (error) {
+      console.error('Error rendering link layer:', error);
+    }
+  }
+
+  private getLinkTarget(annotation: LinkAnnotationData): PdfLinkTarget | null {
+    const url =
+      typeof annotation.url === 'string'
+        ? annotation.url
+        : typeof annotation.unsafeUrl === 'string'
+          ? annotation.unsafeUrl
+          : undefined;
+
+    if (url) {
+      return { url };
+    }
+
+    if (annotation.dest) {
+      return { dest: annotation.dest };
+    }
+
+    return null;
+  }
+
+  private async activateLinkTarget(target: PdfLinkTarget): Promise<void> {
+    this.hideContextMenu();
+
+    if (target.url) {
+      try {
+        await invoke('open_external_url', { url: target.url });
+      } catch (error) {
+        console.error('Failed to open external link:', error);
+        alert(error instanceof Error ? error.message : String(error));
+      }
+      return;
+    }
+
+    if (target.dest) {
+      const pageNum = await this.resolveDestinationPage(target.dest);
+      if (pageNum !== null) {
+        await this.goToPage(pageNum);
+      }
+    }
+  }
+
+  private async resolveDestinationPage(dest: PdfDestination): Promise<number | null> {
+    if (!this.pdfDoc) return null;
+
+    const explicitDest = Array.isArray(dest) ? dest : await this.pdfDoc.getDestination(dest);
+    if (!explicitDest || explicitDest.length === 0) {
+      return null;
+    }
+
+    const pageRef = explicitDest[0];
+    if (typeof pageRef === 'number') {
+      return Math.max(1, Math.min(pageRef + 1, this.state.totalPages));
+    }
+
+    if (
+      pageRef &&
+      typeof pageRef === 'object' &&
+      'num' in pageRef &&
+      'gen' in pageRef &&
+      typeof (pageRef as { num?: unknown }).num === 'number' &&
+      typeof (pageRef as { gen?: unknown }).gen === 'number'
+    ) {
+      const pageIndex = await this.pdfDoc.getPageIndex(pageRef as { num: number; gen: number });
+      return Math.max(1, Math.min(pageIndex + 1, this.state.totalPages));
+    }
+
+    return null;
+  }
+
+  private handlePageContextMenu(event: MouseEvent): void {
+    const target = event.target;
+    const linkElement =
+      target instanceof Element ? target.closest<HTMLElement>('[data-pdf-link="true"]') : null;
+    const linkTarget = linkElement ? this.linkTargets.get(linkElement) : undefined;
+    const selectedText = this.getSelectedText();
+
+    if (!linkTarget && !selectedText) {
+      this.hideContextMenu();
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    this.showContextMenu(event.clientX, event.clientY, linkTarget, selectedText);
+  }
+
+  private showContextMenu(
+    clientX: number,
+    clientY: number,
+    linkTarget: PdfLinkTarget | undefined,
+    selectedText: string,
+  ): void {
+    const menu = this.getContextMenu();
+    menu.replaceChildren();
+
+    if (linkTarget) {
+      menu.append(
+        this.createContextMenuButton('Open Link', () => {
+          void this.activateLinkTarget(linkTarget);
+        }),
+        this.createContextMenuButton('Copy Link', () => {
+          void this.copyLinkTarget(linkTarget);
+        }),
+      );
+    }
+
+    if (linkTarget && selectedText) {
+      const separator = document.createElement('div');
+      separator.className = 'pdf-context-menu-separator';
+      menu.appendChild(separator);
+    }
+
+    if (selectedText) {
+      menu.appendChild(
+        this.createContextMenuButton('Copy Text', () => {
+          void this.copyText(selectedText);
+        }),
+      );
+    }
+
+    menu.style.display = 'block';
+    menu.style.left = '0px';
+    menu.style.top = '0px';
+
+    const { innerWidth, innerHeight } = window;
+    const rect = menu.getBoundingClientRect();
+    const left = Math.min(clientX, innerWidth - rect.width - 8);
+    const top = Math.min(clientY, innerHeight - rect.height - 8);
+    menu.style.left = `${Math.max(8, left)}px`;
+    menu.style.top = `${Math.max(8, top)}px`;
+  }
+
+  private createContextMenuButton(label: string, action: () => void): HTMLButtonElement {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = label;
+    button.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      this.hideContextMenu();
+      action();
+    });
+    return button;
+  }
+
+  private getContextMenu(): HTMLDivElement {
+    if (!this.contextMenu) {
+      this.contextMenu = document.createElement('div');
+      this.contextMenu.className = 'pdf-context-menu';
+      this.contextMenu.style.display = 'none';
+      document.body.appendChild(this.contextMenu);
+    }
+    return this.contextMenu;
+  }
+
+  private hideContextMenu(): void {
+    if (this.contextMenu) {
+      this.contextMenu.style.display = 'none';
+    }
+  }
+
+  private handleDocumentPointerDown(event: PointerEvent): void {
+    this.isPointerDown = true;
+    if (!this.contextMenu || this.contextMenu.style.display === 'none') return;
+    if (event.target instanceof Node && this.contextMenu.contains(event.target)) return;
+    this.hideContextMenu();
+  }
+
+  private handleDocumentPointerUp(): void {
+    this.isPointerDown = false;
+    this.clearSelectingTextLayers();
+  }
+
+  private handleDocumentKeyDown(event: KeyboardEvent): void {
+    if (event.key === 'Escape') {
+      this.hideContextMenu();
+    }
+  }
+
+  private handleSelectionChange(): void {
+    if (!this.isPointerDown) {
+      return;
+    }
+
+    const selection = window.getSelection();
+    if (!selection || selection.rangeCount === 0) {
+      this.clearSelectingTextLayers();
+      return;
+    }
+
+    const activeTextLayers = new Set<HTMLDivElement>();
+    for (let i = 0; i < selection.rangeCount; i++) {
+      const range = selection.getRangeAt(i);
+      for (const surface of this.getPageSurfaces()) {
+        if (range.intersectsNode(surface.textLayer)) {
+          activeTextLayers.add(surface.textLayer);
+        }
+      }
+    }
+
+    for (const surface of this.getPageSurfaces()) {
+      surface.textLayer.classList.toggle('selecting', activeTextLayers.has(surface.textLayer));
+    }
+  }
+
+  private clearSelectingTextLayers(): void {
+    for (const surface of this.getPageSurfaces()) {
+      surface.textLayer.classList.remove('selecting');
+    }
+  }
+
+  private getPageSurfaces(): PageSurface[] {
+    const surfaces = Array.from(this.pageSurfaces.values());
+    if (this.singlePageSurface) {
+      surfaces.push(this.singlePageSurface);
+    }
+    return surfaces;
+  }
+
+  private getSelectedText(): string {
+    const selection = window.getSelection();
+    if (!selection || selection.isCollapsed || selection.rangeCount === 0) {
+      return '';
+    }
+
+    let belongsToViewer = false;
+    for (let i = 0; i < selection.rangeCount; i++) {
+      const range = selection.getRangeAt(i);
+      if (this.containsPdfSurfaceNode(range.commonAncestorContainer)) {
+        belongsToViewer = true;
+        break;
+      }
+    }
+
+    if (!belongsToViewer) {
+      belongsToViewer =
+        Boolean(selection.anchorNode && this.containsPdfSurfaceNode(selection.anchorNode)) ||
+        Boolean(selection.focusNode && this.containsPdfSurfaceNode(selection.focusNode));
+    }
+
+    return belongsToViewer ? selection.toString().trim() : '';
+  }
+
+  private containsPdfSurfaceNode(node: Node): boolean {
+    if (this.singlePageSurface?.wrapper.contains(node)) {
+      return true;
+    }
+
+    for (const surface of this.pageSurfaces.values()) {
+      if (surface.wrapper.contains(node)) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  private async copyLinkTarget(target: PdfLinkTarget): Promise<void> {
+    if (target.url) {
+      await this.copyText(target.url);
+      return;
+    }
+
+    if (target.dest) {
+      const pageNum = await this.resolveDestinationPage(target.dest);
+      await this.copyText(pageNum ? `#page=${pageNum}` : this.describeDestination(target.dest));
+    }
+  }
+
+  private describeDestination(dest: PdfDestination): string {
+    return typeof dest === 'string' ? `#${dest}` : JSON.stringify(dest);
+  }
+
+  private async copyText(text: string): Promise<void> {
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      const textArea = document.createElement('textarea');
+      textArea.value = text;
+      textArea.setAttribute('readonly', 'true');
+      textArea.style.position = 'fixed';
+      textArea.style.left = '-9999px';
+      document.body.appendChild(textArea);
+      textArea.select();
+      document.execCommand('copy');
+      document.body.removeChild(textArea);
+    }
+  }
+
   async renderPage(pageNum: number): Promise<void> {
-    if (!this.pdfDoc || !this.canvas) {
+    if (!this.pdfDoc || !this.canvas || !this.singlePageSurface) {
       throw new Error('PDF not loaded');
     }
 
@@ -254,8 +779,10 @@ export class PDFViewer {
       this.canvas.height = canvasHeight;
       this.canvas.style.width = `${pageWidth}px`;
       this.canvas.style.height = `${pageHeight}px`;
+      this.configurePageSurface(this.singlePageSurface, pageWidth, pageHeight, viewport);
       const targetContext = this.canvas.getContext('2d', { alpha: false });
       targetContext?.drawImage(renderCanvas, 0, 0);
+      await this.renderInteractiveLayers(page, viewport, this.singlePageSurface, pageNum);
 
       // Update state
       const prevPage = this.state.currentPage;
@@ -282,27 +809,32 @@ export class PDFViewer {
 
   async nextPage(): Promise<void> {
     if (this.state.currentPage < this.state.totalPages) {
-      await this.renderPage(this.state.currentPage + 1);
+      await this.goToPage(this.state.currentPage + 1);
     }
   }
 
   async previousPage(): Promise<void> {
     if (this.state.currentPage > 1) {
-      await this.renderPage(this.state.currentPage - 1);
+      await this.goToPage(this.state.currentPage - 1);
     }
   }
 
   async goToPage(pageNum: number): Promise<void> {
+    if (this.state.viewMode === 'continuous') {
+      await this.scrollToPage(pageNum);
+      return;
+    }
+
     await this.renderPage(pageNum);
   }
 
   async firstPage(): Promise<void> {
-    await this.renderPage(1);
+    await this.goToPage(1);
   }
 
   async lastPage(): Promise<void> {
     if (this.pdfDoc) {
-      await this.renderPage(this.state.totalPages);
+      await this.goToPage(this.state.totalPages);
     }
   }
 
@@ -472,16 +1004,16 @@ export class PDFViewer {
     if (this.state.viewMode === 'continuous') {
       // In continuous mode, show/hide the scroll wrapper
       if (this.scrollContainer) {
-        this.scrollContainer.style.display = visible ? 'flex' : 'none';
+        this.scrollContainer.style.display = visible ? 'block' : 'none';
       }
       // Keep single-page canvas hidden
-      if (this.canvas) {
-        this.canvas.style.display = 'none';
+      if (this.singlePageSurface) {
+        this.singlePageSurface.wrapper.style.display = 'none';
       }
     } else {
       // In single-page mode, show/hide the main canvas
-      if (this.canvas) {
-        this.canvas.style.display = visible ? 'block' : 'none';
+      if (this.singlePageSurface) {
+        this.singlePageSurface.wrapper.style.display = visible ? 'block' : 'none';
       }
       // Keep scroll wrapper hidden
       if (this.scrollContainer) {
@@ -580,8 +1112,8 @@ export class PDFViewer {
     if (!this.pdfDoc) return;
 
     // Hide single-page canvas
-    if (this.canvas) {
-      this.canvas.style.display = 'none';
+    if (this.singlePageSurface) {
+      this.singlePageSurface.wrapper.style.display = 'none';
     }
 
     // Create scroll container if it doesn't exist
@@ -617,12 +1149,11 @@ export class PDFViewer {
     this.renderTasks.clear();
     this.queuedVisibleRender = null;
 
-    // Remove all continuous canvases
-    this.canvases.forEach((canvas) => {
-      if (canvas.parentNode) {
-        canvas.parentNode.removeChild(canvas);
-      }
+    // Remove all continuous page surfaces
+    this.pageSurfaces.forEach((surface) => {
+      this.disposePageSurface(surface);
     });
+    this.pageSurfaces.clear();
     this.canvases.clear();
 
     // Remove scroll container
@@ -635,8 +1166,8 @@ export class PDFViewer {
     this.container.classList.remove('continuous-scroll');
 
     // Show single-page canvas
-    if (this.canvas) {
-      this.canvas.style.display = 'block';
+    if (this.singlePageSurface) {
+      this.singlePageSurface.wrapper.style.display = 'block';
     }
 
     // Clear state
@@ -802,12 +1333,11 @@ export class PDFViewer {
       }
     });
 
-    this.canvases.forEach((canvas, pageNum) => {
+    this.pageSurfaces.forEach((surface, pageNum) => {
       if (pagesToKeep.has(pageNum)) return;
 
-      if (canvas.parentNode) {
-        canvas.parentNode.removeChild(canvas);
-      }
+      this.disposePageSurface(surface);
+      this.pageSurfaces.delete(pageNum);
       this.canvases.delete(pageNum);
       this.renderedPages.delete(pageNum);
     });
@@ -836,10 +1366,10 @@ export class PDFViewer {
         rotation: this.state.rotation,
       });
 
-      const canvas = document.createElement('canvas');
-      canvas.id = `${this.canvasId}-page-${pageNum}`;
-      canvas.dataset.pageNum = pageNum.toString();
-      canvas.style.display = 'block';
+      const surface = this.createPageSurface(`${this.canvasId}-page-${pageNum}`, pageNum);
+      const { canvas } = surface;
+      surface.wrapper.style.top = `${this.getPagePosition(pageNum)}px`;
+      surface.wrapper.style.display = 'block';
 
       // Set canvas dimensions
       const context = canvas.getContext('2d', { alpha: false });
@@ -858,7 +1388,7 @@ export class PDFViewer {
       canvas.height = canvasHeight;
       canvas.style.width = `${pageWidth}px`;
       canvas.style.height = `${pageHeight}px`;
-      canvas.style.top = `${this.getPagePosition(pageNum)}px`;
+      this.configurePageSurface(surface, pageWidth, pageHeight, viewport);
 
       outputScale.sx = canvasWidth / pageWidth;
       outputScale.sy = canvasHeight / pageHeight;
@@ -889,23 +1419,29 @@ export class PDFViewer {
       await renderTask.promise;
 
       if (this.renderTasks.get(pageNum) !== renderTask || !this.scrollContainer) {
+        this.disposePageSurface(surface);
         return;
       }
 
       this.renderTasks.delete(pageNum);
 
       if (!this.calculateVisiblePages(this.cleanupBufferPages).includes(pageNum)) {
+        this.disposePageSurface(surface);
         return;
       }
 
-      const previousCanvas = this.canvases.get(pageNum);
-      if (previousCanvas?.parentNode) {
-        previousCanvas.parentNode.replaceChild(canvas, previousCanvas);
+      await this.renderInteractiveLayers(page, viewport, surface, pageNum);
+
+      const previousSurface = this.pageSurfaces.get(pageNum);
+      if (previousSurface?.wrapper.parentNode) {
+        previousSurface.wrapper.parentNode.replaceChild(surface.wrapper, previousSurface.wrapper);
+        this.disposePageSurface(previousSurface);
       } else {
-        this.insertCanvasAtPosition(canvas, pageNum);
+        this.insertSurfaceAtPosition(surface, pageNum);
       }
 
       this.canvases.set(pageNum, canvas);
+      this.pageSurfaces.set(pageNum, surface);
       this.renderedPages.add(pageNum);
     } catch (error: unknown) {
       if (
@@ -920,26 +1456,26 @@ export class PDFViewer {
     }
   }
 
-  private insertCanvasAtPosition(canvas: HTMLCanvasElement, pageNum: number): void {
+  private insertSurfaceAtPosition(surface: PageSurface, pageNum: number): void {
     if (!this.scrollContainer) return;
 
     // Find the correct position to insert
-    const existingCanvases = Array.from(
-      this.scrollContainer.querySelectorAll('canvas[data-page-num]'),
-    ) as HTMLCanvasElement[];
+    const existingSurfaces = Array.from(
+      this.scrollContainer.querySelectorAll('.pdf-page-surface[data-page-num]'),
+    ) as HTMLDivElement[];
     let inserted = false;
 
-    for (let i = 0; i < existingCanvases.length; i++) {
-      const existingPageNum = Number.parseInt(existingCanvases[i].dataset.pageNum || '0', 10);
+    for (let i = 0; i < existingSurfaces.length; i++) {
+      const existingPageNum = Number.parseInt(existingSurfaces[i].dataset.pageNum || '0', 10);
       if (pageNum < existingPageNum) {
-        this.scrollContainer.insertBefore(canvas, existingCanvases[i]);
+        this.scrollContainer.insertBefore(surface.wrapper, existingSurfaces[i]);
         inserted = true;
         break;
       }
     }
 
     if (!inserted) {
-      this.scrollContainer.appendChild(canvas);
+      this.scrollContainer.appendChild(surface.wrapper);
     }
   }
 
@@ -972,7 +1508,7 @@ export class PDFViewer {
 
   async scrollToPage(pageNum: number): Promise<void> {
     if (this.state.viewMode === 'single') {
-      await this.goToPage(pageNum);
+      await this.renderPage(pageNum);
       return;
     }
 
@@ -1000,12 +1536,21 @@ export class PDFViewer {
   }
 
   private updateCanvasPosition(pageNum: number): void {
-    const canvas = this.canvases.get(pageNum);
-    if (!canvas) return;
-    canvas.style.top = `${this.getPagePosition(pageNum)}px`;
+    const surface = this.pageSurfaces.get(pageNum);
+    if (!surface) return;
+    surface.wrapper.style.top = `${this.getPagePosition(pageNum)}px`;
   }
 
   destroy(): void {
+    document.removeEventListener('pointerdown', this.handleDocumentPointerDownBound, true);
+    document.removeEventListener('pointerup', this.handleDocumentPointerUpBound, true);
+    document.removeEventListener('keydown', this.handleDocumentKeyDownBound);
+    document.removeEventListener('selectionchange', this.handleSelectionChangeBound);
+    if (this.contextMenu?.parentNode) {
+      this.contextMenu.parentNode.removeChild(this.contextMenu);
+    }
+    this.contextMenu = null;
+
     // Cleanup continuous scroll if active
     if (this.state.viewMode === 'continuous') {
       this.cleanupContinuousScroll();
@@ -1014,13 +1559,12 @@ export class PDFViewer {
     if (this.renderTask) {
       this.renderTask.cancel();
     }
-    if (this.canvas?.parentNode) {
-      this.canvas.parentNode.removeChild(this.canvas);
-    }
+    this.disposePageSurface(this.singlePageSurface);
     if (this.pdfDoc) {
       this.pdfDoc.destroy();
     }
     this.pdfDoc = null;
     this.canvas = null;
+    this.singlePageSurface = null;
   }
 }
