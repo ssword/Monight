@@ -4,6 +4,11 @@ import { deriveScaledDimensions } from '../lib/dimensions';
 import { hasValueChanged } from '../lib/guards';
 import { getPdfEngine } from '../lib/pdf-engine';
 import {
+  buildPdfLinkDomAttributes,
+  type PdfDestination,
+  type PdfLinkTarget,
+} from '../lib/pdf-links';
+import {
   buildOffsetArray,
   currentPageAt,
   positionAtPage,
@@ -26,7 +31,6 @@ interface VisibleRenderRequest {
 }
 
 type PageViewport = ReturnType<PDFPageProxy['getViewport']>;
-type PdfDestination = string | unknown[];
 type TextLayerTask = TextLayer;
 
 interface LinkAnnotationData {
@@ -34,11 +38,6 @@ interface LinkAnnotationData {
   rect?: number[];
   url?: string;
   unsafeUrl?: string;
-  dest?: PdfDestination;
-}
-
-interface PdfLinkTarget {
-  url?: string;
   dest?: PdfDestination;
 }
 
@@ -311,12 +310,11 @@ export class PDFViewer {
     page: PDFPageProxy,
     viewport: PageViewport,
     surface: PageSurface,
-    pageNum: number,
   ): Promise<void> {
     const layerEpoch = this.resetPageLayers(surface);
     await Promise.all([
       this.renderTextLayer(page, viewport, surface, layerEpoch),
-      this.renderLinkLayer(page, viewport, surface, pageNum, layerEpoch),
+      this.renderLinkLayer(page, viewport, surface, layerEpoch),
     ]);
   }
 
@@ -359,7 +357,6 @@ export class PDFViewer {
     page: PDFPageProxy,
     viewport: PageViewport,
     surface: PageSurface,
-    pageNum: number,
     layerEpoch: number,
   ): Promise<void> {
     try {
@@ -399,20 +396,29 @@ export class PDFViewer {
         section.style.width = `${width}px`;
         section.style.height = `${height}px`;
 
+        const linkAttributes = buildPdfLinkDomAttributes(target);
         const link = document.createElement('a');
-        link.href = target.url ?? `#page-${pageNum}`;
-        link.title = target.url ?? 'Internal PDF link';
-        link.setAttribute(
-          'aria-label',
-          target.url ? `Open ${target.url}` : 'Open internal PDF link',
-        );
+        link.href = linkAttributes.href;
+        link.title = linkAttributes.title;
+        link.setAttribute('aria-label', linkAttributes.ariaLabel);
         link.dataset.pdfLink = 'true';
         this.linkTargets.set(link, target);
 
-        link.addEventListener('click', (event) => {
+        const activate = (event: MouseEvent) => {
           event.preventDefault();
           event.stopPropagation();
           void this.activateLinkTarget(target);
+        };
+        link.addEventListener('click', activate);
+        link.addEventListener('auxclick', (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          if (event.button === 1) {
+            void this.activateLinkTarget(target);
+          }
+        });
+        link.addEventListener('dragstart', (event) => {
+          event.preventDefault();
         });
 
         section.appendChild(link);
@@ -782,7 +788,7 @@ export class PDFViewer {
       this.configurePageSurface(this.singlePageSurface, pageWidth, pageHeight, viewport);
       const targetContext = this.canvas.getContext('2d', { alpha: false });
       targetContext?.drawImage(renderCanvas, 0, 0);
-      await this.renderInteractiveLayers(page, viewport, this.singlePageSurface, pageNum);
+      await this.renderInteractiveLayers(page, viewport, this.singlePageSurface);
 
       // Update state
       const prevPage = this.state.currentPage;
@@ -1001,6 +1007,10 @@ export class PDFViewer {
    * Show or hide the entire viewer (both single-page canvas and continuous scroll wrapper)
    */
   setVisible(visible: boolean): void {
+    if (!visible) {
+      this.hideContextMenu();
+    }
+
     if (this.state.viewMode === 'continuous') {
       // In continuous mode, show/hide the scroll wrapper
       if (this.scrollContainer) {
@@ -1430,7 +1440,7 @@ export class PDFViewer {
         return;
       }
 
-      await this.renderInteractiveLayers(page, viewport, surface, pageNum);
+      await this.renderInteractiveLayers(page, viewport, surface);
 
       const previousSurface = this.pageSurfaces.get(pageNum);
       if (previousSurface?.wrapper.parentNode) {
