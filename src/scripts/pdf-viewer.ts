@@ -2,6 +2,11 @@ import { invoke } from '@tauri-apps/api/core';
 import type { PDFDocumentProxy, PDFPageProxy, RenderTask, TextLayer } from 'pdfjs-dist';
 import { deriveScaledDimensions } from '../lib/dimensions';
 import { hasValueChanged } from '../lib/guards';
+import {
+  computeSafeOutputScale,
+  DEFAULT_MAX_CANVAS_AREA,
+  DEFAULT_MAX_OUTPUT_SCALE_DPR,
+} from '../lib/output-scale';
 import { getPdfEngine } from '../lib/pdf-engine';
 import {
   buildPdfLinkDomAttributes,
@@ -102,9 +107,18 @@ const approximateFraction = (x: number): [number, number] => {
   return x_ === x ? [c, d] : [d, c];
 };
 
-const getOutputScale = (): { sx: number; sy: number } => {
+const getOutputScale = (
+  viewportWidth: number,
+  viewportHeight: number,
+): { sx: number; sy: number } => {
   const pixelRatio = window.devicePixelRatio || 1;
-  return { sx: pixelRatio, sy: pixelRatio };
+  return computeSafeOutputScale({
+    devicePixelRatio: pixelRatio,
+    viewportWidth,
+    viewportHeight,
+    maxArea: DEFAULT_MAX_CANVAS_AREA,
+    maxDpr: DEFAULT_MAX_OUTPUT_SCALE_DPR,
+  });
 };
 
 const isAbortLikeError = (error: unknown): boolean =>
@@ -748,7 +762,7 @@ export class PDFViewer {
         throw new Error('Could not get canvas context');
       }
 
-      const outputScale = getOutputScale();
+      const outputScale = getOutputScale(viewport.width, viewport.height);
       const sfx = approximateFraction(outputScale.sx);
       const sfy = approximateFraction(outputScale.sy);
 
@@ -1385,7 +1399,7 @@ export class PDFViewer {
       const context = canvas.getContext('2d', { alpha: false });
       if (!context) return;
 
-      const outputScale = getOutputScale();
+      const outputScale = getOutputScale(viewport.width, viewport.height);
       const sfx = approximateFraction(outputScale.sx);
       const sfy = approximateFraction(outputScale.sy);
 
