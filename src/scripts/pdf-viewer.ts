@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
-import type { PDFDocumentProxy, PDFPageProxy, RenderTask } from 'pdfjs-dist';
+import type { PDFDocumentProxy, PDFPageProxy, RenderTask, TextLayer } from 'pdfjs-dist';
 import { deriveScaledDimensions } from '../lib/dimensions';
 import { hasValueChanged } from '../lib/guards';
 import { getPdfEngine } from '../lib/pdf-engine';
@@ -27,7 +27,7 @@ interface VisibleRenderRequest {
 
 type PageViewport = ReturnType<PDFPageProxy['getViewport']>;
 type PdfDestination = string | unknown[];
-type TextLayerTask = InstanceType<typeof pdfjsLib.TextLayer>;
+type TextLayerTask = TextLayer;
 
 interface LinkAnnotationData {
   annotationType?: number;
@@ -332,6 +332,7 @@ export class PDFViewer {
         return;
       }
 
+      const pdfjsLib = await getPdfEngine();
       const textLayer = new pdfjsLib.TextLayer({
         textContentSource: textContent,
         container: surface.textLayer,
@@ -368,6 +369,8 @@ export class PDFViewer {
       if (surface.layerEpoch !== layerEpoch) {
         return;
       }
+
+      const pdfjsLib = await getPdfEngine();
 
       for (const annotation of annotations) {
         if (surface.layerEpoch !== layerEpoch) {

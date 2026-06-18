@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 describe('Test infrastructure', () => {
   it('confirms Vitest is wired up and running', () => {
