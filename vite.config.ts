@@ -1,8 +1,12 @@
 import { resolve } from 'node:path';
-import { defineConfig } from 'vite';
+import { defineConfig } from 'vitest/config';
 
 // https://vitejs.dev/config/
 export default defineConfig({
+  test: {
+    include: ['src/**/*.test.ts'],
+    environment: 'node',
+  },
   clearScreen: false,
   server: {
     port: 1420,

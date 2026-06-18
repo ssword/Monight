@@ -31,7 +31,7 @@ export interface MoonightSettings {
  * Default settings
  */
 export const DEFAULT_SETTINGS: MoonightSettings = {
-  version: '1.0.4',
+  version: '1.0.5',
   general: {
     maximizeOnOpen: true,
     displayThumbs: true,

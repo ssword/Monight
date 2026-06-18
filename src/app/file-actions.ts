@@ -38,8 +38,8 @@ export async function openFiles(
         continue;
       }
 
-      // Load PDF data
-      const pdfData: number[] = await invoke('read_pdf_file', { path: canonicalPath });
+      // Load PDF data (received as binary ArrayBuffer via Tauri's IPC)
+      const pdfData: ArrayBuffer = await invoke('read_pdf_file', { path: canonicalPath });
       const fileName: string = await invoke('get_file_name', { path: canonicalPath });
 
       // Create tab (TabManager handles viewer creation)

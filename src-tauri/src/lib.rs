@@ -1,10 +1,10 @@
 // Prevents additional console window on Windows in release builds
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use tauri::{Manager, Emitter, Listener};
 use clap::Parser;
 use serde::Serialize;
 use std::sync::Mutex;
+use tauri::{Emitter, Listener, Manager};
 
 mod commands;
 mod menu;
@@ -83,12 +83,11 @@ pub fn run() {
             commands::fit_main_window_for_pdf,
             commands::take_cli_payload,
             commands::validate_open_path,
+            commands::open_external_url,
         ])
         .setup(|app| {
             // Parse command line arguments (ignore macOS Finder -psn_* argument)
-            let cli = Cli::parse_from(
-                std::env::args().filter(|arg| !arg.starts_with("-psn_")),
-            );
+            let cli = Cli::parse_from(std::env::args().filter(|arg| !arg.starts_with("-psn_")));
             let window = app.get_webview_window("main").unwrap();
             let app_handle = app.handle();
 
@@ -132,7 +131,8 @@ pub fn run() {
                             files: valid_files,
                             page: None,
                         };
-                        let _ = commands::fit_main_window_for_pdf(app_handle_for_open.clone(), true);
+                        let _ =
+                            commands::fit_main_window_for_pdf(app_handle_for_open.clone(), true);
                         store_pending_payload(&app_handle_for_open, payload.clone());
                         let _ = window_for_open.emit("cli-open-files", payload);
                     }

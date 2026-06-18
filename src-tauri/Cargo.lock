@@ -2195,7 +2195,7 @@ dependencies = [
 
 [[package]]
 name = "monight"
-version = "1.0.4"
+version = "1.0.5"
 dependencies = [
  "clap",
  "serde",
@@ -2206,6 +2206,7 @@ dependencies = [
  "tauri-plugin-opener",
  "tauri-plugin-shell",
  "tauri-plugin-store",
+ "url",
 ]
 
 [[package]]
