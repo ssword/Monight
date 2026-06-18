@@ -3,6 +3,8 @@ use tauri::{
     command, AppHandle, Manager, PhysicalPosition, PhysicalSize, State, WebviewUrl,
     WebviewWindowBuilder,
 };
+use tauri_plugin_opener::OpenerExt;
+use url::Url;
 
 use crate::{is_supported_extension, take_cli_payload_inner, CliPayload, PendingCliPayload};
 
@@ -82,6 +84,36 @@ pub(crate) fn read_pdf_bytes(path: String) -> Result<Vec<u8>, String> {
 pub async fn read_pdf_file(path: String) -> Result<tauri::ipc::Response, String> {
     let bytes = read_pdf_bytes(path)?;
     Ok(tauri::ipc::Response::new(bytes))
+}
+
+pub(crate) fn validate_external_url(raw_url: &str) -> Result<Url, String> {
+    let url = Url::parse(raw_url).map_err(|_| "Invalid external link URL".to_string())?;
+
+    match url.scheme() {
+        "http" | "https" => {
+            if url.host_str().is_none() {
+                return Err("External web links must include a host".to_string());
+            }
+        }
+        "mailto" => {
+            if url.path().trim().is_empty() {
+                return Err("Email links must include an address".to_string());
+            }
+        }
+        _ => {
+            return Err("Blocked unsupported PDF link scheme".to_string());
+        }
+    }
+
+    Ok(url)
+}
+
+#[command]
+pub async fn open_external_url(app: AppHandle, url: String) -> Result<(), String> {
+    let url = validate_external_url(&url)?;
+    app.opener()
+        .open_url(url.as_str(), None::<&str>)
+        .map_err(|e| format!("Failed to open external link: {}", e))
 }
 
 /// Extract filename from full path
@@ -277,13 +309,16 @@ mod tests {
 
     #[test]
     fn test_read_pdf_bytes_returns_correct_content() {
-        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/sample.pdf");
+        let fixture =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/sample.pdf");
         let expected = std::fs::read(&fixture).expect("fixture should be readable");
 
         let result = read_pdf_bytes(fixture.to_string_lossy().to_string());
 
-        assert!(result.is_ok(), "read_pdf_bytes should succeed for a valid PDF");
+        assert!(
+            result.is_ok(),
+            "read_pdf_bytes should succeed for a valid PDF"
+        );
         let bytes = result.unwrap();
         assert_eq!(bytes.len(), expected.len());
         assert_eq!(bytes, expected);
@@ -291,8 +326,8 @@ mod tests {
 
     #[test]
     fn test_read_pdf_bytes_rejects_unsupported_extension() {
-        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/readme.txt");
+        let fixture =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/readme.txt");
 
         let result = read_pdf_bytes(fixture.to_string_lossy().to_string());
 
@@ -317,12 +352,34 @@ mod tests {
 
         let result = read_pdf_bytes(missing.to_string_lossy().to_string());
 
-        assert!(result.is_err(), "read_pdf_bytes should fail for missing files");
+        assert!(
+            result.is_err(),
+            "read_pdf_bytes should fail for missing files"
+        );
         let err = result.unwrap_err();
         assert!(
             err.contains("File not found"),
             "error should mention file not found, got: {}",
             err
         );
+    }
+
+    #[test]
+    fn test_validate_external_url_allows_safe_schemes() {
+        assert!(validate_external_url("https://example.com/report").is_ok());
+        assert!(validate_external_url("http://example.com/report").is_ok());
+        assert!(validate_external_url("mailto:user@example.com").is_ok());
+    }
+
+    #[test]
+    fn test_validate_external_url_blocks_unsafe_schemes() {
+        assert!(validate_external_url("file:///etc/passwd").is_err());
+        assert!(validate_external_url("javascript:alert(1)").is_err());
+        assert!(validate_external_url("data:text/html,hello").is_err());
+    }
+
+    #[test]
+    fn test_validate_external_url_requires_web_host() {
+        assert!(validate_external_url("https://").is_err());
     }
 }
