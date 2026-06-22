@@ -10,7 +10,7 @@ import {
 describe('createBenchmarkReport', () => {
   it('creates a report entry for each required issue 7 benchmark category', () => {
     const report = createBenchmarkReport({
-      appVersion: '1.0.5',
+      appVersion: '1.0.6',
       device: 'MacBook Pro M3',
       display: '3024x1964 @ 2x',
       testFiles: ['long-document.pdf: 400 pages, 120 MB'],
@@ -27,7 +27,7 @@ describe('createBenchmarkReport', () => {
 
   it('formats the report as one markdown baseline document with methodology context', () => {
     const report = createBenchmarkReport({
-      appVersion: '1.0.5',
+      appVersion: '1.0.6',
       device: 'MacBook Pro M3',
       display: '3024x1964 @ 2x',
       testFiles: ['long-document.pdf: 400 pages, 120 MB'],
@@ -37,7 +37,7 @@ describe('createBenchmarkReport', () => {
     const markdown = formatBenchmarkReport(report);
 
     expect(markdown).toContain('# Performance Benchmark Report');
-    expect(markdown).toContain('- App version: 1.0.5');
+    expect(markdown).toContain('- App version: 1.0.6');
     expect(markdown).toContain('- Device: MacBook Pro M3');
     expect(markdown).toContain('- Display: 3024x1964 @ 2x');
     expect(markdown).toContain('- Test files: long-document.pdf: 400 pages, 120 MB');
@@ -50,7 +50,7 @@ describe('createBenchmarkReport', () => {
 
   it('reports missing measurements and pending human review before the baseline is complete', () => {
     const report = createBenchmarkReport({
-      appVersion: '1.0.5',
+      appVersion: '1.0.6',
       device: 'MacBook Pro M3',
       display: '3024x1964 @ 2x',
       testFiles: ['long-document.pdf: 400 pages, 120 MB'],

@@ -14,7 +14,7 @@ Open prerequisite issues at the time this scaffold was created:
 
 ## Methodology
 
-- App version: 1.0.5
+- App version: 1.0.6
 - Device: pending
 - Display: pending
 - Operating system: pending
