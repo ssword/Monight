@@ -3,6 +3,7 @@
 
 use clap::Parser;
 use serde::Serialize;
+use std::path::PathBuf;
 use std::sync::Mutex;
 use tauri::{Emitter, Listener, Manager};
 
@@ -66,9 +67,90 @@ fn store_pending_payload(app: &tauri::AppHandle, payload: CliPayload) {
     store_pending_payload_inner(state.inner(), payload);
 }
 
+fn dispatch_open_payload(app: &tauri::AppHandle, payload: CliPayload) {
+    let _ = commands::fit_main_window_for_pdf(app.clone(), true);
+    store_pending_payload(app, payload.clone());
+
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.emit("cli-open-files", payload);
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+}
+
+fn path_from_open_candidate(candidate: String) -> Option<PathBuf> {
+    let trimmed = candidate.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    if let Ok(url) = url::Url::parse(trimmed) {
+        if url.scheme() == "file" {
+            return url.to_file_path().ok();
+        }
+    }
+
+    Some(PathBuf::from(trimmed))
+}
+
+pub(crate) fn paths_from_legacy_file_open_payload(payload: &str) -> Vec<PathBuf> {
+    if payload.is_empty() {
+        return Vec::new();
+    }
+
+    let mut files: Vec<String> = Vec::new();
+
+    if let Ok(list) = serde_json::from_str::<Vec<String>>(payload) {
+        files.extend(list);
+    } else if let Ok(single) = serde_json::from_str::<String>(payload) {
+        files.push(single);
+    } else {
+        files.push(payload.to_string());
+    }
+
+    files
+        .into_iter()
+        .filter_map(path_from_open_candidate)
+        .collect()
+}
+
+pub(crate) fn payload_from_file_paths<I>(files: I, page: Option<u32>) -> Option<CliPayload>
+where
+    I: IntoIterator<Item = PathBuf>,
+{
+    let valid_files = files
+        .into_iter()
+        .filter_map(|file| std::fs::canonicalize(file).ok())
+        .filter(|canonical| canonical.exists() && is_supported_extension(canonical))
+        .map(|canonical| canonical.to_string_lossy().to_string())
+        .collect::<Vec<_>>();
+
+    if valid_files.is_empty() {
+        None
+    } else {
+        Some(CliPayload {
+            files: valid_files,
+            page,
+        })
+    }
+}
+
+pub(crate) fn payload_from_opened_urls(urls: &[url::Url]) -> Option<CliPayload> {
+    payload_from_file_paths(
+        urls.iter().filter_map(|url| {
+            if url.scheme() == "file" {
+                url.to_file_path().ok()
+            } else {
+                None
+            }
+        }),
+        None,
+    )
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
@@ -99,78 +181,26 @@ pub fn run() {
             // macOS/iOS/Windows send tauri://file-open event
             #[cfg(any(target_os = "macos", target_os = "ios", target_os = "windows"))]
             {
-                let window_for_open = window.clone();
                 let app_handle_for_open = app_handle.clone();
                 app_handle.listen("tauri://file-open", move |event| {
                     let payload = event.payload();
-                    if payload.is_empty() {
-                        return;
-                    }
-
-                    let mut files: Vec<String> = Vec::new();
-
-                    if let Ok(list) = serde_json::from_str::<Vec<String>>(payload) {
-                        files.extend(list);
-                    } else if let Ok(single) = serde_json::from_str::<String>(payload) {
-                        files.push(single);
-                    } else {
-                        files.push(payload.to_string());
-                    }
-
-                    let mut valid_files = Vec::new();
-                    for file_path in files {
-                        if let Ok(canonical) = std::fs::canonicalize(&file_path) {
-                            if canonical.exists() && is_supported_extension(&canonical) {
-                                valid_files.push(canonical.to_string_lossy().to_string());
-                            }
-                        }
-                    }
-
-                    if !valid_files.is_empty() {
-                        let payload = CliPayload {
-                            files: valid_files,
-                            page: None,
-                        };
-                        let _ =
-                            commands::fit_main_window_for_pdf(app_handle_for_open.clone(), true);
-                        store_pending_payload(&app_handle_for_open, payload.clone());
-                        let _ = window_for_open.emit("cli-open-files", payload);
+                    if let Some(payload) =
+                        payload_from_file_paths(paths_from_legacy_file_open_payload(payload), None)
+                    {
+                        dispatch_open_payload(&app_handle_for_open, payload);
                     }
                 });
             }
 
             // If files were provided via CLI, emit event to frontend
             if !cli.files.is_empty() {
-                // Validate and canonicalize paths
-                let mut valid_files = Vec::new();
-                for file in cli.files {
-                    if let Ok(canonical) = std::fs::canonicalize(&file) {
-                        if canonical.exists() && is_supported_extension(&canonical) {
-                            valid_files.push(canonical.to_string_lossy().to_string());
-                        } else {
-                            #[cfg(debug_assertions)]
-                            eprintln!("File not found: {}", file);
-                        }
-                    } else {
-                        #[cfg(debug_assertions)]
-                        eprintln!("Invalid path: {}", file);
-                    }
-                }
-
-                // Only emit if we have valid files
-                if !valid_files.is_empty() {
-                    let payload = CliPayload {
-                        files: valid_files,
-                        page: cli.page,
-                    };
-
+                let paths = cli.files.into_iter().map(PathBuf::from);
+                if let Some(payload) = payload_from_file_paths(paths, cli.page) {
                     #[cfg(debug_assertions)]
                     println!("Opening files from CLI: {:?}", payload.files);
 
                     // Store and emit event (frontend will also pull pending on ready)
-                    let _ = commands::fit_main_window_for_pdf(app_handle.clone(), true);
-                    store_pending_payload(&app_handle, payload.clone());
-                    window.emit("cli-open-files", payload)?;
+                    dispatch_open_payload(&app_handle, payload);
                 }
             }
 
@@ -186,8 +216,17 @@ pub fn run() {
         .on_menu_event(|app, event| {
             menu::handle_menu_event(app, event.id().as_ref());
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application");
+
+    app.run(|app, event| {
+        #[cfg(any(target_os = "macos", target_os = "ios", target_os = "android"))]
+        if let tauri::RunEvent::Opened { urls } = event {
+            if let Some(payload) = payload_from_opened_urls(&urls) {
+                dispatch_open_payload(app, payload);
+            }
+        }
+    });
 }
 
 #[cfg(test)]
@@ -220,5 +259,47 @@ mod tests {
         let merged = take_cli_payload_inner(&state).expect("merged payload should be present");
         assert_eq!(merged.files, vec!["/tmp/one.pdf", "/tmp/two.pdf"]);
         assert_eq!(merged.page, Some(7));
+    }
+
+    #[test]
+    fn test_legacy_file_open_payload_accepts_raw_path() {
+        let fixture =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/sample.pdf");
+
+        let payload = payload_from_file_paths(
+            paths_from_legacy_file_open_payload(fixture.to_string_lossy().as_ref()),
+            None,
+        )
+        .expect("raw path payload should be accepted");
+
+        assert_eq!(payload.files, vec![fixture.to_string_lossy().to_string()]);
+        assert_eq!(payload.page, None);
+    }
+
+    #[test]
+    fn test_legacy_file_open_payload_accepts_file_url() {
+        let fixture =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/sample.pdf");
+        let file_url = url::Url::from_file_path(&fixture).expect("fixture should become file URL");
+
+        let payload =
+            payload_from_file_paths(paths_from_legacy_file_open_payload(file_url.as_str()), None)
+                .expect("file URL payload should be accepted");
+
+        assert_eq!(payload.files, vec![fixture.to_string_lossy().to_string()]);
+        assert_eq!(payload.page, None);
+    }
+
+    #[test]
+    fn test_opened_urls_accepts_file_urls() {
+        let fixture =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/sample.pdf");
+        let file_url = url::Url::from_file_path(&fixture).expect("fixture should become file URL");
+
+        let payload =
+            payload_from_opened_urls(&[file_url]).expect("opened file URL should be accepted");
+
+        assert_eq!(payload.files, vec![fixture.to_string_lossy().to_string()]);
+        assert_eq!(payload.page, None);
     }
 }
