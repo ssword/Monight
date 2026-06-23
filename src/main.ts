@@ -9,6 +9,7 @@ import {
   updatePrintMenuState,
 } from './app/file-actions';
 import { registerKeybindActions } from './app/keybinds';
+import { captureReadingSession, restoreReadingSession } from './app/session-state';
 import { restoreTabState, saveCurrentTabState } from './app/tab-state';
 import { setupTauriListeners } from './app/tauri-events';
 import {
@@ -110,6 +111,8 @@ const getInitialViewMode = (): 'single' | 'continuous' => {
 };
 
 let lastFilterSaveTimer: number | null = null;
+let sessionSaveTimer: number | null = null;
+let isRestoringSession = false;
 
 const scheduleLastFilterSave = (settings: FilterSettings): void => {
   const manager = settingsManager;
@@ -130,6 +133,68 @@ const scheduleLastFilterSave = (settings: FilterSettings): void => {
       lastFilterSaveTimer = null;
     }
   }, 250);
+};
+
+const saveReadingSessionNow = async (): Promise<void> => {
+  const manager = settingsManager;
+  if (!manager || !currentSettings?.general.restorePreviousSession || isRestoringSession) return;
+
+  saveCurrentTabState(tabManager, sliderManager);
+  const session = captureReadingSession(tabManager);
+  currentSettings = { ...currentSettings, lastSession: session };
+  await manager.set('lastSession', session);
+};
+
+const scheduleReadingSessionSave = (): void => {
+  if (!settingsManager || !currentSettings?.general.restorePreviousSession || isRestoringSession) {
+    return;
+  }
+
+  if (sessionSaveTimer !== null) {
+    clearTimeout(sessionSaveTimer);
+  }
+
+  sessionSaveTimer = window.setTimeout(async () => {
+    try {
+      await saveReadingSessionNow();
+    } catch (error) {
+      console.error('Failed to save reading session:', error);
+    } finally {
+      sessionSaveTimer = null;
+    }
+  }, 250);
+};
+
+const restorePreviousReadingSession = async (): Promise<number> => {
+  if (!tabManager || !currentSettings?.general.restorePreviousSession) return 0;
+
+  const session = currentSettings.lastSession;
+  if (!session?.tabs.length) return 0;
+
+  isRestoringSession = true;
+  try {
+    const result = await restoreReadingSession(session, {
+      tabManager,
+      sliderManager,
+      getInitialFilterSettings,
+      getInitialViewMode,
+    });
+
+    if (result.failed > 0) {
+      console.warn(`Skipped ${result.failed} PDF(s) while restoring the previous session.`);
+    }
+
+    if (result.opened > 0) {
+      updateTabBarVisibility(tabManager);
+      await updatePrintMenuState(tabManager);
+      await applyWindowAfterOpen();
+    }
+
+    return result.opened;
+  } finally {
+    isRestoringSession = false;
+    scheduleReadingSessionSave();
+  }
 };
 
 async function initializeApp(): Promise<void> {
@@ -157,11 +222,14 @@ async function initializeApp(): Promise<void> {
         updateTabBarVisibility(tabManager);
         // Update print menu state
         await updatePrintMenuState(tabManager);
+        scheduleReadingSessionSave();
       },
       () => {
         saveCurrentTabState(tabManager, sliderManager);
         updateUI(tabManager);
+        scheduleReadingSessionSave();
       },
+      scheduleReadingSessionSave,
     );
 
     // Initialize slider manager
@@ -175,6 +243,7 @@ async function initializeApp(): Promise<void> {
           // Save filter to tab state
           activeTab.filterSettings = filterSettings;
           scheduleLastFilterSave(filterSettings);
+          scheduleReadingSessionSave();
         }
       }
     });
@@ -183,7 +252,10 @@ async function initializeApp(): Promise<void> {
     keybindManager = new KeybindManager(isMac);
 
     const updateUIForTab = () => updateUI(tabManager);
-    const saveStateForTab = () => saveCurrentTabState(tabManager, sliderManager);
+    const saveStateForTab = () => {
+      saveCurrentTabState(tabManager, sliderManager);
+      scheduleReadingSessionSave();
+    };
     const updateTabBar = () => updateTabBarVisibility(tabManager);
 
     // Register all action handlers
@@ -233,6 +305,9 @@ async function initializeApp(): Promise<void> {
     // Update keyboard hints for platform
     updateKeyboardHints(isMac);
 
+    // Restore saved tabs before processing pending OS/CLI file-open events.
+    await restorePreviousReadingSession();
+
     // Listen for Tauri events
     await setupTauriListeners({
       tabManager,
@@ -253,6 +328,13 @@ async function initializeApp(): Promise<void> {
           clearTimeout(lastFilterSaveTimer);
           lastFilterSaveTimer = null;
         }
+        if (!updated.general.restorePreviousSession && sessionSaveTimer !== null) {
+          clearTimeout(sessionSaveTimer);
+          sessionSaveTimer = null;
+        }
+        if (updated.general.restorePreviousSession) {
+          scheduleReadingSessionSave();
+        }
       },
       applyWindowAfterOpen,
       updateTabBarVisibility: updateTabBar,
@@ -262,11 +344,19 @@ async function initializeApp(): Promise<void> {
       printCurrentPDF: () => printCurrentPDF(tabManager),
     });
 
-    // Show splash screen initially
-    showSplash();
+    // Show the correct initial surface after session/CLI restore has run.
+    if ((tabManager?.size ?? 0) > 0) {
+      showViewer();
+    } else {
+      showSplash();
+    }
 
     // Get current window
     const currentWindow = getCurrentWebviewWindow();
+
+    window.addEventListener('beforeunload', () => {
+      void saveReadingSessionNow();
+    });
 
     // Show window after initialization
     await currentWindow.show();

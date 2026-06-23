@@ -58,6 +58,12 @@ async function loadSettings(): Promise<void> {
   const rememberLastFilter = document.getElementById('rememberLastFilter') as HTMLInputElement;
   if (rememberLastFilter) rememberLastFilter.checked = currentSettings.general.rememberLastFilter;
 
+  const restorePreviousSession = document.getElementById(
+    'restorePreviousSession',
+  ) as HTMLInputElement;
+  if (restorePreviousSession)
+    restorePreviousSession.checked = currentSettings.general.restorePreviousSession;
+
   const defaultContinuousScroll = document.getElementById(
     'defaultContinuousScroll',
   ) as HTMLInputElement;
@@ -126,6 +132,19 @@ function setupSettingListeners(): void {
   const rememberLastFilter = document.getElementById('rememberLastFilter') as HTMLInputElement;
   rememberLastFilter?.addEventListener('change', async () => {
     currentSettings.general.rememberLastFilter = rememberLastFilter.checked;
+    await settingsManager.set('general', currentSettings.general);
+    await notifyMainSettingsChanged();
+  });
+
+  const restorePreviousSession = document.getElementById(
+    'restorePreviousSession',
+  ) as HTMLInputElement;
+  restorePreviousSession?.addEventListener('change', async () => {
+    currentSettings.general.restorePreviousSession = restorePreviousSession.checked;
+    if (!restorePreviousSession.checked) {
+      currentSettings.lastSession = undefined;
+      await settingsManager.set('lastSession', undefined);
+    }
     await settingsManager.set('general', currentSettings.general);
     await notifyMainSettingsChanged();
   });

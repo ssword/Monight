@@ -26,10 +26,16 @@ export class TabManager {
   private closedHistory: string[] = [];
   private onTabChange: (tab: TabData | null) => void;
   private onActiveViewerStateChange?: () => void;
+  private onTabsChanged?: () => void;
 
-  constructor(onTabChange: (tab: TabData | null) => void, onActiveViewerStateChange?: () => void) {
+  constructor(
+    onTabChange: (tab: TabData | null) => void,
+    onActiveViewerStateChange?: () => void,
+    onTabsChanged?: () => void,
+  ) {
     this.onTabChange = onTabChange;
     this.onActiveViewerStateChange = onActiveViewerStateChange;
+    this.onTabsChanged = onTabsChanged;
   }
 
   /**
@@ -80,6 +86,7 @@ export class TabManager {
 
     // Render tabs UI
     this.renderTabs();
+    this.onTabsChanged?.();
 
     // Activate the new tab (this will show its canvas)
     await this.activateTab(id);
@@ -123,6 +130,7 @@ export class TabManager {
 
     // Render tabs UI
     this.renderTabs();
+    this.onTabsChanged?.();
 
     console.log(`Closed tab: ${tab.title} (${id})`);
   }
@@ -157,6 +165,10 @@ export class TabManager {
   getActiveTab(): TabData | null {
     if (!this.activeTabId) return null;
     return this.tabs.get(this.activeTabId) || null;
+  }
+
+  getTabs(): TabData[] {
+    return Array.from(this.tabs.values());
   }
 
   /**
