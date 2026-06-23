@@ -1,6 +1,21 @@
 import { Store } from '@tauri-apps/plugin-store';
 import type { FilterSettings } from './filters';
 
+export interface SavedTabSession {
+  filePath: string;
+  title: string;
+  filterSettings: FilterSettings;
+  currentPage: number;
+  zoom: number;
+  viewMode: 'single' | 'continuous';
+}
+
+export interface ReadingSession {
+  version: 1;
+  activeFilePath: string | null;
+  tabs: SavedTabSession[];
+}
+
 /**
  * Keybind configuration interface
  */
@@ -21,10 +36,12 @@ export interface MoonightSettings {
     displayThumbs: boolean;
     defaultDarkMode: string; // preset name
     rememberLastFilter: boolean;
+    restorePreviousSession: boolean;
     defaultViewMode: 'single' | 'continuous';
   };
   keybinds: Record<string, KeybindConfig>;
   lastFilter?: FilterSettings;
+  lastSession?: ReadingSession;
 }
 
 /**
@@ -37,6 +54,7 @@ export const DEFAULT_SETTINGS: MoonightSettings = {
     displayThumbs: true,
     defaultDarkMode: 'default',
     rememberLastFilter: true,
+    restorePreviousSession: true,
     defaultViewMode: 'continuous',
   },
   keybinds: {
