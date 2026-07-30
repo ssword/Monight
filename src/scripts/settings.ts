@@ -7,6 +7,8 @@ export interface SavedTabSession {
   filterSettings: FilterSettings;
   currentPage: number;
   zoom: number;
+  rotation?: number;
+  scrollPosition?: number;
   viewMode: 'single' | 'continuous';
 }
 

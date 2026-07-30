@@ -3,7 +3,7 @@ import type { SliderManager } from '../scripts/sliders';
 import type { TabData, TabManager } from '../scripts/tabs';
 import { updateActivePresetButton } from './ui';
 
-// Restore tab state (filters, page, zoom, view mode)
+// Restore tab state (filters, page, zoom, rotation, precise scroll position, view mode)
 export async function restoreTabState(
   tabManager: TabManager | null,
   sliderManager: SliderManager | null,
@@ -12,15 +12,15 @@ export async function restoreTabState(
   const viewer = tabManager?.getViewerForTab(tab.id);
   if (!viewer) return;
 
-  // Restore view mode first (before page/zoom)
-  await viewer.setViewMode(tab.viewMode);
-
   // Apply saved filter
   viewer.applyFilter(buildFilterCSS(tab.filterSettings));
 
-  // Restore page and zoom
-  await viewer.goToPage(tab.currentPage);
+  // Apply geometry while still in single-page mode, then initialize the saved layout once.
+  await viewer.setRotation(tab.rotation);
   await viewer.setZoom(tab.zoom);
+  await viewer.setViewMode(tab.viewMode);
+  await viewer.goToPage(tab.currentPage);
+  await viewer.setScrollPosition(tab.scrollPosition);
 
   // Update slider if initialized
   if (sliderManager?.isInitialized()) {
@@ -53,6 +53,8 @@ export function saveCurrentTabState(
   // Save state to tab
   activeTab.currentPage = state.currentPage;
   activeTab.zoom = state.zoom;
+  activeTab.rotation = state.rotation;
+  activeTab.scrollPosition = viewer.getScrollPosition();
   activeTab.viewMode = state.viewMode;
 
   // Save current filter if sliders initialized

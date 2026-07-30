@@ -147,6 +147,7 @@ export class PDFViewer {
   private canvasId: string;
   private currentFilterCSS = '';
   private onPageChange: ((pageNum: number) => void) | null = null;
+  private onScrollChange: ((scrollPosition: number) => void) | null = null;
   private readonly linkTargets = new WeakMap<HTMLElement, PdfLinkTarget>();
   private contextMenu: HTMLDivElement | null = null;
   private handleDocumentPointerDownBound: (event: PointerEvent) => void;
@@ -174,6 +175,7 @@ export class PDFViewer {
   private readonly renderBufferPages = 2;
   private readonly cleanupBufferPages = 5;
   private handleScrollBound: () => void;
+  private isScrollListenerAttached = false;
 
   constructor(containerId: string, canvasId: string = 'pdf-canvas') {
     const container = document.getElementById(containerId);
@@ -196,6 +198,10 @@ export class PDFViewer {
 
   setOnPageChange(handler: ((pageNum: number) => void) | null): void {
     this.onPageChange = handler;
+  }
+
+  setOnScrollChange(handler: ((scrollPosition: number) => void) | null): void {
+    this.onScrollChange = handler;
   }
 
   private initializeCanvas(): void {
@@ -297,18 +303,8 @@ export class PDFViewer {
       this.state.fileName = fileName;
       this.state.filePath = filePath;
 
-      // Cache base dimensions (scale=1, rotation=0) for all pages
+      // Render page one immediately. Other dimensions are cached lazily as pages are requested.
       this.baseDimensions.clear();
-      for (let pageNum = 1; pageNum <= this.pdfDoc.numPages; pageNum++) {
-        const page = await this.pdfDoc.getPage(pageNum);
-        const viewport = page.getViewport({ scale: 1.0, rotation: 0 });
-        this.baseDimensions.set(pageNum, {
-          width: viewport.width,
-          height: viewport.height,
-        });
-      }
-
-      // Render first page
       await this.renderPage(1);
 
       console.log(`Loaded PDF: ${fileName} (${this.state.totalPages} pages)`);
@@ -749,6 +745,7 @@ export class PDFViewer {
 
       // Get page
       const page: PDFPageProxy = await this.pdfDoc.getPage(pageNum);
+      this.cacheBaseDimensions(pageNum, page);
 
       // Calculate viewport with zoom and rotation
       const viewport = page.getViewport({
@@ -859,22 +856,24 @@ export class PDFViewer {
   }
 
   async rotateClockwise(): Promise<void> {
-    this.state.rotation = (this.state.rotation + 90) % 360;
-
-    if (this.state.viewMode === 'continuous') {
-      await this.calculateAllPageDimensions();
-      await this.renderVisiblePages(true);
-    } else {
-      await this.renderPage(this.state.currentPage);
-    }
+    await this.setRotation(this.state.rotation + 90);
   }
 
   async rotateCounterClockwise(): Promise<void> {
-    this.state.rotation = (this.state.rotation - 90 + 360) % 360;
+    await this.setRotation(this.state.rotation - 90);
+  }
 
+  async setRotation(rotation: number): Promise<void> {
+    const finiteRotation = Number.isFinite(rotation) ? rotation : 0;
+    const normalized = (((Math.round(finiteRotation / 90) * 90) % 360) + 360) % 360;
+    if (this.state.rotation === normalized) return;
+
+    const currentPage = this.state.currentPage;
+    this.state.rotation = normalized;
     if (this.state.viewMode === 'continuous') {
       await this.calculateAllPageDimensions();
       await this.renderVisiblePages(true);
+      await this.scrollToPage(currentPage);
     } else {
       await this.renderPage(this.state.currentPage);
     }
@@ -1009,6 +1008,19 @@ export class PDFViewer {
     return { ...this.state };
   }
 
+  getScrollPosition(): number {
+    return this.container.scrollTop;
+  }
+
+  async setScrollPosition(scrollPosition: number): Promise<void> {
+    const normalized = Number.isFinite(scrollPosition) ? Math.max(scrollPosition, 0) : 0;
+    this.container.scrollTop = normalized;
+
+    if (this.state.viewMode === 'continuous') {
+      await this.renderVisiblePages();
+    }
+  }
+
   getCanvas(): HTMLCanvasElement | null {
     return this.canvas;
   }
@@ -1023,6 +1035,18 @@ export class PDFViewer {
   setVisible(visible: boolean): void {
     if (!visible) {
       this.hideContextMenu();
+    }
+
+    if (visible && !this.isScrollListenerAttached) {
+      this.container.addEventListener('scroll', this.handleScrollBound);
+      this.isScrollListenerAttached = true;
+    } else if (!visible && this.isScrollListenerAttached) {
+      this.container.removeEventListener('scroll', this.handleScrollBound);
+      this.isScrollListenerAttached = false;
+      if (this.scrollRafId !== null) {
+        window.cancelAnimationFrame(this.scrollRafId);
+        this.scrollRafId = null;
+      }
     }
 
     if (this.state.viewMode === 'continuous') {
@@ -1135,11 +1159,6 @@ export class PDFViewer {
   private async initializeContinuousScroll(): Promise<void> {
     if (!this.pdfDoc) return;
 
-    // Hide single-page canvas
-    if (this.singlePageSurface) {
-      this.singlePageSurface.wrapper.style.display = 'none';
-    }
-
     // Create scroll container if it doesn't exist
     if (!this.scrollContainer) {
       this.scrollContainer = document.createElement('div');
@@ -1147,20 +1166,16 @@ export class PDFViewer {
       this.container.appendChild(this.scrollContainer);
     }
 
-    // Add continuous-scroll class to container
-    this.container.classList.add('continuous-scroll');
-
-    // Calculate dimensions for all pages
+    // Keep the already-rendered first page visible while the continuous layout is measured.
     await this.calculateAllPageDimensions();
 
-    // Set up scroll listener
-    this.container.addEventListener('scroll', this.handleScrollBound);
+    if (this.singlePageSurface) {
+      this.singlePageSurface.wrapper.style.display = 'none';
+    }
+    this.container.classList.add('continuous-scroll');
   }
 
   private cleanupContinuousScroll(): void {
-    // Remove scroll listener
-    this.container.removeEventListener('scroll', this.handleScrollBound);
-
     if (this.scrollRafId !== null) {
       window.cancelAnimationFrame(this.scrollRafId);
       this.scrollRafId = null;
@@ -1199,8 +1214,23 @@ export class PDFViewer {
     this.renderedPages.clear();
     this.pageHeights.clear();
     this.pageWidths.clear();
-    this.baseDimensions.clear();
     this.offsetArray = [];
+  }
+
+  private cacheBaseDimensions(
+    pageNum: number,
+    page: PDFPageProxy,
+  ): {
+    width: number;
+    height: number;
+  } {
+    const cached = this.baseDimensions.get(pageNum);
+    if (cached) return cached;
+
+    const viewport = page.getViewport({ scale: 1.0, rotation: 0 });
+    const dimensions = { width: viewport.width, height: viewport.height };
+    this.baseDimensions.set(pageNum, dimensions);
+    return dimensions;
   }
 
   private async calculateAllPageDimensions(): Promise<void> {
@@ -1219,14 +1249,17 @@ export class PDFViewer {
         this.pageWidths.set(pageNum, Math.floor(scaled.width));
         this.pageHeights.set(pageNum, Math.floor(scaled.height));
       } else {
-        // Fallback: fetch from PDF.js (should only happen if cache wasn't populated)
+        // Lazily fetch and cache dimensions the first time a page needs layout.
         const page = await this.pdfDoc.getPage(pageNum);
-        const viewport = page.getViewport({
-          scale: this.state.zoom,
+        const dimensions = this.cacheBaseDimensions(pageNum, page);
+        const scaled = deriveScaledDimensions({
+          baseWidth: dimensions.width,
+          baseHeight: dimensions.height,
+          zoom: this.state.zoom,
           rotation: this.state.rotation,
         });
-        this.pageWidths.set(pageNum, Math.floor(viewport.width));
-        this.pageHeights.set(pageNum, Math.floor(viewport.height));
+        this.pageWidths.set(pageNum, Math.floor(scaled.width));
+        this.pageHeights.set(pageNum, Math.floor(scaled.height));
       }
     }
 
@@ -1383,6 +1416,7 @@ export class PDFViewer {
 
       // Get page
       const page = await this.pdfDoc.getPage(pageNum);
+      this.cacheBaseDimensions(pageNum, page);
 
       // Calculate viewport
       const viewport = page.getViewport({
@@ -1504,8 +1538,6 @@ export class PDFViewer {
   }
 
   private handleScroll(): void {
-    if (this.state.viewMode !== 'continuous') return;
-
     // Throttle scroll events
     if (this.scrollRafId !== null) {
       return;
@@ -1513,7 +1545,10 @@ export class PDFViewer {
 
     this.scrollRafId = window.requestAnimationFrame(() => {
       this.scrollRafId = null;
-      void this.renderVisiblePages();
+      this.onScrollChange?.(this.container.scrollTop);
+      if (this.state.viewMode === 'continuous') {
+        void this.renderVisiblePages();
+      }
     });
   }
 
@@ -1570,6 +1605,10 @@ export class PDFViewer {
     document.removeEventListener('pointerup', this.handleDocumentPointerUpBound, true);
     document.removeEventListener('keydown', this.handleDocumentKeyDownBound);
     document.removeEventListener('selectionchange', this.handleSelectionChangeBound);
+    if (this.isScrollListenerAttached) {
+      this.container.removeEventListener('scroll', this.handleScrollBound);
+      this.isScrollListenerAttached = false;
+    }
     if (this.contextMenu?.parentNode) {
       this.contextMenu.parentNode.removeChild(this.contextMenu);
     }

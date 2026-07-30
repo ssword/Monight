@@ -12,6 +12,7 @@ export interface TabData {
   filterSettings: FilterSettings; // Current filter preset
   currentPage: number; // Current page number
   zoom: number; // Current zoom level
+  rotation: number; // Clockwise page rotation in degrees
   scrollPosition: number; // Scroll position
   viewMode: 'single' | 'continuous'; // View mode
 }
@@ -24,12 +25,12 @@ export class TabManager {
   private activeTabId: string | null = null;
   private pdfViewers: Map<string, PDFViewer> = new Map();
   private closedHistory: string[] = [];
-  private onTabChange: (tab: TabData | null) => void;
+  private onTabChange: (tab: TabData | null) => void | Promise<void>;
   private onActiveViewerStateChange?: () => void;
   private onTabsChanged?: () => void;
 
   constructor(
-    onTabChange: (tab: TabData | null) => void,
+    onTabChange: (tab: TabData | null) => void | Promise<void>,
     onActiveViewerStateChange?: () => void,
     onTabsChanged?: () => void,
   ) {
@@ -60,6 +61,7 @@ export class TabManager {
       filterSettings: { ...initialFilterSettings },
       currentPage: 1,
       zoom: 1.0,
+      rotation: 0,
       scrollPosition: 0,
       viewMode,
     };
@@ -72,6 +74,11 @@ export class TabManager {
     const viewer = new PDFViewer('pdf-container', canvasId);
     viewer.setOnPageChange(() => {
       if (this.activeTabId !== id) return;
+      this.onActiveViewerStateChange?.();
+    });
+    viewer.setOnScrollChange(() => {
+      if (this.activeTabId !== id) return;
+      tab.scrollPosition = viewer.getScrollPosition();
       this.onActiveViewerStateChange?.();
     });
 
@@ -124,7 +131,7 @@ export class TabManager {
       } else {
         // No tabs left
         this.activeTabId = null;
-        this.onTabChange(null);
+        await this.onTabChange(null);
       }
     }
 
@@ -142,6 +149,14 @@ export class TabManager {
     const tab = this.tabs.get(id);
     if (!tab) return;
 
+    if (this.activeTabId && this.activeTabId !== id) {
+      const previousTab = this.tabs.get(this.activeTabId);
+      const previousViewer = this.pdfViewers.get(this.activeTabId);
+      if (previousTab && previousViewer) {
+        previousTab.scrollPosition = previousViewer.getScrollPosition();
+      }
+    }
+
     // Show/hide all viewers (handles both single-page and continuous scroll modes)
     this.pdfViewers.forEach((viewer, viewerId) => {
       viewer.setVisible(viewerId === id);
@@ -154,7 +169,7 @@ export class TabManager {
     this.renderTabs();
 
     // Notify callback
-    this.onTabChange(tab);
+    await this.onTabChange(tab);
 
     console.log(`Activated tab: ${tab.title} (${id})`);
   }

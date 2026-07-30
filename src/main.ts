@@ -211,10 +211,10 @@ async function initializeApp(): Promise<void> {
     tabManager = new TabManager(
       async (tab: TabData | null) => {
         if (tab) {
-          // Tab activated - restore its state
+          // Reveal the already-rendered first page while any remaining state/layout is restored.
+          showViewer();
           await restoreTabState(tabManager, sliderManager, tab);
           updateUI(tabManager);
-          showViewer();
         } else {
           // No tabs - show splash
           showSplash();

@@ -82,8 +82,8 @@ export async function openPDFFile(
       multiple: true,
       filters: [
         {
-          name: 'Documents',
-          extensions: ['pdf', 'xdp', 'fdf', 'xfdf'],
+          name: 'PDF Documents',
+          extensions: ['pdf'],
         },
       ],
     });

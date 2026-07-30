@@ -24,6 +24,8 @@ function toSavedTabSession(tab: TabData): SavedTabSession {
     filterSettings: { ...tab.filterSettings },
     currentPage: tab.currentPage,
     zoom: tab.zoom,
+    rotation: tab.rotation,
+    scrollPosition: tab.scrollPosition,
     viewMode: tab.viewMode,
   };
 }
@@ -65,6 +67,8 @@ async function restoreSavedTab(
   restoredTab.filterSettings = { ...savedTab.filterSettings };
   restoredTab.currentPage = savedTab.currentPage;
   restoredTab.zoom = savedTab.zoom;
+  restoredTab.rotation = savedTab.rotation ?? 0;
+  restoredTab.scrollPosition = savedTab.scrollPosition ?? 0;
   restoredTab.viewMode = savedTab.viewMode;
 
   await restoreTabState(tabManager, sliderManager, restoredTab);
