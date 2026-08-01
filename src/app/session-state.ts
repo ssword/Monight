@@ -1,3 +1,4 @@
+import type { ViewMode } from '../lib/document-features';
 import type { FilterSettings } from '../scripts/filters';
 import type { ReadingSession, SavedTabSession } from '../scripts/settings';
 import type { SliderManager } from '../scripts/sliders';
@@ -14,7 +15,7 @@ interface RestoreSessionOptions {
   tabManager: TabManager;
   sliderManager: SliderManager | null;
   getInitialFilterSettings: () => FilterSettings;
-  getInitialViewMode: () => 'single' | 'continuous';
+  getInitialViewMode: () => ViewMode;
 }
 
 function toSavedTabSession(tab: TabData): SavedTabSession {
@@ -24,6 +25,8 @@ function toSavedTabSession(tab: TabData): SavedTabSession {
     filterSettings: { ...tab.filterSettings },
     currentPage: tab.currentPage,
     zoom: tab.zoom,
+    rotation: tab.rotation,
+    scrollPosition: tab.scrollPosition,
     viewMode: tab.viewMode,
   };
 }
@@ -65,6 +68,8 @@ async function restoreSavedTab(
   restoredTab.filterSettings = { ...savedTab.filterSettings };
   restoredTab.currentPage = savedTab.currentPage;
   restoredTab.zoom = savedTab.zoom;
+  restoredTab.rotation = savedTab.rotation ?? 0;
+  restoredTab.scrollPosition = savedTab.scrollPosition ?? 0;
   restoredTab.viewMode = savedTab.viewMode;
 
   await restoreTabState(tabManager, sliderManager, restoredTab);

@@ -6,7 +6,6 @@ use tauri::{
 // Import for opening URLs in browser
 use tauri_plugin_opener::OpenerExt;
 
-
 fn build_file_menu(app: &AppHandle) -> Result<Submenu<Wry>, tauri::Error> {
     Submenu::with_items(
         app,
@@ -35,7 +34,13 @@ fn build_file_menu_with_settings(
             &MenuItem::with_id(app, "open", "Open...", true, Some("CmdOrCtrl+O"))?,
             &MenuItem::with_id(app, "print", "Print", true, Some("CmdOrCtrl+P"))?,
             &PredefinedMenuItem::separator(app)?,
-            &MenuItem::with_id(app, "settings", settings_label, true, Some(settings_shortcut))?,
+            &MenuItem::with_id(
+                app,
+                "settings",
+                settings_label,
+                true,
+                Some(settings_shortcut),
+            )?,
             &PredefinedMenuItem::separator(app)?,
             &PredefinedMenuItem::close_window(app, Some("Close"))?,
         ],
@@ -136,6 +141,16 @@ fn emit_to_main(app: &AppHandle, event: &str) {
     }
 }
 
+fn help_url(event_id: &str) -> Option<&'static str> {
+    match event_id {
+        "learn_more" => Some("https://github.com/ssword/Monight"),
+        "license" => Some("https://github.com/ssword/Monight#license"),
+        "bugs" => Some("https://github.com/ssword/Monight/issues/new"),
+        "contact" => Some("https://github.com/ssword"),
+        _ => None,
+    }
+}
+
 /// Create the application menu
 pub fn create_menu(app: &AppHandle) -> Result<Menu<Wry>, tauri::Error> {
     // Create menu with platform-specific Settings placement
@@ -219,28 +234,33 @@ pub fn handle_menu_event(app: &AppHandle, event_id: &str) {
         "close_tab" => {
             emit_to_main(app, "menu-close-tab");
         }
-        "learn_more" => {
-            // Open GitHub repo in browser (placeholder URL)
-            let _ = app.opener().open_url("https://github.com/yourusername/yourrepo", None::<&str>);
-        }
-        "license" => {
-            // Open LICENSE file in browser (placeholder URL)
-            let _ = app.opener().open_url(
-                "https://github.com/yourusername/yourrepo/blob/master/LICENSE",
-                None::<&str>,
-            );
-        }
-        "bugs" => {
-            // Open GitHub issues in browser (placeholder URL)
-            let _ = app.opener().open_url(
-                "https://github.com/yourusername/yourrepo/issues",
-                None::<&str>,
-            );
-        }
-        "contact" => {
-            // Open email client (placeholder email)
-            let _ = app.opener().open_url("mailto:your-email@example.com", None::<&str>);
+        "learn_more" | "license" | "bugs" | "contact" => {
+            if let Some(url) = help_url(event_id) {
+                let _ = app.opener().open_url(url, None::<&str>);
+            }
         }
         _ => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn help_destinations_use_the_real_project_pages() {
+        assert_eq!(
+            help_url("learn_more"),
+            Some("https://github.com/ssword/Monight")
+        );
+        assert_eq!(
+            help_url("license"),
+            Some("https://github.com/ssword/Monight#license")
+        );
+        assert_eq!(
+            help_url("bugs"),
+            Some("https://github.com/ssword/Monight/issues/new")
+        );
+        assert_eq!(help_url("contact"), Some("https://github.com/ssword"));
     }
 }

@@ -1,4 +1,5 @@
 import { Store } from '@tauri-apps/plugin-store';
+import type { PdfAnnotation, RecentFile, ViewMode } from '../lib/document-features';
 import type { FilterSettings } from './filters';
 
 export interface SavedTabSession {
@@ -7,7 +8,9 @@ export interface SavedTabSession {
   filterSettings: FilterSettings;
   currentPage: number;
   zoom: number;
-  viewMode: 'single' | 'continuous';
+  rotation?: number;
+  scrollPosition?: number;
+  viewMode: ViewMode;
 }
 
 export interface ReadingSession {
@@ -37,11 +40,13 @@ export interface MoonightSettings {
     defaultDarkMode: string; // preset name
     rememberLastFilter: boolean;
     restorePreviousSession: boolean;
-    defaultViewMode: 'single' | 'continuous';
+    defaultViewMode: ViewMode;
   };
   keybinds: Record<string, KeybindConfig>;
   lastFilter?: FilterSettings;
   lastSession?: ReadingSession;
+  recentFiles: RecentFile[];
+  annotations: Record<string, PdfAnnotation[]>;
 }
 
 /**
@@ -87,6 +92,11 @@ export const DEFAULT_SETTINGS: MoonightSettings = {
       displayName: 'Print',
       binds: ['CmdOrCtrl+P'],
       action: 'print',
+    },
+    Find: {
+      displayName: 'Find in Document',
+      binds: ['CmdOrCtrl+F'],
+      action: 'find',
     },
     ZoomIn: {
       displayName: 'Zoom In',
@@ -207,7 +217,14 @@ export const DEFAULT_SETTINGS: MoonightSettings = {
       binds: ['F11'],
       action: 'toggleFullscreen',
     },
+    PresentationMode: {
+      displayName: 'Presentation Mode',
+      binds: ['Shift+F11'],
+      action: 'presentationMode',
+    },
   },
+  recentFiles: [],
+  annotations: {},
 };
 
 /**

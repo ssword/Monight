@@ -267,7 +267,7 @@
   text-align: initial;
   text-size-adjust: none;
   transform-origin: 0 0;
-  z-index: 1;
+  z-index: 2;
   --min-font-size: 1;
   --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size));
   --min-font-size-inv: calc(1 / var(--min-font-size));
@@ -315,7 +315,7 @@
 #pdf-container .annotationLayer {
   position: absolute;
   inset: 0;
-  z-index: 2;
+  z-index: 3;
   pointer-events: none;
   transform-origin: 0 0;
 }
@@ -327,6 +327,67 @@
   transform-origin: 0 0;
   user-select: none;
   pointer-events: auto;
+}
+
+#pdf-container .user-annotation-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+#pdf-container .user-annotation {
+  position: absolute;
+  padding: 0;
+  border: 0;
+  border-radius: 2px;
+  background: rgba(255, 220, 58, 0.42);
+  mix-blend-mode: multiply;
+  pointer-events: none;
+}
+
+#pdf-container .user-annotation[data-annotation-color="green"] {
+  background: rgba(95, 210, 117, 0.4);
+}
+
+#pdf-container .user-annotation[data-annotation-color="blue"] {
+  background: rgba(76, 159, 255, 0.38);
+}
+
+#pdf-container .user-annotation[data-annotation-color="pink"] {
+  background: rgba(247, 105, 178, 0.4);
+}
+
+#pdf-container .user-annotation-note,
+#pdf-container .user-annotation.has-note {
+  min-width: 14px;
+  min-height: 14px;
+  border: 1px solid rgba(106, 76, 0, 0.6);
+  border-radius: 50%;
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+#pdf-container .user-annotation.has-note::after {
+  content: "•";
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: #6c4b00;
+  font-size: 12px;
+}
+
+#pdf-container .pdf-search-hit {
+  padding: 0;
+  color: transparent;
+  background: rgba(255, 204, 0, 0.4);
+}
+
+#pdf-container .pdf-search-hit-active {
+  background: rgba(255, 126, 0, 0.62);
+  outline: 1px solid rgba(154, 70, 0, 0.8);
 }
 
 #pdf-container .textLayer.selecting ~ .annotationLayer section {
@@ -428,4 +489,16 @@
 
 #pdf-container:not(.continuous-scroll) > .pdf-page-surface:not([data-page-num]) {
   display: block;
+}
+
+#pdf-container.spread-view > .spread-primary {
+  right: calc(50% + 6px);
+  left: auto;
+  transform: none;
+}
+
+#pdf-container.spread-view > .spread-secondary {
+  right: auto;
+  left: calc(50% + 6px);
+  transform: none;
 }

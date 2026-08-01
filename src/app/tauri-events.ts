@@ -1,6 +1,8 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
+import { getCurrentWebview } from '@tauri-apps/api/webview';
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
+import type { ViewMode } from '../lib/document-features';
 import type { FilterSettings } from '../scripts/filters';
 import type { KeybindManager } from '../scripts/keybind-manager';
 import type { SettingsManager } from '../scripts/settings';
@@ -15,7 +17,7 @@ interface TauriListenerContext {
   isMac: boolean;
   openPdfAndRefresh: () => Promise<void>;
   getInitialFilterSettings: () => FilterSettings;
-  getInitialViewMode: () => 'single' | 'continuous';
+  getInitialViewMode: () => ViewMode;
   reloadSettings: () => Promise<void>;
   applyWindowAfterOpen: () => Promise<void>;
   updateTabBarVisibility: () => void;
@@ -43,7 +45,7 @@ export async function setupTauriListeners({
 }: TauriListenerContext): Promise<void> {
   const isSupportedFile = (path: string): boolean => {
     const ext = path.split('.').pop()?.toLowerCase();
-    return ext ? ['pdf', 'xdp', 'fdf', 'xfdf'].includes(ext) : false;
+    return ext === 'pdf';
   };
 
   const handleCliOpenPayload = async (payload: { files: string[]; page: number | null }) => {
@@ -80,15 +82,14 @@ export async function setupTauriListeners({
     }
   };
 
-  // Listen for file drop events
-  await listen<string[]>('tauri://file-drop', async (event) => {
-    console.log('File drop detected:', event.payload);
+  const handleDroppedFiles = async (paths: string[]): Promise<void> => {
+    console.log('File drop detected:', paths);
     if (!tabManager) return;
 
-    const pdfFiles = event.payload.filter((f) => isSupportedFile(f));
+    const pdfFiles = paths.filter((path) => isSupportedFile(path));
 
     if (pdfFiles.length === 0) {
-      alert('Please drop PDF/XDP/FDF/XFDF files only.');
+      alert('Please drop PDF files only.');
       return;
     }
 
@@ -113,15 +114,23 @@ export async function setupTauriListeners({
     await updatePrintMenuState();
 
     await applyWindowAfterOpen();
-  });
+  };
 
-  // Visual feedback for drag operations
-  await listen('tauri://file-drop-hover', async () => {
-    document.body.classList.add('drag-over');
-  });
-
-  await listen('tauri://file-drop-cancelled', async () => {
-    document.body.classList.remove('drag-over');
+  // Tauri 2 delivers a discriminated drag/drop payload through the current webview.
+  await getCurrentWebview().onDragDropEvent(async (event) => {
+    switch (event.payload.type) {
+      case 'enter':
+      case 'over':
+        document.body.classList.add('drag-over');
+        break;
+      case 'drop':
+        document.body.classList.remove('drag-over');
+        await handleDroppedFiles(event.payload.paths);
+        break;
+      case 'leave':
+        document.body.classList.remove('drag-over');
+        break;
+    }
   });
 
   // Listen for CLI file open events

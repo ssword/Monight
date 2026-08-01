@@ -24,8 +24,10 @@ type KeybindAction = (e: KeyboardEvent, data?: string) => void | Promise<void>;
  */
 export class KeybindManager {
   private keybinds: Map<string, ParsedKeybind[]> = new Map();
+  private configuredActions: Map<string, string> = new Map();
   private actionHandlers: Map<string, KeybindAction> = new Map();
   private actionData: Map<string, string> = new Map();
+  private registeredActionData: Map<string, string> = new Map();
   private isMac: boolean;
 
   constructor(isMac: boolean) {
@@ -69,6 +71,12 @@ export class KeybindManager {
         case 'option':
           result.alt = true;
           break;
+        case 'plus':
+          result.key = '+';
+          break;
+        case 'minus':
+          result.key = '-';
+          break;
         default:
           // The actual key - normalize to lowercase for matching
           result.key = part.toLowerCase();
@@ -84,7 +92,7 @@ export class KeybindManager {
   registerAction(actionId: string, handler: KeybindAction, data?: string): void {
     this.actionHandlers.set(actionId, handler);
     if (data) {
-      this.actionData.set(actionId, data);
+      this.registeredActionData.set(actionId, data);
     }
   }
 
@@ -93,18 +101,20 @@ export class KeybindManager {
    */
   loadFromSettings(settings: MoonightSettings): void {
     this.keybinds.clear();
+    this.configuredActions.clear();
+    this.actionData.clear();
 
-    for (const [actionId, config] of Object.entries(settings.keybinds)) {
+    for (const [bindingId, config] of Object.entries(settings.keybinds)) {
       if (config.binds.length === 0) continue;
 
-      const actionKey = config.action || actionId;
       const parsed: ParsedKeybind[] = config.binds.map((bind) => this.parseAccelerator(bind));
 
-      this.keybinds.set(actionKey, parsed);
+      this.keybinds.set(bindingId, parsed);
+      this.configuredActions.set(bindingId, config.action || bindingId);
 
       // Store action data if present
       if (config.data) {
-        this.actionData.set(actionKey, config.data);
+        this.actionData.set(bindingId, config.data);
       }
     }
 
@@ -116,6 +126,17 @@ export class KeybindManager {
    * Returns the action ID or null if no match
    */
   matchEvent(e: KeyboardEvent): string | null {
+    const bindingId = this.findMatchingBinding(e);
+    if (!bindingId) return null;
+
+    return this.configuredActions.get(bindingId) ?? bindingId;
+  }
+
+  private findMatchingBinding(e: KeyboardEvent): string | null {
+    if (this.isEditableTarget(e.target)) {
+      return null;
+    }
+
     const eventKey = e.key.toLowerCase();
 
     // Ignore modifier-only presses
@@ -128,16 +149,17 @@ export class KeybindManager {
       return null;
     }
 
-    for (const [actionId, keybinds] of this.keybinds) {
+    for (const [bindingId, keybinds] of this.keybinds) {
       for (const kb of keybinds) {
+        const shiftMatches = kb.shift === e.shiftKey || (kb.key === '+' && !kb.shift && e.shiftKey);
         if (
           kb.key === eventKey &&
           kb.ctrl === e.ctrlKey &&
           kb.meta === e.metaKey &&
-          kb.shift === e.shiftKey &&
+          shiftMatches &&
           kb.alt === e.altKey
         ) {
-          return actionId;
+          return bindingId;
         }
       }
     }
@@ -145,20 +167,38 @@ export class KeybindManager {
     return null;
   }
 
+  private isEditableTarget(target: EventTarget | null): boolean {
+    if (!target || typeof target !== 'object') return false;
+
+    const element = target as {
+      tagName?: string;
+      isContentEditable?: boolean;
+    };
+    const tagName = element.tagName?.toLowerCase();
+
+    return (
+      tagName === 'input' ||
+      tagName === 'textarea' ||
+      tagName === 'select' ||
+      element.isContentEditable === true
+    );
+  }
+
   /**
    * Execute the action for a matched keyboard event
    */
   async handleEvent(e: KeyboardEvent): Promise<void> {
-    const actionId = this.matchEvent(e);
-    if (!actionId) return;
+    const bindingId = this.findMatchingBinding(e);
+    if (!bindingId) return;
 
+    const actionId = this.configuredActions.get(bindingId) ?? bindingId;
     const handler = this.actionHandlers.get(actionId);
     if (!handler) {
       console.warn(`No handler registered for action: ${actionId}`);
       return;
     }
 
-    const data = this.actionData.get(actionId);
+    const data = this.actionData.get(bindingId) ?? this.registeredActionData.get(actionId);
     await handler(e, data);
   }
 

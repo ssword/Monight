@@ -1,24 +1,36 @@
 import { getName, getTauriVersion, getVersion } from '@tauri-apps/api/app';
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
+import { requestAnnotationNote, requestPdfPassword, showToast } from './app/dialogs';
 import { setupEventListeners } from './app/dom-events';
 import {
   ensureMinimumViewingSize,
+  openFiles,
   openPDFFile,
   openSettings,
   printCurrentPDF,
   updatePrintMenuState,
 } from './app/file-actions';
 import { registerKeybindActions } from './app/keybinds';
+import { PresentationController } from './app/presentation-controller';
+import { SearchController } from './app/search-controller';
 import { captureReadingSession, restoreReadingSession } from './app/session-state';
+import { SidebarController } from './app/sidebar-controller';
 import { restoreTabState, saveCurrentTabState } from './app/tab-state';
 import { setupTauriListeners } from './app/tauri-events';
 import {
+  renderRecentFiles,
   showSplash,
   showViewer,
   updateKeyboardHints,
   updateTabBarVisibility,
   updateUI,
 } from './app/ui';
+import {
+  type PdfAnnotation,
+  type RecentFile,
+  updateRecentFiles,
+  type ViewMode,
+} from './lib/document-features';
 import { buildFilterCSS, type FilterSettings, PRESETS } from './scripts/filters';
 import { KeybindManager } from './scripts/keybind-manager';
 import { type MoonightSettings, SettingsManager } from './scripts/settings';
@@ -27,6 +39,7 @@ import { type TabData, TabManager } from './scripts/tabs';
 import './styles/main.css';
 import './styles/pdf-viewer.css';
 import './styles/configurator.css';
+import './styles/document-features.css';
 import './styles/tabs.css';
 import 'nouislider/dist/nouislider.css';
 
@@ -48,6 +61,9 @@ let currentSettings: MoonightSettings | null = null;
 
 // Global keybind manager instance
 let keybindManager: KeybindManager | null = null;
+let searchController: SearchController | null = null;
+let sidebarController: SidebarController | null = null;
+let presentationController: PresentationController | null = null;
 
 // Detect if we're on macOS
 const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
@@ -102,7 +118,7 @@ const getInitialFilterSettings = (): FilterSettings => {
   return { ...(preset ?? PRESETS.default) };
 };
 
-const getInitialViewMode = (): 'single' | 'continuous' => {
+const getInitialViewMode = (): ViewMode => {
   if (!currentSettings) {
     return 'single';
   }
@@ -112,7 +128,72 @@ const getInitialViewMode = (): 'single' | 'continuous' => {
 
 let lastFilterSaveTimer: number | null = null;
 let sessionSaveTimer: number | null = null;
+let annotationSaveTimer: number | null = null;
 let isRestoringSession = false;
+
+const getActiveViewer = () => {
+  const activeTab = tabManager?.getActiveTab();
+  return activeTab ? (tabManager?.getViewerForTab(activeTab.id) ?? null) : null;
+};
+
+const persistAnnotations = (filePath: string, annotations: PdfAnnotation[]): void => {
+  const manager = settingsManager;
+  if (!manager || !currentSettings) return;
+
+  const annotationMap = {
+    ...currentSettings.annotations,
+    [filePath]: annotations,
+  };
+  currentSettings = { ...currentSettings, annotations: annotationMap };
+  if (annotationSaveTimer !== null) window.clearTimeout(annotationSaveTimer);
+  annotationSaveTimer = window.setTimeout(async () => {
+    try {
+      await manager.set('annotations', currentSettings?.annotations ?? {});
+    } catch (error) {
+      console.error('Failed to save annotations:', error);
+      showToast('Could not save annotations.', 'error');
+    } finally {
+      annotationSaveTimer = null;
+    }
+  }, 200);
+};
+
+const rememberRecentFile = (filePath: string, title: string): void => {
+  const manager = settingsManager;
+  if (!manager || !currentSettings) return;
+  const opened: RecentFile = { filePath, title, openedAt: Date.now() };
+  const recentFiles = updateRecentFiles(currentSettings.recentFiles, opened);
+  currentSettings = { ...currentSettings, recentFiles };
+  renderRecentFiles(recentFiles);
+  void manager.set('recentFiles', recentFiles).catch((error) => {
+    console.error('Failed to save recent files:', error);
+  });
+};
+
+const clearRecentFiles = async (): Promise<void> => {
+  if (!settingsManager || !currentSettings) return;
+  currentSettings = { ...currentSettings, recentFiles: [] };
+  renderRecentFiles([]);
+  await settingsManager.set('recentFiles', []);
+};
+
+const openRecentFile = async (filePath: string): Promise<void> => {
+  if (!tabManager) return;
+  try {
+    await openFiles([filePath], {
+      tabManager,
+      initialFilterSettings: getInitialFilterSettings(),
+      initialViewMode: getInitialViewMode(),
+    });
+    showViewer();
+    await refreshAfterOpen();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    if (!message.includes('Password entry cancelled')) {
+      showToast(`Could not open recent file: ${message}`, 'error');
+    }
+  }
+};
 
 const scheduleLastFilterSave = (settings: FilterSettings): void => {
   const manager = settingsManager;
@@ -205,20 +286,23 @@ async function initializeApp(): Promise<void> {
     settingsManager = new SettingsManager();
     const settings = await settingsManager.load();
     currentSettings = settings;
+    renderRecentFiles(settings.recentFiles);
     console.log('Settings loaded:', settings);
 
     // Initialize tab manager
     tabManager = new TabManager(
       async (tab: TabData | null) => {
         if (tab) {
-          // Tab activated - restore its state
+          // Reveal the already-rendered first page while any remaining state/layout is restored.
+          showViewer();
           await restoreTabState(tabManager, sliderManager, tab);
           updateUI(tabManager);
-          showViewer();
         } else {
           // No tabs - show splash
           showSplash();
         }
+        searchController?.activeDocumentChanged();
+        sidebarController?.activeDocumentChanged();
         updateTabBarVisibility(tabManager);
         // Update print menu state
         await updatePrintMenuState(tabManager);
@@ -227,10 +311,38 @@ async function initializeApp(): Promise<void> {
       () => {
         saveCurrentTabState(tabManager, sliderManager);
         updateUI(tabManager);
+        sidebarController?.viewerStateChanged();
         scheduleReadingSessionSave();
       },
       scheduleReadingSessionSave,
+      {
+        getAnnotations: (filePath) => currentSettings?.annotations[filePath] ?? [],
+        onAnnotationsChanged: (filePath, annotations) => {
+          persistAnnotations(filePath, annotations);
+          sidebarController?.annotationsChanged();
+        },
+        onDocumentOpened: (tab) => {
+          if (!isRestoringSession) rememberRecentFile(tab.filePath, tab.title);
+        },
+        requestPassword: requestPdfPassword,
+        requestAnnotationNote,
+      },
     );
+
+    searchController = new SearchController(getActiveViewer);
+    sidebarController = new SidebarController({
+      getActiveViewer,
+      requestAnnotationNote,
+    });
+    sidebarController.setThumbnailsEnabled(settings.general.displayThumbs);
+    presentationController = new PresentationController({
+      getActiveViewer,
+      onStateChanged: () => {
+        saveCurrentTabState(tabManager, sliderManager);
+        updateUI(tabManager);
+        scheduleReadingSessionSave();
+      },
+    });
 
     // Initialize slider manager
     sliderManager = new SliderManager((filterSettings) => {
@@ -271,6 +383,10 @@ async function initializeApp(): Promise<void> {
       updateTabBarVisibility: updateTabBar,
       saveCurrentTabState: saveStateForTab,
       updateUI: updateUIForTab,
+      openSearch: () => searchController?.open(),
+      togglePresentationMode: async () => {
+        await presentationController?.toggle();
+      },
     });
 
     // Load keybinds from settings
@@ -300,6 +416,8 @@ async function initializeApp(): Promise<void> {
       onPresetApplied: scheduleLastFilterSave,
       saveCurrentTabState: saveStateForTab,
       updateUI: updateUIForTab,
+      openRecentFile,
+      clearRecentFiles,
     });
 
     // Update keyboard hints for platform
@@ -324,6 +442,8 @@ async function initializeApp(): Promise<void> {
           updated.keybinds.Settings.binds = ['Cmd+,'];
         }
         currentSettings = updated;
+        renderRecentFiles(updated.recentFiles);
+        sidebarController?.setThumbnailsEnabled(updated.general.displayThumbs);
         if (!updated.general.rememberLastFilter && lastFilterSaveTimer !== null) {
           clearTimeout(lastFilterSaveTimer);
           lastFilterSaveTimer = null;

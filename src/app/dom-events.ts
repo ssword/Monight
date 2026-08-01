@@ -1,3 +1,4 @@
+import { nextViewMode, viewModeIcon, viewModeLabel } from '../lib/document-features';
 import type { FilterSettings } from '../scripts/filters';
 import type { KeybindManager } from '../scripts/keybind-manager';
 import type { SliderManager } from '../scripts/sliders';
@@ -14,6 +15,8 @@ interface DomEventContext {
   onPresetApplied: (settings: FilterSettings) => void;
   saveCurrentTabState: () => void;
   updateUI: () => void;
+  openRecentFile: (filePath: string) => Promise<void>;
+  clearRecentFiles: () => Promise<void>;
 }
 
 // Setup event listeners
@@ -26,6 +29,8 @@ export function setupEventListeners({
   onPresetApplied,
   saveCurrentTabState,
   updateUI,
+  openRecentFile,
+  clearRecentFiles,
 }: DomEventContext): void {
   console.log('Setting up event listeners...');
 
@@ -40,6 +45,17 @@ export function setupEventListeners({
   } else {
     console.error('Splash open button not found!');
   }
+
+  document.getElementById('recent-files-list')?.addEventListener('click', (event) => {
+    const target = event.target;
+    const button =
+      target instanceof Element ? target.closest<HTMLButtonElement>('[data-file-path]') : null;
+    const filePath = button?.dataset.filePath;
+    if (filePath) void openRecentFile(filePath);
+  });
+  document.getElementById('clear-recent-files')?.addEventListener('click', () => {
+    void clearRecentFiles();
+  });
 
   // Open file button (in toolbar)
   const openBtn = document.getElementById('open-file');
@@ -130,7 +146,7 @@ export function setupEventListeners({
   toggleViewModeBtn?.addEventListener('click', () => {
     withActiveViewer(tabManager, async (viewer, tab) => {
       const currentMode = viewer.getState().viewMode;
-      const newMode = currentMode === 'single' ? 'continuous' : 'single';
+      const newMode = nextViewMode(currentMode);
       await viewer.setViewMode(newMode);
 
       // Update tab data
@@ -141,7 +157,11 @@ export function setupEventListeners({
       // Update button icon
       const icon = document.getElementById('view-mode-icon');
       if (icon) {
-        icon.textContent = newMode === 'continuous' ? '⊞' : '⊟';
+        icon.textContent = viewModeIcon(newMode);
+        icon.parentElement?.setAttribute(
+          'title',
+          `${viewModeLabel(newMode)} (click to change view)`,
+        );
       }
 
       saveCurrentTabState();

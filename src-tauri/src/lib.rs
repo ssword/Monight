@@ -36,12 +36,7 @@ pub struct PendingCliPayload(pub Mutex<Option<CliPayload>>);
 pub(crate) fn is_supported_extension(path: &std::path::Path) -> bool {
     path.extension()
         .and_then(|e| e.to_str())
-        .map(|ext| {
-            matches!(
-                ext.to_ascii_lowercase().as_str(),
-                "pdf" | "xdp" | "fdf" | "xfdf"
-            )
-        })
+        .map(|ext| ext.eq_ignore_ascii_case("pdf"))
         .unwrap_or(false)
 }
 
@@ -200,7 +195,7 @@ pub fn run() {
                     println!("Opening files from CLI: {:?}", payload.files);
 
                     // Store and emit event (frontend will also pull pending on ready)
-                    dispatch_open_payload(&app_handle, payload);
+                    dispatch_open_payload(app_handle, payload);
                 }
             }
 
@@ -301,5 +296,35 @@ mod tests {
 
         assert_eq!(payload.files, vec![fixture.to_string_lossy().to_string()]);
         assert_eq!(payload.page, None);
+    }
+
+    #[test]
+    fn test_only_pdf_is_a_supported_document_extension() {
+        assert!(is_supported_extension(std::path::Path::new("report.pdf")));
+        assert!(is_supported_extension(std::path::Path::new("REPORT.PDF")));
+        assert!(!is_supported_extension(std::path::Path::new("form.xdp")));
+        assert!(!is_supported_extension(std::path::Path::new("form.fdf")));
+        assert!(!is_supported_extension(std::path::Path::new("form.xfdf")));
+    }
+
+    #[test]
+    fn test_bundle_only_registers_pdf_file_associations() {
+        let config: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.conf.json")).expect("valid Tauri config");
+        let associations = config["bundle"]["fileAssociations"]
+            .as_array()
+            .expect("file associations should be an array");
+        let extensions = associations
+            .iter()
+            .flat_map(|association| {
+                association["ext"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(serde_json::Value::as_str)
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(extensions, vec!["pdf"]);
     }
 }

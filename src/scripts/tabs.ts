@@ -1,5 +1,6 @@
+import type { PdfAnnotation, ViewMode } from '../lib/document-features';
 import { type FilterSettings, PRESETS } from './filters';
-import { PDFViewer } from './pdf-viewer';
+import { type AnnotationNoteRequester, PDFViewer, type PdfPasswordRequester } from './pdf-viewer';
 
 /**
  * Data structure for a single tab
@@ -12,8 +13,18 @@ export interface TabData {
   filterSettings: FilterSettings; // Current filter preset
   currentPage: number; // Current page number
   zoom: number; // Current zoom level
+  rotation: number; // Clockwise page rotation in degrees
   scrollPosition: number; // Scroll position
-  viewMode: 'single' | 'continuous'; // View mode
+  viewMode: ViewMode; // View mode
+  annotations: PdfAnnotation[];
+}
+
+interface TabManagerOptions {
+  getAnnotations?: (filePath: string) => readonly PdfAnnotation[];
+  onAnnotationsChanged?: (filePath: string, annotations: PdfAnnotation[]) => void;
+  onDocumentOpened?: (tab: TabData) => void;
+  requestPassword?: PdfPasswordRequester;
+  requestAnnotationNote?: AnnotationNoteRequester;
 }
 
 /**
@@ -24,18 +35,21 @@ export class TabManager {
   private activeTabId: string | null = null;
   private pdfViewers: Map<string, PDFViewer> = new Map();
   private closedHistory: string[] = [];
-  private onTabChange: (tab: TabData | null) => void;
+  private onTabChange: (tab: TabData | null) => void | Promise<void>;
   private onActiveViewerStateChange?: () => void;
   private onTabsChanged?: () => void;
+  private options: TabManagerOptions;
 
   constructor(
-    onTabChange: (tab: TabData | null) => void,
+    onTabChange: (tab: TabData | null) => void | Promise<void>,
     onActiveViewerStateChange?: () => void,
     onTabsChanged?: () => void,
+    options: TabManagerOptions = {},
   ) {
     this.onTabChange = onTabChange;
     this.onActiveViewerStateChange = onActiveViewerStateChange;
     this.onTabsChanged = onTabsChanged;
+    this.options = options;
   }
 
   /**
@@ -46,7 +60,7 @@ export class TabManager {
     title: string,
     pdfData: Uint8Array,
     filterSettings?: FilterSettings,
-    viewMode: 'single' | 'continuous' = 'single',
+    viewMode: ViewMode = 'single',
   ): Promise<TabData> {
     const id = crypto.randomUUID();
     const initialFilterSettings = filterSettings ?? PRESETS.default;
@@ -60,8 +74,14 @@ export class TabManager {
       filterSettings: { ...initialFilterSettings },
       currentPage: 1,
       zoom: 1.0,
+      rotation: 0,
       scrollPosition: 0,
       viewMode,
+      annotations:
+        this.options.getAnnotations?.(filePath).map((annotation) => ({
+          ...annotation,
+          rects: annotation.rects.map((rect) => ({ ...rect })),
+        })) ?? [],
     };
 
     // Store tab
@@ -69,14 +89,38 @@ export class TabManager {
 
     // Create PDF viewer for this tab
     const canvasId = `pdf-canvas-${id}`;
-    const viewer = new PDFViewer('pdf-container', canvasId);
+    const viewer = new PDFViewer('pdf-container', canvasId, {
+      requestPassword: this.options.requestPassword,
+      requestAnnotationNote: this.options.requestAnnotationNote,
+    });
     viewer.setOnPageChange(() => {
       if (this.activeTabId !== id) return;
       this.onActiveViewerStateChange?.();
     });
+    viewer.setOnScrollChange(() => {
+      if (this.activeTabId !== id) return;
+      tab.scrollPosition = viewer.getScrollPosition();
+      this.onActiveViewerStateChange?.();
+    });
+    viewer.setAnnotations(tab.annotations);
+    viewer.setOnAnnotationsChange((annotations) => {
+      tab.annotations = annotations;
+      this.options.onAnnotationsChanged?.(filePath, annotations);
+      if (this.activeTabId === id) {
+        this.onActiveViewerStateChange?.();
+      }
+    });
 
-    // Load PDF
-    await viewer.loadPDF(pdfData, title, filePath);
+    // Load PDF. Keep tab creation transactional so cancelled passwords or invalid files
+    // do not leave a dead tab/surface behind.
+    try {
+      await viewer.loadPDF(pdfData, title, filePath);
+    } catch (error) {
+      viewer.destroy();
+      this.tabs.delete(id);
+      this.renderTabs();
+      throw error;
+    }
 
     // Store viewer
     this.pdfViewers.set(id, viewer);
@@ -90,6 +134,7 @@ export class TabManager {
 
     // Activate the new tab (this will show its canvas)
     await this.activateTab(id);
+    this.options.onDocumentOpened?.(tab);
 
     console.log(`Created tab: ${title} (${id})`);
     return tab;
@@ -124,7 +169,7 @@ export class TabManager {
       } else {
         // No tabs left
         this.activeTabId = null;
-        this.onTabChange(null);
+        await this.onTabChange(null);
       }
     }
 
@@ -142,6 +187,14 @@ export class TabManager {
     const tab = this.tabs.get(id);
     if (!tab) return;
 
+    if (this.activeTabId && this.activeTabId !== id) {
+      const previousTab = this.tabs.get(this.activeTabId);
+      const previousViewer = this.pdfViewers.get(this.activeTabId);
+      if (previousTab && previousViewer) {
+        previousTab.scrollPosition = previousViewer.getScrollPosition();
+      }
+    }
+
     // Show/hide all viewers (handles both single-page and continuous scroll modes)
     this.pdfViewers.forEach((viewer, viewerId) => {
       viewer.setVisible(viewerId === id);
@@ -154,7 +207,7 @@ export class TabManager {
     this.renderTabs();
 
     // Notify callback
-    this.onTabChange(tab);
+    await this.onTabChange(tab);
 
     console.log(`Activated tab: ${tab.title} (${id})`);
   }

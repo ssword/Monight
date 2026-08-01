@@ -1,3 +1,8 @@
+import {
+  viewModeIcon as getViewModeIcon,
+  type RecentFile,
+  viewModeLabel,
+} from '../lib/document-features';
 import { type FilterSettings, PRESETS } from '../scripts/filters';
 import type { TabManager } from '../scripts/tabs';
 
@@ -15,6 +20,32 @@ export function showViewer(): void {
   const viewer = document.getElementById('viewer-container');
   if (splash) splash.classList.add('hidden');
   if (viewer) viewer.classList.remove('hidden');
+}
+
+export function renderRecentFiles(recentFiles: readonly RecentFile[]): void {
+  const section = document.getElementById('recent-files-section');
+  const list = document.getElementById('recent-files-list');
+  if (!section || !list) return;
+
+  section.classList.toggle('hidden', recentFiles.length === 0);
+  list.replaceChildren();
+
+  for (const recent of recentFiles) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'recent-file-button';
+    button.dataset.filePath = recent.filePath;
+    button.title = recent.filePath;
+
+    const title = document.createElement('span');
+    title.className = 'recent-file-title';
+    title.textContent = recent.title;
+    const path = document.createElement('span');
+    path.className = 'recent-file-path';
+    path.textContent = recent.filePath;
+    button.append(title, path);
+    list.appendChild(button);
+  }
 }
 
 // Update tab bar visibility
@@ -92,7 +123,11 @@ export function updateUI(tabManager: TabManager | null): void {
   // Update view mode icon
   const viewModeIcon = document.getElementById('view-mode-icon');
   if (viewModeIcon) {
-    viewModeIcon.textContent = state.viewMode === 'continuous' ? '⊞' : '⊟';
+    viewModeIcon.textContent = getViewModeIcon(state.viewMode);
+    viewModeIcon.parentElement?.setAttribute(
+      'title',
+      `${viewModeLabel(state.viewMode)} (click to change view)`,
+    );
   }
 
   // Update button states

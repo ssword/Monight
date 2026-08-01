@@ -70,7 +70,7 @@ pub(crate) fn read_pdf_bytes(path: String) -> Result<Vec<u8>, String> {
             format!(".{}", ext)
         };
         return Err(format!(
-            "Unsupported file type {}. Only PDF, XDP, FDF, and XFDF files are supported.",
+            "Unsupported file type {}. Only PDF files are supported.",
             ext_label
         ));
     }
@@ -259,7 +259,7 @@ pub fn validate_open_path(path: String) -> Result<String, String> {
             format!(".{}", ext)
         };
         return Err(format!(
-            "Unsupported file type {}. Only PDF, XDP, FDF, and XFDF files are supported.",
+            "Unsupported file type {}. Only PDF files are supported.",
             ext_label
         ));
     }
