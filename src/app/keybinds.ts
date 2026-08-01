@@ -1,4 +1,5 @@
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
+import type { ViewMode } from '../lib/document-features';
 import type { FilterSettings } from '../scripts/filters';
 import type { KeybindManager } from '../scripts/keybind-manager';
 import type { TabManager } from '../scripts/tabs';
@@ -12,11 +13,13 @@ interface KeybindContext {
   printCurrentPDF: () => Promise<void>;
   openSettings: () => Promise<void>;
   getInitialFilterSettings: () => FilterSettings;
-  getInitialViewMode: () => 'single' | 'continuous';
+  getInitialViewMode: () => ViewMode;
   applyWindowAfterOpen: () => Promise<void>;
   updateTabBarVisibility: () => void;
   saveCurrentTabState: () => void;
   updateUI: () => void;
+  openSearch: () => void;
+  togglePresentationMode: () => Promise<void>;
 }
 
 // Register all keybind actions with the KeybindManager
@@ -32,6 +35,8 @@ export function registerKeybindActions({
   updateTabBarVisibility,
   saveCurrentTabState,
   updateUI,
+  openSearch,
+  togglePresentationMode,
 }: KeybindContext): void {
   if (!keybindManager) {
     console.error('KeybindManager not initialized');
@@ -49,6 +54,10 @@ export function registerKeybindActions({
 
   keybindManager.registerAction('openSettings', async () => {
     await openSettings();
+  });
+
+  keybindManager.registerAction('find', () => {
+    openSearch();
   });
 
   // Tab management
@@ -188,6 +197,10 @@ export function registerKeybindActions({
     const currentWindow = getCurrentWebviewWindow();
     const isFullscreen = await currentWindow.isFullscreen();
     await currentWindow.setFullscreen(!isFullscreen);
+  });
+
+  keybindManager.registerAction('presentationMode', async () => {
+    await togglePresentationMode();
   });
 
   console.log('All keybind actions registered');

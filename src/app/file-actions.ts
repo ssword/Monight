@@ -1,7 +1,9 @@
 import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
+import type { ViewMode } from '../lib/document-features';
 import type { FilterSettings } from '../scripts/filters';
 import type { TabManager } from '../scripts/tabs';
+import { showToast } from './dialogs';
 import { withActiveViewer } from './viewer-helpers';
 
 interface OpenFilesOptions {
@@ -9,7 +11,7 @@ interface OpenFilesOptions {
   continueOnError?: boolean;
   onError?: (message: string) => void;
   initialFilterSettings?: FilterSettings;
-  initialViewMode?: 'single' | 'continuous';
+  initialViewMode?: ViewMode;
 }
 
 interface EnsureViewingSizeOptions {
@@ -72,7 +74,7 @@ export async function openFiles(
 export async function openPDFFile(
   tabManager: TabManager | null,
   initialFilterSettings?: FilterSettings,
-  initialViewMode?: 'single' | 'continuous',
+  initialViewMode?: ViewMode,
 ): Promise<number> {
   if (!tabManager) return 0;
   console.log('openPDFFile() called');
@@ -100,7 +102,10 @@ export async function openPDFFile(
     return await openFiles(files, { tabManager, initialFilterSettings, initialViewMode });
   } catch (error) {
     console.error('Error opening file:', error);
-    alert(`Failed to open file: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    if (!message.includes('Password entry cancelled')) {
+      showToast(`Failed to open file: ${message}`, 'error');
+    }
     return 0;
   }
 }
@@ -127,7 +132,7 @@ export async function ensureMinimumViewingSize({
 export async function printCurrentPDF(tabManager: TabManager | null): Promise<void> {
   const activeTab = tabManager?.getActiveTab();
   if (!activeTab) {
-    alert('No PDF is currently open.');
+    showToast('No PDF is currently open.', 'error');
     return;
   }
 
@@ -136,7 +141,10 @@ export async function printCurrentPDF(tabManager: TabManager | null): Promise<vo
       await viewer.print();
     } catch (error) {
       console.error('Print error:', error);
-      alert(`Failed to print: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      showToast(
+        `Failed to print: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        'error',
+      );
     }
   });
 }
@@ -147,6 +155,9 @@ export async function openSettings(): Promise<void> {
     await invoke('open_settings');
   } catch (error) {
     console.error('Error opening settings:', error);
-    alert(`Failed to open settings: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    showToast(
+      `Failed to open settings: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      'error',
+    );
   }
 }

@@ -20,6 +20,13 @@
             <p class="app-version" id="version-info">Loading...</p>
             <button id="splash-open-btn" class="splash-open-btn">Open PDF File</button>
             <p class="hint-text">Press Cmd+O to open a PDF file</p>
+            <section id="recent-files-section" class="recent-files hidden" aria-labelledby="recent-files-title">
+                <div class="recent-files-heading">
+                    <h3 id="recent-files-title">Recent files</h3>
+                    <button id="clear-recent-files" type="button">Clear</button>
+                </div>
+                <div id="recent-files-list" class="recent-files-list"></div>
+            </section>
         </div>
 
         <!-- PDF viewer container (hidden initially) -->
@@ -80,6 +87,24 @@
                     </button>
                 </div>
 
+                <div class="toolbar-group viewer-tools">
+                    <button id="open-search" class="toolbar-btn" title="Find in Document (Ctrl+F)" aria-label="Find in document">
+                        <span>⌕</span>
+                    </button>
+                    <button id="toggle-outline" class="toolbar-btn" title="Table of Contents" aria-label="Toggle table of contents">
+                        <span>☷</span>
+                    </button>
+                    <button id="toggle-thumbnails" class="toolbar-btn" title="Page Thumbnails" aria-label="Toggle page thumbnails">
+                        <span>▦</span>
+                    </button>
+                    <button id="toggle-annotations" class="toolbar-btn" title="Annotations" aria-label="Toggle annotations">
+                        <span>✎</span>
+                    </button>
+                    <button id="presentation-mode" class="toolbar-btn" title="Presentation Mode (Shift+F11)" aria-label="Start presentation mode">
+                        <span>▣</span>
+                    </button>
+                </div>
+
                 <!-- File info -->
                 <div class="toolbar-group file-info">
                     <span id="file-name" class="file-name">No file loaded</span>
@@ -96,6 +121,15 @@
                 </div>
             </div>
 
+            <div id="search-bar" class="search-bar hidden" role="search">
+                <label for="search-input">Find</label>
+                <input id="search-input" type="search" autocomplete="off" placeholder="Search this PDF" />
+                <span id="search-status" class="search-status" aria-live="polite">Type to search</span>
+                <button id="search-previous" type="button" title="Previous result (Shift+Enter)" aria-label="Previous search result">↑</button>
+                <button id="search-next" type="button" title="Next result (Enter)" aria-label="Next search result">↓</button>
+                <button id="search-close" type="button" title="Close search (Escape)" aria-label="Close search">✕</button>
+            </div>
+
             <!-- Tab Bar -->
             <div id="tab-bar" class="tab-bar hidden">
                 <div id="tab-container" class="tab-list">
@@ -104,8 +138,20 @@
                 <button id="new-tab-btn" class="new-tab-btn" title="Open New PDF (Ctrl+T)">+</button>
             </div>
 
-            <!-- PDF canvas container -->
-            <div id="pdf-container"></div>
+            <div id="document-workspace">
+                <aside id="document-sidebar" class="document-sidebar hidden" aria-label="Document sidebar">
+                    <div class="sidebar-tabs" role="tablist">
+                        <button type="button" data-sidebar-tab="outline" role="tab">Contents</button>
+                        <button id="thumbnails-tab" type="button" data-sidebar-tab="thumbnails" role="tab">Pages</button>
+                        <button type="button" data-sidebar-tab="annotations" role="tab">Notes</button>
+                        <button id="close-sidebar" type="button" class="sidebar-close" title="Close sidebar" aria-label="Close sidebar">✕</button>
+                    </div>
+                    <div id="sidebar-content" class="sidebar-content"></div>
+                </aside>
+
+                <!-- PDF canvas container -->
+                <div id="pdf-container"></div>
+            </div>
         </div>
 
         <!-- Dark Mode Configurator Overlay -->
@@ -143,6 +189,37 @@
                 </div>
             </div>
         </div>
+
+        <dialog id="password-dialog" class="app-dialog">
+            <form method="dialog">
+                <h2 data-password-title>Unlock PDF</h2>
+                <p data-password-message>This PDF is encrypted.</p>
+                <label>
+                    Password
+                    <input name="password" type="password" autocomplete="off" required />
+                </label>
+                <div class="dialog-actions">
+                    <button type="button" class="dialog-secondary" data-dialog-cancel>Cancel</button>
+                    <button type="submit" class="dialog-primary">Unlock</button>
+                </div>
+            </form>
+        </dialog>
+
+        <dialog id="annotation-dialog" class="app-dialog">
+            <form method="dialog">
+                <h2>Annotation note</h2>
+                <label>
+                    Note
+                    <textarea name="note" rows="5" placeholder="Add a note to this highlight"></textarea>
+                </label>
+                <div class="dialog-actions">
+                    <button type="button" class="dialog-secondary" data-dialog-cancel>Cancel</button>
+                    <button type="submit" class="dialog-primary">Save</button>
+                </div>
+            </form>
+        </dialog>
+
+        <div id="toast-region" class="toast-region" aria-live="polite"></div>
     </div>
     <script type="module" src="/src/main.ts"></script>
 </body>

@@ -1,3 +1,4 @@
+import { viewModeIcon, viewModeLabel } from '../lib/document-features';
 import { buildFilterCSS } from '../scripts/filters';
 import type { SliderManager } from '../scripts/sliders';
 import type { TabData, TabManager } from '../scripts/tabs';
@@ -33,7 +34,11 @@ export async function restoreTabState(
   // Update view mode button icon
   const icon = document.getElementById('view-mode-icon');
   if (icon) {
-    icon.textContent = tab.viewMode === 'continuous' ? '⊞' : '⊟';
+    icon.textContent = viewModeIcon(tab.viewMode);
+    icon.parentElement?.setAttribute(
+      'title',
+      `${viewModeLabel(tab.viewMode)} (click to change view)`,
+    );
   }
 }
 

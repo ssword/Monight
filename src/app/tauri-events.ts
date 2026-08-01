@@ -2,6 +2,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
+import type { ViewMode } from '../lib/document-features';
 import type { FilterSettings } from '../scripts/filters';
 import type { KeybindManager } from '../scripts/keybind-manager';
 import type { SettingsManager } from '../scripts/settings';
@@ -16,7 +17,7 @@ interface TauriListenerContext {
   isMac: boolean;
   openPdfAndRefresh: () => Promise<void>;
   getInitialFilterSettings: () => FilterSettings;
-  getInitialViewMode: () => 'single' | 'continuous';
+  getInitialViewMode: () => ViewMode;
   reloadSettings: () => Promise<void>;
   applyWindowAfterOpen: () => Promise<void>;
   updateTabBarVisibility: () => void;

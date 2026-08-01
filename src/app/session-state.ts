@@ -1,3 +1,4 @@
+import type { ViewMode } from '../lib/document-features';
 import type { FilterSettings } from '../scripts/filters';
 import type { ReadingSession, SavedTabSession } from '../scripts/settings';
 import type { SliderManager } from '../scripts/sliders';
@@ -14,7 +15,7 @@ interface RestoreSessionOptions {
   tabManager: TabManager;
   sliderManager: SliderManager | null;
   getInitialFilterSettings: () => FilterSettings;
-  getInitialViewMode: () => 'single' | 'continuous';
+  getInitialViewMode: () => ViewMode;
 }
 
 function toSavedTabSession(tab: TabData): SavedTabSession {

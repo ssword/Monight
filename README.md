@@ -5,8 +5,17 @@ Monight is a cross-platform PDF reader built with Tauri and TypeScript. It combi
 Current version: `1.0.6`
 
 ## Features
+
 - Multi-tab PDF viewing
-- Adjustable zoom, fit-to-page/width, and rotation
+- Single-page, continuous-scroll, and two-page spread layouts
+- Adjustable zoom, fit-to-page/width, rotation, and cursor-anchored pinch/wheel zoom
+- Full-document text search (`Cmd/Ctrl+F`)
+- Table of contents and lazy-rendered page thumbnails
+- Persistent highlights and notes
+- Exact page and scroll-position restoration
+- Recent files on the launch screen
+- Password prompts for encrypted PDFs
+- Fullscreen presentation mode (`Shift+F11`)
 - Dark mode presets and a custom filter configurator
 - Customizable keyboard shortcuts
 - Native file dialogs and system menu integration
@@ -50,7 +59,10 @@ npm run dev
 ```
 
 ## Settings
-Settings are stored using the Tauri Store plugin and can be edited in the in-app Settings window. Options include default dark mode presets, remembering last filter, and keybind customization.
+Settings are stored using the Tauri Store plugin and can be edited in the in-app Settings
+window. Reading sessions, recent files, highlights, and notes are saved locally. Options include
+default dark mode presets, thumbnail visibility, session restoration, remembering the last
+filter, and keybind customization.
 
 ## Iconography
 The app icon is designed to follow Apple UI icon principles: minimal, bold silhouettes, and soft depth. The high-resolution source lives at `src-tauri/icons/icon-source.svg` and is used to generate the platform icon set.
