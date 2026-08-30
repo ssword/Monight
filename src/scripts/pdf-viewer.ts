@@ -28,6 +28,8 @@ import {
   positionAtPage,
   visiblePageRange,
 } from '../lib/scroll-geometry';
+import type { ReadingPosition } from '../reader/reader-actions';
+import { captureReadingPosition, restoreReadingPosition } from '../reader/reading-position';
 
 interface ViewState {
   currentPage: number;
@@ -194,6 +196,8 @@ export class PDFViewer {
   private currentFilterCSS = '';
   private onPageChange: ((pageNum: number) => void) | null = null;
   private onScrollChange: ((scrollPosition: number) => void) | null = null;
+  private onScrollSettled: (() => void) | null = null;
+  private onPageNavigationRequest: ((page: number) => Promise<void>) | null = null;
   private onAnnotationsChange: ((annotations: PdfAnnotation[]) => void) | null = null;
   private annotations: PdfAnnotation[] = [];
   private searchQuery = '';
@@ -231,6 +235,7 @@ export class PDFViewer {
   private baseDimensions: Map<number, { width: number; height: number }> = new Map();
   private offsetArray: number[] = [];
   private scrollRafId: number | null = null;
+  private scrollSettleTimer: number | null = null;
   private visibleRenderLoop: Promise<void> | null = null;
   private queuedVisibleRender: VisibleRenderRequest | null = null;
   private readonly pageGap = 20;
@@ -274,6 +279,14 @@ export class PDFViewer {
 
   setOnScrollChange(handler: ((scrollPosition: number) => void) | null): void {
     this.onScrollChange = handler;
+  }
+
+  setOnScrollSettled(handler: (() => void) | null): void {
+    this.onScrollSettled = handler;
+  }
+
+  setOnPageNavigationRequest(handler: ((page: number) => Promise<void>) | null): void {
+    this.onPageNavigationRequest = handler;
   }
 
   setOnAnnotationsChange(handler: ((annotations: PdfAnnotation[]) => void) | null): void {
@@ -1413,6 +1426,14 @@ export class PDFViewer {
   }
 
   async goToPage(pageNum: number): Promise<void> {
+    if (this.onPageNavigationRequest) {
+      await this.onPageNavigationRequest(pageNum);
+      return;
+    }
+    await this.projectPage(pageNum);
+  }
+
+  private async projectPage(pageNum: number): Promise<void> {
     if (this.state.viewMode === 'continuous') {
       await this.scrollToPage(pageNum);
       return;
@@ -1647,6 +1668,37 @@ export class PDFViewer {
 
   getScrollPosition(): number {
     return this.container.scrollTop;
+  }
+
+  getReadingPosition(): ReadingPosition {
+    if (this.state.viewMode !== 'continuous' || this.offsetArray.length === 0) {
+      return { page: this.state.currentPage, location: 0 };
+    }
+    const pageHeights = Array.from(
+      { length: this.state.totalPages },
+      (_, index) => this.pageHeights.get(index + 1) ?? 0,
+    );
+    return captureReadingPosition({
+      pageOffsets: this.offsetArray,
+      pageHeights,
+      scrollTop: this.container.scrollTop,
+      pagePadding: this.pagePadding,
+    });
+  }
+
+  async goToReadingPosition(position: ReadingPosition): Promise<void> {
+    await this.projectPage(position.page);
+    if (this.state.viewMode !== 'continuous' || this.offsetArray.length === 0) return;
+    const pageHeights = Array.from(
+      { length: this.state.totalPages },
+      (_, index) => this.pageHeights.get(index + 1) ?? 0,
+    );
+    this.container.scrollTop = restoreReadingPosition(position, {
+      pageOffsets: this.offsetArray,
+      pageHeights,
+      pagePadding: this.pagePadding,
+    });
+    await this.renderVisiblePages();
   }
 
   async setScrollPosition(scrollPosition: number): Promise<void> {
@@ -2205,6 +2257,14 @@ export class PDFViewer {
   }
 
   private handleScroll(): void {
+    if (this.scrollSettleTimer !== null) {
+      window.clearTimeout(this.scrollSettleTimer);
+    }
+    this.scrollSettleTimer = window.setTimeout(() => {
+      this.scrollSettleTimer = null;
+      this.onScrollSettled?.();
+    }, 150);
+
     // Throttle scroll events
     if (this.scrollRafId !== null) {
       return;
@@ -2268,6 +2328,10 @@ export class PDFViewer {
   }
 
   destroy(): void {
+    if (this.scrollSettleTimer !== null) {
+      window.clearTimeout(this.scrollSettleTimer);
+      this.scrollSettleTimer = null;
+    }
     document.removeEventListener('pointerdown', this.handleDocumentPointerDownBound, true);
     document.removeEventListener('pointerup', this.handleDocumentPointerUpBound, true);
     document.removeEventListener('keydown', this.handleDocumentKeyDownBound);

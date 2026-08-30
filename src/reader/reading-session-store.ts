@@ -1,0 +1,210 @@
+import type {
+  PersistedReadingSession,
+  ReadingSessionDocument,
+  ReadingSessionVisualState,
+} from './reader-actions';
+
+export interface ReadingSessionStorage {
+  read(): Promise<unknown>;
+  write(session: PersistedReadingSession): Promise<void>;
+  readLegacy(): Promise<unknown>;
+  removeLegacy(): Promise<void>;
+}
+
+interface LegacyDocument {
+  filePath: string;
+  title: string;
+  currentPage: number;
+  filterSettings?: ReadingSessionVisualState['filterSettings'];
+  zoom?: number;
+  rotation?: number;
+  viewMode?: 'single' | 'continuous' | 'spread';
+}
+
+interface LegacyReadingSession {
+  activeFilePath: string | null;
+  tabs: LegacyDocument[];
+}
+
+const EMPTY_READING_SESSION: PersistedReadingSession = {
+  schemaVersion: 1,
+  activeDocumentPath: null,
+  documents: [],
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function parseVisualState(value: unknown): ReadingSessionVisualState | undefined {
+  if (!isRecord(value) || !isRecord(value.filterSettings)) return undefined;
+  const filterSettings = value.filterSettings;
+  const filterKeys = [
+    'brightness',
+    'grayscale',
+    'invert',
+    'sepia',
+    'hue',
+    'extraBrightness',
+  ] as const;
+  if (filterKeys.some((key) => typeof filterSettings[key] !== 'number')) return undefined;
+  if (
+    typeof value.zoom !== 'number' ||
+    typeof value.rotation !== 'number' ||
+    (value.viewMode !== 'single' && value.viewMode !== 'continuous' && value.viewMode !== 'spread')
+  ) {
+    return undefined;
+  }
+  return {
+    filterSettings: {
+      brightness: filterSettings.brightness as number,
+      grayscale: filterSettings.grayscale as number,
+      invert: filterSettings.invert as number,
+      sepia: filterSettings.sepia as number,
+      hue: filterSettings.hue as number,
+      extraBrightness: filterSettings.extraBrightness as number,
+    },
+    zoom: value.zoom,
+    rotation: value.rotation,
+    viewMode: value.viewMode,
+  };
+}
+
+function parseDocument(value: unknown): ReadingSessionDocument | null {
+  if (!isRecord(value) || typeof value.filePath !== 'string' || value.filePath.length === 0) {
+    return null;
+  }
+  if (typeof value.title !== 'string' || !isRecord(value.readingPosition)) return null;
+  const { page, location } = value.readingPosition;
+  if (
+    !Number.isInteger(page) ||
+    (page as number) < 1 ||
+    typeof location !== 'number' ||
+    !Number.isFinite(location) ||
+    location < 0 ||
+    location > 1
+  ) {
+    return null;
+  }
+  const visualState = parseVisualState(value.visualState);
+  return {
+    filePath: value.filePath,
+    title: value.title,
+    readingPosition: { page: page as number, location },
+    ...(visualState ? { visualState } : {}),
+  };
+}
+
+export function parseReadingSession(value: unknown): PersistedReadingSession | null {
+  if (!isRecord(value) || value.schemaVersion !== 1 || !Array.isArray(value.documents)) {
+    return null;
+  }
+  if (value.activeDocumentPath !== null && typeof value.activeDocumentPath !== 'string') {
+    return null;
+  }
+  const documents = value.documents.map(parseDocument);
+  if (documents.some((document) => document === null)) return null;
+  const validDocuments = documents as ReadingSessionDocument[];
+  const paths = validDocuments.map((document) => document.filePath);
+  if (new Set(paths).size !== paths.length) return null;
+  if (value.activeDocumentPath !== null && !paths.includes(value.activeDocumentPath)) return null;
+  return {
+    schemaVersion: 1,
+    activeDocumentPath: value.activeDocumentPath,
+    documents: validDocuments,
+  };
+}
+
+function parseLegacyReadingSession(value: unknown): LegacyReadingSession | null {
+  if (!isRecord(value) || !Array.isArray(value.tabs)) return null;
+  if (value.activeFilePath !== null && typeof value.activeFilePath !== 'string') return null;
+  const tabs: LegacyDocument[] = [];
+  for (const tab of value.tabs) {
+    if (
+      !isRecord(tab) ||
+      typeof tab.filePath !== 'string' ||
+      typeof tab.title !== 'string' ||
+      !Number.isInteger(tab.currentPage) ||
+      (tab.currentPage as number) < 1
+    ) {
+      return null;
+    }
+    tabs.push({
+      filePath: tab.filePath,
+      title: tab.title,
+      currentPage: tab.currentPage as number,
+      ...(isRecord(tab.filterSettings)
+        ? {
+            filterSettings: parseVisualState({
+              filterSettings: tab.filterSettings,
+              zoom: tab.zoom,
+              rotation: tab.rotation ?? 0,
+              viewMode: tab.viewMode,
+            })?.filterSettings,
+          }
+        : {}),
+      ...(typeof tab.zoom === 'number' ? { zoom: tab.zoom } : {}),
+      ...(typeof tab.rotation === 'number' ? { rotation: tab.rotation } : {}),
+      ...(tab.viewMode === 'single' || tab.viewMode === 'continuous' || tab.viewMode === 'spread'
+        ? { viewMode: tab.viewMode }
+        : {}),
+    });
+  }
+  return { activeFilePath: value.activeFilePath, tabs };
+}
+
+function migrateLegacyReadingSession(legacy: LegacyReadingSession): PersistedReadingSession {
+  const documents = legacy.tabs.map((tab) => ({
+    filePath: tab.filePath,
+    title: tab.title,
+    readingPosition: { page: tab.currentPage, location: 0 },
+    ...(tab.filterSettings && tab.zoom !== undefined && tab.viewMode
+      ? {
+          visualState: {
+            filterSettings: tab.filterSettings,
+            zoom: tab.zoom,
+            rotation: tab.rotation ?? 0,
+            viewMode: tab.viewMode,
+          },
+        }
+      : {}),
+  }));
+  const activeDocumentPath = documents.some(
+    (document) => document.filePath === legacy.activeFilePath,
+  )
+    ? legacy.activeFilePath
+    : null;
+  return { schemaVersion: 1, activeDocumentPath, documents };
+}
+
+export async function loadReadingSession(
+  storage: ReadingSessionStorage,
+): Promise<PersistedReadingSession> {
+  const stored = parseReadingSession(await storage.read());
+  if (stored) {
+    if ((await storage.readLegacy()) !== undefined) {
+      try {
+        await storage.removeLegacy();
+      } catch {
+        // The verified new value remains authoritative; retry cleanup on the next load.
+      }
+    }
+    return stored;
+  }
+
+  const legacy = parseLegacyReadingSession(await storage.readLegacy());
+  if (!legacy) return EMPTY_READING_SESSION;
+
+  const migrated = migrateLegacyReadingSession(legacy);
+  const validated = parseReadingSession(migrated);
+  if (!validated) {
+    throw new Error('Legacy Reading Session converted to invalid data');
+  }
+  await storage.write(validated);
+  const verified = parseReadingSession(await storage.read());
+  if (!verified) {
+    throw new Error('Reading Session migration could not be verified');
+  }
+  await storage.removeLegacy();
+  return verified;
+}

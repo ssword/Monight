@@ -144,6 +144,7 @@ function setupSettingListeners(): void {
     if (!restorePreviousSession.checked) {
       currentSettings.lastSession = undefined;
       await settingsManager.set('lastSession', undefined);
+      await settingsManager.clearPersistedReadingSession();
     }
     await settingsManager.set('general', currentSettings.general);
     await notifyMainSettingsChanged();

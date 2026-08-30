@@ -1,4 +1,5 @@
 import type { PdfAnnotation, ViewMode } from '../lib/document-features';
+import type { ReadingPosition } from '../reader/reader-actions';
 import { type FilterSettings, PRESETS } from './filters';
 import { type AnnotationNoteRequester, PDFViewer, type PdfPasswordRequester } from './pdf-viewer';
 
@@ -22,7 +23,10 @@ export interface TabData {
 interface TabManagerOptions {
   getAnnotations?: (filePath: string) => readonly PdfAnnotation[];
   onAnnotationsChanged?: (filePath: string, annotations: PdfAnnotation[]) => void;
-  onDocumentOpened?: (tab: TabData) => void;
+  onDocumentOpened?: (tab: TabData) => void | Promise<void>;
+  onDocumentClosed?: (filePath: string) => void | Promise<void>;
+  onReadingPositionSettled?: (filePath: string, position: ReadingPosition) => void;
+  onPageNavigationRequested?: (page: number) => Promise<void>;
   requestPassword?: PdfPasswordRequester;
   requestAnnotationNote?: AnnotationNoteRequester;
 }
@@ -39,6 +43,7 @@ export class TabManager {
   private onActiveViewerStateChange?: () => void;
   private onTabsChanged?: () => void;
   private options: TabManagerOptions;
+  private requestActivation: ((filePath: string) => Promise<void>) | null = null;
 
   constructor(
     onTabChange: (tab: TabData | null) => void | Promise<void>,
@@ -102,6 +107,11 @@ export class TabManager {
       tab.scrollPosition = viewer.getScrollPosition();
       this.onActiveViewerStateChange?.();
     });
+    viewer.setOnScrollSettled(() => {
+      if (this.activeTabId !== id) return;
+      this.options.onReadingPositionSettled?.(filePath, viewer.getReadingPosition());
+    });
+    viewer.setOnPageNavigationRequest(this.options.onPageNavigationRequested ?? null);
     viewer.setAnnotations(tab.annotations);
     viewer.setOnAnnotationsChange((annotations) => {
       tab.annotations = annotations;
@@ -133,8 +143,8 @@ export class TabManager {
     this.onTabsChanged?.();
 
     // Activate the new tab (this will show its canvas)
+    await this.options.onDocumentOpened?.(tab);
     await this.activateTab(id);
-    this.options.onDocumentOpened?.(tab);
 
     console.log(`Created tab: ${title} (${id})`);
     return tab;
@@ -159,6 +169,7 @@ export class TabManager {
 
     // Remove tab
     this.tabs.delete(id);
+    await this.options.onDocumentClosed?.(tab.filePath);
 
     // If closing active tab, activate adjacent tab
     if (this.activeTabId === id) {
@@ -184,6 +195,30 @@ export class TabManager {
    * Activate a tab
    */
   async activateTab(id: string): Promise<void> {
+    const tab = this.tabs.get(id);
+    if (!tab) return;
+    if (this.requestActivation) {
+      await this.requestActivation(tab.filePath);
+      return;
+    }
+    await this.activateTabDirect(id);
+  }
+
+  setActivationRequester(requestActivation: (filePath: string) => Promise<void>): void {
+    this.requestActivation = requestActivation;
+  }
+
+  async projectActiveDocument(filePath: string, position: ReadingPosition): Promise<void> {
+    const tab = this.getTabs().find((item) => item.filePath === filePath);
+    if (!tab) throw new Error(`Cannot activate unopened Document: ${filePath}`);
+    tab.currentPage = position.page;
+    await this.activateTabDirect(tab.id);
+    const viewer = this.pdfViewers.get(tab.id);
+    if (!viewer) throw new Error(`Cannot render unopened Document: ${filePath}`);
+    await viewer.goToReadingPosition(position);
+  }
+
+  private async activateTabDirect(id: string): Promise<void> {
     const tab = this.tabs.get(id);
     if (!tab) return;
 

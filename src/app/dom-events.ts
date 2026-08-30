@@ -17,6 +17,7 @@ interface DomEventContext {
   updateUI: () => void;
   openRecentFile: (filePath: string) => Promise<void>;
   clearRecentFiles: () => Promise<void>;
+  goToPage: (page: number) => Promise<void>;
 }
 
 // Setup event listeners
@@ -31,6 +32,7 @@ export function setupEventListeners({
   updateUI,
   openRecentFile,
   clearRecentFiles,
+  goToPage,
 }: DomEventContext): void {
   console.log('Setting up event listeners...');
 
@@ -76,15 +78,17 @@ export function setupEventListeners({
   const nextBtn = document.getElementById('next-page');
   prevBtn?.addEventListener('click', () => {
     withActiveViewer(tabManager, async (viewer) => {
-      await viewer.previousPage();
-      saveCurrentTabState();
+      const state = viewer.getState();
+      const step = state.viewMode === 'spread' ? 2 : 1;
+      await goToPage(Math.max(state.currentPage - step, 1));
       updateUI();
     });
   });
   nextBtn?.addEventListener('click', () => {
     withActiveViewer(tabManager, async (viewer) => {
-      await viewer.nextPage();
-      saveCurrentTabState();
+      const state = viewer.getState();
+      const step = state.viewMode === 'spread' ? 2 : 1;
+      await goToPage(Math.min(state.currentPage + step, state.totalPages));
       updateUI();
     });
   });
@@ -97,8 +101,7 @@ export function setupEventListeners({
       const pageNum = Number.parseInt(pageInput.value, 10);
       const state = viewer.getState();
       if (pageNum >= 1 && pageNum <= state.totalPages) {
-        await viewer.goToPage(pageNum);
-        saveCurrentTabState();
+        await goToPage(pageNum);
         updateUI();
       } else {
         pageInput.value = state.currentPage.toString();

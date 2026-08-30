@@ -12,8 +12,9 @@ import {
 } from './app/file-actions';
 import { registerKeybindActions } from './app/keybinds';
 import { PresentationController } from './app/presentation-controller';
+import { createReadingSessionStorage } from './app/reading-session-storage';
 import { SearchController } from './app/search-controller';
-import { captureReadingSession, restoreReadingSession } from './app/session-state';
+import { restoreReadingSession } from './app/session-state';
 import { SidebarController } from './app/sidebar-controller';
 import { restoreTabState, saveCurrentTabState } from './app/tab-state';
 import { setupTauriListeners } from './app/tauri-events';
@@ -31,6 +32,12 @@ import {
   updateRecentFiles,
   type ViewMode,
 } from './lib/document-features';
+import {
+  createReaderActions,
+  type PersistedReadingSession,
+  type ReaderActions,
+} from './reader/reader-actions';
+import { loadReadingSession, type ReadingSessionStorage } from './reader/reading-session-store';
 import { buildFilterCSS, type FilterSettings, PRESETS } from './scripts/filters';
 import { KeybindManager } from './scripts/keybind-manager';
 import { type MoonightSettings, SettingsManager } from './scripts/settings';
@@ -58,6 +65,9 @@ let sliderManager: SliderManager | null = null;
 // Global settings manager instance
 let settingsManager: SettingsManager | null = null;
 let currentSettings: MoonightSettings | null = null;
+let readerActions: ReaderActions | null = null;
+let readingSessionStorage: ReadingSessionStorage | null = null;
+let restoredReadingSession: PersistedReadingSession | null = null;
 
 // Global keybind manager instance
 let keybindManager: KeybindManager | null = null;
@@ -134,6 +144,10 @@ let isRestoringSession = false;
 const getActiveViewer = () => {
   const activeTab = tabManager?.getActiveTab();
   return activeTab ? (tabManager?.getViewerForTab(activeTab.id) ?? null) : null;
+};
+
+const goToPage = async (page: number): Promise<void> => {
+  await readerActions?.dispatch({ type: 'goToPage', page });
 };
 
 const persistAnnotations = (filePath: string, annotations: PdfAnnotation[]): void => {
@@ -217,13 +231,17 @@ const scheduleLastFilterSave = (settings: FilterSettings): void => {
 };
 
 const saveReadingSessionNow = async (): Promise<void> => {
-  const manager = settingsManager;
-  if (!manager || !currentSettings?.general.restorePreviousSession || isRestoringSession) return;
+  if (
+    !readingSessionStorage ||
+    !readerActions ||
+    !currentSettings?.general.restorePreviousSession ||
+    isRestoringSession
+  ) {
+    return;
+  }
 
   saveCurrentTabState(tabManager, sliderManager);
-  const session = captureReadingSession(tabManager);
-  currentSettings = { ...currentSettings, lastSession: session };
-  await manager.set('lastSession', session);
+  await readingSessionStorage.write(readerActions.snapshot());
 };
 
 const scheduleReadingSessionSave = (): void => {
@@ -249,12 +267,26 @@ const scheduleReadingSessionSave = (): void => {
 const restorePreviousReadingSession = async (): Promise<number> => {
   if (!tabManager || !currentSettings?.general.restorePreviousSession) return 0;
 
-  const session = currentSettings.lastSession;
-  if (!session?.tabs.length) return 0;
+  const session = restoredReadingSession;
+  if (!session?.documents.length) return 0;
+  const legacyProjection = {
+    version: 1 as const,
+    activeFilePath: session.activeDocumentPath,
+    tabs: session.documents.map((document) => ({
+      filePath: document.filePath,
+      title: document.title,
+      filterSettings: document.visualState?.filterSettings ?? getInitialFilterSettings(),
+      currentPage: document.readingPosition.page,
+      zoom: document.visualState?.zoom ?? 1,
+      rotation: document.visualState?.rotation ?? 0,
+      scrollPosition: 0,
+      viewMode: document.visualState?.viewMode ?? getInitialViewMode(),
+    })),
+  };
 
   isRestoringSession = true;
   try {
-    const result = await restoreReadingSession(session, {
+    const result = await restoreReadingSession(legacyProjection, {
       tabManager,
       sliderManager,
       getInitialFilterSettings,
@@ -286,6 +318,17 @@ async function initializeApp(): Promise<void> {
     settingsManager = new SettingsManager();
     const settings = await settingsManager.load();
     currentSettings = settings;
+    readingSessionStorage = createReadingSessionStorage(settingsManager);
+    try {
+      restoredReadingSession = await loadReadingSession(readingSessionStorage);
+    } catch (error) {
+      console.error('Reading Session migration failed; legacy data was retained:', error);
+      restoredReadingSession = {
+        schemaVersion: 1,
+        activeDocumentPath: null,
+        documents: [],
+      };
+    }
     renderRecentFiles(settings.recentFiles);
     console.log('Settings loaded:', settings);
 
@@ -321,13 +364,75 @@ async function initializeApp(): Promise<void> {
           persistAnnotations(filePath, annotations);
           sidebarController?.annotationsChanged();
         },
-        onDocumentOpened: (tab) => {
+        onDocumentOpened: async (tab) => {
+          await readerActions?.dispatch({
+            type: 'registerDocument',
+            document: {
+              filePath: tab.filePath,
+              title: tab.title,
+              readingPosition: { page: tab.currentPage, location: 0 },
+              visualState: {
+                filterSettings: tab.filterSettings,
+                zoom: tab.zoom,
+                rotation: tab.rotation,
+                viewMode: tab.viewMode,
+              },
+            },
+          });
           if (!isRestoringSession) rememberRecentFile(tab.filePath, tab.title);
         },
+        onDocumentClosed: async (filePath) => {
+          await readerActions?.dispatch({ type: 'removeDocument', filePath });
+        },
+        onReadingPositionSettled: (filePath, readingPosition) => {
+          void readerActions?.dispatch({
+            type: 'settleReadingPosition',
+            filePath,
+            readingPosition,
+          });
+        },
+        onPageNavigationRequested: goToPage,
         requestPassword: requestPdfPassword,
         requestAnnotationNote,
       },
     );
+
+    readerActions = createReaderActions({
+      initialSession: restoredReadingSession,
+      projection: {
+        activateDocument: async (filePath, position) => {
+          await tabManager?.projectActiveDocument(filePath, position);
+        },
+        goToReadingPosition: async (filePath, position) => {
+          const tab = tabManager?.getTabs().find((item) => item.filePath === filePath);
+          const viewer = tab ? tabManager?.getViewerForTab(tab.id) : null;
+          if (!viewer) throw new Error(`Cannot navigate unopened Document: ${filePath}`);
+          await viewer.goToReadingPosition(position);
+        },
+      },
+      persist: async (snapshot) => {
+        if (currentSettings?.general.restorePreviousSession) {
+          await readingSessionStorage?.write(snapshot);
+        }
+      },
+    });
+    readerActions.observe((snapshot) => {
+      for (const document of snapshot.documents) {
+        const tab = tabManager?.getTabs().find((item) => item.filePath === document.filePath);
+        if (!tab) continue;
+        tab.currentPage = document.readingPosition.page;
+        if (document.visualState) {
+          tab.filterSettings = { ...document.visualState.filterSettings };
+          tab.zoom = document.visualState.zoom;
+          tab.rotation = document.visualState.rotation;
+          tab.viewMode = document.visualState.viewMode;
+        }
+      }
+      updateUI(tabManager);
+    });
+    tabManager.setActivationRequester(async (filePath) => {
+      await readerActions?.dispatch({ type: 'activateDocument', filePath });
+    });
 
     searchController = new SearchController(getActiveViewer);
     sidebarController = new SidebarController({
@@ -387,6 +492,7 @@ async function initializeApp(): Promise<void> {
       togglePresentationMode: async () => {
         await presentationController?.toggle();
       },
+      goToPage,
     });
 
     // Load keybinds from settings
@@ -418,6 +524,7 @@ async function initializeApp(): Promise<void> {
       updateUI: updateUIForTab,
       openRecentFile,
       clearRecentFiles,
+      goToPage,
     });
 
     // Update keyboard hints for platform
