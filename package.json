@@ -18,7 +18,6 @@
   },
   "dependencies": {
     "@tauri-apps/api": "~2.11.0",
-    "@tauri-apps/plugin-dialog": "~2.7.0",
     "@tauri-apps/plugin-store": "~2.4.0",
     "nouislider": "^15.8.1",
     "pdfjs-dist": "^5.4.530"

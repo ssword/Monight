@@ -1,5 +1,4 @@
 import { invoke } from '@tauri-apps/api/core';
-import { open } from '@tauri-apps/plugin-dialog';
 import type { ViewMode } from '../lib/document-features';
 import type { FilterSettings } from '../scripts/filters';
 import type { TabManager } from '../scripts/tabs';
@@ -80,15 +79,7 @@ export async function openPDFFile(
   console.log('openPDFFile() called');
   try {
     console.log('Opening file dialog...');
-    const selected = await open({
-      multiple: true,
-      filters: [
-        {
-          name: 'PDF Documents',
-          extensions: ['pdf'],
-        },
-      ],
-    });
+    const selected = await invoke<string[]>('open_pdf_dialog');
 
     console.log('File dialog result:', selected);
 
@@ -97,9 +88,7 @@ export async function openPDFFile(
       return 0;
     }
 
-    // Handle single or multiple files
-    const files = Array.isArray(selected) ? selected : [selected];
-    return await openFiles(files, { tabManager, initialFilterSettings, initialViewMode });
+    return await openFiles(selected, { tabManager, initialFilterSettings, initialViewMode });
   } catch (error) {
     console.error('Error opening file:', error);
     const message = error instanceof Error ? error.message : 'Unknown error';

@@ -1,12 +1,15 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use tauri::{
     command, AppHandle, Manager, PhysicalPosition, PhysicalSize, State, WebviewUrl,
     WebviewWindowBuilder,
 };
+use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_opener::OpenerExt;
 use url::Url;
 
-use crate::{is_supported_extension, take_cli_payload_inner, CliPayload, PendingCliPayload};
+use crate::{
+    document_intake::DocumentIntake, take_cli_payload_inner, CliPayload, PendingCliPayload,
+};
 
 const PDF_VIEW_MIN_WIDTH: f64 = 1000.0;
 const PDF_VIEW_MAX_WIDTH: f64 = 1320.0;
@@ -20,6 +23,13 @@ struct PdfWindowFrame {
     height: u32,
     x: i32,
     y: i32,
+}
+
+fn authorize_dialog_selection<I>(document_intake: &DocumentIntake, paths: I) -> Vec<String>
+where
+    I: IntoIterator<Item = PathBuf>,
+{
+    document_intake.authorize(paths)
 }
 
 fn scaled_pixels(value: f64, scale_factor: f64) -> u32 {
@@ -54,36 +64,43 @@ fn calculate_pdf_window_frame(
 
 /// Read and validate a PDF file, returning raw bytes.
 /// This is the pure, testable core — no Tauri dependencies.
-pub(crate) fn read_pdf_bytes(path: String) -> Result<Vec<u8>, String> {
-    // Validate file exists
-    let file_path = Path::new(&path);
-    if !file_path.exists() {
-        return Err(format!("File not found: {}", path));
-    }
-
-    // Validate file extension
-    if !is_supported_extension(file_path) {
-        let ext = file_path.extension().and_then(|e| e.to_str()).unwrap_or("");
-        let ext_label = if ext.is_empty() {
-            "no extension".to_string()
-        } else {
-            format!(".{}", ext)
-        };
-        return Err(format!(
-            "Unsupported file type {}. Only PDF files are supported.",
-            ext_label
-        ));
-    }
-
-    // Read file contents
-    std::fs::read(file_path).map_err(|e| format!("Failed to read file: {}", e))
+pub(crate) fn read_pdf_bytes(
+    path: String,
+    document_intake: &DocumentIntake,
+) -> Result<Vec<u8>, String> {
+    document_intake.read(path)
 }
 
 /// Read a PDF file and return raw bytes via Tauri's binary response mechanism.
 #[command]
-pub async fn read_pdf_file(path: String) -> Result<tauri::ipc::Response, String> {
-    let bytes = read_pdf_bytes(path)?;
+pub async fn read_pdf_file(
+    path: String,
+    document_intake: State<'_, DocumentIntake>,
+) -> Result<tauri::ipc::Response, String> {
+    let bytes = read_pdf_bytes(path, document_intake.inner())?;
     Ok(tauri::ipc::Response::new(bytes))
+}
+
+/// Open the native Document picker and authorize its selection before returning paths.
+#[command]
+pub async fn open_pdf_dialog(
+    app: AppHandle,
+    document_intake: State<'_, DocumentIntake>,
+) -> Result<Vec<String>, String> {
+    let selected = tauri::async_runtime::spawn_blocking(move || {
+        app.dialog()
+            .file()
+            .add_filter("PDF Documents", &["pdf"])
+            .blocking_pick_files()
+    })
+    .await
+    .map_err(|error| format!("Failed to open file dialog: {error}"))?
+    .unwrap_or_default();
+    let paths = selected
+        .into_iter()
+        .filter_map(|file| file.into_path().ok());
+
+    Ok(authorize_dialog_selection(document_intake.inner(), paths))
 }
 
 pub(crate) fn validate_external_url(raw_url: &str) -> Result<Url, String> {
@@ -242,34 +259,27 @@ pub fn take_cli_payload(state: State<PendingCliPayload>) -> Option<CliPayload> {
 
 /// Validate and canonicalize a file path for opening
 #[command]
-pub fn validate_open_path(path: String) -> Result<String, String> {
-    let raw_path = Path::new(&path);
-    if !raw_path.exists() {
-        return Err(format!("File not found: {}", path));
-    }
-
-    let canonical =
-        std::fs::canonicalize(raw_path).map_err(|e| format!("Invalid path: {} ({})", path, e))?;
-
-    if !is_supported_extension(&canonical) {
-        let ext = canonical.extension().and_then(|e| e.to_str()).unwrap_or("");
-        let ext_label = if ext.is_empty() {
-            "no extension".to_string()
-        } else {
-            format!(".{}", ext)
-        };
-        return Err(format!(
-            "Unsupported file type {}. Only PDF files are supported.",
-            ext_label
-        ));
-    }
-
-    Ok(canonical.to_string_lossy().to_string())
+pub fn validate_open_path(
+    path: String,
+    document_intake: State<'_, DocumentIntake>,
+) -> Result<String, String> {
+    document_intake.validate(path)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn copied_pdf_fixture(name: &str) -> PathBuf {
+        let fixture =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/sample.pdf");
+        let directory =
+            std::env::temp_dir().join(format!("monight-command-tests-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).expect("test directory should be created");
+        let copy = directory.join(name);
+        std::fs::copy(fixture, &copy).expect("PDF fixture should be copied");
+        copy
+    }
 
     #[test]
     fn test_get_file_name() {
@@ -312,8 +322,10 @@ mod tests {
         let fixture =
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/sample.pdf");
         let expected = std::fs::read(&fixture).expect("fixture should be readable");
+        let document_intake = DocumentIntake::default();
+        authorize_dialog_selection(&document_intake, [fixture.clone()]);
 
-        let result = read_pdf_bytes(fixture.to_string_lossy().to_string());
+        let result = read_pdf_bytes(fixture.to_string_lossy().to_string(), &document_intake);
 
         assert!(
             result.is_ok(),
@@ -328,8 +340,10 @@ mod tests {
     fn test_read_pdf_bytes_rejects_unsupported_extension() {
         let fixture =
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/readme.txt");
+        let document_intake = DocumentIntake::default();
+        authorize_dialog_selection(&document_intake, [fixture.clone()]);
 
-        let result = read_pdf_bytes(fixture.to_string_lossy().to_string());
+        let result = read_pdf_bytes(fixture.to_string_lossy().to_string(), &document_intake);
 
         assert!(result.is_err(), "read_pdf_bytes should reject .txt files");
         let err = result.unwrap_err();
@@ -349,8 +363,9 @@ mod tests {
     fn test_read_pdf_bytes_errors_for_missing_file() {
         let missing = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("tests/fixtures/does_not_exist.pdf");
+        let document_intake = DocumentIntake::default();
 
-        let result = read_pdf_bytes(missing.to_string_lossy().to_string());
+        let result = read_pdf_bytes(missing.to_string_lossy().to_string(), &document_intake);
 
         assert!(
             result.is_err(),
@@ -362,6 +377,82 @@ mod tests {
             "error should mention file not found, got: {}",
             err
         );
+    }
+
+    #[test]
+    fn unregistered_pdf_is_denied_and_validation_does_not_authorize_it() {
+        let fixture =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/sample.pdf");
+        let document_intake = DocumentIntake::default();
+
+        document_intake
+            .validate(fixture.to_string_lossy().to_string())
+            .expect("fixture should be a valid Document path");
+        let error = read_pdf_bytes(fixture.to_string_lossy().to_string(), &document_intake)
+            .expect_err("validation must not authorize a Document");
+
+        assert!(error.contains("not authorized"));
+    }
+
+    #[test]
+    fn dialog_selection_authorizes_the_selected_document() {
+        let fixture =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/sample.pdf");
+        let denied = copied_pdf_fixture("dialog-denied.pdf");
+        let document_intake = DocumentIntake::default();
+
+        let selected = authorize_dialog_selection(&document_intake, [fixture.clone()]);
+
+        assert_eq!(selected, vec![fixture.to_string_lossy().to_string()]);
+        assert!(read_pdf_bytes(selected[0].clone(), &document_intake).is_ok());
+        assert!(read_pdf_bytes(denied.to_string_lossy().to_string(), &document_intake).is_err());
+        std::fs::remove_file(denied).expect("test copy should be removed");
+    }
+
+    #[test]
+    fn startup_snapshot_authorizes_recent_and_reading_session_documents_once() {
+        let fixture =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/sample.pdf");
+        let test_directory =
+            std::env::temp_dir().join(format!("monight-authorization-test-{}", std::process::id()));
+        std::fs::create_dir_all(&test_directory).expect("test directory should be created");
+        let recent_document = test_directory.join("recent.pdf");
+        let session_document = test_directory.join("session.pdf");
+        let added_after_startup = test_directory.join("added-after-startup.pdf");
+        for target in [&recent_document, &session_document, &added_after_startup] {
+            std::fs::copy(&fixture, target).expect("fixture copy should be created");
+        }
+        let mut persisted_store = serde_json::json!({
+            "settings": {
+                "recentFiles": [{ "filePath": recent_document }]
+            },
+            "readingSession": {
+                "documents": [{ "filePath": session_document }]
+            },
+        });
+        let document_intake = DocumentIntake::default();
+
+        document_intake.authorize_persisted_snapshot(&persisted_store);
+        persisted_store["settings"]["recentFiles"] =
+            serde_json::json!([{ "filePath": added_after_startup }]);
+
+        assert!(read_pdf_bytes(
+            recent_document.to_string_lossy().to_string(),
+            &document_intake
+        )
+        .is_ok());
+        assert!(read_pdf_bytes(
+            session_document.to_string_lossy().to_string(),
+            &document_intake
+        )
+        .is_ok());
+        assert!(read_pdf_bytes(
+            added_after_startup.to_string_lossy().to_string(),
+            &document_intake
+        )
+        .is_err());
+
+        std::fs::remove_dir_all(test_directory).expect("test directory should be removed");
     }
 
     #[test]

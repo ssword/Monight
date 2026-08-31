@@ -5,9 +5,11 @@ use clap::Parser;
 use serde::Serialize;
 use std::path::PathBuf;
 use std::sync::Mutex;
-use tauri::{Emitter, Listener, Manager};
+use tauri::{Emitter, Manager};
+use tauri_plugin_store::StoreExt;
 
 mod commands;
+mod document_intake;
 mod menu;
 
 /// Command line arguments for Monight PDF viewer
@@ -73,74 +75,45 @@ fn dispatch_open_payload(app: &tauri::AppHandle, payload: CliPayload) {
     }
 }
 
-fn path_from_open_candidate(candidate: String) -> Option<PathBuf> {
-    let trimmed = candidate.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-
-    if let Ok(url) = url::Url::parse(trimmed) {
-        if url.scheme() == "file" {
-            return url.to_file_path().ok();
-        }
-    }
-
-    Some(PathBuf::from(trimmed))
-}
-
-pub(crate) fn paths_from_legacy_file_open_payload(payload: &str) -> Vec<PathBuf> {
-    if payload.is_empty() {
-        return Vec::new();
-    }
-
-    let mut files: Vec<String> = Vec::new();
-
-    if let Ok(list) = serde_json::from_str::<Vec<String>>(payload) {
-        files.extend(list);
-    } else if let Ok(single) = serde_json::from_str::<String>(payload) {
-        files.push(single);
+fn payload_from_authorized_paths(files: Vec<String>, page: Option<u32>) -> Option<CliPayload> {
+    if files.is_empty() {
+        None
     } else {
-        files.push(payload.to_string());
+        Some(CliPayload { files, page })
     }
-
-    files
-        .into_iter()
-        .filter_map(path_from_open_candidate)
-        .collect()
 }
 
-pub(crate) fn payload_from_file_paths<I>(files: I, page: Option<u32>) -> Option<CliPayload>
+pub(crate) fn payload_from_cli_paths<I>(
+    document_intake: &document_intake::DocumentIntake,
+    files: I,
+    page: Option<u32>,
+) -> Option<CliPayload>
 where
     I: IntoIterator<Item = PathBuf>,
 {
-    let valid_files = files
-        .into_iter()
-        .filter_map(|file| std::fs::canonicalize(file).ok())
-        .filter(|canonical| canonical.exists() && is_supported_extension(canonical))
-        .map(|canonical| canonical.to_string_lossy().to_string())
-        .collect::<Vec<_>>();
-
-    if valid_files.is_empty() {
-        None
-    } else {
-        Some(CliPayload {
-            files: valid_files,
-            page,
-        })
-    }
+    let files = document_intake.authorize(files);
+    payload_from_authorized_paths(files, page)
 }
 
-pub(crate) fn payload_from_opened_urls(urls: &[url::Url]) -> Option<CliPayload> {
-    payload_from_file_paths(
-        urls.iter().filter_map(|url| {
-            if url.scheme() == "file" {
-                url.to_file_path().ok()
-            } else {
-                None
-            }
-        }),
-        None,
-    )
+fn authorize_dropped_paths<I>(document_intake: &document_intake::DocumentIntake, paths: I)
+where
+    I: IntoIterator<Item = PathBuf>,
+{
+    document_intake.authorize(paths);
+}
+
+pub(crate) fn payload_from_opened_urls(
+    document_intake: &document_intake::DocumentIntake,
+    urls: &[url::Url],
+) -> Option<CliPayload> {
+    let files = document_intake.authorize(urls.iter().filter_map(|url| {
+        if url.scheme() == "file" {
+            url.to_file_path().ok()
+        } else {
+            None
+        }
+    }));
+    payload_from_authorized_paths(files, None)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -150,8 +123,10 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_store::Builder::default().build())
         .manage(PendingCliPayload(Mutex::new(None)))
+        .manage(document_intake::DocumentIntake::default())
         .invoke_handler(tauri::generate_handler![
             commands::read_pdf_file,
+            commands::open_pdf_dialog,
             commands::get_file_name,
             commands::get_file_directory,
             commands::open_settings,
@@ -161,7 +136,18 @@ pub fn run() {
             commands::validate_open_path,
             commands::open_external_url,
         ])
+        .on_webview_event(|webview, event| {
+            if let tauri::WebviewEvent::DragDrop(tauri::DragDropEvent::Drop { paths, .. }) = event {
+                let document_intake = webview.state::<document_intake::DocumentIntake>();
+                authorize_dropped_paths(document_intake.inner(), paths.clone());
+            }
+        })
         .setup(|app| {
+            let store = app.store("settings.json")?;
+            let persisted_store = serde_json::Value::Object(store.entries().into_iter().collect());
+            let document_intake = app.state::<document_intake::DocumentIntake>();
+            document_intake.authorize_persisted_snapshot(&persisted_store);
+
             // Parse command line arguments (ignore macOS Finder -psn_* argument)
             let cli = Cli::parse_from(std::env::args().filter(|arg| !arg.starts_with("-psn_")));
             let window = app.get_webview_window("main").unwrap();
@@ -171,25 +157,12 @@ pub fn run() {
             let menu = menu::create_menu(app.handle())?;
             app.set_menu(menu)?;
 
-            // Handle files opened via file association (double-click in OS)
-            // macOS/iOS/Windows send tauri://file-open event
-            #[cfg(any(target_os = "macos", target_os = "ios", target_os = "windows"))]
-            {
-                let app_handle_for_open = app_handle.clone();
-                app_handle.listen("tauri://file-open", move |event| {
-                    let payload = event.payload();
-                    if let Some(payload) =
-                        payload_from_file_paths(paths_from_legacy_file_open_payload(payload), None)
-                    {
-                        dispatch_open_payload(&app_handle_for_open, payload);
-                    }
-                });
-            }
-
             // If files were provided via CLI, emit event to frontend
             if !cli.files.is_empty() {
                 let paths = cli.files.into_iter().map(PathBuf::from);
-                if let Some(payload) = payload_from_file_paths(paths, cli.page) {
+                if let Some(payload) =
+                    payload_from_cli_paths(document_intake.inner(), paths, cli.page)
+                {
                     #[cfg(debug_assertions)]
                     println!("Opening files from CLI: {:?}", payload.files);
 
@@ -216,7 +189,8 @@ pub fn run() {
     app.run(|app, event| {
         #[cfg(any(target_os = "macos", target_os = "ios", target_os = "android"))]
         if let tauri::RunEvent::Opened { urls } = event {
-            if let Some(payload) = payload_from_opened_urls(&urls) {
+            let document_intake = app.state::<document_intake::DocumentIntake>();
+            if let Some(payload) = payload_from_opened_urls(document_intake.inner(), &urls) {
                 dispatch_open_payload(app, payload);
             }
         }
@@ -226,6 +200,19 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn copied_pdf_fixture(name: &str) -> PathBuf {
+        let fixture =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/sample.pdf");
+        let directory = std::env::temp_dir().join(format!(
+            "monight-entry-channel-tests-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&directory).expect("test directory should be created");
+        let copy = directory.join(name);
+        std::fs::copy(fixture, &copy).expect("PDF fixture should be copied");
+        copy
+    }
 
     fn script_src(csp: &str) -> &str {
         csp.split(';')
@@ -345,45 +332,63 @@ mod tests {
     }
 
     #[test]
-    fn test_legacy_file_open_payload_accepts_raw_path() {
+    fn drag_and_drop_authorizes_only_the_dropped_document() {
         let fixture =
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/sample.pdf");
+        let denied = copied_pdf_fixture("drag-denied.pdf");
+        let document_intake = document_intake::DocumentIntake::default();
 
-        let payload = payload_from_file_paths(
-            paths_from_legacy_file_open_payload(fixture.to_string_lossy().as_ref()),
-            None,
-        )
-        .expect("raw path payload should be accepted");
+        authorize_dropped_paths(&document_intake, [fixture.clone()]);
 
-        assert_eq!(payload.files, vec![fixture.to_string_lossy().to_string()]);
-        assert_eq!(payload.page, None);
+        assert!(
+            commands::read_pdf_bytes(fixture.to_string_lossy().to_string(), &document_intake)
+                .is_ok()
+        );
+        assert!(
+            commands::read_pdf_bytes(denied.to_string_lossy().to_string(), &document_intake)
+                .is_err()
+        );
+        std::fs::remove_file(denied).expect("test copy should be removed");
     }
 
     #[test]
-    fn test_legacy_file_open_payload_accepts_file_url() {
+    fn os_opened_event_authorizes_only_its_file_url() {
         let fixture =
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/sample.pdf");
+        let denied = copied_pdf_fixture("opened-event-denied.pdf");
         let file_url = url::Url::from_file_path(&fixture).expect("fixture should become file URL");
+        let document_intake = document_intake::DocumentIntake::default();
 
-        let payload =
-            payload_from_file_paths(paths_from_legacy_file_open_payload(file_url.as_str()), None)
-                .expect("file URL payload should be accepted");
+        let payload = payload_from_opened_urls(&document_intake, &[file_url])
+            .expect("opened file URL should be accepted");
 
         assert_eq!(payload.files, vec![fixture.to_string_lossy().to_string()]);
         assert_eq!(payload.page, None);
+        assert!(commands::read_pdf_bytes(payload.files[0].clone(), &document_intake).is_ok());
+        assert!(
+            commands::read_pdf_bytes(denied.to_string_lossy().to_string(), &document_intake)
+                .is_err()
+        );
+        std::fs::remove_file(denied).expect("test copy should be removed");
     }
 
     #[test]
-    fn test_opened_urls_accepts_file_urls() {
+    fn cli_authorizes_only_its_document() {
         let fixture =
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/sample.pdf");
-        let file_url = url::Url::from_file_path(&fixture).expect("fixture should become file URL");
+        let denied = copied_pdf_fixture("cli-denied.pdf");
+        let document_intake = document_intake::DocumentIntake::default();
 
-        let payload =
-            payload_from_opened_urls(&[file_url]).expect("opened file URL should be accepted");
+        let payload = payload_from_cli_paths(&document_intake, [fixture], Some(4))
+            .expect("CLI Document should be accepted");
 
-        assert_eq!(payload.files, vec![fixture.to_string_lossy().to_string()]);
-        assert_eq!(payload.page, None);
+        assert_eq!(payload.page, Some(4));
+        assert!(commands::read_pdf_bytes(payload.files[0].clone(), &document_intake).is_ok());
+        assert!(
+            commands::read_pdf_bytes(denied.to_string_lossy().to_string(), &document_intake)
+                .is_err()
+        );
+        std::fs::remove_file(denied).expect("test copy should be removed");
     }
 
     #[test]
