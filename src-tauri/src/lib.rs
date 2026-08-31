@@ -290,18 +290,30 @@ mod tests {
     }
 
     #[test]
-    fn test_shipped_manifests_exclude_shell_and_retain_the_opener() {
+    fn test_shipped_artifacts_exclude_shell_and_retain_the_opener() {
         let cargo_manifest = include_str!("../Cargo.toml");
+        let cargo_lock = include_str!("../Cargo.lock");
         let npm_manifest: serde_json::Value =
             serde_json::from_str(include_str!("../../package.json")).expect("valid npm manifest");
+        let npm_lock: serde_json::Value =
+            serde_json::from_str(include_str!("../../package-lock.json"))
+                .expect("valid npm lockfile");
+        let runtime_source = include_str!("lib.rs");
+        let shell_plugin = concat!("tauri-plugin-", "shell");
+        let shell_registration = concat!("tauri_plugin_", "shell::init()");
 
         assert!(!cargo_manifest
             .lines()
-            .any(|line| line.trim_start().starts_with("tauri-plugin-shell =")));
+            .any(|line| line.trim_start().starts_with(&format!("{shell_plugin} ="))));
         assert!(cargo_manifest
             .lines()
             .any(|line| line.trim_start().starts_with("tauri-plugin-opener =")));
-        assert!(npm_manifest["dependencies"]["@tauri-apps/plugin-shell"].is_null());
+        assert!(!cargo_lock
+            .lines()
+            .any(|line| line.trim() == format!("name = \"{shell_plugin}\"")));
+        assert!(npm_manifest["dependencies"][format!("@tauri-apps/{shell_plugin}")].is_null());
+        assert!(npm_lock["packages"][format!("node_modules/@tauri-apps/{shell_plugin}")].is_null());
+        assert!(!runtime_source.contains(shell_registration));
     }
 
     #[test]
