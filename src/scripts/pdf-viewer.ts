@@ -1201,12 +1201,16 @@ export class PDFViewer {
     }
   }
 
-  async renderThumbnail(pageNumber: number, maxWidth = 144): Promise<HTMLCanvasElement> {
+  async renderThumbnail(
+    pageNumber: number,
+    options: { maxWidth?: number; rotation?: number } = {},
+  ): Promise<HTMLCanvasElement> {
     if (!this.pdfDoc) throw new Error('PDF not loaded');
+    const { maxWidth = 144, rotation = this.state.rotation } = options;
     const page = await this.pdfDoc.getPage(pageNumber);
-    const baseViewport = page.getViewport({ scale: 1, rotation: this.state.rotation });
+    const baseViewport = page.getViewport({ scale: 1, rotation });
     const scale = Math.min(maxWidth / baseViewport.width, 1);
-    const viewport = page.getViewport({ scale, rotation: this.state.rotation });
+    const viewport = page.getViewport({ scale, rotation });
     const canvas = document.createElement('canvas');
     const outputScale = Math.min(window.devicePixelRatio || 1, 2);
     canvas.width = Math.max(1, Math.floor(viewport.width * outputScale));
