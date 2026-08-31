@@ -148,7 +148,6 @@ pub fn run() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_store::Builder::default().build())
         .manage(PendingCliPayload(Mutex::new(None)))
         .invoke_handler(tauri::generate_handler![
@@ -227,6 +226,83 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn script_src(csp: &str) -> &str {
+        csp.split(';')
+            .map(str::trim)
+            .find(|directive| directive.starts_with("script-src "))
+            .expect("CSP should define script-src")
+    }
+
+    fn html_csp(html: &str) -> &str {
+        let marker = "content=\"";
+        let csp_start = html
+            .find("Content-Security-Policy")
+            .and_then(|meta_start| {
+                html[meta_start..]
+                    .find(marker)
+                    .map(|offset| meta_start + offset)
+            })
+            .map(|marker_start| marker_start + marker.len())
+            .expect("HTML should define a Content-Security-Policy meta tag");
+        let csp_end = html[csp_start..]
+            .find('"')
+            .map(|offset| csp_start + offset)
+            .expect("CSP content attribute should be terminated");
+
+        &html[csp_start..csp_end]
+    }
+
+    #[test]
+    fn test_shipped_csp_disallows_inline_scripts_and_retains_pdf_and_print_support() {
+        let config: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.conf.json")).expect("valid Tauri config");
+        let tauri_csp = config["app"]["security"]["csp"]
+            .as_str()
+            .expect("Tauri config should define CSP");
+        let csp_policies = [
+            tauri_csp,
+            html_csp(include_str!("../../index.html")),
+            html_csp(include_str!("../../settings.html")),
+        ];
+
+        for csp in csp_policies {
+            let scripts = script_src(csp);
+            assert!(!scripts
+                .split_whitespace()
+                .any(|source| source == "'unsafe-inline'"));
+            assert!(scripts
+                .split_whitespace()
+                .any(|source| source == "'wasm-unsafe-eval'"));
+            assert!(csp
+                .split(';')
+                .map(str::trim)
+                .any(|directive| directive == "frame-src blob:"));
+        }
+    }
+
+    #[test]
+    fn test_shipped_config_disables_the_global_tauri_ipc_object() {
+        let config: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.conf.json")).expect("valid Tauri config");
+
+        assert_eq!(config["app"]["withGlobalTauri"].as_bool(), Some(false));
+    }
+
+    #[test]
+    fn test_shipped_manifests_exclude_shell_and_retain_the_opener() {
+        let cargo_manifest = include_str!("../Cargo.toml");
+        let npm_manifest: serde_json::Value =
+            serde_json::from_str(include_str!("../../package.json")).expect("valid npm manifest");
+
+        assert!(!cargo_manifest
+            .lines()
+            .any(|line| line.trim_start().starts_with("tauri-plugin-shell =")));
+        assert!(cargo_manifest
+            .lines()
+            .any(|line| line.trim_start().starts_with("tauri-plugin-opener =")));
+        assert!(npm_manifest["dependencies"]["@tauri-apps/plugin-shell"].is_null());
+    }
 
     #[test]
     fn test_pending_cli_payload_flow() {
