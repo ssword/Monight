@@ -89,8 +89,8 @@ describe('reading session visual state', () => {
       setViewMode: vi.fn(async (viewMode: string) => {
         calls.push(`viewMode:${viewMode}`);
       }),
-      goToPage: vi.fn(async (page: number) => {
-        calls.push(`page:${page}`);
+      goToReadingPosition: vi.fn(async (position: { page: number; location: number }) => {
+        calls.push(`page:${position.page}:${position.location}`);
       }),
       setScrollPosition: vi.fn(async (scrollPosition: number) => {
         calls.push(`scroll:${scrollPosition}`);
@@ -108,7 +108,7 @@ describe('reading session visual state', () => {
       'rotation:270',
       'zoom:1.75',
       'viewMode:continuous',
-      'page:12',
+      'page:12:0',
       'scroll:4321',
     ]);
   });

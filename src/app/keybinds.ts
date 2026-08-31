@@ -20,6 +20,7 @@ interface KeybindContext {
   updateUI: () => void;
   openSearch: () => void;
   togglePresentationMode: () => Promise<void>;
+  goToPage: (page: number) => Promise<void>;
 }
 
 // Register all keybind actions with the KeybindManager
@@ -37,6 +38,7 @@ export function registerKeybindActions({
   updateUI,
   openSearch,
   togglePresentationMode,
+  goToPage,
 }: KeybindContext): void {
   if (!keybindManager) {
     console.error('KeybindManager not initialized');
@@ -103,32 +105,32 @@ export function registerKeybindActions({
   // PDF navigation (requires active tab)
   keybindManager.registerAction('nextPage', async () => {
     await withActiveViewer(tabManager, async (viewer) => {
-      await viewer.nextPage();
-      saveCurrentTabState();
+      const state = viewer.getState();
+      const step = state.viewMode === 'spread' ? 2 : 1;
+      await goToPage(Math.min(state.currentPage + step, state.totalPages));
       updateUI();
     });
   });
 
   keybindManager.registerAction('previousPage', async () => {
     await withActiveViewer(tabManager, async (viewer) => {
-      await viewer.previousPage();
-      saveCurrentTabState();
+      const state = viewer.getState();
+      const step = state.viewMode === 'spread' ? 2 : 1;
+      await goToPage(Math.max(state.currentPage - step, 1));
       updateUI();
     });
   });
 
   keybindManager.registerAction('firstPage', async () => {
-    await withActiveViewer(tabManager, async (viewer) => {
-      await viewer.firstPage();
-      saveCurrentTabState();
+    await withActiveViewer(tabManager, async () => {
+      await goToPage(1);
       updateUI();
     });
   });
 
   keybindManager.registerAction('lastPage', async () => {
     await withActiveViewer(tabManager, async (viewer) => {
-      await viewer.lastPage();
-      saveCurrentTabState();
+      await goToPage(viewer.getState().totalPages);
       updateUI();
     });
   });

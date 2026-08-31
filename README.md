@@ -83,4 +83,4 @@ npx tauri icon src-tauri/icons/icon-source.svg
 - Menu items and shortcuts are defined in `src-tauri/src/menu.rs`.
 
 ## License
-TBD
+MIT — see [LICENSE](LICENSE).

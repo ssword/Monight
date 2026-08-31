@@ -1,5 +1,6 @@
 import { Store } from '@tauri-apps/plugin-store';
 import type { PdfAnnotation, RecentFile, ViewMode } from '../lib/document-features';
+import type { PersistedReadingSession } from '../reader/reader-actions';
 import type { FilterSettings } from './filters';
 
 export interface SavedTabSession {
@@ -314,11 +315,38 @@ export class SettingsManager {
     await this.save();
   }
 
+  async readPersistedReadingSession(): Promise<unknown> {
+    const store = await this.initStore();
+    return await store.get('readingSession');
+  }
+
+  async writePersistedReadingSession(session: PersistedReadingSession): Promise<void> {
+    const store = await this.initStore();
+    await store.set('readingSession', session);
+    await store.save();
+  }
+
+  async clearPersistedReadingSession(): Promise<void> {
+    const store = await this.initStore();
+    await store.delete('readingSession');
+    await store.save();
+  }
+
+  readLegacyReadingSession(): unknown {
+    return this.settings.lastSession;
+  }
+
+  async removeLegacyReadingSession(): Promise<void> {
+    delete this.settings.lastSession;
+    await this.save();
+  }
+
   /**
    * Reset settings to defaults
    */
   async reset(): Promise<void> {
     this.settings = { ...DEFAULT_SETTINGS };
+    await this.clearPersistedReadingSession();
     await this.save();
   }
 

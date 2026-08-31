@@ -20,7 +20,7 @@ export async function restoreTabState(
   await viewer.setRotation(tab.rotation);
   await viewer.setZoom(tab.zoom);
   await viewer.setViewMode(tab.viewMode);
-  await viewer.goToPage(tab.currentPage);
+  await viewer.goToReadingPosition({ page: tab.currentPage, location: 0 });
   await viewer.setScrollPosition(tab.scrollPosition);
 
   // Update slider if initialized
