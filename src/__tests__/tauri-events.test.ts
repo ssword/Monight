@@ -1,14 +1,19 @@
 import type { DragDropEvent } from '@tauri-apps/api/webview';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { PRESETS } from '../scripts/filters';
+import type { SettingsManager } from '../scripts/settings';
 import type { TabManager } from '../scripts/tabs';
 
 const mocks = vi.hoisted(() => {
   let dragDropHandler: ((event: { payload: DragDropEvent }) => void | Promise<void>) | undefined;
+  const listeners = new Map<string, () => void | Promise<void>>();
 
   return {
     invoke: vi.fn(async () => null),
-    listen: vi.fn(async () => vi.fn()),
+    listen: vi.fn(async (event: string, handler: () => void | Promise<void>) => {
+      listeners.set(event, handler);
+      return vi.fn();
+    }),
     openFiles: vi.fn(async () => 1),
     onDragDropEvent: vi.fn(
       async (handler: (event: { payload: DragDropEvent }) => void | Promise<void>) => {
@@ -19,7 +24,9 @@ const mocks = vi.hoisted(() => {
     getDragDropHandler: () => dragDropHandler,
     resetDragDropHandler: () => {
       dragDropHandler = undefined;
+      listeners.clear();
     },
+    getListener: (event: string) => listeners.get(event),
   };
 });
 
@@ -57,25 +64,29 @@ describe('Tauri drag and drop events', () => {
     vi.stubGlobal('alert', showAlert);
   });
 
+  const context = (overrides: Record<string, unknown> = {}) => ({
+    tabManager: {} as TabManager,
+    settingsManager: null,
+    keybindManager: null,
+    isMac: true,
+    openPdfAndRefresh: vi.fn(async () => undefined),
+    getInitialFilterSettings: () => ({ ...PRESETS.default }),
+    getInitialViewMode: () => 'single' as const,
+    reloadSettings: vi.fn(async () => undefined),
+    readingHistoryCleared: vi.fn(),
+    applyWindowAfterOpen: vi.fn(async () => undefined),
+    updateTabBarVisibility: vi.fn(),
+    updatePrintMenuState: vi.fn(async () => undefined),
+    updateUI: vi.fn(),
+    saveCurrentTabState: vi.fn(),
+    printCurrentPDF: vi.fn(async () => undefined),
+    ...overrides,
+  });
+
   it('uses the Tauri 2 drag/drop API and reads paths from the v2 payload', async () => {
     const tabManager = {} as TabManager;
 
-    await setupTauriListeners({
-      tabManager,
-      settingsManager: null,
-      keybindManager: null,
-      isMac: true,
-      openPdfAndRefresh: vi.fn(async () => undefined),
-      getInitialFilterSettings: () => ({ ...PRESETS.default }),
-      getInitialViewMode: () => 'single',
-      reloadSettings: vi.fn(async () => undefined),
-      applyWindowAfterOpen: vi.fn(async () => undefined),
-      updateTabBarVisibility: vi.fn(),
-      updatePrintMenuState: vi.fn(async () => undefined),
-      updateUI: vi.fn(),
-      saveCurrentTabState: vi.fn(),
-      printCurrentPDF: vi.fn(async () => undefined),
-    });
+    await setupTauriListeners(context({ tabManager }));
 
     expect(mocks.onDragDropEvent).toHaveBeenCalledOnce();
     expect(mocks.listen).not.toHaveBeenCalledWith('tauri://file-drop', expect.any(Function));
@@ -105,5 +116,21 @@ describe('Tauri drag and drop events', () => {
       ['/tmp/report.pdf'],
       expect.objectContaining({ tabManager, continueOnError: true }),
     );
+  });
+
+  it('handles the Settings clear-history request in the main window', async () => {
+    const clearReadingHistory = vi.fn(async () => undefined);
+    const readingHistoryCleared = vi.fn();
+    await setupTauriListeners(
+      context({
+        settingsManager: { clearReadingHistory } as unknown as SettingsManager,
+        readingHistoryCleared,
+      }),
+    );
+
+    await mocks.getListener('clear-reading-history')?.();
+
+    expect(clearReadingHistory).toHaveBeenCalledOnce();
+    expect(readingHistoryCleared).toHaveBeenCalledOnce();
   });
 });

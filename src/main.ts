@@ -555,13 +555,35 @@ async function initializeApp(): Promise<void> {
           clearTimeout(lastFilterSaveTimer);
           lastFilterSaveTimer = null;
         }
-        if (!updated.general.restorePreviousSession && sessionSaveTimer !== null) {
-          clearTimeout(sessionSaveTimer);
-          sessionSaveTimer = null;
-        }
-        if (updated.general.restorePreviousSession) {
+        if (!updated.general.restorePreviousSession) {
+          if (sessionSaveTimer !== null) {
+            clearTimeout(sessionSaveTimer);
+            sessionSaveTimer = null;
+          }
+          await settingsManager.clearPersistedReadingSession();
+          restoredReadingSession = {
+            schemaVersion: 1,
+            activeDocumentPath: null,
+            documents: [],
+          };
+        } else {
           scheduleReadingSessionSave();
         }
+      },
+      readingHistoryCleared: () => {
+        if (!currentSettings) return;
+        currentSettings = { ...currentSettings, recentFiles: [], annotations: {} };
+        restoredReadingSession = {
+          schemaVersion: 1,
+          activeDocumentPath: null,
+          documents: [],
+        };
+        renderRecentFiles([]);
+        for (const tab of tabManager?.getTabs() ?? []) {
+          tab.annotations = [];
+          tabManager?.getViewerForTab(tab.id)?.setAnnotations([]);
+        }
+        sidebarController?.annotationsChanged();
       },
       applyWindowAfterOpen,
       updateTabBarVisibility: updateTabBar,

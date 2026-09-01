@@ -1,5 +1,5 @@
 import { getName, getTauriVersion, getVersion } from '@tauri-apps/api/app';
-import { emit } from '@tauri-apps/api/event';
+import { emit, listen } from '@tauri-apps/api/event';
 import { version as pdfjsVersion } from 'pdfjs-dist';
 import { KeybindEditor } from './keybind-editor';
 import { KeybindManager } from './keybind-manager';
@@ -7,7 +7,7 @@ import type { MoonightSettings } from './settings';
 import { type KeybindConfig, SettingsManager } from './settings';
 
 // Initialize settings manager
-const settingsManager = new SettingsManager();
+const settingsManager = new SettingsManager('settings');
 let currentSettings: MoonightSettings;
 
 // Detect platform
@@ -141,11 +141,6 @@ function setupSettingListeners(): void {
   ) as HTMLInputElement;
   restorePreviousSession?.addEventListener('change', async () => {
     currentSettings.general.restorePreviousSession = restorePreviousSession.checked;
-    if (!restorePreviousSession.checked) {
-      currentSettings.lastSession = undefined;
-      await settingsManager.set('lastSession', undefined);
-      await settingsManager.clearPersistedReadingSession();
-    }
     await settingsManager.set('general', currentSettings.general);
     await notifyMainSettingsChanged();
   });
@@ -167,6 +162,13 @@ function setupSettingListeners(): void {
     currentSettings.general.defaultDarkMode = defaultDarkMode.value;
     await settingsManager.set('general', currentSettings.general);
     await notifyMainSettingsChanged();
+  });
+
+  const clearHistoryButton = document.getElementById('clear-reading-history');
+  clearHistoryButton?.addEventListener('click', async () => {
+    if (confirm('Clear recent files, the saved Reading Session, and all annotations?')) {
+      await emit('clear-reading-history');
+    }
   });
 
   // Reset settings button
@@ -383,6 +385,8 @@ async function init(): Promise<void> {
 
   // Setup event listeners
   setupSettingListeners();
+  await listen('settings-changed', loadSettings);
+  await listen('keybinds-changed', loadSettings);
 
   console.log('Settings page initialized!');
 }
