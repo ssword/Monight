@@ -19,4 +19,17 @@ describe('Reading Position', () => {
       }),
     ).toBeCloseTo(807.1428571428571);
   });
+
+  it('uses a legacy absolute offset when no fractional location was saved', () => {
+    expect(
+      restoreReadingPosition(
+        { page: 2, legacyOffset: 842 },
+        {
+          pageOffsets: [0, 20, 620, 1220],
+          pageHeights: [580, 580],
+          pagePadding: 20,
+        },
+      ),
+    ).toBe(842);
+  });
 });

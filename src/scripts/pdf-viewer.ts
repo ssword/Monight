@@ -28,7 +28,7 @@ import {
   positionAtPage,
   visiblePageRange,
 } from '../lib/scroll-geometry';
-import type { ReadingPosition } from '../reader/reader-actions';
+import type { ReadingPosition, RestorableReadingPosition } from '../reader/reader-actions';
 import { captureReadingPosition, restoreReadingPosition } from '../reader/reading-position';
 
 interface ViewState {
@@ -1577,7 +1577,8 @@ export class PDFViewer {
   async fitToWidth(): Promise<void> {
     if (!this.pdfDoc || !this.canvas) return;
 
-    const base = this.baseDimensions.get(this.state.currentPage);
+    const currentPage = this.state.currentPage;
+    const base = this.baseDimensions.get(currentPage);
     let baseWidth: number;
     if (base) {
       // Use cached base dimensions — derive the effective width accounting for rotation
@@ -1589,7 +1590,7 @@ export class PDFViewer {
       });
       baseWidth = dims.width;
     } else {
-      const page = await this.pdfDoc.getPage(this.state.currentPage);
+      const page = await this.pdfDoc.getPage(currentPage);
       const viewport = page.getViewport({ scale: 1.0, rotation: this.state.rotation });
       baseWidth = viewport.width;
     }
@@ -1603,15 +1604,17 @@ export class PDFViewer {
     if (this.state.viewMode === 'continuous') {
       await this.calculateAllPageDimensions();
       await this.renderVisiblePages(true);
+      await this.scrollToPage(currentPage);
     } else {
-      await this.renderPage(this.state.currentPage);
+      await this.renderPage(currentPage);
     }
   }
 
   async fitToPage(): Promise<void> {
     if (!this.pdfDoc || !this.canvas) return;
 
-    const base = this.baseDimensions.get(this.state.currentPage);
+    const currentPage = this.state.currentPage;
+    const base = this.baseDimensions.get(currentPage);
     let baseWidth: number;
     let baseHeight: number;
     if (base) {
@@ -1624,7 +1627,7 @@ export class PDFViewer {
       baseWidth = dims.width;
       baseHeight = dims.height;
     } else {
-      const page = await this.pdfDoc.getPage(this.state.currentPage);
+      const page = await this.pdfDoc.getPage(currentPage);
       const viewport = page.getViewport({ scale: 1.0, rotation: this.state.rotation });
       baseWidth = viewport.width;
       baseHeight = viewport.height;
@@ -1643,8 +1646,9 @@ export class PDFViewer {
     if (this.state.viewMode === 'continuous') {
       await this.calculateAllPageDimensions();
       await this.renderVisiblePages(true);
+      await this.scrollToPage(currentPage);
     } else {
-      await this.renderPage(this.state.currentPage);
+      await this.renderPage(currentPage);
     }
   }
 
@@ -1690,7 +1694,7 @@ export class PDFViewer {
     });
   }
 
-  async goToReadingPosition(position: ReadingPosition): Promise<void> {
+  async goToReadingPosition(position: RestorableReadingPosition): Promise<void> {
     await this.projectPage(position.page);
     if (this.state.viewMode !== 'continuous' || this.offsetArray.length === 0) return;
     const pageHeights = Array.from(

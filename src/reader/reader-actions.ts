@@ -6,6 +6,13 @@ export interface ReadingPosition {
   readonly location: number;
 }
 
+export interface LegacyReadingPosition {
+  readonly page: number;
+  readonly legacyOffset: number;
+}
+
+export type RestorableReadingPosition = ReadingPosition | LegacyReadingPosition;
+
 export interface ReadingSessionVisualState {
   readonly filterSettings: Readonly<FilterSettings>;
   readonly zoom: number;
@@ -16,7 +23,7 @@ export interface ReadingSessionVisualState {
 export interface ReadingSessionDocument {
   readonly filePath: string;
   readonly title: string;
-  readonly readingPosition: ReadingPosition;
+  readonly readingPosition: RestorableReadingPosition;
   readonly visualState?: ReadingSessionVisualState;
 }
 
@@ -31,8 +38,8 @@ export interface ReadingSessionSnapshot extends PersistedReadingSession {
 }
 
 export interface ReaderProjection {
-  activateDocument(filePath: string, position: ReadingPosition): Promise<void>;
-  goToReadingPosition(filePath: string, position: ReadingPosition): Promise<void>;
+  activateDocument(filePath: string, position: RestorableReadingPosition): Promise<void>;
+  goToReadingPosition(filePath: string, position: RestorableReadingPosition): Promise<void>;
 }
 
 export type ReaderAction =
@@ -190,6 +197,7 @@ export function createReaderActions({
           return { status: 'no-op', revision: snapshot.revision };
         }
         if (
+          'location' in document.readingPosition &&
           document.readingPosition.page === page &&
           document.readingPosition.location === location
         ) {

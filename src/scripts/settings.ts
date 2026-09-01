@@ -255,7 +255,10 @@ function migrateLegacyReadingSession(session: ReadingSession | undefined): Persi
   const documents = session.tabs.map((tab) => ({
     filePath: tab.filePath,
     title: tab.title,
-    readingPosition: { page: tab.currentPage, location: 0 },
+    readingPosition:
+      tab.scrollPosition !== undefined
+        ? { page: tab.currentPage, legacyOffset: tab.scrollPosition }
+        : { page: tab.currentPage, location: 0 },
     visualState: {
       filterSettings: tab.filterSettings,
       zoom: tab.zoom,

@@ -39,6 +39,7 @@ const legacySession = {
       filePath: '/books/one.pdf',
       title: 'one.pdf',
       currentPage: 4,
+      scrollPosition: 842,
       filterSettings: {
         brightness: 90,
         grayscale: 0,
@@ -96,7 +97,7 @@ describe('settings storage', () => {
         expect.objectContaining({
           filePath: '/books/one.pdf',
           title: 'one.pdf',
-          readingPosition: { page: 4, location: 0 },
+          readingPosition: { page: 4, legacyOffset: 842 },
         }),
       ],
     });

@@ -26,6 +26,7 @@ import {
   updateTabBarVisibility,
   updateUI,
 } from './app/ui';
+import { registerReadingSessionCloseGuard } from './app/window-lifecycle';
 import {
   type PdfAnnotation,
   type RecentFile,
@@ -241,6 +242,17 @@ const saveReadingSessionNow = async (): Promise<void> => {
   }
 
   saveCurrentTabState(tabManager, sliderManager);
+
+  const activeTab = tabManager?.getActiveTab();
+  const activeViewer = activeTab ? tabManager?.getViewerForTab(activeTab.id) : null;
+  if (activeTab && activeViewer) {
+    await readerActions.dispatch({
+      type: 'settleReadingPosition',
+      filePath: activeTab.filePath,
+      readingPosition: activeViewer.getReadingPosition(),
+    });
+  }
+
   await readingSessionStorage.write(readerActions.snapshot());
 };
 
@@ -279,7 +291,8 @@ const restorePreviousReadingSession = async (): Promise<number> => {
       currentPage: document.readingPosition.page,
       zoom: document.visualState?.zoom ?? 1,
       rotation: document.visualState?.rotation ?? 0,
-      scrollPosition: 0,
+      scrollPosition:
+        'legacyOffset' in document.readingPosition ? document.readingPosition.legacyOffset : 0,
       viewMode: document.visualState?.viewMode ?? getInitialViewMode(),
     })),
   };
@@ -603,8 +616,12 @@ async function initializeApp(): Promise<void> {
     // Get current window
     const currentWindow = getCurrentWebviewWindow();
 
-    window.addEventListener('beforeunload', () => {
-      void saveReadingSessionNow();
+    await registerReadingSessionCloseGuard(currentWindow, async () => {
+      if (sessionSaveTimer !== null) {
+        clearTimeout(sessionSaveTimer);
+        sessionSaveTimer = null;
+      }
+      await saveReadingSessionNow();
     });
 
     // Show window after initialization

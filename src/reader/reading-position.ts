@@ -1,5 +1,5 @@
 import { currentPageAt } from '../lib/scroll-geometry';
-import type { ReadingPosition } from './reader-actions';
+import type { ReadingPosition, RestorableReadingPosition } from './reader-actions';
 
 interface ReadingGeometry {
   pageOffsets: number[];
@@ -26,9 +26,13 @@ export function captureReadingPosition({
 }
 
 export function restoreReadingPosition(
-  position: ReadingPosition,
+  position: RestorableReadingPosition,
   { pageOffsets, pageHeights, pagePadding }: ReadingGeometry,
 ): number {
+  if ('legacyOffset' in position) {
+    return Math.max(0, position.legacyOffset);
+  }
+
   const page = Math.min(Math.max(position.page, 1), pageHeights.length);
   const pageTop = pageOffsets[page] ?? pagePadding;
   const pageHeight = pageHeights[page - 1] ?? 0;

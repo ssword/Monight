@@ -1,5 +1,5 @@
 import type { PdfAnnotation, ViewMode } from '../lib/document-features';
-import type { ReadingPosition } from '../reader/reader-actions';
+import type { ReadingPosition, RestorableReadingPosition } from '../reader/reader-actions';
 import { type FilterSettings, PRESETS } from './filters';
 import { type AnnotationNoteRequester, PDFViewer, type PdfPasswordRequester } from './pdf-viewer';
 
@@ -208,7 +208,10 @@ export class TabManager {
     this.requestActivation = requestActivation;
   }
 
-  async projectActiveDocument(filePath: string, position: ReadingPosition): Promise<void> {
+  async projectActiveDocument(
+    filePath: string,
+    position: RestorableReadingPosition,
+  ): Promise<void> {
     const tab = this.getTabs().find((item) => item.filePath === filePath);
     if (!tab) throw new Error(`Cannot activate unopened Document: ${filePath}`);
     tab.currentPage = position.page;
