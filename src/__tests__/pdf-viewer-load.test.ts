@@ -1,3 +1,4 @@
+import { Window } from 'happy-dom';
 import { describe, expect, it, vi } from 'vitest';
 
 const getPdfEngine = vi.hoisted(() => vi.fn());
@@ -52,6 +53,123 @@ describe('PDFViewer initial load', () => {
     await viewer.loadPDF(new Uint8Array([1]), 'report.pdf', '/tmp/report.pdf');
 
     expect(events[0]).toBe('render:1');
+  });
+
+  it('makes a large continuous Document scrollable before measuring its final page', async () => {
+    const browser = new Window();
+    vi.stubGlobal('document', browser.document);
+    vi.stubGlobal('window', browser);
+    const requestFrame = vi.fn((callback: FrameRequestCallback) => {
+      callback(0);
+      return 1;
+    });
+    vi.stubGlobal('requestAnimationFrame', requestFrame);
+    Object.defineProperty(browser.HTMLCanvasElement.prototype, 'getContext', {
+      configurable: true,
+      value: vi.fn(() => ({
+        drawImage: vi.fn(),
+        fillRect: vi.fn(),
+        fillStyle: '',
+      })),
+    });
+
+    const events: string[] = [];
+    const page = {
+      getViewport: ({ scale = 1 }: { scale?: number }) => ({
+        width: 600 * scale,
+        height: 800 * scale,
+        scale,
+      }),
+      render: () => ({ promise: Promise.resolve(), cancel: vi.fn() }),
+      getTextContent: async () => ({ items: [] }),
+      getAnnotations: async () => [],
+    };
+    const pdfDocument = {
+      numPages: 1_001,
+      getPage: vi.fn(async (pageNumber: number) => {
+        events.push(`dimensions:${pageNumber}`);
+        return page;
+      }),
+      destroy: vi.fn(),
+    };
+    getPdfEngine.mockResolvedValue({
+      TextLayer: class {
+        render = async () => {};
+        cancel = vi.fn();
+      },
+    });
+
+    const { PDFViewer } = await import('../scripts/pdf-viewer');
+    const viewer = Object.create(PDFViewer.prototype) as InstanceType<typeof PDFViewer>;
+    const container = browser.document.createElement('div');
+    Object.defineProperties(container, {
+      clientHeight: { value: 900 },
+      clientWidth: { value: 1_200 },
+    });
+    const wrapper = browser.document.createElement('div');
+    const canvas = browser.document.createElement('canvas');
+    const textLayer = browser.document.createElement('div');
+    const linkLayer = browser.document.createElement('div');
+    const userAnnotationLayer = browser.document.createElement('div');
+    wrapper.append(canvas, userAnnotationLayer, textLayer, linkLayer);
+    const singlePageSurface = {
+      wrapper,
+      canvas,
+      textLayer,
+      linkLayer,
+      userAnnotationLayer,
+      textLayerTask: null,
+      layerEpoch: 0,
+      pageNumber: 1,
+      viewport: null,
+    };
+    container.appendChild(wrapper);
+    Object.assign(viewer, {
+      pdfDoc: pdfDocument,
+      container,
+      canvas,
+      singlePageSurface,
+      spreadPageSurface: null,
+      state: {
+        currentPage: 1,
+        totalPages: 1_001,
+        zoom: 1,
+        rotation: 0,
+        fileName: 'large.pdf',
+        filePath: '/tmp/large.pdf',
+        viewMode: 'single',
+      },
+      canvasId: 'pdf-canvas',
+      currentFilterCSS: '',
+      isVisible: true,
+      canvases: new Map(),
+      pageSurfaces: new Map(),
+      renderedPages: new Set(),
+      visiblePages: new Set(),
+      renderTasks: new Map(),
+      pageHeights: new Map(),
+      pageWidths: new Map(),
+      baseDimensions: new Map([[1, { width: 600, height: 800 }]]),
+      offsetArray: [],
+      visibleRenderLoop: null,
+      queuedVisibleRender: null,
+      dimensionRefinementTimer: null,
+      dimensionRefinementEpoch: 0,
+      pageGap: 20,
+      pagePadding: 20,
+      renderBufferPages: 2,
+      cleanupBufferPages: 5,
+      annotations: [],
+      searchQuery: '',
+      activeSearchMatch: null,
+      pendingSelectionHighlights: [],
+    });
+
+    await viewer.setViewMode('continuous');
+    events.push('scrollable');
+
+    expect(events).not.toContain('dimensions:1001');
+    viewer.destroy();
   });
 
   it('requests and applies an encrypted-document password', async () => {

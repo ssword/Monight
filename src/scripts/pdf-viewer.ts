@@ -24,6 +24,7 @@ import {
 } from '../lib/pdf-links';
 import {
   buildOffsetArray,
+  correctScrollTopForPageAnchor,
   currentPageAt,
   positionAtPage,
   visiblePageRange,
@@ -248,6 +249,9 @@ export class PDFViewer {
   private scrollSettleTimer: number | null = null;
   private visibleRenderLoop: Promise<void> | null = null;
   private queuedVisibleRender: VisibleRenderRequest | null = null;
+  private dimensionRefinementTimer: number | null = null;
+  private dimensionRefinementEpoch = 0;
+  private readonly dimensionMeasurementBatchSize = 16;
   private readonly pageGap = 20;
   private readonly pagePadding = 20;
   private readonly renderBufferPages = 2;
@@ -451,6 +455,7 @@ export class PDFViewer {
     let passwordCancelled = false;
     let passwordRequestError: unknown = null;
     try {
+      this.cancelDimensionRefinement();
       // Cancel any pending render
       if (this.renderTask) {
         this.renderTask.cancel();
@@ -1899,6 +1904,7 @@ export class PDFViewer {
   }
 
   private cleanupContinuousScroll(): void {
+    this.cancelDimensionRefinement();
     if (this.scrollRafId !== null) {
       window.cancelAnimationFrame(this.scrollRafId);
       this.scrollRafId = null;
@@ -1959,31 +1965,36 @@ export class PDFViewer {
   private async calculateAllPageDimensions(): Promise<void> {
     if (!this.pdfDoc) return;
 
+    let estimatedBaseDimensions = this.baseDimensions.get(1);
+    if (!estimatedBaseDimensions) {
+      const firstPage = await this.pdfDoc.getPage(1);
+      estimatedBaseDimensions = this.cacheBaseDimensions(1, firstPage);
+    }
+
+    this.applyPageDimensionEstimates(estimatedBaseDimensions, false);
+    this.scheduleDimensionRefinement();
+  }
+
+  private applyPageDimensionEstimates(
+    fallbackBaseDimensions: { width: number; height: number },
+    preservePageAnchor: boolean,
+  ): void {
+    const previousOffsets = this.offsetArray;
+    const anchorPage =
+      previousOffsets.length > 0
+        ? currentPageAt(previousOffsets, this.container.scrollTop + this.pagePadding + 1)
+        : this.state.currentPage;
+
     for (let pageNum = 1; pageNum <= this.state.totalPages; pageNum++) {
-      const base = this.baseDimensions.get(pageNum);
-      if (base) {
-        // Derive from cached base dimensions (no page fetch needed)
-        const scaled = deriveScaledDimensions({
-          baseWidth: base.width,
-          baseHeight: base.height,
-          zoom: this.state.zoom,
-          rotation: this.state.rotation,
-        });
-        this.pageWidths.set(pageNum, Math.floor(scaled.width));
-        this.pageHeights.set(pageNum, Math.floor(scaled.height));
-      } else {
-        // Lazily fetch and cache dimensions the first time a page needs layout.
-        const page = await this.pdfDoc.getPage(pageNum);
-        const dimensions = this.cacheBaseDimensions(pageNum, page);
-        const scaled = deriveScaledDimensions({
-          baseWidth: dimensions.width,
-          baseHeight: dimensions.height,
-          zoom: this.state.zoom,
-          rotation: this.state.rotation,
-        });
-        this.pageWidths.set(pageNum, Math.floor(scaled.width));
-        this.pageHeights.set(pageNum, Math.floor(scaled.height));
-      }
+      const base = this.baseDimensions.get(pageNum) ?? fallbackBaseDimensions;
+      const scaled = deriveScaledDimensions({
+        baseWidth: base.width,
+        baseHeight: base.height,
+        zoom: this.state.zoom,
+        rotation: this.state.rotation,
+      });
+      this.pageWidths.set(pageNum, Math.floor(scaled.width));
+      this.pageHeights.set(pageNum, Math.floor(scaled.height));
     }
 
     // Build the cumulative offset array from page heights
@@ -1993,8 +2004,85 @@ export class PDFViewer {
     }
     this.offsetArray = buildOffsetArray(heights, this.pageGap, this.pagePadding);
 
-    // Update scroll container height using the precomputed total
+    if (preservePageAnchor && previousOffsets.length > 0 && this.offsetArray.length > 0) {
+      this.container.scrollTop = correctScrollTopForPageAnchor(
+        previousOffsets,
+        this.offsetArray,
+        anchorPage,
+        this.container.scrollTop,
+      );
+      this.onScrollChange?.(this.container.scrollTop);
+    }
+
     this.updateScrollContainerHeight();
+    this.pageSurfaces.forEach((_surface, pageNumber) => {
+      this.updateCanvasPosition(pageNumber);
+    });
+  }
+
+  private scheduleDimensionRefinement(): void {
+    this.cancelDimensionRefinement();
+    const refinementEpoch = this.dimensionRefinementEpoch;
+    this.dimensionRefinementTimer = window.setTimeout(() => {
+      this.dimensionRefinementTimer = null;
+      void this.refinePageDimensions(refinementEpoch).catch((error) => {
+        console.error('Error refining page dimensions:', error);
+      });
+    }, 0);
+  }
+
+  private cancelDimensionRefinement(): void {
+    this.dimensionRefinementEpoch = (this.dimensionRefinementEpoch ?? 0) + 1;
+    if (this.dimensionRefinementTimer != null) {
+      window.clearTimeout(this.dimensionRefinementTimer);
+      this.dimensionRefinementTimer = null;
+    }
+  }
+
+  private async refinePageDimensions(refinementEpoch: number): Promise<void> {
+    const documentToMeasure = this.pdfDoc;
+    const fallbackBaseDimensions = this.baseDimensions.get(1);
+    if (!documentToMeasure || !fallbackBaseDimensions) return;
+
+    const unmeasuredPages = Array.from(
+      { length: this.state.totalPages },
+      (_, index) => index + 1,
+    ).filter((pageNumber) => !this.baseDimensions.has(pageNumber));
+
+    for (
+      let batchStart = 0;
+      batchStart < unmeasuredPages.length;
+      batchStart += this.dimensionMeasurementBatchSize
+    ) {
+      if (
+        refinementEpoch !== this.dimensionRefinementEpoch ||
+        documentToMeasure !== this.pdfDoc ||
+        this.state.viewMode !== 'continuous'
+      ) {
+        return;
+      }
+
+      const batch = unmeasuredPages.slice(
+        batchStart,
+        batchStart + this.dimensionMeasurementBatchSize,
+      );
+      const measuredPages = await Promise.all(
+        batch.map(async (pageNumber) => ({
+          pageNumber,
+          page: await documentToMeasure.getPage(pageNumber),
+        })),
+      );
+
+      if (documentToMeasure !== this.pdfDoc) return;
+      for (const { pageNumber, page } of measuredPages) {
+        this.cacheBaseDimensions(pageNumber, page);
+      }
+      if (refinementEpoch !== this.dimensionRefinementEpoch) return;
+
+      this.applyPageDimensionEstimates(fallbackBaseDimensions, true);
+      void this.renderVisiblePages();
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+    }
   }
 
   private updateScrollContainerHeight(): void {
