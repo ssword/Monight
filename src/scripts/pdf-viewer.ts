@@ -80,6 +80,11 @@ interface SurfaceRender {
   pageHeight: number;
 }
 
+interface BasePageDimensions {
+  width: number;
+  height: number;
+}
+
 interface RawOutlineItem {
   title: string;
   bold: boolean;
@@ -243,7 +248,7 @@ export class PDFViewer {
   private renderTasks: Map<number, RenderTask> = new Map();
   private pageHeights: Map<number, number> = new Map();
   private pageWidths: Map<number, number> = new Map();
-  private baseDimensions: Map<number, { width: number; height: number }> = new Map();
+  private baseDimensions: Map<number, BasePageDimensions> = new Map();
   private offsetArray: number[] = [];
   private scrollRafId: number | null = null;
   private scrollSettleTimer: number | null = null;
@@ -414,12 +419,18 @@ export class PDFViewer {
     if (!context) return null;
 
     const outputScale = getOutputScale(viewport.width, viewport.height);
-    const sfx = approximateFraction(outputScale.sx);
-    const sfy = approximateFraction(outputScale.sy);
-    const canvasWidth = floorToDivide(calcRound(viewport.width * outputScale.sx), sfx[0]);
-    const canvasHeight = floorToDivide(calcRound(viewport.height * outputScale.sy), sfy[0]);
-    const pageWidth = floorToDivide(calcRound(viewport.width), sfx[1]);
-    const pageHeight = floorToDivide(calcRound(viewport.height), sfy[1]);
+    const horizontalScaleFraction = approximateFraction(outputScale.sx);
+    const verticalScaleFraction = approximateFraction(outputScale.sy);
+    const canvasWidth = floorToDivide(
+      calcRound(viewport.width * outputScale.sx),
+      horizontalScaleFraction[0],
+    );
+    const canvasHeight = floorToDivide(
+      calcRound(viewport.height * outputScale.sy),
+      verticalScaleFraction[0],
+    );
+    const pageWidth = floorToDivide(calcRound(viewport.width), horizontalScaleFraction[1]);
+    const pageHeight = floorToDivide(calcRound(viewport.height), verticalScaleFraction[1]);
 
     renderCanvas.width = canvasWidth;
     renderCanvas.height = canvasHeight;
@@ -1946,13 +1957,7 @@ export class PDFViewer {
     this.offsetArray = [];
   }
 
-  private cacheBaseDimensions(
-    pageNum: number,
-    page: PDFPageProxy,
-  ): {
-    width: number;
-    height: number;
-  } {
+  private cacheBaseDimensions(pageNum: number, page: PDFPageProxy): BasePageDimensions {
     const cached = this.baseDimensions.get(pageNum);
     if (cached) return cached;
 
@@ -1976,7 +1981,7 @@ export class PDFViewer {
   }
 
   private applyPageDimensionEstimates(
-    fallbackBaseDimensions: { width: number; height: number },
+    fallbackBaseDimensions: BasePageDimensions,
     preservePageAnchor: boolean,
   ): void {
     const previousOffsets = this.offsetArray;
@@ -2003,6 +2008,7 @@ export class PDFViewer {
       heights.push(this.pageHeights.get(pageNum) || 0);
     }
     this.offsetArray = buildOffsetArray(heights, this.pageGap, this.pagePadding);
+    this.updateScrollContainerHeight();
 
     if (preservePageAnchor && previousOffsets.length > 0 && this.offsetArray.length > 0) {
       this.container.scrollTop = correctScrollTopForPageAnchor(
@@ -2014,7 +2020,6 @@ export class PDFViewer {
       this.onScrollChange?.(this.container.scrollTop);
     }
 
-    this.updateScrollContainerHeight();
     this.pageSurfaces.forEach((_surface, pageNumber) => {
       this.updateCanvasPosition(pageNumber);
     });
@@ -2040,9 +2045,9 @@ export class PDFViewer {
   }
 
   private async refinePageDimensions(refinementEpoch: number): Promise<void> {
-    const documentToMeasure = this.pdfDoc;
+    const pdfProxyToMeasure = this.pdfDoc;
     const fallbackBaseDimensions = this.baseDimensions.get(1);
-    if (!documentToMeasure || !fallbackBaseDimensions) return;
+    if (!pdfProxyToMeasure || !fallbackBaseDimensions) return;
 
     const unmeasuredPages = Array.from(
       { length: this.state.totalPages },
@@ -2056,7 +2061,7 @@ export class PDFViewer {
     ) {
       if (
         refinementEpoch !== this.dimensionRefinementEpoch ||
-        documentToMeasure !== this.pdfDoc ||
+        pdfProxyToMeasure !== this.pdfDoc ||
         this.state.viewMode !== 'continuous'
       ) {
         return;
@@ -2069,11 +2074,11 @@ export class PDFViewer {
       const measuredPages = await Promise.all(
         batch.map(async (pageNumber) => ({
           pageNumber,
-          page: await documentToMeasure.getPage(pageNumber),
+          page: await pdfProxyToMeasure.getPage(pageNumber),
         })),
       );
 
-      if (documentToMeasure !== this.pdfDoc) return;
+      if (pdfProxyToMeasure !== this.pdfDoc) return;
       for (const { pageNumber, page } of measuredPages) {
         this.cacheBaseDimensions(pageNumber, page);
       }

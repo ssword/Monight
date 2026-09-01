@@ -55,7 +55,7 @@ describe('PDFViewer initial load', () => {
     expect(events[0]).toBe('render:1');
   });
 
-  it('makes a large continuous Document scrollable before measuring its final page', async () => {
+  it('makes the continuous view of a large Document scrollable before measuring all pages', async () => {
     const browser = new Window();
     vi.stubGlobal('document', browser.document);
     vi.stubGlobal('window', browser);
@@ -84,7 +84,7 @@ describe('PDFViewer initial load', () => {
       getTextContent: async () => ({ items: [] }),
       getAnnotations: async () => [],
     };
-    const pdfDocument = {
+    const pdfProxy = {
       numPages: 1_001,
       getPage: vi.fn(async (pageNumber: number) => {
         events.push(`dimensions:${pageNumber}`);
@@ -125,7 +125,7 @@ describe('PDFViewer initial load', () => {
     };
     container.appendChild(wrapper);
     Object.assign(viewer, {
-      pdfDoc: pdfDocument,
+      pdfDoc: pdfProxy,
       container,
       canvas,
       singlePageSurface,
@@ -168,6 +168,18 @@ describe('PDFViewer initial load', () => {
     await viewer.setViewMode('continuous');
     events.push('scrollable');
 
+    const requestedPageCount = new Set(
+      events
+        .filter((event) => event.startsWith('dimensions:'))
+        .map((event) => Number.parseInt(event.slice('dimensions:'.length), 10)),
+    ).size;
+    const scrollWrapper = container.querySelector('.scroll-wrapper') as unknown as {
+      style: { minHeight: string };
+    } | null;
+    expect(Number.parseInt(scrollWrapper?.style.minHeight ?? '0', 10)).toBeGreaterThan(
+      container.clientHeight,
+    );
+    expect(requestedPageCount).toBeLessThan(20);
     expect(events).not.toContain('dimensions:1001');
     viewer.destroy();
   });
