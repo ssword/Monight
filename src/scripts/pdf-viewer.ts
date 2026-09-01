@@ -69,6 +69,16 @@ interface PageSurface {
   viewport: PageViewport | null;
 }
 
+interface SurfaceRender {
+  page: PDFPageProxy;
+  viewport: PageViewport;
+  renderTask: RenderTask;
+  canvasWidth: number;
+  canvasHeight: number;
+  pageWidth: number;
+  pageHeight: number;
+}
+
 interface RawOutlineItem {
   title: string;
   bold: boolean;
@@ -381,6 +391,60 @@ export class PDFViewer {
     if (surface.wrapper.parentNode) {
       surface.wrapper.parentNode.removeChild(surface.wrapper);
     }
+  }
+
+  private async startSurfaceRender(
+    pageNumber: number,
+    surface: PageSurface,
+    renderCanvas: HTMLCanvasElement = surface.canvas,
+  ): Promise<SurfaceRender | null> {
+    if (!this.pdfDoc) return null;
+
+    const page = await this.pdfDoc.getPage(pageNumber);
+    this.cacheBaseDimensions(pageNumber, page);
+    const viewport = page.getViewport({
+      scale: this.state.zoom,
+      rotation: this.state.rotation,
+    });
+    const context = renderCanvas.getContext('2d', { alpha: false });
+    if (!context) return null;
+
+    const outputScale = getOutputScale(viewport.width, viewport.height);
+    const sfx = approximateFraction(outputScale.sx);
+    const sfy = approximateFraction(outputScale.sy);
+    const canvasWidth = floorToDivide(calcRound(viewport.width * outputScale.sx), sfx[0]);
+    const canvasHeight = floorToDivide(calcRound(viewport.height * outputScale.sy), sfy[0]);
+    const pageWidth = floorToDivide(calcRound(viewport.width), sfx[1]);
+    const pageHeight = floorToDivide(calcRound(viewport.height), sfy[1]);
+
+    renderCanvas.width = canvasWidth;
+    renderCanvas.height = canvasHeight;
+    renderCanvas.style.width = `${pageWidth}px`;
+    renderCanvas.style.height = `${pageHeight}px`;
+    renderCanvas.style.filter = this.currentFilterCSS;
+    context.fillStyle = '#ffffff';
+    context.fillRect(0, 0, canvasWidth, canvasHeight);
+
+    outputScale.sx = canvasWidth / pageWidth;
+    outputScale.sy = canvasHeight / pageHeight;
+    const renderTask = page.render({
+      canvasContext: context,
+      viewport,
+      transform:
+        outputScale.sx !== 1 || outputScale.sy !== 1
+          ? [outputScale.sx, 0, 0, outputScale.sy, 0, 0]
+          : undefined,
+    } as unknown as Parameters<PDFPageProxy['render']>[0]);
+
+    return {
+      page,
+      viewport,
+      renderTask,
+      canvasWidth,
+      canvasHeight,
+      pageWidth,
+      pageHeight,
+    };
   }
 
   async loadPDF(pdfData: Uint8Array, fileName: string, filePath: string): Promise<void> {
@@ -1247,47 +1311,11 @@ export class PDFViewer {
         this.renderTask = null;
       }
 
-      // Get page
-      const page: PDFPageProxy = await this.pdfDoc.getPage(pageNum);
-      this.cacheBaseDimensions(pageNum, page);
-
-      // Calculate viewport with zoom and rotation
-      const viewport = page.getViewport({
-        scale: this.state.zoom,
-        rotation: this.state.rotation,
-      });
-
       const renderCanvas = document.createElement('canvas');
-      const context = renderCanvas.getContext('2d', { alpha: false });
-      if (!context) {
-        throw new Error('Could not get canvas context');
-      }
-
-      const outputScale = getOutputScale(viewport.width, viewport.height);
-      const sfx = approximateFraction(outputScale.sx);
-      const sfy = approximateFraction(outputScale.sy);
-
-      const canvasWidth = floorToDivide(calcRound(viewport.width * outputScale.sx), sfx[0]);
-      const canvasHeight = floorToDivide(calcRound(viewport.height * outputScale.sy), sfy[0]);
-      const pageWidth = floorToDivide(calcRound(viewport.width), sfx[1]);
-      const pageHeight = floorToDivide(calcRound(viewport.height), sfy[1]);
-
-      renderCanvas.width = canvasWidth;
-      renderCanvas.height = canvasHeight;
-      context.fillStyle = '#ffffff';
-      context.fillRect(0, 0, canvasWidth, canvasHeight);
-
-      outputScale.sx = canvasWidth / pageWidth;
-      outputScale.sy = canvasHeight / pageHeight;
-
-      const renderTask = page.render({
-        canvasContext: context,
-        viewport,
-        transform:
-          outputScale.sx !== 1 || outputScale.sy !== 1
-            ? [outputScale.sx, 0, 0, outputScale.sy, 0, 0]
-            : undefined,
-      } as unknown as Parameters<PDFPageProxy['render']>[0]);
+      const render = await this.startSurfaceRender(pageNum, this.singlePageSurface, renderCanvas);
+      if (!render) throw new Error('Could not get canvas context');
+      const { page, viewport, renderTask, canvasWidth, canvasHeight, pageWidth, pageHeight } =
+        render;
       this.renderTask = renderTask;
 
       await renderTask.promise;
@@ -1359,43 +1387,11 @@ export class PDFViewer {
     }
 
     try {
-      const page = await this.pdfDoc.getPage(pageNumber);
-      this.cacheBaseDimensions(pageNumber, page);
-      const viewport = page.getViewport({
-        scale: this.state.zoom,
-        rotation: this.state.rotation,
-      });
-      const context = surface.canvas.getContext('2d', { alpha: false });
-      if (!context) return;
-
-      const outputScale = getOutputScale(viewport.width, viewport.height);
-      const sfx = approximateFraction(outputScale.sx);
-      const sfy = approximateFraction(outputScale.sy);
-      const canvasWidth = floorToDivide(calcRound(viewport.width * outputScale.sx), sfx[0]);
-      const canvasHeight = floorToDivide(calcRound(viewport.height * outputScale.sy), sfy[0]);
-      const pageWidth = floorToDivide(calcRound(viewport.width), sfx[1]);
-      const pageHeight = floorToDivide(calcRound(viewport.height), sfy[1]);
-
-      surface.canvas.width = canvasWidth;
-      surface.canvas.height = canvasHeight;
-      surface.canvas.style.width = `${pageWidth}px`;
-      surface.canvas.style.height = `${pageHeight}px`;
-      surface.canvas.style.filter = this.currentFilterCSS;
+      const render = await this.startSurfaceRender(pageNumber, surface);
+      if (!render) return;
+      const { page, viewport, renderTask, pageWidth, pageHeight } = render;
       surface.pageNumber = pageNumber;
       this.configurePageSurface(surface, pageWidth, pageHeight, viewport);
-      context.fillStyle = '#ffffff';
-      context.fillRect(0, 0, canvasWidth, canvasHeight);
-      outputScale.sx = canvasWidth / pageWidth;
-      outputScale.sy = canvasHeight / pageHeight;
-
-      const renderTask = page.render({
-        canvasContext: context,
-        viewport,
-        transform:
-          outputScale.sx !== 1 || outputScale.sy !== 1
-            ? [outputScale.sx, 0, 0, outputScale.sy, 0, 0]
-            : undefined,
-      } as unknown as Parameters<PDFPageProxy['render']>[0]);
       this.spreadRenderTask = renderTask;
       await renderTask.promise;
       if (this.spreadRenderTask !== renderTask) return;
@@ -2141,63 +2137,20 @@ export class PDFViewer {
         this.renderTasks.delete(pageNum);
       }
 
-      // Get page
-      const page = await this.pdfDoc.getPage(pageNum);
-      this.cacheBaseDimensions(pageNum, page);
-
-      // Calculate viewport
-      const viewport = page.getViewport({
-        scale: this.state.zoom,
-        rotation: this.state.rotation,
-      });
-
       const surface = this.createPageSurface(`${this.canvasId}-page-${pageNum}`, pageNum);
       const { canvas } = surface;
       surface.wrapper.style.top = `${this.getPagePosition(pageNum)}px`;
       surface.wrapper.style.display = 'block';
-
-      // Set canvas dimensions
-      const context = canvas.getContext('2d', { alpha: false });
-      if (!context) return;
-
-      const outputScale = getOutputScale(viewport.width, viewport.height);
-      const sfx = approximateFraction(outputScale.sx);
-      const sfy = approximateFraction(outputScale.sy);
-
-      const canvasWidth = floorToDivide(calcRound(viewport.width * outputScale.sx), sfx[0]);
-      const canvasHeight = floorToDivide(calcRound(viewport.height * outputScale.sy), sfy[0]);
-      const pageWidth = floorToDivide(calcRound(viewport.width), sfx[1]);
-      const pageHeight = floorToDivide(calcRound(viewport.height), sfy[1]);
-
-      canvas.width = canvasWidth;
-      canvas.height = canvasHeight;
-      canvas.style.width = `${pageWidth}px`;
-      canvas.style.height = `${pageHeight}px`;
+      const render = await this.startSurfaceRender(pageNum, surface);
+      if (!render) return;
+      const { page, viewport, renderTask, pageWidth, pageHeight } = render;
       this.configurePageSurface(surface, pageWidth, pageHeight, viewport);
-
-      outputScale.sx = canvasWidth / pageWidth;
-      outputScale.sy = canvasHeight / pageHeight;
-
-      // Apply current filter
-      canvas.style.filter = this.currentFilterCSS;
-      context.fillStyle = '#ffffff';
-      context.fillRect(0, 0, canvasWidth, canvasHeight);
 
       // Cancel previous render task for this page
       const prevTask = this.renderTasks.get(pageNum);
       if (prevTask) {
         prevTask.cancel();
       }
-
-      // Render page
-      const renderTask = page.render({
-        canvasContext: context,
-        viewport,
-        transform:
-          outputScale.sx !== 1 || outputScale.sy !== 1
-            ? [outputScale.sx, 0, 0, outputScale.sy, 0, 0]
-            : undefined,
-      } as unknown as Parameters<PDFPageProxy['render']>[0]);
 
       this.renderTasks.set(pageNum, renderTask);
 
