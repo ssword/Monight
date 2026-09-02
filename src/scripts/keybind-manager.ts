@@ -1,3 +1,4 @@
+import { debugLog } from '../lib/debug-log';
 import type { MoonightSettings } from './settings';
 
 /**
@@ -118,7 +119,7 @@ export class KeybindManager {
       }
     }
 
-    console.log(`KeybindManager loaded ${this.keybinds.size} actions with keybinds`);
+    debugLog(`KeybindManager loaded ${this.keybinds.size} actions with keybinds`);
   }
 
   /**

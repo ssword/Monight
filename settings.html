@@ -372,6 +372,73 @@
             font-size: 13px;
             margin-top: 15px;
         }
+
+        .app-dialog {
+            width: min(420px, calc(100vw - 40px));
+            margin: auto;
+            padding: 0;
+            color: #e0e0e0;
+            background: #2d2d2d;
+            border: 1px solid #3d3d3d;
+            border-radius: 8px;
+            box-shadow: 0 18px 60px rgba(0, 0, 0, 0.5);
+        }
+
+        .app-dialog::backdrop {
+            background: rgba(0, 0, 0, 0.58);
+        }
+
+        .app-dialog form {
+            display: grid;
+            gap: 16px;
+            padding: 22px;
+        }
+
+        .app-dialog h2 {
+            margin: 0;
+            font-size: 20px;
+        }
+
+        .app-dialog p {
+            color: #a0a0a0;
+            line-height: 1.45;
+        }
+
+        .dialog-actions {
+            display: flex;
+            justify-content: flex-end;
+            gap: 8px;
+        }
+
+        .toast-region {
+            position: fixed;
+            right: 18px;
+            bottom: 18px;
+            z-index: 12000;
+            display: grid;
+            gap: 8px;
+            pointer-events: none;
+        }
+
+        .toast {
+            max-width: min(420px, calc(100vw - 36px));
+            padding: 10px 14px;
+            border: 1px solid #3d3d3d;
+            border-radius: 7px;
+            color: #e0e0e0;
+            background: #2d2d2d;
+            box-shadow: 0 8px 28px rgba(0, 0, 0, 0.4);
+            transition: opacity 0.18s ease, transform 0.18s ease;
+        }
+
+        .toast-error {
+            border-color: #dc5c68;
+        }
+
+        .toast-leaving {
+            opacity: 0;
+            transform: translateY(8px);
+        }
     </style>
 </head>
 <body>
@@ -501,15 +568,15 @@
                 </div>
                 <div class="version-row">
                     <span class="version-label">Version:</span>
-                    <span class="version-value" id="app-version">1.0.0</span>
+                    <span class="version-value" id="app-version">Loading...</span>
                 </div>
                 <div class="version-row">
                     <span class="version-label">Tauri Version:</span>
-                    <span class="version-value" id="tauri-version">2.0</span>
+                    <span class="version-value" id="tauri-version">Loading...</span>
                 </div>
                 <div class="version-row">
                     <span class="version-label">PDF.js Version:</span>
-                    <span class="version-value" id="pdfjs-version">4.9.155</span>
+                    <span class="version-value" id="pdfjs-version">Loading...</span>
                 </div>
             </div>
 
@@ -541,6 +608,19 @@
             <p class="capture-hint">Press Escape to cancel, Enter to save</p>
         </div>
     </div>
+
+    <dialog id="confirmation-dialog" class="app-dialog">
+        <form method="dialog">
+            <h2 data-confirmation-title>Confirm action</h2>
+            <p data-confirmation-message></p>
+            <div class="dialog-actions">
+                <button type="button" class="btn btn-secondary" data-dialog-cancel>Cancel</button>
+                <button type="submit" class="btn" data-dialog-confirm>Confirm</button>
+            </div>
+        </form>
+    </dialog>
+
+    <div id="toast-region" class="toast-region" aria-live="polite"></div>
 
     <script type="module" src="/src/scripts/settings-page.ts"></script>
 </body>

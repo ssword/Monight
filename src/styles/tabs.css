@@ -64,6 +64,11 @@
   color: var(--text-primary);
 }
 
+.tab:focus-visible {
+  outline: 2px solid var(--accent-color);
+  outline-offset: -2px;
+}
+
 .tab.active {
   background-color: var(--bg-primary);
   color: var(--text-primary);

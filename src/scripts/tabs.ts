@@ -1,3 +1,4 @@
+import { debugLog } from '../lib/debug-log';
 import type { PdfAnnotation, ViewMode } from '../lib/document-features';
 import type {
   ReaderActionOptions,
@@ -33,6 +34,7 @@ interface TabManagerOptions {
   onPageNavigationRequested?: (page: number, options?: ReaderActionOptions) => Promise<void>;
   requestPassword?: PdfPasswordRequester;
   requestAnnotationNote?: AnnotationNoteRequester;
+  reportError?: (message: string) => void;
 }
 
 /**
@@ -101,6 +103,7 @@ export class TabManager {
     const viewer = new PDFViewer('pdf-container', canvasId, {
       requestPassword: this.options.requestPassword,
       requestAnnotationNote: this.options.requestAnnotationNote,
+      reportError: this.options.reportError,
     });
     viewer.setOnPageChange(() => {
       if (this.activeTabId !== id) return;
@@ -150,7 +153,7 @@ export class TabManager {
     await this.options.onDocumentOpened?.(tab);
     await this.activateTab(id);
 
-    console.log(`Created tab: ${title} (${id})`);
+    debugLog(`Created tab: ${title} (${id})`);
     return tab;
   }
 
@@ -192,7 +195,7 @@ export class TabManager {
     this.renderTabs();
     this.onTabsChanged?.();
 
-    console.log(`Closed tab: ${tab.title} (${id})`);
+    debugLog(`Closed tab: ${tab.title} (${id})`);
   }
 
   /**
@@ -251,7 +254,7 @@ export class TabManager {
     // Notify callback
     await this.onTabChange(tab);
 
-    console.log(`Activated tab: ${tab.title} (${id})`);
+    debugLog(`Activated tab: ${tab.title} (${id})`);
   }
 
   /**
@@ -340,6 +343,9 @@ export class TabManager {
     const container = document.getElementById('tab-container');
     if (!container) return;
 
+    container.setAttribute('role', 'tablist');
+    container.setAttribute('aria-label', 'Open documents');
+
     // Clear existing tabs
     container.innerHTML = '';
 
@@ -348,6 +354,9 @@ export class TabManager {
       const tabElement = document.createElement('div');
       tabElement.className = `tab ${id === this.activeTabId ? 'active' : ''}`;
       tabElement.dataset.tabId = id;
+      tabElement.setAttribute('role', 'tab');
+      tabElement.setAttribute('aria-selected', id === this.activeTabId ? 'true' : 'false');
+      tabElement.tabIndex = id === this.activeTabId ? 0 : -1;
 
       // Tab title
       const titleSpan = document.createElement('span');
@@ -361,6 +370,7 @@ export class TabManager {
       closeBtn.className = 'tab-close';
       closeBtn.textContent = '✕';
       closeBtn.title = 'Close tab';
+      closeBtn.setAttribute('aria-label', `Close ${tab.title}`);
       tabElement.appendChild(closeBtn);
 
       // Tab click handler
@@ -368,6 +378,42 @@ export class TabManager {
         // Don't activate if clicking close button
         if (e.target === closeBtn) return;
         this.activateTab(id);
+      });
+
+      tabElement.addEventListener('keydown', (event) => {
+        if (event.target === closeBtn) return;
+
+        const ids = Array.from(this.tabs.keys());
+        const index = ids.indexOf(id);
+        let targetId: string | undefined;
+        switch (event.key) {
+          case 'ArrowLeft':
+            targetId = ids[(index - 1 + ids.length) % ids.length];
+            break;
+          case 'ArrowRight':
+            targetId = ids[(index + 1) % ids.length];
+            break;
+          case 'Home':
+            targetId = ids[0];
+            break;
+          case 'End':
+            targetId = ids[ids.length - 1];
+            break;
+          case 'Enter':
+          case ' ':
+            targetId = id;
+            break;
+          default:
+            return;
+        }
+
+        event.preventDefault();
+        void this.activateTab(targetId).then(() => {
+          const activatedTab = Array.from(
+            container.querySelectorAll<HTMLElement>('[role="tab"]'),
+          ).find((element) => element.dataset.tabId === targetId);
+          activatedTab?.focus();
+        });
       });
 
       // Close button handler
@@ -379,7 +425,7 @@ export class TabManager {
       container.appendChild(tabElement);
     });
 
-    console.log(`Rendered ${this.tabs.size} tabs`);
+    debugLog(`Rendered ${this.tabs.size} tabs`);
   }
 
   /**

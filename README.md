@@ -2,8 +2,6 @@
 
 Monight is a cross-platform PDF reader built with Tauri and TypeScript. It combines a lightweight native shell with a web-based UI for fast, native-feeling PDF viewing.
 
-Current version: `1.0.6`
-
 ## Features
 
 - Multi-tab PDF viewing

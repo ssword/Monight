@@ -1,5 +1,11 @@
 export type PasswordRequestReason = 'required' | 'incorrect';
 
+export interface ConfirmationRequest {
+  title: string;
+  message: string;
+  confirmLabel?: string;
+}
+
 function requireDialog(id: string): HTMLDialogElement {
   const dialog = document.getElementById(id);
   if (!(dialog instanceof HTMLDialogElement)) {
@@ -101,6 +107,55 @@ export function requestAnnotationNote(initialValue = ''): Promise<string | null>
     dialog.showModal();
     input.focus();
     input.select();
+  });
+}
+
+export function requestConfirmation({
+  title,
+  message,
+  confirmLabel = 'Confirm',
+}: ConfirmationRequest): Promise<boolean> {
+  const dialog = requireDialog('confirmation-dialog');
+  const form = dialog.querySelector<HTMLFormElement>('form');
+  const titleElement = dialog.querySelector<HTMLElement>('[data-confirmation-title]');
+  const messageElement = dialog.querySelector<HTMLElement>('[data-confirmation-message]');
+  const confirmButton = dialog.querySelector<HTMLButtonElement>('[data-dialog-confirm]');
+  const cancelButton = dialog.querySelector<HTMLButtonElement>('[data-dialog-cancel]');
+
+  if (!form || !titleElement || !messageElement || !confirmButton || !cancelButton) {
+    throw new Error('Confirmation dialog is incomplete');
+  }
+
+  titleElement.textContent = title;
+  messageElement.textContent = message;
+  confirmButton.textContent = confirmLabel;
+
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (confirmed: boolean) => {
+      if (settled) return;
+      settled = true;
+      form.removeEventListener('submit', handleSubmit);
+      cancelButton.removeEventListener('click', handleCancel);
+      dialog.removeEventListener('cancel', handleDialogCancel);
+      if (dialog.open) dialog.close();
+      resolve(confirmed);
+    };
+    const handleSubmit = (event: SubmitEvent) => {
+      event.preventDefault();
+      finish(true);
+    };
+    const handleCancel = () => finish(false);
+    const handleDialogCancel = (event: Event) => {
+      event.preventDefault();
+      finish(false);
+    };
+
+    form.addEventListener('submit', handleSubmit);
+    cancelButton.addEventListener('click', handleCancel);
+    dialog.addEventListener('cancel', handleDialogCancel);
+    dialog.showModal();
+    confirmButton.focus();
   });
 }
 

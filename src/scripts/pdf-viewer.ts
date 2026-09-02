@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import type { PDFDocumentProxy, PDFPageProxy, RenderTask, TextLayer } from 'pdfjs-dist';
+import { debugLog } from '../lib/debug-log';
 import { deriveScaledDimensions } from '../lib/dimensions';
 import {
   type PdfAnnotation,
@@ -137,6 +138,7 @@ export type AnnotationNoteRequester = (initialValue?: string) => Promise<string 
 export interface PDFViewerOptions {
   requestPassword?: PdfPasswordRequester;
   requestAnnotationNote?: AnnotationNoteRequester;
+  reportError?: (message: string) => void;
 }
 
 // Align canvas size to PDF.js viewer rounding to avoid subpixel blur.
@@ -248,6 +250,7 @@ export class PDFViewer {
   private readonly pageTextCache = new Map<number, string>();
   private requestPassword?: PdfPasswordRequester;
   private requestAnnotationNote?: AnnotationNoteRequester;
+  private reportError?: (message: string) => void;
   private readonly linkTargets = new WeakMap<HTMLElement, PdfLinkTarget>();
   private contextMenu: HTMLDivElement | null = null;
   private handleDocumentPointerDownBound: (event: PointerEvent) => void;
@@ -314,6 +317,7 @@ export class PDFViewer {
     this.canvasId = canvasId;
     this.requestPassword = options.requestPassword;
     this.requestAnnotationNote = options.requestAnnotationNote;
+    this.reportError = options.reportError;
     this.initializeCanvas();
     this.handleScrollBound = this.handleScroll.bind(this);
     this.handleDocumentPointerDownBound = this.handleDocumentPointerDown.bind(this);
@@ -562,7 +566,7 @@ export class PDFViewer {
       this.clearSearch();
       await this.renderPage(1);
 
-      console.log(`Loaded PDF: ${fileName} (${this.state.totalPages} pages)`);
+      debugLog(`Loaded PDF: ${fileName} (${this.state.totalPages} pages)`);
     } catch (error) {
       console.error('Error loading PDF:', error);
       if (passwordCancelled) {
@@ -737,7 +741,7 @@ export class PDFViewer {
         await invoke('open_external_url', { url: target.url });
       } catch (error) {
         console.error('Failed to open external link:', error);
-        alert(error instanceof Error ? error.message : String(error));
+        this.reportError?.(error instanceof Error ? error.message : String(error));
       }
       return;
     }
@@ -1487,7 +1491,7 @@ export class PDFViewer {
 
       if (!this.isCurrentRenderCommit(expectedGestureEpoch, options)) return;
 
-      console.log(`Rendered page ${pageNum}/${this.state.totalPages}`);
+      debugLog(`Rendered page ${pageNum}/${this.state.totalPages}`);
     } catch (error: unknown) {
       if (
         error &&
@@ -1495,7 +1499,7 @@ export class PDFViewer {
         'name' in error &&
         error.name === 'RenderingCancelledException'
       ) {
-        console.log('Rendering cancelled');
+        debugLog('Rendering cancelled');
         return;
       }
       console.error('Error rendering page:', error);

@@ -14,7 +14,10 @@ const mocks = vi.hoisted(() => {
       listeners.set(event, handler);
       return vi.fn();
     }),
-    openFiles: vi.fn(async () => 1),
+    openFiles: vi.fn(
+      async (_paths: string[], _options: { onError?: (message: string) => void }) => 1,
+    ),
+    showToast: vi.fn(),
     onDragDropEvent: vi.fn(
       async (handler: (event: { payload: DragDropEvent }) => void | Promise<void>) => {
         dragDropHandler = handler;
@@ -42,14 +45,13 @@ vi.mock('@tauri-apps/api/webviewWindow', () => ({
   }),
 }));
 vi.mock('../app/file-actions', () => ({ openFiles: mocks.openFiles }));
+vi.mock('../app/dialogs', () => ({ showToast: mocks.showToast }));
 
 import { setupTauriListeners } from '../app/tauri-events';
 
 describe('Tauri drag and drop events', () => {
   const addClass = vi.fn();
   const removeClass = vi.fn();
-  const showAlert = vi.fn();
-
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.resetDragDropHandler();
@@ -61,7 +63,6 @@ describe('Tauri drag and drop events', () => {
         },
       },
     });
-    vi.stubGlobal('alert', showAlert);
   });
 
   const context = (overrides: Record<string, unknown> = {}) => ({
@@ -116,6 +117,35 @@ describe('Tauri drag and drop events', () => {
       ['/tmp/report.pdf'],
       expect.objectContaining({ tabManager, continueOnError: true }),
     );
+  });
+
+  it('reports drag/drop errors through non-blocking toasts', async () => {
+    await setupTauriListeners(context());
+    const handler = mocks.getDragDropHandler();
+
+    await handler?.({
+      payload: {
+        type: 'drop',
+        paths: ['/tmp/form.xfdf'],
+        position: { x: 1, y: 2 } as never,
+      },
+    });
+
+    expect(mocks.showToast).toHaveBeenCalledWith('Please drop PDF files only.', 'error');
+
+    mocks.openFiles.mockImplementationOnce(async (_paths, options) => {
+      options.onError?.('Could not read /tmp/report.pdf');
+      return 0;
+    });
+    await handler?.({
+      payload: {
+        type: 'drop',
+        paths: ['/tmp/report.pdf'],
+        position: { x: 1, y: 2 } as never,
+      },
+    });
+
+    expect(mocks.showToast).toHaveBeenCalledWith('Could not read /tmp/report.pdf', 'error');
   });
 
   it('handles the Settings clear-history request in the main window', async () => {

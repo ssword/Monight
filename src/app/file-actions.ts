@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
+import { debugLog } from '../lib/debug-log';
 import type { ViewMode } from '../lib/document-features';
 import type { FilterSettings } from '../scripts/filters';
 import type { TabManager } from '../scripts/tabs';
@@ -35,7 +36,7 @@ export async function openFiles(
 
       // Check if already open
       if (tabManager.isFileOpen(canonicalPath)) {
-        console.log(`File already open: ${canonicalPath}`);
+        debugLog(`File already open: ${canonicalPath}`);
         continue;
       }
 
@@ -53,7 +54,7 @@ export async function openFiles(
       );
       opened += 1;
 
-      console.log(`Opened PDF: ${fileName}`);
+      debugLog(`Opened PDF: ${fileName}`);
     } catch (error) {
       const message = `Failed to open ${filePath}: ${error instanceof Error ? error.message : 'Unknown error'}`;
       console.error(message, error);
@@ -76,15 +77,15 @@ export async function openPDFFile(
   initialViewMode?: ViewMode,
 ): Promise<number> {
   if (!tabManager) return 0;
-  console.log('openPDFFile() called');
+  debugLog('openPDFFile() called');
   try {
-    console.log('Opening file dialog...');
+    debugLog('Opening file dialog...');
     const selected = await invoke<string[]>('open_pdf_dialog');
 
-    console.log('File dialog result:', selected);
+    debugLog('File dialog result:', selected);
 
     if (!selected) {
-      console.log('No file selected');
+      debugLog('No file selected');
       return 0;
     }
 
@@ -104,7 +105,7 @@ export async function updatePrintMenuState(tabManager: TabManager | null): Promi
   const hasPDF = (tabManager?.size ?? 0) > 0;
   try {
     await invoke('set_print_enabled', { enabled: hasPDF });
-    console.log(`Print menu ${hasPDF ? 'enabled' : 'disabled'}`);
+    debugLog(`Print menu ${hasPDF ? 'enabled' : 'disabled'}`);
   } catch (error) {
     console.error('Failed to update print menu state:', error);
   }

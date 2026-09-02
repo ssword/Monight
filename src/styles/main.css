@@ -114,6 +114,7 @@ body.pdf-loaded {
 
 .app-dialog {
   width: min(420px, calc(100vw - 40px));
+  margin: auto;
   padding: 0;
   color: var(--text-primary);
   background: var(--bg-secondary);

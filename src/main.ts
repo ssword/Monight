@@ -27,6 +27,7 @@ import {
   updateUI,
 } from './app/ui';
 import { registerReadingSessionCloseGuard } from './app/window-lifecycle';
+import { debugLog } from './lib/debug-log';
 import {
   type PdfAnnotation,
   type RecentFile,
@@ -80,7 +81,7 @@ let presentationController: PresentationController | null = null;
 // Detect if we're on macOS
 const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
 
-console.log('Platform:', navigator.platform, 'isMac:', isMac);
+debugLog('Platform:', navigator.platform, 'isMac:', isMac);
 
 async function getAppInfo(): Promise<AppInfo> {
   try {
@@ -93,7 +94,7 @@ async function getAppInfo(): Promise<AppInfo> {
     return { name, version, tauriVersion };
   } catch (error) {
     console.error('Failed to get app info:', error);
-    return { name: 'Monight', version: '1.0.6', tauriVersion: 'Unknown' };
+    return { name: 'Monight', version: 'Unknown', tauriVersion: 'Unknown' };
   }
 }
 
@@ -326,7 +327,7 @@ const restorePreviousReadingSession = async (): Promise<number> => {
 
 async function initializeApp(): Promise<void> {
   try {
-    console.log('Initializing app...');
+    debugLog('Initializing app...');
 
     // Initialize settings manager
     settingsManager = new SettingsManager();
@@ -344,7 +345,7 @@ async function initializeApp(): Promise<void> {
       };
     }
     renderRecentFiles(settings.recentFiles);
-    console.log('Settings loaded:', settings);
+    debugLog('Settings loaded:', settings);
 
     // Initialize tab manager
     tabManager = new TabManager(
@@ -408,6 +409,7 @@ async function initializeApp(): Promise<void> {
         onPageNavigationRequested: goToPage,
         requestPassword: requestPdfPassword,
         requestAnnotationNote,
+        reportError: (message) => showToast(message, 'error'),
       },
     );
 
@@ -515,7 +517,7 @@ async function initializeApp(): Promise<void> {
       settings.keybinds.Settings.binds = ['Cmd+,'];
     }
     keybindManager.loadFromSettings(settings);
-    console.log('KeybindManager initialized with settings keybinds');
+    debugLog('KeybindManager initialized with settings keybinds');
 
     // Get app information
     const info = await getAppInfo();
@@ -629,7 +631,7 @@ async function initializeApp(): Promise<void> {
     await currentWindow.show();
     await currentWindow.setFocus();
 
-    console.log(`${info.name} initialized successfully!`);
+    debugLog(`${info.name} initialized successfully!`);
   } catch (error) {
     console.error('Initialization error:', error);
   }

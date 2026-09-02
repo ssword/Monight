@@ -1,3 +1,4 @@
+import { debugLog } from '../lib/debug-log';
 import { nextViewMode, viewModeIcon, viewModeLabel } from '../lib/document-features';
 import type { FilterSettings } from '../scripts/filters';
 import type { KeybindManager } from '../scripts/keybind-manager';
@@ -34,16 +35,16 @@ export function setupEventListeners({
   clearRecentFiles,
   goToPage,
 }: DomEventContext): void {
-  console.log('Setting up event listeners...');
+  debugLog('Setting up event listeners...');
 
   // Splash screen open button
   const splashOpenBtn = document.getElementById('splash-open-btn');
   if (splashOpenBtn) {
     splashOpenBtn.addEventListener('click', () => {
-      console.log('Splash open button clicked');
+      debugLog('Splash open button clicked');
       openPdfAndRefresh();
     });
-    console.log('Splash open button listener attached');
+    debugLog('Splash open button listener attached');
   } else {
     console.error('Splash open button not found!');
   }
@@ -62,14 +63,14 @@ export function setupEventListeners({
   // Open file button (in toolbar)
   const openBtn = document.getElementById('open-file');
   openBtn?.addEventListener('click', () => {
-    console.log('Open button clicked');
+    debugLog('Open button clicked');
     openPdfAndRefresh();
   });
 
   // Print button
   const printBtn = document.getElementById('print-file');
   printBtn?.addEventListener('click', () => {
-    console.log('Print button clicked');
+    debugLog('Print button clicked');
     printCurrentPDF();
   });
 
@@ -193,15 +194,13 @@ export function setupEventListeners({
 
     const actionId = keybindManager.matchEvent(e);
     if (actionId) {
-      console.log(`Keybind matched: ${actionId}`);
+      debugLog(`Keybind matched: ${actionId}`);
       e.preventDefault();
       e.stopPropagation();
       await keybindManager.handleEvent(e);
     }
   };
 
-  // Add to both document and window for maximum compatibility
   document.addEventListener('keydown', handleKeyDown);
-  window.addEventListener('keydown', handleKeyDown);
-  console.log('Keyboard event listeners attached');
+  debugLog('Keyboard event listeners attached');
 }

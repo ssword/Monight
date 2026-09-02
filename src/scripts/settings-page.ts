@@ -1,6 +1,8 @@
 import { getName, getTauriVersion, getVersion } from '@tauri-apps/api/app';
 import { emit, listen } from '@tauri-apps/api/event';
 import { version as pdfjsVersion } from 'pdfjs-dist';
+import { requestConfirmation } from '../app/dialogs';
+import { debugLog } from '../lib/debug-log';
 import { KeybindEditor } from './keybind-editor';
 import { KeybindManager } from './keybind-manager';
 import type { MoonightSettings } from './settings';
@@ -106,7 +108,7 @@ async function updateAboutPanel(): Promise<void> {
 async function notifyMainSettingsChanged(): Promise<void> {
   try {
     await emit('settings-changed');
-    console.log('Emitted settings-changed event to main window');
+    debugLog('Emitted settings-changed event to main window');
   } catch (error) {
     console.error('Error emitting settings-changed event:', error);
   }
@@ -166,7 +168,12 @@ function setupSettingListeners(): void {
 
   const clearHistoryButton = document.getElementById('clear-reading-history');
   clearHistoryButton?.addEventListener('click', async () => {
-    if (confirm('Clear recent files, the saved Reading Session, and all annotations?')) {
+    const confirmed = await requestConfirmation({
+      title: 'Clear reading history?',
+      message: 'Clear recent files, the saved Reading Session, and all annotations?',
+      confirmLabel: 'Clear history',
+    });
+    if (confirmed) {
       await emit('clear-reading-history');
     }
   });
@@ -174,7 +181,12 @@ function setupSettingListeners(): void {
   // Reset settings button
   const resetButton = document.getElementById('reset-settings');
   resetButton?.addEventListener('click', async () => {
-    if (confirm('Are you sure you want to reset all settings to default values?')) {
+    const confirmed = await requestConfirmation({
+      title: 'Reset all settings?',
+      message: 'Reset all settings and keyboard shortcuts to their default values?',
+      confirmLabel: 'Reset settings',
+    });
+    if (confirmed) {
       await settingsManager.reset();
       currentSettings = await settingsManager.load();
       await loadSettings();
@@ -287,10 +299,11 @@ function startEditingKeybind(actionId: string, config: KeybindConfig, bindIndex:
       // Check for conflicts
       const conflict = keybindEditor?.findConflict(newKeybind, actionId);
       if (conflict) {
-        const confirmed = confirm(
-          `This key combination is already used for "${conflict.displayName}".\n\n` +
-            `Do you want to replace it?`,
-        );
+        const confirmed = await requestConfirmation({
+          title: 'Replace keyboard shortcut?',
+          message: `This key combination is already used for "${conflict.displayName}". Replace it?`,
+          confirmLabel: 'Replace',
+        });
 
         if (!confirmed) return;
 
@@ -339,10 +352,11 @@ function addKeybind(actionId: string): void {
       // Check for conflicts
       const conflict = keybindEditor?.findConflict(newKeybind, actionId);
       if (conflict) {
-        const confirmed = confirm(
-          `This key combination is already used for "${conflict.displayName}".\n\n` +
-            `Do you want to replace it?`,
-        );
+        const confirmed = await requestConfirmation({
+          title: 'Replace keyboard shortcut?',
+          message: `This key combination is already used for "${conflict.displayName}". Replace it?`,
+          confirmLabel: 'Replace',
+        });
 
         if (!confirmed) return;
 
@@ -367,7 +381,7 @@ async function notifyMainKeybindsChanged(): Promise<void> {
   try {
     // Emit event to main window to reload keybinds
     await emit('keybinds-changed');
-    console.log('Emitted keybinds-changed event to main window');
+    debugLog('Emitted keybinds-changed event to main window');
   } catch (error) {
     console.error('Error emitting keybinds-changed event:', error);
   }
@@ -375,7 +389,7 @@ async function notifyMainKeybindsChanged(): Promise<void> {
 
 // Initialize settings page
 async function init(): Promise<void> {
-  console.log('Initializing settings page...');
+  debugLog('Initializing settings page...');
 
   // Setup panel switching
   initializePanelSwitching();
@@ -388,7 +402,7 @@ async function init(): Promise<void> {
   await listen('settings-changed', loadSettings);
   await listen('keybinds-changed', loadSettings);
 
-  console.log('Settings page initialized!');
+  debugLog('Settings page initialized!');
 }
 
 // Wait for DOM to be ready
