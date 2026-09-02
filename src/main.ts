@@ -36,6 +36,7 @@ import {
 import {
   createReaderActions,
   type PersistedReadingSession,
+  type ReaderActionOptions,
   type ReaderActions,
 } from './reader/reader-actions';
 import { loadReadingSession, type ReadingSessionStorage } from './reader/reading-session-store';
@@ -147,8 +148,8 @@ const getActiveViewer = () => {
   return activeTab ? (tabManager?.getViewerForTab(activeTab.id) ?? null) : null;
 };
 
-const goToPage = async (page: number): Promise<void> => {
-  await readerActions?.dispatch({ type: 'goToPage', page });
+const goToPage = async (page: number, options?: ReaderActionOptions): Promise<void> => {
+  await readerActions?.dispatch({ type: 'goToPage', page }, options);
 };
 
 const persistAnnotations = (filePath: string, annotations: PdfAnnotation[]): void => {
@@ -416,11 +417,11 @@ async function initializeApp(): Promise<void> {
         activateDocument: async (filePath, position) => {
           await tabManager?.projectActiveDocument(filePath, position);
         },
-        goToReadingPosition: async (filePath, position) => {
+        goToReadingPosition: async (filePath, position, options) => {
           const tab = tabManager?.getTabs().find((item) => item.filePath === filePath);
           const viewer = tab ? tabManager?.getViewerForTab(tab.id) : null;
           if (!viewer) throw new Error(`Cannot navigate unopened Document: ${filePath}`);
-          await viewer.goToReadingPosition(position);
+          await viewer.goToReadingPosition(position, options);
         },
       },
       persist: async (snapshot) => {

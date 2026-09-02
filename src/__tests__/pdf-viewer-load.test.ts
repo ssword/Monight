@@ -294,6 +294,121 @@ describe('PDFViewer initial load', () => {
     ]);
   });
 
+  it('guards search match navigation with the current query token', async () => {
+    const requestAnimationFrame = vi.fn();
+    vi.stubGlobal('window', { requestAnimationFrame });
+    const { PDFViewer } = await import('../scripts/pdf-viewer');
+    const viewer = Object.create(PDFViewer.prototype) as InstanceType<typeof PDFViewer>;
+    let navigationOptions: { isCancelled?: () => boolean } | undefined;
+    Object.assign(viewer, {
+      searchToken: 1,
+      searchQuery: 'moon',
+      searchMatches: [],
+      activeSearchMatch: null,
+      pageSurfaces: new Map(),
+      singlePageSurface: null,
+      spreadPageSurface: null,
+    });
+    const goToPage = vi.spyOn(viewer, 'goToPage').mockImplementation(async (...args: unknown[]) => {
+      navigationOptions = args[1] as typeof navigationOptions;
+      viewer.clearSearch();
+    });
+
+    await viewer.revealSearchMatch({
+      pageNumber: 2,
+      pageOccurrence: 0,
+      index: 4,
+      excerpt: 'moon',
+    });
+
+    expect(goToPage).toHaveBeenCalledWith(
+      2,
+      expect.objectContaining({ isCancelled: expect.any(Function) }),
+    );
+    expect(navigationOptions?.isCancelled?.()).toBe(true);
+    expect(requestAnimationFrame).not.toHaveBeenCalled();
+  });
+
+  it('discards a staged page when navigation is cancelled during rendering', async () => {
+    const browser = new Window();
+    vi.stubGlobal('document', browser.document);
+    vi.stubGlobal('window', browser);
+    Object.defineProperty(browser.HTMLCanvasElement.prototype, 'getContext', {
+      configurable: true,
+      value: vi.fn(() => ({
+        drawImage: vi.fn(),
+        fillRect: vi.fn(),
+        fillStyle: '',
+      })),
+    });
+
+    let finishRender: (() => void) | undefined;
+    const page = {
+      getViewport: ({ scale = 1 }: { scale?: number }) => ({
+        width: 600 * scale,
+        height: 800 * scale,
+        scale,
+      }),
+      render: () => ({
+        promise: new Promise<void>((resolve) => {
+          finishRender = resolve;
+        }),
+        cancel: vi.fn(),
+      }),
+    };
+    const { PDFViewer } = await import('../scripts/pdf-viewer');
+    const viewer = Object.create(PDFViewer.prototype) as InstanceType<typeof PDFViewer>;
+    const wrapper = browser.document.createElement('div');
+    const canvas = browser.document.createElement('canvas');
+    const textLayer = browser.document.createElement('div');
+    const linkLayer = browser.document.createElement('div');
+    const userAnnotationLayer = browser.document.createElement('div');
+    wrapper.append(canvas, userAnnotationLayer, textLayer, linkLayer);
+    const singlePageSurface = {
+      wrapper,
+      canvas,
+      textLayer,
+      linkLayer,
+      userAnnotationLayer,
+      textLayerTask: null,
+      layerEpoch: 0,
+      pageNumber: 1,
+      viewport: null,
+    };
+    const onPageChange = vi.fn();
+    Object.assign(viewer, {
+      pdfDoc: { getPage: vi.fn(async () => page) },
+      canvas,
+      singlePageSurface,
+      spreadPageSurface: null,
+      state: {
+        currentPage: 1,
+        totalPages: 2,
+        zoom: 1,
+        rotation: 0,
+        fileName: 'book.pdf',
+        filePath: '/tmp/book.pdf',
+        viewMode: 'single',
+      },
+      renderTask: null,
+      canvasId: 'pdf-canvas',
+      currentFilterCSS: '',
+      baseDimensions: new Map(),
+      onPageChange,
+    });
+    let cancelled = false;
+
+    const render = viewer.renderPage(2, null, { isCancelled: () => cancelled });
+    await vi.waitFor(() => expect(finishRender).toBeTypeOf('function'));
+    cancelled = true;
+    finishRender?.();
+    await render;
+
+    expect(viewer.getState().currentPage).toBe(1);
+    expect(singlePageSurface.pageNumber).toBe(1);
+    expect(onPageChange).not.toHaveBeenCalled();
+  });
+
   it('advances two pages at a time in spread view', async () => {
     vi.stubGlobal('document', {
       createElement: () => ({ style: { width: '' } }),

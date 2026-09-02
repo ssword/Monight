@@ -1,5 +1,9 @@
 import type { PdfAnnotation, ViewMode } from '../lib/document-features';
-import type { ReadingPosition, RestorableReadingPosition } from '../reader/reader-actions';
+import type {
+  ReaderActionOptions,
+  ReadingPosition,
+  RestorableReadingPosition,
+} from '../reader/reader-actions';
 import { type FilterSettings, PRESETS } from './filters';
 import { type AnnotationNoteRequester, PDFViewer, type PdfPasswordRequester } from './pdf-viewer';
 
@@ -26,7 +30,7 @@ interface TabManagerOptions {
   onDocumentOpened?: (tab: TabData) => void | Promise<void>;
   onDocumentClosed?: (filePath: string) => void | Promise<void>;
   onReadingPositionSettled?: (filePath: string, position: ReadingPosition) => void;
-  onPageNavigationRequested?: (page: number) => Promise<void>;
+  onPageNavigationRequested?: (page: number, options?: ReaderActionOptions) => Promise<void>;
   requestPassword?: PdfPasswordRequester;
   requestAnnotationNote?: AnnotationNoteRequester;
 }

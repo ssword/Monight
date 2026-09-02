@@ -39,7 +39,15 @@ export interface ReadingSessionSnapshot extends PersistedReadingSession {
 
 export interface ReaderProjection {
   activateDocument(filePath: string, position: RestorableReadingPosition): Promise<void>;
-  goToReadingPosition(filePath: string, position: RestorableReadingPosition): Promise<void>;
+  goToReadingPosition(
+    filePath: string,
+    position: RestorableReadingPosition,
+    options?: ReaderActionOptions,
+  ): Promise<void>;
+}
+
+export interface ReaderActionOptions {
+  readonly isCancelled?: () => boolean;
 }
 
 export type ReaderAction =
@@ -79,7 +87,7 @@ interface CreateReaderActionsOptions {
 }
 
 export interface ReaderActions {
-  dispatch(action: ReaderAction): Promise<ReaderActionOutcome>;
+  dispatch(action: ReaderAction, options?: ReaderActionOptions): Promise<ReaderActionOutcome>;
   snapshot(): ReadingSessionSnapshot;
   observe(observer: (snapshot: ReadingSessionSnapshot) => void): () => void;
 }
@@ -139,7 +147,7 @@ export function createReaderActions({
   };
 
   return {
-    async dispatch(action) {
+    async dispatch(action, options) {
       if (action.type === 'removeDocument') {
         const index = snapshot.documents.findIndex((item) => item.filePath === action.filePath);
         if (index === -1) return { status: 'no-op', revision: snapshot.revision };
@@ -220,10 +228,20 @@ export function createReaderActions({
       if (!document || !Number.isInteger(action.page) || action.page < 1) {
         return { status: 'no-op', revision: snapshot.revision };
       }
+      if (options?.isCancelled?.()) {
+        return { status: 'no-op', revision: snapshot.revision };
+      }
 
       const readingPosition = { page: action.page, location: 0 };
       try {
-        await projection.goToReadingPosition(document.filePath, readingPosition);
+        if (options) {
+          await projection.goToReadingPosition(document.filePath, readingPosition, options);
+        } else {
+          await projection.goToReadingPosition(document.filePath, readingPosition);
+        }
+        if (options?.isCancelled?.()) {
+          return { status: 'no-op', revision: snapshot.revision };
+        }
         const documents = snapshot.documents.map((item) =>
           item.filePath === document.filePath ? { ...item, readingPosition } : item,
         );

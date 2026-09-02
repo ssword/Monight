@@ -30,7 +30,11 @@ import {
   positionAtPage,
   visiblePageRange,
 } from '../lib/scroll-geometry';
-import type { ReadingPosition, RestorableReadingPosition } from '../reader/reader-actions';
+import type {
+  ReaderActionOptions,
+  ReadingPosition,
+  RestorableReadingPosition,
+} from '../reader/reader-actions';
 import { captureReadingPosition, restoreReadingPosition } from '../reader/reading-position';
 
 interface ViewState {
@@ -231,7 +235,9 @@ export class PDFViewer {
   private onPageChange: ((pageNum: number) => void) | null = null;
   private onScrollChange: ((scrollPosition: number) => void) | null = null;
   private onScrollSettled: (() => void) | null = null;
-  private onPageNavigationRequest: ((page: number) => Promise<void>) | null = null;
+  private onPageNavigationRequest:
+    | ((page: number, options?: ReaderActionOptions) => Promise<void>)
+    | null = null;
   private onAnnotationsChange: ((annotations: PdfAnnotation[]) => void) | null = null;
   private annotations: PdfAnnotation[] = [];
   private searchQuery = '';
@@ -335,7 +341,9 @@ export class PDFViewer {
     this.onScrollSettled = handler;
   }
 
-  setOnPageNavigationRequest(handler: ((page: number) => Promise<void>) | null): void {
+  setOnPageNavigationRequest(
+    handler: ((page: number, options?: ReaderActionOptions) => Promise<void>) | null,
+  ): void {
     this.onPageNavigationRequest = handler;
   }
 
@@ -438,11 +446,12 @@ export class PDFViewer {
     surface: PageSurface,
     renderCanvas: HTMLCanvasElement = surface.canvas,
     expectedGestureEpoch: number | null = null,
+    options?: ReaderActionOptions,
   ): Promise<SurfaceRender | null> {
-    if (!this.pdfDoc || !this.isCurrentGestureCommit(expectedGestureEpoch)) return null;
+    if (!this.pdfDoc || !this.isCurrentRenderCommit(expectedGestureEpoch, options)) return null;
 
     const page = await this.pdfDoc.getPage(pageNumber);
-    if (!this.isCurrentGestureCommit(expectedGestureEpoch)) return null;
+    if (!this.isCurrentRenderCommit(expectedGestureEpoch, options)) return null;
     this.cacheBaseDimensions(pageNumber, page);
     const viewport = page.getViewport({
       scale: this.state.zoom,
@@ -484,7 +493,7 @@ export class PDFViewer {
           : undefined,
     } as unknown as Parameters<PDFPageProxy['render']>[0]);
 
-    if (!this.isCurrentGestureCommit(expectedGestureEpoch)) {
+    if (!this.isCurrentRenderCommit(expectedGestureEpoch, options)) {
       renderTask.cancel();
       return null;
     }
@@ -1224,13 +1233,16 @@ export class PDFViewer {
 
   async revealSearchMatch(match: PdfSearchMatch): Promise<void> {
     const searchToken = this.searchToken ?? 0;
+    const options: ReaderActionOptions = {
+      isCancelled: () => this.searchToken !== searchToken,
+    };
     this.activeSearchMatch = { ...match };
-    await this.goToPage(match.pageNumber);
-    if (this.searchToken !== searchToken) return;
+    await this.goToPage(match.pageNumber, options);
+    if (options.isCancelled?.()) return;
     this.refreshSearchHighlights();
 
     window.requestAnimationFrame(() => {
-      if (this.searchToken !== searchToken) return;
+      if (options.isCancelled?.()) return;
       const activeMark = this.container.querySelector<HTMLElement>(
         '.pdf-search-hit[aria-current="true"]',
       );
@@ -1362,12 +1374,16 @@ export class PDFViewer {
     return canvas;
   }
 
-  async renderPage(pageNum: number, expectedGestureEpoch: number | null = null): Promise<void> {
+  async renderPage(
+    pageNum: number,
+    expectedGestureEpoch: number | null = null,
+    options?: ReaderActionOptions,
+  ): Promise<void> {
     if (!this.pdfDoc || !this.canvas || !this.singlePageSurface) {
       throw new Error('PDF not loaded');
     }
 
-    if (!this.isCurrentGestureCommit(expectedGestureEpoch)) return;
+    if (!this.isCurrentRenderCommit(expectedGestureEpoch, options)) return;
 
     if (pageNum < 1 || pageNum > this.state.totalPages) {
       throw new Error(`Invalid page number: ${pageNum}`);
@@ -1382,23 +1398,24 @@ export class PDFViewer {
 
       const renderCanvas = document.createElement('canvas');
       const stagedSurface =
-        expectedGestureEpoch === null
+        expectedGestureEpoch === null && !options?.isCancelled
           ? this.singlePageSurface
-          : this.createPageSurface(`${this.canvasId}-gesture-page-${pageNum}`, pageNum);
+          : this.createPageSurface(`${this.canvasId}-staged-page-${pageNum}`, pageNum);
       const render = await this.startSurfaceRender(
         pageNum,
         stagedSurface,
         renderCanvas,
         expectedGestureEpoch,
+        options,
       );
       if (!render) {
         if (stagedSurface !== this.singlePageSurface) this.disposePageSurface(stagedSurface);
-        if (!this.isCurrentGestureCommit(expectedGestureEpoch)) return;
+        if (!this.isCurrentRenderCommit(expectedGestureEpoch, options)) return;
         throw new Error('Could not get canvas context');
       }
       const { page, viewport, renderTask, canvasWidth, canvasHeight, pageWidth, pageHeight } =
         render;
-      if (!this.isCurrentGestureCommit(expectedGestureEpoch)) {
+      if (!this.isCurrentRenderCommit(expectedGestureEpoch, options)) {
         renderTask.cancel();
         return;
       }
@@ -1406,7 +1423,7 @@ export class PDFViewer {
 
       await renderTask.promise;
       if (
-        !this.isCurrentGestureCommit(expectedGestureEpoch) ||
+        !this.isCurrentRenderCommit(expectedGestureEpoch, options) ||
         this.renderTask !== renderTask ||
         !this.canvas
       ) {
@@ -1419,7 +1436,7 @@ export class PDFViewer {
         stagedSurface.pageNumber = pageNum;
         this.configurePageSurface(stagedSurface, pageWidth, pageHeight, viewport);
         await this.renderInteractiveLayers(page, viewport, stagedSurface);
-        if (!this.isCurrentGestureCommit(expectedGestureEpoch)) {
+        if (!this.isCurrentRenderCommit(expectedGestureEpoch, options)) {
           this.disposePageSurface(stagedSurface);
           return;
         }
@@ -1453,7 +1470,7 @@ export class PDFViewer {
         targetContext?.drawImage(renderCanvas, 0, 0);
         await this.renderInteractiveLayers(page, viewport, this.singlePageSurface);
       }
-      if (!this.isCurrentGestureCommit(expectedGestureEpoch)) return;
+      if (!this.isCurrentRenderCommit(expectedGestureEpoch, options)) return;
 
       // Update state
       const prevPage = this.state.currentPage;
@@ -1468,7 +1485,7 @@ export class PDFViewer {
         this.spreadPageSurface.wrapper.style.display = 'none';
       }
 
-      if (!this.isCurrentGestureCommit(expectedGestureEpoch)) return;
+      if (!this.isCurrentRenderCommit(expectedGestureEpoch, options)) return;
 
       console.log(`Rendered page ${pageNum}/${this.state.totalPages}`);
     } catch (error: unknown) {
@@ -1565,21 +1582,22 @@ export class PDFViewer {
     }
   }
 
-  async goToPage(pageNum: number): Promise<void> {
+  async goToPage(pageNum: number, options?: ReaderActionOptions): Promise<void> {
     if (this.onPageNavigationRequest) {
-      await this.onPageNavigationRequest(pageNum);
+      await this.onPageNavigationRequest(pageNum, options);
       return;
     }
-    await this.projectPage(pageNum);
+    await this.projectPage(pageNum, options);
   }
 
-  private async projectPage(pageNum: number): Promise<void> {
+  private async projectPage(pageNum: number, options?: ReaderActionOptions): Promise<void> {
+    if (options?.isCancelled?.()) return;
     if (this.state.viewMode === 'continuous') {
       await this.scrollToPage(pageNum);
       return;
     }
 
-    await this.renderPage(pageNum);
+    await this.renderPage(pageNum, null, options);
   }
 
   async firstPage(): Promise<void> {
@@ -1751,6 +1769,13 @@ export class PDFViewer {
 
   private isCurrentGestureCommit(epoch: number | null): boolean {
     return epoch === null || epoch === this.gestureRenderEpoch;
+  }
+
+  private isCurrentRenderCommit(
+    gestureEpoch: number | null,
+    options?: ReaderActionOptions,
+  ): boolean {
+    return this.isCurrentGestureCommit(gestureEpoch) && !options?.isCancelled?.();
   }
 
   private readGesturePreviewOrigin(): { x: number; y: number } {
@@ -2059,8 +2084,12 @@ export class PDFViewer {
     });
   }
 
-  async goToReadingPosition(position: RestorableReadingPosition): Promise<void> {
-    await this.projectPage(position.page);
+  async goToReadingPosition(
+    position: RestorableReadingPosition,
+    options?: ReaderActionOptions,
+  ): Promise<void> {
+    await this.projectPage(position.page, options);
+    if (options?.isCancelled?.()) return;
     if (this.state.viewMode !== 'continuous' || this.offsetArray.length === 0) return;
     const pageHeights = Array.from(
       { length: this.state.totalPages },
