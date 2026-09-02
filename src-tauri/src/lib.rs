@@ -116,9 +116,66 @@ pub(crate) fn payload_from_opened_urls(
     payload_from_authorized_paths(files, None)
 }
 
+pub(crate) fn parse_cli_or_default<I, T>(args: I) -> Cli
+where
+    I: IntoIterator<Item = T>,
+    T: Into<std::ffi::OsString> + Clone,
+{
+    let filtered = args.into_iter().filter(|arg| {
+        let arg: std::ffi::OsString = arg.clone().into();
+        !arg.to_string_lossy().starts_with("-psn_")
+    });
+
+    Cli::try_parse_from(filtered).unwrap_or(Cli {
+        files: Vec::new(),
+        page: None,
+    })
+}
+
+pub(crate) fn payload_from_cli_args<I, T>(
+    document_intake: &document_intake::DocumentIntake,
+    args: I,
+    working_directory: Option<&std::path::Path>,
+) -> Option<CliPayload>
+where
+    I: IntoIterator<Item = T>,
+    T: Into<std::ffi::OsString> + Clone,
+{
+    let cli = parse_cli_or_default(args);
+    let paths = cli.files.into_iter().map(|file| {
+        let path = PathBuf::from(file);
+        match working_directory {
+            Some(directory) if path.is_relative() => directory.join(path),
+            _ => path,
+        }
+    });
+
+    payload_from_cli_paths(document_intake, paths, cli.page)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let app = tauri::Builder::default()
+    let builder = tauri::Builder::default();
+
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, args, cwd| {
+        let document_intake = app.state::<document_intake::DocumentIntake>();
+        let working_directory = PathBuf::from(cwd);
+
+        if let Some(payload) = payload_from_cli_args(
+            document_intake.inner(),
+            args,
+            Some(working_directory.as_path()),
+        ) {
+            dispatch_open_payload(app, payload);
+        } else if let Some(window) = app.get_webview_window("main") {
+            let _ = window.show();
+            let _ = window.unminimize();
+            let _ = window.set_focus();
+        }
+    }));
+
+    let app = builder
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_store::Builder::default().build())
@@ -148,8 +205,6 @@ pub fn run() {
             let document_intake = app.state::<document_intake::DocumentIntake>();
             document_intake.authorize_persisted_snapshot(&persisted_store);
 
-            // Parse command line arguments (ignore macOS Finder -psn_* argument)
-            let cli = Cli::parse_from(std::env::args().filter(|arg| !arg.starts_with("-psn_")));
             let window = app.get_webview_window("main").unwrap();
             let app_handle = app.handle();
 
@@ -157,18 +212,16 @@ pub fn run() {
             let menu = menu::create_menu(app.handle())?;
             app.set_menu(menu)?;
 
-            // If files were provided via CLI, emit event to frontend
-            if !cli.files.is_empty() {
-                let paths = cli.files.into_iter().map(PathBuf::from);
-                if let Some(payload) =
-                    payload_from_cli_paths(document_intake.inner(), paths, cli.page)
-                {
-                    #[cfg(debug_assertions)]
-                    println!("Opening files from CLI: {:?}", payload.files);
+            // If files were provided via CLI, emit event to frontend. Malformed
+            // arguments produce no payload but do not prevent the app launching.
+            if let Some(payload) =
+                payload_from_cli_args(document_intake.inner(), std::env::args(), None)
+            {
+                #[cfg(debug_assertions)]
+                println!("Opening files from CLI: {:?}", payload.files);
 
-                    // Store and emit event (frontend will also pull pending on ready)
-                    dispatch_open_payload(app_handle, payload);
-                }
+                // Store and emit event (frontend will also pull pending on ready)
+                dispatch_open_payload(app_handle, payload);
             }
 
             // Show window after setup complete
@@ -389,6 +442,34 @@ mod tests {
                 .is_err()
         );
         std::fs::remove_file(denied).expect("test copy should be removed");
+    }
+
+    #[test]
+    fn malformed_cli_arguments_fall_back_to_launching_without_documents() {
+        let cli = parse_cli_or_default(["monight", "--not-a-real-flag", "value"]);
+
+        assert!(cli.files.is_empty());
+        assert_eq!(cli.page, None);
+    }
+
+    #[test]
+    fn forwarded_arguments_route_through_document_intake() {
+        let working_directory =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+        let expected =
+            std::fs::canonicalize(working_directory.join("sample.pdf")).expect("fixture exists");
+        let document_intake = document_intake::DocumentIntake::default();
+
+        let payload = payload_from_cli_args(
+            &document_intake,
+            ["monight", "--page", "5", "sample.pdf"],
+            Some(working_directory.as_path()),
+        )
+        .expect("forwarded arguments should produce a CLI payload");
+
+        assert_eq!(payload.files, vec![expected.to_string_lossy().to_string()]);
+        assert_eq!(payload.page, Some(5));
+        assert!(commands::read_pdf_bytes(payload.files[0].clone(), &document_intake).is_ok());
     }
 
     #[test]
