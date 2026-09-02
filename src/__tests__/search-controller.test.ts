@@ -69,10 +69,43 @@ function progress(
 }
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
 });
 
 describe('SearchController', () => {
+  it('does not restart an active scan when navigation is requested before page progress', async () => {
+    const controls = createSearchControls();
+    vi.stubGlobal('document', {
+      getElementById: (id: string) => controls.get(id) ?? null,
+    });
+
+    let finishSearch: ((matches: PdfSearchMatch[]) => void) | undefined;
+    const viewer = {
+      searchText: vi.fn(async () => {
+        return new Promise<PdfSearchMatch[]>((resolve) => {
+          finishSearch = resolve;
+        });
+      }),
+      revealSearchMatch: vi.fn(async () => {}),
+      clearSearch: vi.fn(),
+    } as unknown as PDFViewer;
+    const controller = new SearchController(() => viewer);
+    const input = controls.get('search-input');
+    const nextButton = controls.get('search-next');
+    if (!input || !nextButton) throw new Error('Search controls not created');
+
+    input.value = 'moon';
+    controller.open();
+    await vi.waitFor(() => expect(viewer.searchText).toHaveBeenCalledOnce());
+
+    nextButton.trigger('click');
+    await Promise.resolve();
+    expect(viewer.searchText).toHaveBeenCalledOnce();
+
+    finishSearch?.([]);
+  });
+
   it('shows partial results and navigates before scanning finishes', async () => {
     const controls = createSearchControls();
     vi.stubGlobal('document', {
@@ -151,5 +184,54 @@ describe('SearchController', () => {
     expect(status.textContent).toBe('Type to search');
     expect(viewer.revealSearchMatch).not.toHaveBeenCalled();
     expect(viewer.clearSearch).toHaveBeenCalledOnce();
+  });
+
+  it('cancels partial results when the query changes', async () => {
+    vi.useFakeTimers();
+    const controls = createSearchControls();
+    vi.stubGlobal('document', {
+      getElementById: (id: string) => controls.get(id) ?? null,
+    });
+    vi.stubGlobal('window', globalThis);
+
+    const progressCallbacks: Array<(event: SearchProgress) => void> = [];
+    const finishSearches: Array<(matches: PdfSearchMatch[]) => void> = [];
+    const viewer = {
+      searchText: vi.fn(async (_query: string, onProgress: (event: SearchProgress) => void) => {
+        progressCallbacks.push(onProgress);
+        return new Promise<PdfSearchMatch[]>((resolve) => {
+          finishSearches.push(resolve);
+        });
+      }),
+      revealSearchMatch: vi.fn(async () => {}),
+      clearSearch: vi.fn(),
+    } as unknown as PDFViewer;
+    const controller = new SearchController(() => viewer);
+    const input = controls.get('search-input');
+    const nextButton = controls.get('search-next');
+    const status = controls.get('search-status');
+    if (!input || !nextButton || !status) throw new Error('Search controls not created');
+
+    input.value = 'moon';
+    controller.open();
+    expect(viewer.searchText).toHaveBeenCalledOnce();
+
+    progressCallbacks[0]?.(progress(1, 3, [match(1, 0)]));
+    expect(status.textContent).toBe('1 of 1 · page 1 · scanning 1/3');
+
+    input.value = 'sun';
+    input.trigger('input');
+    expect(status.textContent).toBe('Searching…');
+    expect(nextButton.disabled).toBe(true);
+
+    progressCallbacks[0]?.(progress(2, 3, [match(1, 0), match(2, 0)]));
+    expect(status.textContent).toBe('Searching…');
+
+    await vi.advanceTimersByTimeAsync(180);
+    expect(viewer.searchText).toHaveBeenNthCalledWith(2, 'sun', expect.any(Function));
+
+    finishSearches[0]?.([]);
+    finishSearches[1]?.([]);
+    controller.close();
   });
 });

@@ -13,6 +13,7 @@ export class SearchController {
   private searchTimer: number | null = null;
   private searchEpoch = 0;
   private searchedViewer: PDFViewer | null = null;
+  private isScanning = false;
   private scanProgress: { pageNumber: number; totalPages: number } | null = null;
 
   constructor(getActiveViewer: () => PDFViewer | null) {
@@ -73,6 +74,7 @@ export class SearchController {
     this.searchedViewer = null;
     this.matches = [];
     this.activeIndex = -1;
+    this.isScanning = false;
     this.scanProgress = null;
     this.status.textContent = 'Type to search';
     this.setNavigationEnabled(false);
@@ -84,6 +86,7 @@ export class SearchController {
     this.searchedViewer = null;
     this.matches = [];
     this.activeIndex = -1;
+    this.isScanning = false;
     this.scanProgress = null;
     this.setNavigationEnabled(false);
     if (!this.bar.classList.contains('hidden') && this.input.value.trim()) {
@@ -98,11 +101,19 @@ export class SearchController {
   private scheduleSearch(): void {
     this.searchEpoch += 1;
     this.searchedViewer?.clearSearch();
+    this.searchedViewer = null;
     this.matches = [];
     this.activeIndex = -1;
+    this.isScanning = false;
     this.scanProgress = null;
     this.setNavigationEnabled(false);
     this.clearSearchTimer();
+    if (!this.input.value.trim()) {
+      this.status.textContent = 'Type to search';
+      return;
+    }
+
+    this.status.textContent = 'Searching…';
     this.searchTimer = window.setTimeout(() => {
       this.searchTimer = null;
       void this.runSearch();
@@ -117,6 +128,7 @@ export class SearchController {
   }
 
   private async runSearch(): Promise<void> {
+    this.clearSearchTimer();
     const viewer = this.getActiveViewer();
     const query = this.input.value.trim();
     const epoch = ++this.searchEpoch;
@@ -124,6 +136,7 @@ export class SearchController {
     this.searchedViewer = viewer;
     this.matches = [];
     this.activeIndex = -1;
+    this.isScanning = false;
     this.scanProgress = null;
 
     if (!viewer || !query) {
@@ -133,6 +146,7 @@ export class SearchController {
 
     this.status.textContent = 'Searching…';
     this.setNavigationEnabled(false);
+    this.isScanning = true;
     this.scanProgress = null;
     let matches: PdfSearchMatch[];
     try {
@@ -141,6 +155,7 @@ export class SearchController {
       );
     } catch (error) {
       if (!this.isCurrentSearch(epoch, viewer)) return;
+      this.isScanning = false;
       this.scanProgress = null;
       console.error('Document search failed:', error);
       this.status.textContent = 'Search unavailable';
@@ -149,6 +164,7 @@ export class SearchController {
     }
     if (!this.isCurrentSearch(epoch, viewer)) return;
 
+    this.isScanning = false;
     this.scanProgress = null;
     this.matches = matches;
     this.setNavigationEnabled(matches.length > 0);
@@ -187,8 +203,7 @@ export class SearchController {
 
   private async move(direction: -1 | 1): Promise<void> {
     if (this.matches.length === 0) {
-      // A scan is already running; wait for it to emit matches instead of restarting.
-      if (this.scanProgress) return;
+      if (this.isScanning) return;
       await this.runSearch();
       return;
     }
