@@ -349,7 +349,7 @@ describe('PDFViewer initial load', () => {
     });
     const { PDFViewer } = await import('../scripts/pdf-viewer');
     const viewer = Object.create(PDFViewer.prototype) as InstanceType<typeof PDFViewer>;
-    const zoomAtPoint = vi.fn(async () => {});
+    const previewZoomAtPoint = vi.fn();
     Object.assign(viewer, {
       state: {
         currentPage: 1,
@@ -361,12 +361,18 @@ describe('PDFViewer initial load', () => {
         viewMode: 'single',
       },
       container: {
+        scrollLeft: 0,
+        scrollTop: 0,
         getBoundingClientRect: () => ({ left: 0, top: 0, width: 800, height: 600 }),
       },
       pendingWheelDelta: 0,
       wheelZoomRafId: null,
       pinchStartZoom: 2,
-      zoomAtPoint,
+      gestureZoomActive: false,
+      gestureBaseZoom: 2,
+      gesturePendingZoom: 2,
+      gestureSettleTimer: null,
+      previewZoomAtPoint,
     });
     const privateViewer = viewer as unknown as {
       handleWheel: (event: WheelEvent) => void;
@@ -384,14 +390,14 @@ describe('PDFViewer initial load', () => {
       preventDefault,
     } as unknown as WheelEvent);
     expect(preventDefault).toHaveBeenCalled();
-    expect(zoomAtPoint).toHaveBeenCalledWith(expect.any(Number), 120, 180);
+    expect(previewZoomAtPoint).toHaveBeenCalledWith(expect.any(Number), 120, 180);
 
     privateViewer.handleGestureStart({ preventDefault } as unknown as Event);
     privateViewer.handleGestureChange({
       scale: 1.5,
       preventDefault,
     } as unknown as Event & { scale: number });
-    expect(zoomAtPoint).toHaveBeenLastCalledWith(3, 400, 300);
+    expect(previewZoomAtPoint).toHaveBeenLastCalledWith(3, 400, 300);
   });
 
   it('updates annotation notes and emits a persistence snapshot', async () => {

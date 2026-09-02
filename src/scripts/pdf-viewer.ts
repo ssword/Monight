@@ -45,6 +45,13 @@ interface ViewState {
 interface VisibleRenderRequest {
   forceRender: boolean;
   isInitialRender: boolean;
+  gestureEpoch: number | null;
+}
+
+interface GestureCommit {
+  epoch: number;
+  targetZoom: number;
+  previousZoom: number;
 }
 
 type PageViewport = ReturnType<PDFPageProxy['getViewport']>;
@@ -97,7 +104,17 @@ interface RawOutlineItem {
 
 interface GestureLikeEvent extends Event {
   scale?: number;
+  clientX?: number;
+  clientY?: number;
 }
+
+const MIN_ZOOM = 0.25;
+const MAX_ZOOM = 5.0;
+
+/** How long the zoom gesture must be quiet before the sharp re-render runs. */
+const GESTURE_SETTLE_DELAY_MS = 160;
+
+const clampZoom = (zoom: number): number => Math.max(MIN_ZOOM, Math.min(zoom, MAX_ZOOM));
 
 interface SelectionHighlightData {
   pageNumber: number;
@@ -236,8 +253,20 @@ export class PDFViewer {
   private isVisible = false;
   private wheelZoomRafId: number | null = null;
   private pendingWheelDelta = 0;
+  private pendingWheelAnchor: { clientX: number; clientY: number } | null = null;
   private pinchStartZoom = 1;
-  private pinchRenderEpoch = 0;
+  private gestureRenderEpoch = 0;
+  /** True while a pinch / modifier+wheel gesture is being previewed via CSS transform. */
+  private gestureZoomActive = false;
+  /** Zoom level the currently rendered surfaces were rasterised at. */
+  private gestureBaseZoom = 1;
+  /** Zoom level the preview transform currently represents. */
+  private gesturePendingZoom = 1;
+  private gestureSettleTimer: ReturnType<typeof setTimeout> | null = null;
+  private gesturePreviewBaseMinHeight: string | null = null;
+  private gesturePreviewBaseLeft: string | null = null;
+  private gesturePreviewOrigin: { x: number; y: number } | null = null;
+  private gestureCommit: GestureCommit | null = null;
 
   // Continuous scroll properties
   private canvases: Map<number, HTMLCanvasElement> = new Map();
@@ -406,10 +435,12 @@ export class PDFViewer {
     pageNumber: number,
     surface: PageSurface,
     renderCanvas: HTMLCanvasElement = surface.canvas,
+    expectedGestureEpoch: number | null = null,
   ): Promise<SurfaceRender | null> {
-    if (!this.pdfDoc) return null;
+    if (!this.pdfDoc || !this.isCurrentGestureCommit(expectedGestureEpoch)) return null;
 
     const page = await this.pdfDoc.getPage(pageNumber);
+    if (!this.isCurrentGestureCommit(expectedGestureEpoch)) return null;
     this.cacheBaseDimensions(pageNumber, page);
     const viewport = page.getViewport({
       scale: this.state.zoom,
@@ -450,6 +481,11 @@ export class PDFViewer {
           ? [outputScale.sx, 0, 0, outputScale.sy, 0, 0]
           : undefined,
     } as unknown as Parameters<PDFPageProxy['render']>[0]);
+
+    if (!this.isCurrentGestureCommit(expectedGestureEpoch)) {
+      renderTask.cancel();
+      return null;
+    }
 
     return {
       page,
@@ -1311,10 +1347,12 @@ export class PDFViewer {
     return canvas;
   }
 
-  async renderPage(pageNum: number): Promise<void> {
+  async renderPage(pageNum: number, expectedGestureEpoch: number | null = null): Promise<void> {
     if (!this.pdfDoc || !this.canvas || !this.singlePageSurface) {
       throw new Error('PDF not loaded');
     }
+
+    if (!this.isCurrentGestureCommit(expectedGestureEpoch)) return;
 
     if (pageNum < 1 || pageNum > this.state.totalPages) {
       throw new Error(`Invalid page number: ${pageNum}`);
@@ -1328,27 +1366,79 @@ export class PDFViewer {
       }
 
       const renderCanvas = document.createElement('canvas');
-      const render = await this.startSurfaceRender(pageNum, this.singlePageSurface, renderCanvas);
-      if (!render) throw new Error('Could not get canvas context');
+      const stagedSurface =
+        expectedGestureEpoch === null
+          ? this.singlePageSurface
+          : this.createPageSurface(`${this.canvasId}-gesture-page-${pageNum}`, pageNum);
+      const render = await this.startSurfaceRender(
+        pageNum,
+        stagedSurface,
+        renderCanvas,
+        expectedGestureEpoch,
+      );
+      if (!render) {
+        if (stagedSurface !== this.singlePageSurface) this.disposePageSurface(stagedSurface);
+        if (!this.isCurrentGestureCommit(expectedGestureEpoch)) return;
+        throw new Error('Could not get canvas context');
+      }
       const { page, viewport, renderTask, canvasWidth, canvasHeight, pageWidth, pageHeight } =
         render;
+      if (!this.isCurrentGestureCommit(expectedGestureEpoch)) {
+        renderTask.cancel();
+        return;
+      }
       this.renderTask = renderTask;
 
       await renderTask.promise;
-      if (this.renderTask !== renderTask || !this.canvas) {
+      if (
+        !this.isCurrentGestureCommit(expectedGestureEpoch) ||
+        this.renderTask !== renderTask ||
+        !this.canvas
+      ) {
+        if (stagedSurface !== this.singlePageSurface) this.disposePageSurface(stagedSurface);
         return;
       }
       this.renderTask = null;
 
-      this.canvas.width = canvasWidth;
-      this.canvas.height = canvasHeight;
-      this.canvas.style.width = `${pageWidth}px`;
-      this.canvas.style.height = `${pageHeight}px`;
-      this.singlePageSurface.pageNumber = pageNum;
-      this.configurePageSurface(this.singlePageSurface, pageWidth, pageHeight, viewport);
-      const targetContext = this.canvas.getContext('2d', { alpha: false });
-      targetContext?.drawImage(renderCanvas, 0, 0);
-      await this.renderInteractiveLayers(page, viewport, this.singlePageSurface);
+      if (stagedSurface !== this.singlePageSurface) {
+        stagedSurface.pageNumber = pageNum;
+        this.configurePageSurface(stagedSurface, pageWidth, pageHeight, viewport);
+        await this.renderInteractiveLayers(page, viewport, stagedSurface);
+        if (!this.isCurrentGestureCommit(expectedGestureEpoch)) {
+          this.disposePageSurface(stagedSurface);
+          return;
+        }
+
+        this.canvas.width = canvasWidth;
+        this.canvas.height = canvasHeight;
+        this.canvas.style.width = `${pageWidth}px`;
+        this.canvas.style.height = `${pageHeight}px`;
+        this.singlePageSurface.pageNumber = pageNum;
+        this.configurePageSurface(this.singlePageSurface, pageWidth, pageHeight, viewport);
+        const targetContext = this.canvas.getContext('2d', { alpha: false });
+        targetContext?.drawImage(renderCanvas, 0, 0);
+        this.singlePageSurface.textLayer.replaceChildren(
+          ...Array.from(stagedSurface.textLayer.childNodes),
+        );
+        this.singlePageSurface.linkLayer.replaceChildren(
+          ...Array.from(stagedSurface.linkLayer.childNodes),
+        );
+        this.singlePageSurface.userAnnotationLayer.replaceChildren(
+          ...Array.from(stagedSurface.userAnnotationLayer.childNodes),
+        );
+        this.disposePageSurface(stagedSurface);
+      } else {
+        this.canvas.width = canvasWidth;
+        this.canvas.height = canvasHeight;
+        this.canvas.style.width = `${pageWidth}px`;
+        this.canvas.style.height = `${pageHeight}px`;
+        this.singlePageSurface.pageNumber = pageNum;
+        this.configurePageSurface(this.singlePageSurface, pageWidth, pageHeight, viewport);
+        const targetContext = this.canvas.getContext('2d', { alpha: false });
+        targetContext?.drawImage(renderCanvas, 0, 0);
+        await this.renderInteractiveLayers(page, viewport, this.singlePageSurface);
+      }
+      if (!this.isCurrentGestureCommit(expectedGestureEpoch)) return;
 
       // Update state
       const prevPage = this.state.currentPage;
@@ -1358,10 +1448,12 @@ export class PDFViewer {
       }
 
       if (this.state.viewMode === 'spread') {
-        await this.renderSpreadCompanion(pageNum + 1);
+        await this.renderSpreadCompanion(pageNum + 1, expectedGestureEpoch);
       } else if (this.spreadPageSurface) {
         this.spreadPageSurface.wrapper.style.display = 'none';
       }
+
+      if (!this.isCurrentGestureCommit(expectedGestureEpoch)) return;
 
       console.log(`Rendered page ${pageNum}/${this.state.totalPages}`);
     } catch (error: unknown) {
@@ -1388,8 +1480,11 @@ export class PDFViewer {
     return this.spreadPageSurface;
   }
 
-  private async renderSpreadCompanion(pageNumber: number): Promise<void> {
-    if (!this.pdfDoc) return;
+  private async renderSpreadCompanion(
+    pageNumber: number,
+    expectedGestureEpoch: number | null = null,
+  ): Promise<void> {
+    if (!this.pdfDoc || !this.isCurrentGestureCommit(expectedGestureEpoch)) return;
     const surface = this.ensureSpreadSurface();
     if (pageNumber > this.state.totalPages) {
       surface.pageNumber = null;
@@ -1403,16 +1498,30 @@ export class PDFViewer {
     }
 
     try {
-      const render = await this.startSurfaceRender(pageNumber, surface);
+      const render = await this.startSurfaceRender(
+        pageNumber,
+        surface,
+        surface.canvas,
+        expectedGestureEpoch,
+      );
       if (!render) return;
       const { page, viewport, renderTask, pageWidth, pageHeight } = render;
+      if (!this.isCurrentGestureCommit(expectedGestureEpoch)) {
+        renderTask.cancel();
+        return;
+      }
       surface.pageNumber = pageNumber;
       this.configurePageSurface(surface, pageWidth, pageHeight, viewport);
       this.spreadRenderTask = renderTask;
       await renderTask.promise;
-      if (this.spreadRenderTask !== renderTask) return;
+      if (
+        !this.isCurrentGestureCommit(expectedGestureEpoch) ||
+        this.spreadRenderTask !== renderTask
+      )
+        return;
       this.spreadRenderTask = null;
       await this.renderInteractiveLayers(page, viewport, surface);
+      if (!this.isCurrentGestureCommit(expectedGestureEpoch)) return;
       surface.wrapper.style.display = this.isVisible ? 'block' : 'none';
     } catch (error) {
       if (
@@ -1481,6 +1590,7 @@ export class PDFViewer {
     const normalized = (((Math.round(finiteRotation / 90) * 90) % 360) + 360) % 360;
     if (this.state.rotation === normalized) return;
 
+    this.cancelGestureZoom();
     const currentPage = this.state.currentPage;
     this.state.rotation = normalized;
     if (this.state.viewMode === 'continuous') {
@@ -1494,7 +1604,8 @@ export class PDFViewer {
 
   async zoomIn(): Promise<void> {
     const currentPage = this.state.currentPage;
-    this.state.zoom = Math.min(this.state.zoom + 0.25, 5.0);
+    this.cancelGestureZoom();
+    this.state.zoom = Math.min(this.state.zoom + 0.25, MAX_ZOOM);
 
     if (this.state.viewMode === 'continuous') {
       await this.calculateAllPageDimensions();
@@ -1507,7 +1618,8 @@ export class PDFViewer {
 
   async zoomOut(): Promise<void> {
     const currentPage = this.state.currentPage;
-    this.state.zoom = Math.max(this.state.zoom - 0.25, 0.25);
+    this.cancelGestureZoom();
+    this.state.zoom = Math.max(this.state.zoom - 0.25, MIN_ZOOM);
 
     if (this.state.viewMode === 'continuous') {
       await this.calculateAllPageDimensions();
@@ -1522,21 +1634,26 @@ export class PDFViewer {
     if (!event.ctrlKey && !event.metaKey) return;
     event.preventDefault();
     this.pendingWheelDelta += event.deltaY;
+    this.pendingWheelAnchor = { clientX: event.clientX, clientY: event.clientY };
     if (this.wheelZoomRafId !== null) return;
 
-    const clientX = event.clientX;
-    const clientY = event.clientY;
     this.wheelZoomRafId = window.requestAnimationFrame(() => {
       this.wheelZoomRafId = null;
       const delta = this.pendingWheelDelta;
       this.pendingWheelDelta = 0;
-      const targetZoom = this.state.zoom * Math.exp(-delta * 0.002);
-      void this.zoomAtPoint(targetZoom, clientX, clientY);
+      const anchor = this.pendingWheelAnchor ?? {
+        clientX: event.clientX,
+        clientY: event.clientY,
+      };
+      this.pendingWheelAnchor = null;
+      const targetZoom = this.gesturePendingZoomOrCurrent() * Math.exp(-delta * 0.002);
+      this.previewZoomAtPoint(targetZoom, anchor.clientX, anchor.clientY);
     });
   }
 
   private handleGestureStart(event: Event): void {
     event.preventDefault();
+    this.beginGestureZoom();
     this.pinchStartZoom = this.state.zoom;
   }
 
@@ -1544,51 +1661,271 @@ export class PDFViewer {
     const gesture = event as GestureLikeEvent;
     if (!gesture.scale || !Number.isFinite(gesture.scale)) return;
     event.preventDefault();
-    const rect = this.container.getBoundingClientRect();
-    void this.zoomAtPoint(
-      this.pinchStartZoom * gesture.scale,
-      rect.left + rect.width / 2,
-      rect.top + rect.height / 2,
-    );
+    const anchor = this.gestureAnchor(gesture);
+    this.previewZoomAtPoint(this.pinchStartZoom * gesture.scale, anchor.clientX, anchor.clientY);
   }
 
-  private async zoomAtPoint(targetZoom: number, clientX: number, clientY: number): Promise<void> {
-    const epoch = ++this.pinchRenderEpoch;
-    const oldZoom = this.state.zoom;
-    const rect = this.container.getBoundingClientRect();
-    const localX = clientX - rect.left;
-    const localY = clientY - rect.top;
-    const documentX = (this.container.scrollLeft + localX) / oldZoom;
-    const documentY = (this.container.scrollTop + localY) / oldZoom;
+  /** Pinch events carry the midpoint on WebKit; fall back to the viewport centre. */
+  private gestureAnchor(gesture: GestureLikeEvent): { clientX: number; clientY: number } {
+    const rect = this.containerRect();
+    if (Number.isFinite(gesture.clientX) && Number.isFinite(gesture.clientY)) {
+      return { clientX: gesture.clientX as number, clientY: gesture.clientY as number };
+    }
+    return { clientX: rect.left + rect.width / 2, clientY: rect.top + rect.height / 2 };
+  }
 
-    await this.setZoom(targetZoom);
-    if (epoch !== this.pinchRenderEpoch) return;
+  private containerRect(): { left: number; top: number; width: number; height: number } {
+    const rect = this.container.getBoundingClientRect?.();
+    if (!rect) return { left: 0, top: 0, width: 0, height: 0 };
+    return { left: rect.left, top: rect.top, width: rect.width, height: rect.height };
+  }
 
-    const scale = this.state.zoom;
-    this.container.scrollLeft = Math.max(0, documentX * scale - localX);
-    this.container.scrollTop = Math.max(0, documentY * scale - localY);
+  private gesturePendingZoomOrCurrent(): number {
+    return this.gestureZoomActive ? this.gesturePendingZoom : this.state.zoom;
+  }
+
+  private beginGestureZoom(): void {
+    if (this.gestureZoomActive) return;
+    this.cancelInFlightGestureCommit();
+    // Invalidate any settle re-render still in flight from a previous gesture.
+    this.gestureRenderEpoch = (this.gestureRenderEpoch ?? 0) + 1;
+    this.gestureZoomActive = true;
+    this.gestureBaseZoom = this.state.zoom;
+    this.gesturePendingZoom = this.state.zoom;
+    this.gesturePreviewBaseMinHeight = this.scrollContainer?.style.minHeight ?? null;
+    this.gesturePreviewBaseLeft =
+      this.state.viewMode === 'single' && this.singlePageSurface
+        ? this.singlePageSurface.wrapper.style.left
+        : null;
+    this.gesturePreviewOrigin = this.readGesturePreviewOrigin();
+  }
+
+  private cancelInFlightGestureCommit(): void {
+    const commit = this.gestureCommit;
+    if (!commit) return;
+
+    this.cancelDimensionRefinement();
+
+    if (this.renderTask) {
+      this.renderTask.cancel();
+      this.renderTask = null;
+    }
+    if (this.spreadRenderTask) {
+      this.spreadRenderTask.cancel();
+      this.spreadRenderTask = null;
+    }
+    this.renderTasks.forEach((task) => {
+      task.cancel();
+    });
+    this.renderTasks.clear();
+    this.queuedVisibleRender = null;
+
+    if (this.state.zoom === commit.targetZoom) {
+      this.state.zoom = commit.previousZoom;
+      this.restoreGestureCommitLayout();
+    }
+    this.gestureCommit = null;
+  }
+
+  private restoreGestureCommitLayout(): void {
+    if (this.state.viewMode !== 'continuous') return;
+    const fallbackBaseDimensions = this.baseDimensions.get(1);
+    if (!fallbackBaseDimensions) return;
+    this.applyPageDimensionEstimates(fallbackBaseDimensions, false);
+  }
+
+  private isCurrentGestureCommit(epoch: number | null): boolean {
+    return epoch === null || epoch === this.gestureRenderEpoch;
+  }
+
+  private readGesturePreviewOrigin(): { x: number; y: number } {
+    const target =
+      this.state.viewMode === 'continuous' ? this.scrollContainer : this.singlePageSurface?.wrapper;
+    const targetRect = target?.getBoundingClientRect?.();
+    if (!targetRect) return { x: 0, y: 0 };
+
+    const containerRect = this.containerRect();
+    const originX = targetRect.left - containerRect.left + this.container.scrollLeft;
+    const originY = targetRect.top - containerRect.top + this.container.scrollTop;
+    if (this.state.viewMode === 'continuous') {
+      return { x: originX, y: originY };
+    }
+    return { x: originX + targetRect.width / 2, y: originY };
+  }
+
+  /**
+   * Instant feedback path: scale the already-rendered surfaces with a CSS transform and
+   * keep the gesture anchor pinned, then debounce a single sharp re-render.
+   */
+  private previewZoomAtPoint(targetZoom: number, clientX: number, clientY: number): void {
+    this.beginGestureZoom();
+    const clamped = clampZoom(targetZoom);
+    const previous = this.gesturePendingZoom;
+    this.gesturePendingZoom = clamped;
+    const scrollLeft = this.container.scrollLeft;
+    const scrollTop = this.container.scrollTop;
+    this.applyGesturePreviewTransform();
+
+    if (hasValueChanged(previous, clamped)) {
+      const rect = this.containerRect();
+      const localX = clientX - rect.left;
+      const localY = clientY - rect.top;
+      const step = clamped / previous;
+      const origin = this.gesturePreviewOrigin ?? { x: 0, y: 0 };
+      this.container.scrollLeft = Math.max(
+        0,
+        origin.x + (scrollLeft + localX - origin.x) * step - localX,
+      );
+      this.container.scrollTop = Math.max(
+        0,
+        origin.y + (scrollTop + localY - origin.y) * step - localY,
+      );
+    }
+
+    this.scheduleGestureSettle();
+  }
+
+  private gesturePreviewTargets(): HTMLElement[] {
+    if (this.state.viewMode === 'continuous') {
+      return this.scrollContainer ? [this.scrollContainer] : [];
+    }
+    const targets: HTMLElement[] = [];
+    if (this.singlePageSurface) targets.push(this.singlePageSurface.wrapper);
+    if (this.spreadPageSurface) targets.push(this.spreadPageSurface.wrapper);
+    return targets;
+  }
+
+  private applyGesturePreviewTransform(): void {
+    const scale = this.gesturePendingZoom / this.gestureBaseZoom;
+    for (const target of this.gesturePreviewTargets()) {
+      target.style.transformOrigin = this.state.viewMode === 'continuous' ? '0 0' : '50% 0';
+      target.style.transform = `scale(${scale})`;
+      target.style.willChange = 'transform';
+    }
+    if (this.state.viewMode === 'single' && this.singlePageSurface) {
+      const wrapper = this.singlePageSurface.wrapper;
+      const width = Number.parseFloat(wrapper.style.width);
+      if (Number.isFinite(width) && width > 0) {
+        // Inline transform replaces the CSS translateX(-50%), so keep the page centered
+        // while scaling around the page's center.
+        wrapper.style.left = `calc(50% - ${width / 2}px)`;
+      }
+    }
+    // Keep the scrollable extent in step so the anchored scroll offsets are not clamped away.
+    if (this.state.viewMode === 'continuous' && this.scrollContainer) {
+      const totalHeight = this.offsetArray.length
+        ? this.offsetArray[this.offsetArray.length - 1]
+        : 0;
+      if (totalHeight > 0) {
+        this.scrollContainer.style.minHeight = `${totalHeight * scale}px`;
+      }
+    }
+  }
+
+  private clearGesturePreviewTransform(): void {
+    for (const target of this.gesturePreviewTargets()) {
+      target.style.transform = '';
+      target.style.transformOrigin = '';
+      target.style.willChange = '';
+    }
+    if (this.scrollContainer && this.gesturePreviewBaseMinHeight !== null) {
+      this.scrollContainer.style.minHeight = this.gesturePreviewBaseMinHeight;
+    }
+    if (this.singlePageSurface && this.gesturePreviewBaseLeft !== null) {
+      this.singlePageSurface.wrapper.style.left = this.gesturePreviewBaseLeft;
+    }
+    this.gesturePreviewBaseMinHeight = null;
+    this.gesturePreviewBaseLeft = null;
+    this.gesturePreviewOrigin = null;
+  }
+
+  private scheduleGestureSettle(): void {
+    if (this.gestureSettleTimer !== null) clearTimeout(this.gestureSettleTimer);
+    this.gestureSettleTimer = setTimeout(() => {
+      this.gestureSettleTimer = null;
+      void this.commitGestureZoom();
+    }, GESTURE_SETTLE_DELAY_MS);
+  }
+
+  /** Runs exactly once per settled gesture: drops the preview and re-renders sharply. */
+  private async commitGestureZoom(): Promise<void> {
+    if (!this.gestureZoomActive) return;
+    const epoch = ++this.gestureRenderEpoch;
+    const targetZoom = this.gesturePendingZoom;
+    const scrollLeft = this.container.scrollLeft;
+    const scrollTop = this.container.scrollTop;
+    this.gestureCommit = {
+      epoch,
+      targetZoom,
+      previousZoom: this.state.zoom,
+    };
+
+    this.clearGesturePreviewTransform();
+    this.gestureZoomActive = false;
+
+    // The scroll offsets were kept anchored while previewing, so they already describe the
+    // target layout; restore them after the re-render reflows the real geometry.
+    try {
+      await this.setZoom(targetZoom);
+    } finally {
+      if (this.gestureCommit?.epoch === epoch) {
+        this.gestureCommit = null;
+      }
+    }
+    if (epoch !== this.gestureRenderEpoch) return;
+
+    this.container.scrollLeft = Math.max(0, scrollLeft);
+    this.container.scrollTop = Math.max(0, scrollTop);
     this.onScrollChange?.(this.container.scrollTop);
   }
 
+  private cancelGestureZoom(): void {
+    this.cancelInFlightGestureCommit();
+    if (this.wheelZoomRafId != null) {
+      window.cancelAnimationFrame(this.wheelZoomRafId);
+      this.wheelZoomRafId = null;
+    }
+    this.pendingWheelDelta = 0;
+    this.pendingWheelAnchor = null;
+
+    if (this.gestureSettleTimer != null) {
+      clearTimeout(this.gestureSettleTimer);
+      this.gestureSettleTimer = null;
+    }
+    if (this.gestureZoomActive) {
+      this.clearGesturePreviewTransform();
+      this.gestureZoomActive = false;
+    }
+    this.gestureRenderEpoch = (this.gestureRenderEpoch ?? 0) + 1;
+  }
+
   async setZoom(zoom: number): Promise<void> {
-    const clamped = Math.max(0.25, Math.min(zoom, 5.0));
+    if (this.gestureZoomActive) this.cancelGestureZoom();
+    const gestureEpoch = this.gestureCommit?.epoch ?? null;
+    if (!this.isCurrentGestureCommit(gestureEpoch)) return;
+    const clamped = clampZoom(zoom);
     if (!hasValueChanged(this.state.zoom, clamped)) return;
 
     const currentPage = this.state.currentPage;
     this.state.zoom = clamped;
+    if (!this.isCurrentGestureCommit(gestureEpoch)) return;
 
     if (this.state.viewMode === 'continuous') {
-      await this.calculateAllPageDimensions();
-      await this.renderVisiblePages(true);
-      await this.scrollToPage(currentPage);
+      await this.calculateAllPageDimensions(gestureEpoch);
+      if (!this.isCurrentGestureCommit(gestureEpoch)) return;
+      await this.renderVisiblePages(true, false, gestureEpoch);
+      if (!this.isCurrentGestureCommit(gestureEpoch)) return;
+      await this.scrollToPage(currentPage, gestureEpoch);
     } else {
-      await this.renderPage(this.state.currentPage);
+      await this.renderPage(this.state.currentPage, gestureEpoch);
+      if (!this.isCurrentGestureCommit(gestureEpoch)) return;
     }
   }
 
   async fitToWidth(): Promise<void> {
     if (!this.pdfDoc || !this.canvas) return;
 
+    this.cancelGestureZoom();
     const currentPage = this.state.currentPage;
     const base = this.baseDimensions.get(currentPage);
     let baseWidth: number;
@@ -1625,6 +1962,7 @@ export class PDFViewer {
   async fitToPage(): Promise<void> {
     if (!this.pdfDoc || !this.canvas) return;
 
+    this.cancelGestureZoom();
     const currentPage = this.state.currentPage;
     const base = this.baseDimensions.get(currentPage);
     let baseWidth: number;
@@ -1763,11 +2101,7 @@ export class PDFViewer {
         window.cancelAnimationFrame(this.scrollRafId);
         this.scrollRafId = null;
       }
-      if (this.wheelZoomRafId !== null) {
-        window.cancelAnimationFrame(this.wheelZoomRafId);
-        this.wheelZoomRafId = null;
-      }
-      this.pendingWheelDelta = 0;
+      this.cancelGestureZoom();
     }
 
     if (visible) this.applyViewModeClasses();
@@ -1866,6 +2200,7 @@ export class PDFViewer {
   async setViewMode(mode: ViewMode): Promise<void> {
     if (this.state.viewMode === mode) return;
 
+    this.cancelGestureZoom();
     const currentPage = this.state.currentPage;
     const previousMode = this.state.viewMode;
     if (previousMode === 'continuous') {
@@ -1967,15 +2302,19 @@ export class PDFViewer {
     return dimensions;
   }
 
-  private async calculateAllPageDimensions(): Promise<void> {
-    if (!this.pdfDoc) return;
+  private async calculateAllPageDimensions(
+    expectedGestureEpoch: number | null = null,
+  ): Promise<void> {
+    if (!this.pdfDoc || !this.isCurrentGestureCommit(expectedGestureEpoch)) return;
 
     let estimatedBaseDimensions = this.baseDimensions.get(1);
     if (!estimatedBaseDimensions) {
       const firstPage = await this.pdfDoc.getPage(1);
+      if (!this.isCurrentGestureCommit(expectedGestureEpoch)) return;
       estimatedBaseDimensions = this.cacheBaseDimensions(1, firstPage);
     }
 
+    if (!this.isCurrentGestureCommit(expectedGestureEpoch)) return;
     this.applyPageDimensionEstimates(estimatedBaseDimensions, false);
     this.scheduleDimensionRefinement();
   }
@@ -2123,10 +2462,19 @@ export class PDFViewer {
     return visible;
   }
 
-  private async renderVisiblePages(forceRender = false, isInitialRender = false): Promise<void> {
+  private async renderVisiblePages(
+    forceRender = false,
+    isInitialRender = false,
+    expectedGestureEpoch: number | null = null,
+  ): Promise<void> {
+    const queuedGestureEpoch = this.queuedVisibleRender?.gestureEpoch ?? null;
+    const requestGestureEpoch = expectedGestureEpoch ?? queuedGestureEpoch;
+    if (!this.isCurrentGestureCommit(requestGestureEpoch)) return;
+
     this.queuedVisibleRender = {
       forceRender: (this.queuedVisibleRender?.forceRender ?? false) || forceRender,
       isInitialRender: (this.queuedVisibleRender?.isInitialRender ?? false) || isInitialRender,
+      gestureEpoch: requestGestureEpoch,
     };
 
     if (this.visibleRenderLoop) {
@@ -2145,15 +2493,22 @@ export class PDFViewer {
     while (this.queuedVisibleRender) {
       const request = this.queuedVisibleRender;
       this.queuedVisibleRender = null;
-      await this.renderVisiblePagesOnce(request.forceRender, request.isInitialRender);
+      if (!this.isCurrentGestureCommit(request.gestureEpoch)) continue;
+      await this.renderVisiblePagesOnce(
+        request.forceRender,
+        request.isInitialRender,
+        request.gestureEpoch,
+      );
     }
   }
 
   private async renderVisiblePagesOnce(
     forceRender = false,
     isInitialRender = false,
+    expectedGestureEpoch: number | null = null,
   ): Promise<void> {
-    if (!this.pdfDoc || !this.scrollContainer) return;
+    if (!this.pdfDoc || !this.scrollContainer || !this.isCurrentGestureCommit(expectedGestureEpoch))
+      return;
 
     const renderBufferPages = forceRender ? this.cleanupBufferPages : this.renderBufferPages;
     const visiblePageNums = this.calculateVisiblePages(renderBufferPages);
@@ -2183,11 +2538,14 @@ export class PDFViewer {
 
     // Render new pages that came into view
     for (const pageNum of visiblePageNums) {
+      if (!this.isCurrentGestureCommit(expectedGestureEpoch)) return;
       this.updateCanvasPosition(pageNum);
       if (forceRender || !this.renderedPages.has(pageNum)) {
-        await this.renderPageToContinuousCanvas(pageNum, forceRender);
+        await this.renderPageToContinuousCanvas(pageNum, forceRender, expectedGestureEpoch);
       }
     }
+
+    if (!this.isCurrentGestureCommit(expectedGestureEpoch)) return;
 
     // Cleanup pages that are no longer visible
     this.cleanupInvisiblePages(pagesToKeep);
@@ -2216,8 +2574,13 @@ export class PDFViewer {
     });
   }
 
-  private async renderPageToContinuousCanvas(pageNum: number, forceRender = false): Promise<void> {
-    if (!this.pdfDoc || !this.scrollContainer) return;
+  private async renderPageToContinuousCanvas(
+    pageNum: number,
+    forceRender = false,
+    expectedGestureEpoch: number | null = null,
+  ): Promise<void> {
+    if (!this.pdfDoc || !this.scrollContainer || !this.isCurrentGestureCommit(expectedGestureEpoch))
+      return;
 
     try {
       const activeTask = this.renderTasks.get(pageNum);
@@ -2234,9 +2597,22 @@ export class PDFViewer {
       const { canvas } = surface;
       surface.wrapper.style.top = `${this.getPagePosition(pageNum)}px`;
       surface.wrapper.style.display = 'block';
-      const render = await this.startSurfaceRender(pageNum, surface);
-      if (!render) return;
+      const render = await this.startSurfaceRender(
+        pageNum,
+        surface,
+        surface.canvas,
+        expectedGestureEpoch,
+      );
+      if (!render) {
+        this.disposePageSurface(surface);
+        return;
+      }
       const { page, viewport, renderTask, pageWidth, pageHeight } = render;
+      if (!this.isCurrentGestureCommit(expectedGestureEpoch)) {
+        renderTask.cancel();
+        this.disposePageSurface(surface);
+        return;
+      }
       this.configurePageSurface(surface, pageWidth, pageHeight, viewport);
 
       // Cancel previous render task for this page
@@ -2249,7 +2625,14 @@ export class PDFViewer {
 
       await renderTask.promise;
 
-      if (this.renderTasks.get(pageNum) !== renderTask || !this.scrollContainer) {
+      if (
+        !this.isCurrentGestureCommit(expectedGestureEpoch) ||
+        this.renderTasks.get(pageNum) !== renderTask ||
+        !this.scrollContainer
+      ) {
+        if (this.renderTasks.get(pageNum) === renderTask) {
+          this.renderTasks.delete(pageNum);
+        }
         this.disposePageSurface(surface);
         return;
       }
@@ -2262,6 +2645,10 @@ export class PDFViewer {
       }
 
       await this.renderInteractiveLayers(page, viewport, surface);
+      if (!this.isCurrentGestureCommit(expectedGestureEpoch)) {
+        this.disposePageSurface(surface);
+        return;
+      }
 
       const previousSurface = this.pageSurfaces.get(pageNum);
       if (previousSurface?.wrapper.parentNode) {
@@ -2346,9 +2733,11 @@ export class PDFViewer {
     }
   }
 
-  async scrollToPage(pageNum: number): Promise<void> {
+  async scrollToPage(pageNum: number, expectedGestureEpoch: number | null = null): Promise<void> {
+    if (!this.isCurrentGestureCommit(expectedGestureEpoch)) return;
+
     if (this.state.viewMode === 'single') {
-      await this.renderPage(pageNum);
+      await this.renderPage(pageNum, expectedGestureEpoch);
       return;
     }
 
@@ -2358,7 +2747,7 @@ export class PDFViewer {
     this.container.scrollTop = Math.max(targetY - this.pagePadding, 0);
 
     // Ensure the page is rendered
-    await this.renderVisiblePages();
+    await this.renderVisiblePages(false, false, expectedGestureEpoch);
   }
 
   private getPagePosition(pageNum: number): number {
@@ -2397,11 +2786,7 @@ export class PDFViewer {
       this.container.removeEventListener('gesturechange', this.handleGestureChangeBound);
       this.isScrollListenerAttached = false;
     }
-    if (this.wheelZoomRafId !== null) {
-      window.cancelAnimationFrame(this.wheelZoomRafId);
-      this.wheelZoomRafId = null;
-    }
-    this.pendingWheelDelta = 0;
+    this.cancelGestureZoom();
     if (this.contextMenu?.parentNode) {
       this.contextMenu.parentNode.removeChild(this.contextMenu);
     }
