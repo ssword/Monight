@@ -71,6 +71,8 @@ fn dispatch_open_payload(app: &tauri::AppHandle, payload: CliPayload) {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.emit("cli-open-files", payload);
         let _ = window.show();
+        #[cfg(any(target_os = "windows", target_os = "linux"))]
+        let _ = window.unminimize();
         let _ = window.set_focus();
     }
 }
