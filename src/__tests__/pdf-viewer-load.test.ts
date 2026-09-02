@@ -282,9 +282,13 @@ describe('PDFViewer initial load', () => {
       activeSearchMatch: null,
     });
 
-    const matches = await viewer.searchText('moon');
+    const progress: number[] = [];
+    const matches = await viewer.searchText('moon', (event) => {
+      progress.push(event.pageNumber);
+    });
     expect(matches).toHaveLength(2);
     expect(matches.map((match) => match.pageOccurrence)).toEqual([0, 1]);
+    expect(progress).toEqual([1, 2]);
     await expect(viewer.getOutlineItems()).resolves.toEqual([
       expect.objectContaining({ title: 'Second page', pageNumber: 2 }),
     ]);

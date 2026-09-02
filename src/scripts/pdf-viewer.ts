@@ -2,12 +2,13 @@ import { invoke } from '@tauri-apps/api/core';
 import type { PDFDocumentProxy, PDFPageProxy, RenderTask, TextLayer } from 'pdfjs-dist';
 import { deriveScaledDimensions } from '../lib/dimensions';
 import {
-  findPageTextMatches,
   type PdfAnnotation,
   type PdfAnnotationColor,
   type PdfAnnotationRect,
   type PdfOutlineItem,
   type PdfSearchMatch,
+  type SearchProgress,
+  searchDocumentIncrementally,
   type ViewMode,
 } from '../lib/document-features';
 import { hasValueChanged } from '../lib/guards';
@@ -234,6 +235,7 @@ export class PDFViewer {
   private onAnnotationsChange: ((annotations: PdfAnnotation[]) => void) | null = null;
   private annotations: PdfAnnotation[] = [];
   private searchQuery = '';
+  private searchToken = 0;
   private searchMatches: PdfSearchMatch[] = [];
   private activeSearchMatch: PdfSearchMatch | null = null;
   private pendingSelectionHighlights: SelectionHighlightData[] = [];
@@ -1190,33 +1192,45 @@ export class PDFViewer {
     return text;
   }
 
-  async searchText(query: string): Promise<PdfSearchMatch[]> {
+  async searchText(
+    query: string,
+    onProgress?: (progress: SearchProgress) => void,
+  ): Promise<PdfSearchMatch[]> {
     const normalizedQuery = query.trim();
+    const searchToken = (this.searchToken ?? 0) + 1;
+    this.searchToken = searchToken;
     this.searchQuery = normalizedQuery;
     this.searchMatches = [];
     this.activeSearchMatch = null;
     this.refreshSearchHighlights();
     if (!normalizedQuery || !this.pdfDoc) return [];
 
-    const matches: PdfSearchMatch[] = [];
-    for (let pageNumber = 1; pageNumber <= this.state.totalPages; pageNumber++) {
-      if (this.searchQuery !== normalizedQuery) return [];
-      const pageText = await this.getPageText(pageNumber);
-      if (this.searchQuery !== normalizedQuery) return [];
-      matches.push(...findPageTextMatches(pageText, normalizedQuery, pageNumber));
-    }
+    const matches = await searchDocumentIncrementally({
+      query: normalizedQuery,
+      totalPages: this.state.totalPages,
+      getPageText: (pageNumber) => this.getPageText(pageNumber),
+      isCancelled: () => this.searchToken !== searchToken || this.searchQuery !== normalizedQuery,
+      onProgress: (progress) => {
+        this.searchMatches = progress.matches.map((match) => ({ ...match }));
+        if (progress.pageMatches.length > 0) this.refreshSearchHighlights();
+        onProgress?.(progress);
+      },
+    });
 
-    if (this.searchQuery !== normalizedQuery) return [];
+    if (this.searchToken !== searchToken || this.searchQuery !== normalizedQuery) return [];
     this.searchMatches = matches;
     return matches.map((match) => ({ ...match }));
   }
 
   async revealSearchMatch(match: PdfSearchMatch): Promise<void> {
+    const searchToken = this.searchToken ?? 0;
     this.activeSearchMatch = { ...match };
     await this.goToPage(match.pageNumber);
+    if (this.searchToken !== searchToken) return;
     this.refreshSearchHighlights();
 
     window.requestAnimationFrame(() => {
+      if (this.searchToken !== searchToken) return;
       const activeMark = this.container.querySelector<HTMLElement>(
         '.pdf-search-hit[aria-current="true"]',
       );
@@ -1229,6 +1243,7 @@ export class PDFViewer {
   }
 
   clearSearch(): void {
+    this.searchToken = (this.searchToken ?? 0) + 1;
     this.searchQuery = '';
     this.searchMatches = [];
     this.activeSearchMatch = null;
