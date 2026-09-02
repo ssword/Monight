@@ -15,6 +15,8 @@ export class SearchController {
   private searchedViewer: PDFViewer | null = null;
   private isScanning = false;
   private scanProgress: { pageNumber: number; totalPages: number } | null = null;
+  private revealQueue: Promise<void> = Promise.resolve();
+  private revealRequest = 0;
 
   constructor(getActiveViewer: () => PDFViewer | null) {
     this.getActiveViewer = getActiveViewer;
@@ -67,27 +69,15 @@ export class SearchController {
   }
 
   close(): void {
-    this.searchEpoch += 1;
+    this.invalidateSearch();
     this.bar.classList.add('hidden');
     this.clearSearchTimer();
-    this.searchedViewer?.clearSearch();
-    this.searchedViewer = null;
-    this.matches = [];
-    this.activeIndex = -1;
-    this.isScanning = false;
-    this.scanProgress = null;
     this.status.textContent = 'Type to search';
     this.setNavigationEnabled(false);
   }
 
   activeDocumentChanged(): void {
-    this.searchEpoch += 1;
-    this.searchedViewer?.clearSearch();
-    this.searchedViewer = null;
-    this.matches = [];
-    this.activeIndex = -1;
-    this.isScanning = false;
-    this.scanProgress = null;
+    this.invalidateSearch();
     this.setNavigationEnabled(false);
     if (!this.bar.classList.contains('hidden') && this.input.value.trim()) {
       void this.runSearch();
@@ -99,13 +89,7 @@ export class SearchController {
   }
 
   private scheduleSearch(): void {
-    this.searchEpoch += 1;
-    this.searchedViewer?.clearSearch();
-    this.searchedViewer = null;
-    this.matches = [];
-    this.activeIndex = -1;
-    this.isScanning = false;
-    this.scanProgress = null;
+    this.invalidateSearch();
     this.setNavigationEnabled(false);
     this.clearSearchTimer();
     if (!this.input.value.trim()) {
@@ -131,13 +115,8 @@ export class SearchController {
     this.clearSearchTimer();
     const viewer = this.getActiveViewer();
     const query = this.input.value.trim();
-    const epoch = ++this.searchEpoch;
-    this.searchedViewer?.clearSearch();
+    const epoch = this.invalidateSearch();
     this.searchedViewer = viewer;
-    this.matches = [];
-    this.activeIndex = -1;
-    this.isScanning = false;
-    this.scanProgress = null;
 
     if (!viewer || !query) {
       this.status.textContent = 'Type to search';
@@ -175,7 +154,7 @@ export class SearchController {
 
     if (this.activeIndex < 0) {
       this.activeIndex = 0;
-      await viewer.revealSearchMatch(matches[0]);
+      await this.queueReveal(epoch, viewer, matches[0]);
     }
     if (!this.isCurrentSearch(epoch, viewer)) return;
     this.updateStatus();
@@ -183,6 +162,18 @@ export class SearchController {
 
   private isCurrentSearch(epoch: number, viewer: PDFViewer): boolean {
     return epoch === this.searchEpoch && viewer === this.getActiveViewer();
+  }
+
+  private invalidateSearch(): number {
+    this.searchEpoch += 1;
+    this.searchedViewer?.clearSearch();
+    this.searchedViewer = null;
+    this.matches = [];
+    this.activeIndex = -1;
+    this.isScanning = false;
+    this.scanProgress = null;
+    this.revealRequest += 1;
+    return this.searchEpoch;
   }
 
   /** Applies partial results emitted while pages are still being scanned. */
@@ -193,10 +184,6 @@ export class SearchController {
     this.matches = progress.matches;
     if (this.matches.length > 0) {
       this.setNavigationEnabled(true);
-      if (this.activeIndex < 0) {
-        this.activeIndex = 0;
-        void this.revealSearchMatchWhileCurrent(epoch, viewer, this.matches[0]);
-      }
     }
     this.updateStatus();
   }
@@ -208,30 +195,47 @@ export class SearchController {
       return;
     }
 
-    this.activeIndex = (this.activeIndex + direction + this.matches.length) % this.matches.length;
+    this.activeIndex =
+      this.activeIndex < 0
+        ? direction === 1
+          ? 0
+          : this.matches.length - 1
+        : (this.activeIndex + direction + this.matches.length) % this.matches.length;
     const viewer = this.getActiveViewer();
     if (!viewer) return;
     const epoch = this.searchEpoch;
-    await viewer.revealSearchMatch(this.matches[this.activeIndex]);
-    if (!this.isCurrentSearch(epoch, viewer)) return;
-    this.updateStatus();
+    await this.queueReveal(epoch, viewer, this.matches[this.activeIndex]);
   }
 
-  private async revealSearchMatchWhileCurrent(
+  private async queueReveal(
     epoch: number,
     viewer: PDFViewer,
     match: PdfSearchMatch,
   ): Promise<void> {
-    if (!this.isCurrentSearch(epoch, viewer)) return;
-    await viewer.revealSearchMatch(match);
+    const request = ++this.revealRequest;
+    const pendingReveal = this.revealQueue
+      .catch(() => undefined)
+      .then(async () => {
+        if (!this.isCurrentSearch(epoch, viewer)) return;
+        await viewer.revealSearchMatch(match);
+        if (!this.isCurrentSearch(epoch, viewer) || request !== this.revealRequest) return;
+        this.updateStatus();
+      });
+    this.revealQueue = pendingReveal;
+    await pendingReveal;
   }
 
   private updateStatus(): void {
     const scanSuffix = this.scanProgress
       ? ` · scanning ${this.scanProgress.pageNumber}/${this.scanProgress.totalPages}`
       : '';
-    if (this.matches.length === 0) {
-      this.status.textContent = this.scanProgress ? `Searching…${scanSuffix}` : 'No matches';
+    if (this.activeIndex < 0) {
+      if (this.matches.length === 0 && !this.scanProgress) {
+        this.status.textContent = 'No matches';
+        return;
+      }
+      const matchLabel = this.matches.length === 1 ? 'match' : 'matches';
+      this.status.textContent = `${this.matches.length} ${matchLabel}${scanSuffix}`;
       return;
     }
     const match = this.matches[this.activeIndex];

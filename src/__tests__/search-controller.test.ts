@@ -112,8 +112,8 @@ describe('SearchController', () => {
       getElementById: (id: string) => controls.get(id) ?? null,
     });
 
-    const first = match(1, 0);
-    const second = match(2, 0);
+    const first = match(2, 0);
+    const second = match(3, 0);
     let emitProgress: ((event: SearchProgress) => void) | undefined;
     let finishSearch: ((matches: PdfSearchMatch[]) => void) | undefined;
     const viewer = {
@@ -136,14 +136,72 @@ describe('SearchController', () => {
     controller.open();
     await vi.waitFor(() => expect(viewer.searchText).toHaveBeenCalledOnce());
 
-    emitProgress?.(progress(1, 3, [first]));
-    expect(status.textContent).toBe('1 of 1 · page 1 · scanning 1/3');
+    emitProgress?.(progress(1, 3, []));
+    expect(status.textContent).toBe('0 matches · scanning 1/3');
+    expect(nextButton.disabled).toBe(true);
+
+    emitProgress?.(progress(2, 3, [first]));
+    expect(status.textContent).toBe('1 match · scanning 2/3');
     expect(nextButton.disabled).toBe(false);
+    expect(viewer.revealSearchMatch).not.toHaveBeenCalled();
 
-    emitProgress?.(progress(2, 3, [first, second]));
+    emitProgress?.(progress(3, 3, [first, second]));
+    expect(status.textContent).toBe('2 matches · scanning 3/3');
     nextButton.trigger('click');
-    await vi.waitFor(() => expect(viewer.revealSearchMatch).toHaveBeenCalledWith(second));
+    await vi.waitFor(() => expect(viewer.revealSearchMatch).toHaveBeenCalledWith(first));
 
+    finishSearch?.([first, second]);
+    await vi.waitFor(() => expect(status.textContent).toBe('1 of 2 · page 2'));
+  });
+
+  it('applies mid-scan navigation in request order', async () => {
+    const controls = createSearchControls();
+    vi.stubGlobal('document', {
+      getElementById: (id: string) => controls.get(id) ?? null,
+    });
+
+    const first = match(1, 0);
+    const second = match(2, 0);
+    let emitProgress: ((event: SearchProgress) => void) | undefined;
+    let finishSearch: ((matches: PdfSearchMatch[]) => void) | undefined;
+    const finishReveals: Array<() => void> = [];
+    const viewer = {
+      searchText: vi.fn(async (_query: string, onProgress: (event: SearchProgress) => void) => {
+        emitProgress = onProgress;
+        return new Promise<PdfSearchMatch[]>((resolve) => {
+          finishSearch = resolve;
+        });
+      }),
+      revealSearchMatch: vi.fn(
+        async () =>
+          new Promise<void>((resolve) => {
+            finishReveals.push(resolve);
+          }),
+      ),
+      clearSearch: vi.fn(),
+    } as unknown as PDFViewer;
+    const controller = new SearchController(() => viewer);
+    const input = controls.get('search-input');
+    const nextButton = controls.get('search-next');
+    const status = controls.get('search-status');
+    if (!input || !nextButton || !status) throw new Error('Search controls not created');
+
+    input.value = 'moon';
+    controller.open();
+    await vi.waitFor(() => expect(viewer.searchText).toHaveBeenCalledOnce());
+    emitProgress?.(progress(2, 3, [first, second]));
+
+    nextButton.trigger('click');
+    await vi.waitFor(() => expect(viewer.revealSearchMatch).toHaveBeenCalledTimes(1));
+    nextButton.trigger('click');
+    expect(viewer.revealSearchMatch).toHaveBeenCalledTimes(1);
+    expect(viewer.revealSearchMatch).toHaveBeenNthCalledWith(1, first);
+
+    finishReveals[0]?.();
+    await vi.waitFor(() => expect(viewer.revealSearchMatch).toHaveBeenCalledTimes(2));
+    expect(viewer.revealSearchMatch).toHaveBeenNthCalledWith(2, second);
+
+    finishReveals[1]?.();
     finishSearch?.([first, second]);
     await vi.waitFor(() => expect(status.textContent).toBe('2 of 2 · page 2'));
   });
@@ -217,7 +275,7 @@ describe('SearchController', () => {
     expect(viewer.searchText).toHaveBeenCalledOnce();
 
     progressCallbacks[0]?.(progress(1, 3, [match(1, 0)]));
-    expect(status.textContent).toBe('1 of 1 · page 1 · scanning 1/3');
+    expect(status.textContent).toBe('1 match · scanning 1/3');
 
     input.value = 'sun';
     input.trigger('input');
