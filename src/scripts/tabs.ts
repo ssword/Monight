@@ -153,7 +153,7 @@ export class TabManager {
     await this.options.onDocumentOpened?.(tab);
     await this.activateTab(id);
 
-    debugLog(`Created tab: ${title} (${id})`);
+    debugLog(`Created Document: ${title} (${id})`);
     return tab;
   }
 
@@ -195,7 +195,7 @@ export class TabManager {
     this.renderTabs();
     this.onTabsChanged?.();
 
-    debugLog(`Closed tab: ${tab.title} (${id})`);
+    debugLog(`Closed Document: ${tab.title} (${id})`);
   }
 
   /**
@@ -254,7 +254,7 @@ export class TabManager {
     // Notify callback
     await this.onTabChange(tab);
 
-    debugLog(`Activated tab: ${tab.title} (${id})`);
+    debugLog(`Activated Document: ${tab.title} (${id})`);
   }
 
   /**
@@ -342,21 +342,29 @@ export class TabManager {
   private renderTabs(): void {
     const container = document.getElementById('tab-container');
     if (!container) return;
-
-    container.setAttribute('role', 'tablist');
-    container.setAttribute('aria-label', 'Open documents');
+    const workspace = document.getElementById('document-workspace');
 
     // Clear existing tabs
     container.innerHTML = '';
 
     // Render each tab
     this.tabs.forEach((tab, id) => {
-      const tabElement = document.createElement('div');
+      const itemElement = document.createElement('div');
+      itemElement.className = `tab-item ${id === this.activeTabId ? 'active' : ''}`;
+
+      const tabElement = document.createElement('button');
+      tabElement.type = 'button';
       tabElement.className = `tab ${id === this.activeTabId ? 'active' : ''}`;
       tabElement.dataset.tabId = id;
+      tabElement.dataset.filePath = tab.filePath;
+      tabElement.id = `document-tab-${id}`;
       tabElement.setAttribute('role', 'tab');
       tabElement.setAttribute('aria-selected', id === this.activeTabId ? 'true' : 'false');
+      tabElement.setAttribute('aria-controls', 'document-workspace');
       tabElement.tabIndex = id === this.activeTabId ? 0 : -1;
+      if (id === this.activeTabId) {
+        workspace?.setAttribute('aria-labelledby', tabElement.id);
+      }
 
       // Tab title
       const titleSpan = document.createElement('span');
@@ -364,56 +372,20 @@ export class TabManager {
       titleSpan.textContent = tab.title;
       titleSpan.title = tab.title; // Tooltip shows full name
       tabElement.appendChild(titleSpan);
+      itemElement.appendChild(tabElement);
 
       // Close button
       const closeBtn = document.createElement('button');
       closeBtn.className = 'tab-close';
       closeBtn.textContent = '✕';
-      closeBtn.title = 'Close tab';
+      closeBtn.title = 'Close document';
       closeBtn.setAttribute('aria-label', `Close ${tab.title}`);
-      tabElement.appendChild(closeBtn);
+      closeBtn.tabIndex = id === this.activeTabId ? 0 : -1;
+      itemElement.appendChild(closeBtn);
 
       // Tab click handler
-      tabElement.addEventListener('click', (e) => {
-        // Don't activate if clicking close button
-        if (e.target === closeBtn) return;
-        this.activateTab(id);
-      });
-
-      tabElement.addEventListener('keydown', (event) => {
-        if (event.target === closeBtn) return;
-
-        const ids = Array.from(this.tabs.keys());
-        const index = ids.indexOf(id);
-        let targetId: string | undefined;
-        switch (event.key) {
-          case 'ArrowLeft':
-            targetId = ids[(index - 1 + ids.length) % ids.length];
-            break;
-          case 'ArrowRight':
-            targetId = ids[(index + 1) % ids.length];
-            break;
-          case 'Home':
-            targetId = ids[0];
-            break;
-          case 'End':
-            targetId = ids[ids.length - 1];
-            break;
-          case 'Enter':
-          case ' ':
-            targetId = id;
-            break;
-          default:
-            return;
-        }
-
-        event.preventDefault();
-        void this.activateTab(targetId).then(() => {
-          const activatedTab = Array.from(
-            container.querySelectorAll<HTMLElement>('[role="tab"]'),
-          ).find((element) => element.dataset.tabId === targetId);
-          activatedTab?.focus();
-        });
+      tabElement.addEventListener('click', () => {
+        void this.activateTab(id);
       });
 
       // Close button handler
@@ -422,10 +394,10 @@ export class TabManager {
         this.closeTab(id);
       });
 
-      container.appendChild(tabElement);
+      container.appendChild(itemElement);
     });
 
-    debugLog(`Rendered ${this.tabs.size} tabs`);
+    debugLog(`Rendered ${this.tabs.size} Documents`);
   }
 
   /**

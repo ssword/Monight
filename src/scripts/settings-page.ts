@@ -3,6 +3,7 @@ import { emit, listen } from '@tauri-apps/api/event';
 import { version as pdfjsVersion } from 'pdfjs-dist';
 import { requestConfirmation } from '../app/dialogs';
 import { debugLog } from '../lib/debug-log';
+import '../styles/dialogs.css';
 import { KeybindEditor } from './keybind-editor';
 import { KeybindManager } from './keybind-manager';
 import type { MoonightSettings } from './settings';
@@ -170,7 +171,7 @@ function setupSettingListeners(): void {
   clearHistoryButton?.addEventListener('click', async () => {
     const confirmed = await requestConfirmation({
       title: 'Clear reading history?',
-      message: 'Clear recent files, the saved Reading Session, and all annotations?',
+      message: 'Clear Recent Documents, the saved Reading Session, and all annotations?',
       confirmLabel: 'Clear history',
     });
     if (confirmed) {
@@ -285,6 +286,23 @@ function formatKeybindForDisplay(bind: string): string {
     .replace('ArrowDown', '↓');
 }
 
+async function resolveKeybindConflict(newKeybind: string, actionId: string): Promise<boolean> {
+  const conflict = keybindEditor?.findConflict(newKeybind, actionId);
+  if (!conflict) return true;
+
+  const confirmed = await requestConfirmation({
+    title: 'Replace keyboard shortcut?',
+    message: `This key combination is already used for "${conflict.displayName}". Replace it?`,
+    confirmLabel: 'Replace',
+  });
+  if (!confirmed) return false;
+
+  currentSettings.keybinds[conflict.actionId].binds = currentSettings.keybinds[
+    conflict.actionId
+  ].binds.filter((bind) => bind !== newKeybind);
+  return true;
+}
+
 // Start editing a keybind
 function startEditingKeybind(actionId: string, config: KeybindConfig, bindIndex: number = 0): void {
   if (!keybindEditor) {
@@ -296,22 +314,7 @@ function startEditingKeybind(actionId: string, config: KeybindConfig, bindIndex:
   keybindEditor.startRecording(
     currentBind,
     async (newKeybind) => {
-      // Check for conflicts
-      const conflict = keybindEditor?.findConflict(newKeybind, actionId);
-      if (conflict) {
-        const confirmed = await requestConfirmation({
-          title: 'Replace keyboard shortcut?',
-          message: `This key combination is already used for "${conflict.displayName}". Replace it?`,
-          confirmLabel: 'Replace',
-        });
-
-        if (!confirmed) return;
-
-        // Clear the conflicting keybind
-        currentSettings.keybinds[conflict.actionId].binds = currentSettings.keybinds[
-          conflict.actionId
-        ].binds.filter((b) => b !== newKeybind);
-      }
+      if (!(await resolveKeybindConflict(newKeybind, actionId))) return;
 
       // Update settings
       if (config.binds[bindIndex]) {
@@ -349,22 +352,7 @@ function addKeybind(actionId: string): void {
   keybindEditor.startRecording(
     '',
     async (newKeybind) => {
-      // Check for conflicts
-      const conflict = keybindEditor?.findConflict(newKeybind, actionId);
-      if (conflict) {
-        const confirmed = await requestConfirmation({
-          title: 'Replace keyboard shortcut?',
-          message: `This key combination is already used for "${conflict.displayName}". Replace it?`,
-          confirmLabel: 'Replace',
-        });
-
-        if (!confirmed) return;
-
-        // Clear the conflicting keybind
-        currentSettings.keybinds[conflict.actionId].binds = currentSettings.keybinds[
-          conflict.actionId
-        ].binds.filter((b) => b !== newKeybind);
-      }
+      if (!(await resolveKeybindConflict(newKeybind, actionId))) return;
 
       // Add new binding
       currentSettings.keybinds[actionId].binds.push(newKeybind);

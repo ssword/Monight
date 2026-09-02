@@ -11,7 +11,7 @@ Monight is a cross-platform PDF reader built with Tauri and TypeScript. It combi
 - Table of contents and lazy-rendered page thumbnails
 - Persistent highlights and notes
 - Exact page and scroll-position restoration
-- Recent files on the launch screen
+- Recent Documents on the launch screen
 - Password prompts for encrypted PDFs
 - Fullscreen presentation mode (`Shift+F11`)
 - Dark mode presets and a custom filter configurator
@@ -58,7 +58,7 @@ npm run dev
 
 ## Settings
 Settings are stored using the Tauri Store plugin and can be edited in the in-app Settings
-window. Reading sessions, recent files, highlights, and notes are saved locally. Options include
+window. Reading sessions, Recent Documents, highlights, and notes are saved locally. Options include
 default dark mode presets, thumbnail visibility, session restoration, remembering the last
 filter, and keybind customization.
 

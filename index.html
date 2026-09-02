@@ -22,7 +22,7 @@
             <p class="hint-text">Press Cmd+O to open a PDF file</p>
             <section id="recent-files-section" class="recent-files hidden" aria-labelledby="recent-files-title">
                 <div class="recent-files-heading">
-                    <h3 id="recent-files-title">Recent files</h3>
+                    <h3 id="recent-files-title">Recent Documents</h3>
                     <button id="clear-recent-files" type="button">Clear</button>
                 </div>
                 <div id="recent-files-list" class="recent-files-list"></div>
@@ -138,7 +138,7 @@
                 <button id="new-tab-btn" class="new-tab-btn" title="Open New PDF (Ctrl+T)">+</button>
             </div>
 
-            <div id="document-workspace">
+            <div id="document-workspace" role="tabpanel">
                 <aside id="document-sidebar" class="document-sidebar hidden" aria-label="Document sidebar">
                     <div class="sidebar-tabs" role="tablist">
                         <button type="button" data-sidebar-tab="outline" role="tab">Contents</button>

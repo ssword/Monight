@@ -8,11 +8,13 @@ vi.mock('../lib/pdf-engine', () => ({ getPdfEngine }));
 
 import { TabManager } from '../scripts/tabs';
 
-describe('Document tabs', () => {
+describe('Document navigation', () => {
   beforeEach(() => {
     document.body.innerHTML = `
-      <div id="tab-container"></div>
-      <div id="pdf-container"></div>
+      <div id="tab-container" role="tablist" aria-label="Open documents"></div>
+      <div id="document-workspace" role="tabpanel">
+        <div id="pdf-container"></div>
+      </div>
     `;
     Object.defineProperty(HTMLCanvasElement.prototype, 'getContext', {
       configurable: true,
@@ -50,7 +52,7 @@ describe('Document tabs', () => {
 
   it('exposes a keyboard-operable tablist with one selected tab', async () => {
     const manager = new TabManager(vi.fn());
-    const first = await manager.createTab('/tmp/one.pdf', 'one.pdf', new Uint8Array([1]));
+    await manager.createTab('/tmp/one.pdf', 'one.pdf', new Uint8Array([1]));
     await manager.createTab('/tmp/two.pdf', 'two.pdf', new Uint8Array([2]));
 
     const tablist = document.getElementById('tab-container');
@@ -61,15 +63,16 @@ describe('Document tabs', () => {
     expect(tabs[0].tabIndex).toBe(-1);
     expect(tabs[1].getAttribute('aria-selected')).toBe('true');
     expect(tabs[1].tabIndex).toBe(0);
+    expect(tabs[1].getAttribute('aria-controls')).toBe('document-workspace');
+    expect(tabs[1].dataset.filePath).toBe('/tmp/two.pdf');
 
-    tabs[1].focus();
-    tabs[1].dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true }));
+    const workspace = document.getElementById('document-workspace');
+    expect(workspace?.getAttribute('role')).toBe('tabpanel');
+    expect(workspace?.getAttribute('aria-labelledby')).toBe(tabs[1].id);
 
-    await vi.waitFor(() => expect(manager.getActiveTab()?.id).toBe(first.id));
-    await vi.waitFor(() => {
-      expect(document.activeElement?.getAttribute('data-tab-id')).toBe(first.id);
-    });
-    const focusedTab = document.querySelector<HTMLElement>(`[data-tab-id="${first.id}"]`);
-    expect(focusedTab?.getAttribute('aria-selected')).toBe('true');
+    const closeButtons = Array.from(document.querySelectorAll<HTMLButtonElement>('.tab-close'));
+    expect(closeButtons[0].parentElement).not.toBe(tabs[0]);
+    expect(closeButtons[0].tabIndex).toBe(-1);
+    expect(closeButtons[1].tabIndex).toBe(0);
   });
 });

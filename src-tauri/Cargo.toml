@@ -1,6 +1,7 @@
 [package]
 name = "monight"
-version = "1.0.6"
+version = "0.0.0"
+publish = false
 description = "Monight (墨页) - A modern PDF reader"
 authors = ["Monight Team"]
 edition = "2021"

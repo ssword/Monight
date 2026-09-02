@@ -16,6 +16,7 @@ interface DomEventContext {
   onPresetApplied: (settings: FilterSettings) => void;
   saveCurrentTabState: () => void;
   updateUI: () => void;
+  activateDocument: (filePath: string) => Promise<void>;
   openRecentFile: (filePath: string) => Promise<void>;
   clearRecentFiles: () => Promise<void>;
   goToPage: (page: number) => Promise<void>;
@@ -31,6 +32,7 @@ export function setupEventListeners({
   onPresetApplied,
   saveCurrentTabState,
   updateUI,
+  activateDocument,
   openRecentFile,
   clearRecentFiles,
   goToPage,
@@ -186,6 +188,42 @@ export function setupEventListeners({
   const closeConfigBtn = document.getElementById('close-configurator');
   closeConfigBtn?.addEventListener('click', () => {
     toggleDarkConfigurator(sliderManager);
+  });
+
+  const tabContainer = document.getElementById('tab-container');
+  tabContainer?.addEventListener('keydown', (event) => {
+    const focusedTab =
+      event.target instanceof Element ? event.target.closest<HTMLElement>('[role="tab"]') : null;
+    if (!focusedTab) return;
+
+    const tabs = Array.from(tabContainer.querySelectorAll<HTMLElement>('[role="tab"]'));
+    const currentIndex = tabs.indexOf(focusedTab);
+    let targetTab: HTMLElement | undefined;
+    switch (event.key) {
+      case 'ArrowLeft':
+        targetTab = tabs[(currentIndex - 1 + tabs.length) % tabs.length];
+        break;
+      case 'ArrowRight':
+        targetTab = tabs[(currentIndex + 1) % tabs.length];
+        break;
+      case 'Home':
+        targetTab = tabs[0];
+        break;
+      case 'End':
+        targetTab = tabs[tabs.length - 1];
+        break;
+      default:
+        return;
+    }
+
+    const tabId = targetTab?.dataset.tabId;
+    const filePath = targetTab?.dataset.filePath;
+    if (!tabId || !filePath) return;
+    event.preventDefault();
+    event.stopPropagation();
+    void activateDocument(filePath).then(() => {
+      document.getElementById(`document-tab-${tabId}`)?.focus();
+    });
   });
 
   // Keyboard shortcuts - use KeybindManager for dynamic keybind handling

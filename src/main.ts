@@ -47,6 +47,7 @@ import { type MoonightSettings, SettingsManager } from './scripts/settings';
 import { SliderManager } from './scripts/sliders';
 import { type TabData, TabManager } from './scripts/tabs';
 import './styles/main.css';
+import './styles/dialogs.css';
 import './styles/pdf-viewer.css';
 import './styles/configurator.css';
 import './styles/document-features.css';
@@ -207,7 +208,7 @@ const openRecentFile = async (filePath: string): Promise<void> => {
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';
     if (!message.includes('Password entry cancelled')) {
-      showToast(`Could not open recent file: ${message}`, 'error');
+      showToast(`Could not open Recent Document: ${message}`, 'error');
     }
   }
 };
@@ -538,6 +539,9 @@ async function initializeApp(): Promise<void> {
       onPresetApplied: scheduleLastFilterSave,
       saveCurrentTabState: saveStateForTab,
       updateUI: updateUIForTab,
+      activateDocument: async (filePath) => {
+        await readerActions?.dispatch({ type: 'activateDocument', filePath });
+      },
       openRecentFile,
       clearRecentFiles,
       goToPage,

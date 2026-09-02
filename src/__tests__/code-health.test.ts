@@ -14,6 +14,7 @@ describe('shipped code-health invariants', () => {
       readProjectFile('src/main.ts'),
       readProjectFile('settings.html'),
       readProjectFile('README.md'),
+      readProjectFile('src-tauri/Cargo.toml'),
     ];
 
     expect(tauriConfig.version).toBe('../package.json');
