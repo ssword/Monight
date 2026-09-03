@@ -10,7 +10,15 @@ import type { KeybindManager } from '../scripts/keybind-manager';
 import type { SettingsManager } from '../scripts/settings';
 import type { TabManager } from '../scripts/tabs';
 import { showToast } from './dialogs';
-import { openFiles } from './file-actions';
+import { intakeFiles, reportDocumentIntakeOutcomes } from './file-actions';
+
+type ExternalOpenSource = 'commandLine' | 'operatingSystem' | 'dragAndDrop';
+
+interface ExternalOpenPayload {
+  files: string[];
+  page: number | null;
+  source: ExternalOpenSource;
+}
 
 interface TauriListenerContext {
   tabManager: TabManager | null;
@@ -45,13 +53,8 @@ export async function setupTauriListeners({
   printCurrentPDF,
   dispatchReaderAction,
 }: TauriListenerContext): Promise<void> {
-  const isSupportedFile = (path: string): boolean => {
-    const ext = path.split('.').pop()?.toLowerCase();
-    return ext === 'pdf';
-  };
-
-  const handleCliOpenPayload = async (payload: { files: string[]; page: number | null }) => {
-    debugLog('CLI open files event:', payload);
+  const handleExternalOpenPayload = async (payload: ExternalOpenPayload) => {
+    debugLog('External Document request:', payload);
     if (!tabManager) return;
 
     const { files, page } = payload;
@@ -59,62 +62,26 @@ export async function setupTauriListeners({
     try {
       const initialFilterSettings = getInitialFilterSettings();
       const initialViewMode = getInitialViewMode();
-      // Open each file
-      await openFiles(files, {
+      const result = await intakeFiles(files, {
         tabManager,
         initialFilterSettings,
         initialViewMode,
         ...(page && page > 0 ? { page } : {}),
       });
+      reportDocumentIntakeOutcomes(result, (message) => showToast(message, 'error'));
 
-      // Update UI
-      updateTabBarVisibility();
-
-      // Update print menu state
-      await updatePrintMenuState();
-
-      await applyWindowAfterOpen();
+      if (result.opened + result.activated > 0) {
+        updateTabBarVisibility();
+        await updatePrintMenuState();
+        await applyWindowAfterOpen();
+      }
     } catch (error) {
-      console.error('Error opening CLI files:', error);
+      console.error('External Document adapter failed:', error);
       showToast(
-        `Failed to open files: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        `Failed to process Document request: ${error instanceof Error ? error.message : 'Unknown error'}`,
         'error',
       );
     }
-  };
-
-  const handleDroppedFiles = async (paths: string[]): Promise<void> => {
-    debugLog('File drop detected:', paths);
-    if (!tabManager) return;
-
-    const pdfFiles = paths.filter((path) => isSupportedFile(path));
-
-    if (pdfFiles.length === 0) {
-      showToast('Please drop PDF files only.', 'error');
-      return;
-    }
-
-    try {
-      const initialFilterSettings = getInitialFilterSettings();
-      const initialViewMode = getInitialViewMode();
-      await openFiles(pdfFiles, {
-        tabManager,
-        continueOnError: true,
-        onError: (message) => showToast(message, 'error'),
-        initialFilterSettings,
-        initialViewMode,
-      });
-    } catch (error) {
-      console.error('Error opening dropped files:', error);
-    }
-
-    // Update UI
-    updateTabBarVisibility();
-
-    // Update print menu state
-    await updatePrintMenuState();
-
-    await applyWindowAfterOpen();
   };
 
   // Tauri 2 delivers a discriminated drag/drop payload through the current webview.
@@ -126,7 +93,12 @@ export async function setupTauriListeners({
         break;
       case 'drop':
         document.body.classList.remove('drag-over');
-        await handleDroppedFiles(event.payload.paths);
+        debugLog('File drop detected:', event.payload.paths);
+        await handleExternalOpenPayload({
+          files: event.payload.paths,
+          page: null,
+          source: 'dragAndDrop',
+        });
         break;
       case 'leave':
         document.body.classList.remove('drag-over');
@@ -134,18 +106,22 @@ export async function setupTauriListeners({
     }
   });
 
-  // Listen for CLI file open events
-  await listen<{ files: string[]; page: number | null }>('cli-open-files', async (event) => {
-    await handleCliOpenPayload(event.payload);
-  });
+  let externalOpenDrain = Promise.resolve();
+  const drainExternalOpenPayloads = (): Promise<void> => {
+    externalOpenDrain = externalOpenDrain.then(async () => {
+      while (true) {
+        const payloads = await invoke<ExternalOpenPayload[]>('take_external_open_payloads');
+        if (payloads.length === 0) return;
+        for (const payload of payloads) {
+          if (payload.files.length > 0) await handleExternalOpenPayload(payload);
+        }
+      }
+    });
+    return externalOpenDrain;
+  };
 
-  // Pull any pending CLI payloads that were emitted before listeners were ready
-  const pendingPayload = await invoke<{ files: string[]; page: number | null } | null>(
-    'take_cli_payload',
-  );
-  if (pendingPayload?.files?.length) {
-    await handleCliOpenPayload(pendingPayload);
-  }
+  await listen('external-open-files-available', drainExternalOpenPayloads);
+  await drainExternalOpenPayloads();
 
   // Listen for menu events
   await listen('menu-open', async () => {

@@ -1,24 +1,35 @@
 import type { DragDropEvent } from '@tauri-apps/api/webview';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { DocumentIntakeResult } from '../reader/document-intake';
 import { PRESETS } from '../scripts/filters';
 import type { SettingsManager } from '../scripts/settings';
 import type { TabManager } from '../scripts/tabs';
 
 const mocks = vi.hoisted(() => {
   let dragDropHandler: ((event: { payload: DragDropEvent }) => void | Promise<void>) | undefined;
-  const listeners = new Map<string, () => void | Promise<void>>();
+  const listeners = new Map<string, (event?: { payload: unknown }) => void | Promise<void>>();
 
   return {
-    invoke: vi.fn<(command: string) => Promise<{ files: string[]; page: number | null } | null>>(
-      async () => null,
+    invoke: vi.fn<(command: string) => Promise<unknown>>(async () => []),
+    listen: vi.fn(
+      async (event: string, handler: (event?: { payload: unknown }) => void | Promise<void>) => {
+        listeners.set(event, handler);
+        return vi.fn();
+      },
     ),
-    listen: vi.fn(async (event: string, handler: () => void | Promise<void>) => {
-      listeners.set(event, handler);
-      return vi.fn();
-    }),
-    openFiles: vi.fn(
-      async (_paths: string[], _options: { onError?: (message: string) => void }) => 1,
+    intakeFiles: vi.fn<(paths: string[], options: unknown) => Promise<DocumentIntakeResult>>(
+      async (paths: string[]) => ({
+        outcomes: paths.map((path) => ({
+          status: 'opened' as const,
+          requestedPath: path,
+          filePath: path,
+        })),
+        opened: paths.length,
+        activated: 0,
+        failed: 0,
+      }),
     ),
+    reportDocumentIntakeOutcomes: vi.fn(),
     showToast: vi.fn(),
     onDragDropEvent: vi.fn(
       async (handler: (event: { payload: DragDropEvent }) => void | Promise<void>) => {
@@ -46,7 +57,10 @@ vi.mock('@tauri-apps/api/webviewWindow', () => ({
     setFullscreen: vi.fn(async () => undefined),
   }),
 }));
-vi.mock('../app/file-actions', () => ({ openFiles: mocks.openFiles }));
+vi.mock('../app/file-actions', () => ({
+  intakeFiles: mocks.intakeFiles,
+  reportDocumentIntakeOutcomes: mocks.reportDocumentIntakeOutcomes,
+}));
 vi.mock('../app/dialogs', () => ({ showToast: mocks.showToast }));
 
 import { setupTauriListeners } from '../app/tauri-events';
@@ -114,30 +128,34 @@ describe('Tauri drag and drop events', () => {
     });
 
     expect(removeClass).toHaveBeenCalledWith('drag-over');
-    expect(mocks.openFiles).toHaveBeenCalledWith(
-      ['/tmp/report.pdf'],
-      expect.objectContaining({ tabManager, continueOnError: true }),
+    expect(mocks.intakeFiles).toHaveBeenCalledWith(
+      ['/tmp/report.pdf', '/tmp/form.xfdf'],
+      expect.objectContaining({ tabManager }),
     );
   });
 
-  it('reports drag/drop errors through non-blocking toasts', async () => {
-    await setupTauriListeners(context());
+  it('translates drag/drop intake outcomes into non-blocking feedback', async () => {
+    const updateTabBarVisibility = vi.fn();
+    const updatePrintMenuState = vi.fn(async () => undefined);
+    const applyWindowAfterOpen = vi.fn(async () => undefined);
+    await setupTauriListeners(
+      context({ updateTabBarVisibility, updatePrintMenuState, applyWindowAfterOpen }),
+    );
     const handler = mocks.getDragDropHandler();
 
-    await handler?.({
-      payload: {
-        type: 'drop',
-        paths: ['/tmp/form.xfdf'],
-        position: { x: 1, y: 2 } as never,
-      },
-    });
-
-    expect(mocks.showToast).toHaveBeenCalledWith('Please drop PDF files only.', 'error');
-
-    mocks.openFiles.mockImplementationOnce(async (_paths, options) => {
-      options.onError?.('Could not read /tmp/report.pdf');
-      return 0;
-    });
+    const failedResult = {
+      outcomes: [
+        {
+          status: 'failed' as const,
+          requestedPath: '/tmp/report.pdf',
+          error: new Error('bad PDF'),
+        },
+      ],
+      opened: 0,
+      activated: 0,
+      failed: 1,
+    };
+    mocks.intakeFiles.mockResolvedValueOnce(failedResult);
     await handler?.({
       payload: {
         type: 'drop',
@@ -146,17 +164,43 @@ describe('Tauri drag and drop events', () => {
       },
     });
 
-    expect(mocks.showToast).toHaveBeenCalledWith('Could not read /tmp/report.pdf', 'error');
+    expect(mocks.reportDocumentIntakeOutcomes).toHaveBeenCalledWith(
+      failedResult,
+      expect.any(Function),
+    );
+    expect(updateTabBarVisibility).not.toHaveBeenCalled();
+    expect(updatePrintMenuState).not.toHaveBeenCalled();
+    expect(applyWindowAfterOpen).not.toHaveBeenCalled();
   });
 
   it('passes the startup CLI page into Document Intake', async () => {
-    mocks.invoke.mockImplementationOnce(async () => ({ files: ['/tmp/report.pdf'], page: 7 }));
+    mocks.invoke.mockImplementationOnce(async () => [
+      { files: ['/tmp/report.pdf'], page: 7, source: 'commandLine' },
+    ]);
 
     await setupTauriListeners(context());
 
-    expect(mocks.openFiles).toHaveBeenCalledWith(
+    expect(mocks.intakeFiles).toHaveBeenCalledWith(
       ['/tmp/report.pdf'],
       expect.objectContaining({ page: 7 }),
+    );
+  });
+
+  it('routes operating-system open and file-association payloads through Document Intake', async () => {
+    await setupTauriListeners(context());
+    mocks.invoke.mockResolvedValueOnce([
+      {
+        files: ['/tmp/associated.pdf', '/tmp/missing.pdf'],
+        page: null,
+        source: 'operatingSystem',
+      },
+    ]);
+
+    await mocks.getListener('external-open-files-available')?.();
+
+    expect(mocks.intakeFiles).toHaveBeenCalledWith(
+      ['/tmp/associated.pdf', '/tmp/missing.pdf'],
+      expect.objectContaining({ tabManager: expect.anything() }),
     );
   });
 

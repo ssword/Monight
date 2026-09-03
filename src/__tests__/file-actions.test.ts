@@ -124,6 +124,41 @@ describe('Document picker intake', () => {
     );
   });
 
+  it('translates every typed failure without rolling back successful siblings', async () => {
+    mocks.invoke.mockImplementation(async (command: string, args?: { path?: string }) => {
+      if (command === 'describe_pdf_file') {
+        if (args?.path?.includes('bad')) throw new Error(`invalid ${args.path}`);
+        return { canonicalPath: args?.path, title: args?.path?.split('/').pop() };
+      }
+      if (command === 'read_pdf_file') return new ArrayBuffer(4);
+      throw new Error(`Unexpected command: ${command}`);
+    });
+    const tabManager = {
+      getTabs: vi.fn(() => []),
+      createTab: vi.fn(async () => undefined),
+    };
+    const onError = vi.fn();
+    const { intakeFiles, reportDocumentIntakeOutcomes } = await import('../app/file-actions');
+
+    const result = await intakeFiles(
+      ['/docs/one.pdf', '/docs/bad-one.pdf', '/docs/two.pdf', '/docs/bad-two.pdf'],
+      { tabManager: tabManager as never },
+    );
+    reportDocumentIntakeOutcomes(result, onError);
+
+    expect(result.outcomes.map(({ status }) => status)).toEqual([
+      'opened',
+      'failed',
+      'opened',
+      'failed',
+    ]);
+    expect(tabManager.createTab).toHaveBeenCalledTimes(2);
+    expect(onError.mock.calls.map(([message]) => message)).toEqual([
+      'Failed to open /docs/bad-one.pdf: invalid /docs/bad-one.pdf',
+      'Failed to open /docs/bad-two.pdf: invalid /docs/bad-two.pdf',
+    ]);
+  });
+
   it('shares canonical Document preparation across overlapping open requests', async () => {
     const releaseCreates: Array<() => void> = [];
     const tabs: Array<{ id: string; filePath: string }> = [];

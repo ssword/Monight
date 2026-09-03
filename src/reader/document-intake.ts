@@ -129,9 +129,11 @@ export function createDocumentIntake({
 
     const completion = (async () => {
       const outcomes: DocumentIntakeOutcome[] = [];
+      let hasActivatedDocument = false;
       for (const [index, requestedPath] of paths.entries()) {
         try {
           const document = await source.describe(requestedPath);
+          const activateDocument = options.activate !== false && !hasActivatedDocument;
           let outcome: Extract<DocumentIntakeOutcome, { status: 'opened' | 'activated' }>;
           const preparation = await coordinator.prepare(
             document.canonicalPath,
@@ -141,13 +143,17 @@ export function createDocumentIntake({
               await runtime.open({
                 document,
                 bytes,
-                activate: options.activate !== false,
+                activate: activateDocument,
                 ...(index === 0 && options.page !== undefined ? { initialPage: options.page } : {}),
               });
+              if (activateDocument) hasActivatedDocument = true;
             },
           );
           if (preparation === 'existing') {
-            if (options.activate !== false) await runtime.activate(document.canonicalPath);
+            if (activateDocument) {
+              await runtime.activate(document.canonicalPath);
+              hasActivatedDocument = true;
+            }
             if (index === 0 && options.page !== undefined) {
               await runtime.goToPage(document.canonicalPath, options.page);
             }

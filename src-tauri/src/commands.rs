@@ -9,7 +9,8 @@ use tauri_plugin_opener::OpenerExt;
 use url::Url;
 
 use crate::{
-    document_intake::DocumentIntake, take_cli_payload_inner, CliPayload, PendingCliPayload,
+    document_intake::DocumentIntake, take_external_open_payloads_inner, ExternalOpenPayload,
+    PendingExternalOpenPayloads,
 };
 
 const PDF_VIEW_MIN_WIDTH: f64 = 1000.0;
@@ -78,7 +79,14 @@ pub async fn read_pdf_file(
     path: String,
     document_intake: State<'_, DocumentIntake>,
 ) -> Result<tauri::ipc::Response, String> {
-    let bytes = read_pdf_bytes(path, document_intake.inner())?;
+    read_pdf_response(path, document_intake.inner())
+}
+
+pub(crate) fn read_pdf_response(
+    path: String,
+    document_intake: &DocumentIntake,
+) -> Result<tauri::ipc::Response, String> {
+    let bytes = read_pdf_bytes(path, document_intake)?;
     Ok(tauri::ipc::Response::new(bytes))
 }
 
@@ -280,10 +288,12 @@ pub fn fit_main_window_for_pdf(app: AppHandle, fill_available_height: bool) -> R
     Ok(())
 }
 
-/// Get and clear any pending CLI-open payloads
+/// Drain queued external Document requests in arrival order.
 #[command]
-pub fn take_cli_payload(state: State<PendingCliPayload>) -> Option<CliPayload> {
-    take_cli_payload_inner(state.inner())
+pub fn take_external_open_payloads(
+    state: State<PendingExternalOpenPayloads>,
+) -> Vec<ExternalOpenPayload> {
+    take_external_open_payloads_inner(state.inner())
 }
 
 /// Validate and canonicalize a file path for opening
@@ -339,6 +349,13 @@ mod tests {
         assert!(
             read_pdf_bytes(canonical.to_string_lossy().to_string(), &document_intake,).is_err()
         );
+        assert_eq!(
+            serde_json::to_value(description).expect("description should serialize"),
+            serde_json::json!({
+                "canonicalPath": canonical.to_string_lossy(),
+                "title": "sample.pdf",
+            })
+        );
     }
 
     #[test]
@@ -386,6 +403,26 @@ mod tests {
         let bytes = result.unwrap();
         assert_eq!(bytes.len(), expected.len());
         assert_eq!(bytes, expected);
+    }
+
+    #[test]
+    fn read_pdf_response_uses_the_raw_byte_ipc_body() {
+        use tauri::ipc::{InvokeResponseBody, IpcResponse};
+
+        let fixture =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/sample.pdf");
+        let expected = std::fs::read(&fixture).expect("fixture should be readable");
+        let document_intake = DocumentIntake::default();
+        authorize_dialog_selection(&document_intake, [fixture.clone()]);
+
+        let response = read_pdf_response(fixture.to_string_lossy().to_string(), &document_intake)
+            .expect("authorized PDF should return an IPC response");
+        let body = IpcResponse::body(response).expect("IPC response body should resolve");
+
+        match body {
+            InvokeResponseBody::Raw(bytes) => assert_eq!(bytes, expected),
+            InvokeResponseBody::Json(_) => panic!("PDF bytes must not be encoded as JSON"),
+        }
     }
 
     #[test]

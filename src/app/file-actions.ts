@@ -1,48 +1,55 @@
 import { invoke } from '@tauri-apps/api/core';
 import { debugLog } from '../lib/debug-log';
 import type { ViewMode } from '../lib/document-features';
+import type { DocumentIntakeOutcome, DocumentIntakeResult } from '../reader/document-intake';
 import type { FilterSettings } from '../scripts/filters';
 import type { TabManager } from '../scripts/tabs';
 import { showToast } from './dialogs';
 import { createDocumentIntakeRuntime } from './document-intake-runtime';
 import { withActiveViewer } from './viewer-helpers';
 
-interface OpenFilesOptions {
+interface IntakeFilesOptions {
   tabManager: TabManager;
-  continueOnError?: boolean;
-  onError?: (message: string) => void;
   initialFilterSettings?: FilterSettings;
   initialViewMode?: ViewMode;
   page?: number;
   activate?: boolean;
 }
 
+interface OpenFilesOptions extends IntakeFilesOptions {
+  continueOnError?: boolean;
+  onError?: (message: string) => void;
+}
+
 interface EnsureViewingSizeOptions {
   fillAvailableHeight?: boolean;
 }
 
-export async function openFiles(
+export async function intakeFiles(
   filePaths: string[],
-  {
-    tabManager,
-    continueOnError = false,
-    onError,
-    initialFilterSettings,
-    initialViewMode,
-    page,
-    activate = true,
-  }: OpenFilesOptions,
-): Promise<number> {
+  { tabManager, initialFilterSettings, initialViewMode, page, activate = true }: IntakeFilesOptions,
+): Promise<DocumentIntakeResult> {
   const intake = createDocumentIntakeRuntime({
     tabManager,
     initialFilterSettings,
     initialViewMode,
   });
-  const result = await intake.open(filePaths, {
+  return intake.open(filePaths, {
     ...(page !== undefined ? { page } : {}),
     activate,
   });
+}
 
+function formatDocumentIntakeFailure(
+  outcome: Extract<DocumentIntakeOutcome, { status: 'failed' }>,
+): string {
+  return `Failed to open ${outcome.requestedPath}: ${outcome.error instanceof Error ? outcome.error.message : 'Unknown error'}`;
+}
+
+export function reportDocumentIntakeOutcomes(
+  result: DocumentIntakeResult,
+  onError?: (message: string) => void,
+): void {
   for (const outcome of result.outcomes) {
     if (outcome.status === 'opened') {
       debugLog(`Opened PDF: ${outcome.filePath}`);
@@ -52,11 +59,24 @@ export async function openFiles(
       debugLog(`Document already open: ${outcome.filePath}`);
       continue;
     }
-    const message = `Failed to open ${outcome.requestedPath}: ${outcome.error instanceof Error ? outcome.error.message : 'Unknown error'}`;
+    const message = formatDocumentIntakeFailure(outcome);
     console.error(message, outcome.error);
     onError?.(message);
-    if (!continueOnError) throw outcome.error;
   }
+}
+
+export async function openFiles(
+  filePaths: string[],
+  { continueOnError = false, onError, ...intakeOptions }: OpenFilesOptions,
+): Promise<number> {
+  const result = await intakeFiles(filePaths, intakeOptions);
+  reportDocumentIntakeOutcomes(result, onError);
+
+  const firstFailure = result.outcomes.find(
+    (outcome): outcome is Extract<DocumentIntakeOutcome, { status: 'failed' }> =>
+      outcome.status === 'failed',
+  );
+  if (firstFailure && !continueOnError) throw firstFailure.error;
 
   return result.opened;
 }

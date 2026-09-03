@@ -38,7 +38,7 @@ describe('Document Intake', () => {
     const runtime = {
       isOpen: vi.fn(() => false),
       activate: vi.fn(),
-      open: vi.fn(async () => undefined),
+      open: vi.fn(async (_request: { activate: boolean }) => undefined),
       goToPage: vi.fn(),
     };
     const intake = createDocumentIntake({ source, runtime });
@@ -47,6 +47,7 @@ describe('Document Intake', () => {
 
     expect(result.outcomes.map(({ status }) => status)).toEqual(['opened', 'failed', 'opened']);
     expect(runtime.open).toHaveBeenCalledTimes(2);
+    expect(runtime.open.mock.calls.map(([request]) => request.activate)).toEqual([true, false]);
   });
 
   it('does not transfer the first explicit page when the first Document fails', async () => {
@@ -68,6 +69,38 @@ describe('Document Intake', () => {
     await intake.open(['/docs/first.pdf', '/docs/second.pdf'], { page: 12 });
 
     expect(runtime.goToPage).not.toHaveBeenCalled();
+    expect(runtime.open).toHaveBeenCalledWith({
+      document: { canonicalPath: '/docs/second.pdf', title: 'second.pdf' },
+      bytes: expect.any(Uint8Array),
+      activate: true,
+    });
+  });
+
+  it('keeps the first successful explicit Document active for a multi-path request', async () => {
+    const runtime = {
+      isOpen: vi.fn((path: string) => path.endsWith('first.pdf')),
+      activate: vi.fn(async () => undefined),
+      open: vi.fn(async () => undefined),
+      goToPage: vi.fn(async () => undefined),
+    };
+    const intake = createDocumentIntake({
+      source: {
+        describe: async (path) => ({ canonicalPath: path, title: path.split('/').pop() ?? path }),
+        read: async () => new Uint8Array([1]),
+      },
+      runtime,
+    });
+
+    await intake.open(['/docs/first.pdf', '/docs/second.pdf']);
+
+    expect(runtime.activate).toHaveBeenCalledTimes(1);
+    expect(runtime.activate).toHaveBeenCalledWith('/docs/first.pdf');
+    expect(runtime.open).toHaveBeenCalledWith(
+      expect.objectContaining({
+        document: expect.objectContaining({ canonicalPath: '/docs/second.pdf' }),
+        activate: false,
+      }),
+    );
   });
 
   it('passes the first explicit page into new-Document preparation', async () => {
