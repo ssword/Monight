@@ -89,6 +89,7 @@ describe('Tauri drag and drop events', () => {
     openPdfAndRefresh: vi.fn(async () => undefined),
     getInitialFilterSettings: () => ({ ...PRESETS.default }),
     getInitialViewMode: () => 'single' as const,
+    handleStartupExternalOpenPayloads: vi.fn(async () => undefined),
     reloadSettings: vi.fn(async () => undefined),
     readingHistoryCleared: vi.fn(),
     applyWindowAfterOpen: vi.fn(async () => undefined),
@@ -173,16 +174,46 @@ describe('Tauri drag and drop events', () => {
     expect(applyWindowAfterOpen).not.toHaveBeenCalled();
   });
 
-  it('passes the startup CLI page into Document Intake', async () => {
+  it('passes the startup CLI request to the startup restoration workflow', async () => {
     mocks.invoke.mockImplementationOnce(async () => [
       { files: ['/tmp/report.pdf'], page: 7, source: 'commandLine' },
     ]);
+    const handleStartupExternalOpenPayloads = vi.fn(async () => undefined);
 
-    await setupTauriListeners(context());
+    await setupTauriListeners(context({ handleStartupExternalOpenPayloads }));
+
+    expect(handleStartupExternalOpenPayloads).toHaveBeenCalledWith([
+      { files: ['/tmp/report.pdf'], page: 7, source: 'commandLine' },
+    ]);
+    expect(mocks.intakeFiles).not.toHaveBeenCalled();
+  });
+
+  it('holds live external requests until startup restoration completes', async () => {
+    let finishStartup: (() => void) | undefined;
+    const handleStartupExternalOpenPayloads = vi.fn(
+      async () =>
+        new Promise<void>((resolve) => {
+          finishStartup = resolve;
+        }),
+    );
+    mocks.invoke
+      .mockResolvedValueOnce([{ files: ['/tmp/startup.pdf'], page: null, source: 'commandLine' }])
+      .mockResolvedValueOnce([{ files: ['/tmp/live.pdf'], page: null, source: 'operatingSystem' }])
+      .mockResolvedValueOnce([]);
+
+    const setup = setupTauriListeners(context({ handleStartupExternalOpenPayloads }));
+    await vi.waitFor(() => expect(handleStartupExternalOpenPayloads).toHaveBeenCalledOnce());
+    const liveRequest = mocks.getListener('external-open-files-available')?.();
+    await Promise.resolve();
+    expect(mocks.intakeFiles).not.toHaveBeenCalled();
+
+    finishStartup?.();
+    await setup;
+    await liveRequest;
 
     expect(mocks.intakeFiles).toHaveBeenCalledWith(
-      ['/tmp/report.pdf'],
-      expect.objectContaining({ page: 7 }),
+      ['/tmp/live.pdf'],
+      expect.objectContaining({ tabManager: expect.anything() }),
     );
   });
 

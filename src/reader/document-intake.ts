@@ -13,12 +13,14 @@ export interface DocumentRuntimeOpenRequest {
   bytes: Uint8Array;
   activate: boolean;
   initialPage?: number;
+  notifyOpened?: boolean;
   restoredDocument?: ReadingSessionDocument;
 }
 
 export interface DocumentRuntimeIntake {
   isOpen(filePath: string): boolean;
   activate(filePath: string, options?: DocumentRuntimeActivateOptions): Promise<void>;
+  notifyOpened?(filePath: string): Promise<void>;
   open(request: DocumentRuntimeOpenRequest): Promise<void>;
   goToPage(filePath: string, page: number): Promise<void>;
   canonicalizeDocumentPaths?(paths: readonly DocumentPathReconciliation[]): Promise<void>;
@@ -38,9 +40,11 @@ export interface DocumentIntakeResult {
 }
 
 export interface RestoreSessionResult {
-  opened: number;
-  failed: number;
-  failedPaths: string[];
+  readonly outcomes: readonly DocumentIntakeOutcome[];
+  readonly opened: number;
+  readonly failed: number;
+  readonly failedPaths: readonly string[];
+  readonly explicitRequestResult: DocumentIntakeResult;
 }
 
 type DocumentPreparationResult = 'opened' | 'existing';
@@ -93,12 +97,21 @@ export interface OpenDocumentsOptions {
 }
 
 export interface RestoreReadingSessionOptions {
-  readonly foregroundDocumentPath?: string | null;
+  readonly explicitRequests?: readonly StartupDocumentRequest[];
+}
+
+export interface StartupDocumentRequest {
+  readonly paths: readonly string[];
+  readonly page?: number;
 }
 
 export interface DocumentIntake {
   begin(paths: readonly string[], options?: OpenDocumentsOptions): DocumentIntakeOperation;
   open(paths: readonly string[], options?: OpenDocumentsOptions): Promise<DocumentIntakeResult>;
+  beginRestore(
+    session: PersistedReadingSession,
+    options?: RestoreReadingSessionOptions,
+  ): RestoreSessionOperation;
   restore(
     session: PersistedReadingSession,
     options?: RestoreReadingSessionOptions,
@@ -110,6 +123,38 @@ export interface DocumentIntakeOperation {
   readonly completion: Promise<DocumentIntakeResult>;
 }
 
+export interface RestoreSessionOperation {
+  readonly foreground: Promise<DocumentIntakeOutcome | null>;
+  readonly completion: Promise<RestoreSessionResult>;
+}
+
+type DocumentIntakeOrigin = 'explicit' | 'restoration';
+
+interface ForegroundSignal {
+  readonly promise: Promise<DocumentIntakeOutcome | null>;
+  resolve(outcome: DocumentIntakeOutcome | null): void;
+}
+
+function createForegroundSignal(): ForegroundSignal {
+  let resolvePromise!: (outcome: DocumentIntakeOutcome | null) => void;
+  let resolved = false;
+  const promise = new Promise<DocumentIntakeOutcome | null>((resolve) => {
+    resolvePromise = resolve;
+  });
+  return {
+    promise,
+    resolve(outcome) {
+      if (resolved) return;
+      resolved = true;
+      resolvePromise(outcome);
+    },
+  };
+}
+
+function allowForegroundConsumerToRun(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
 export function createDocumentIntake({
   source,
   runtime,
@@ -117,15 +162,81 @@ export function createDocumentIntake({
   onSucceeded,
   onObserverError = (error) => console.error('Document Intake observer failed:', error),
 }: DocumentIntakeOptions): DocumentIntake {
+  const summarizeOutcomes = (outcomes: readonly DocumentIntakeOutcome[]): DocumentIntakeResult => ({
+    outcomes,
+    opened: outcomes.filter(({ status }) => status === 'opened').length,
+    activated: outcomes.filter(({ status }) => status === 'activated').length,
+    failed: outcomes.filter(({ status }) => status === 'failed').length,
+  });
+
+  const intakeDescribedDocument = async (
+    requestedPath: string,
+    document: DocumentMetadata,
+    {
+      activate,
+      initialPage,
+      origin,
+      restoredDocument,
+    }: {
+      activate: boolean;
+      initialPage?: number;
+      origin: DocumentIntakeOrigin;
+      restoredDocument?: ReadingSessionDocument;
+    },
+  ): Promise<{
+    outcome: Extract<DocumentIntakeOutcome, { status: 'opened' | 'activated' }>;
+    preparation: DocumentPreparationResult;
+  }> => {
+    const notifyOpened = origin === 'explicit';
+    const preparation = await coordinator.prepare(
+      document.canonicalPath,
+      () => runtime.isOpen(document.canonicalPath),
+      async () => {
+        const bytes = await source.read(document.canonicalPath);
+        await runtime.open({
+          document,
+          bytes,
+          activate,
+          ...(initialPage !== undefined ? { initialPage } : {}),
+          notifyOpened,
+          ...(restoredDocument ? { restoredDocument } : {}),
+        });
+      },
+    );
+    if (preparation === 'existing') {
+      if (activate) {
+        if (notifyOpened === false) {
+          await runtime.activate(document.canonicalPath, { notifyOpened: false });
+        } else {
+          await runtime.activate(document.canonicalPath);
+        }
+      } else if (origin === 'explicit') {
+        await runtime.notifyOpened?.(document.canonicalPath);
+      }
+      if (initialPage !== undefined) {
+        await runtime.goToPage(document.canonicalPath, initialPage);
+      }
+    }
+    const outcome: Extract<DocumentIntakeOutcome, { status: 'opened' | 'activated' }> =
+      preparation === 'opened'
+        ? { status: 'opened', requestedPath, filePath: document.canonicalPath }
+        : { status: 'activated', requestedPath, filePath: document.canonicalPath };
+    if (origin === 'explicit') {
+      try {
+        onSucceeded?.(outcome);
+      } catch (error) {
+        onObserverError(error);
+      }
+    }
+    return { outcome, preparation };
+  };
+
   const begin = (
     paths: readonly string[],
     options: OpenDocumentsOptions = {},
   ): DocumentIntakeOperation => {
-    let resolveForeground!: (outcome: DocumentIntakeOutcome | null) => void;
-    const foreground = new Promise<DocumentIntakeOutcome | null>((resolve) => {
-      resolveForeground = resolve;
-    });
-    if (paths.length === 0) resolveForeground(null);
+    const foreground = createForegroundSignal();
+    if (paths.length === 0) foreground.resolve(null);
 
     const completion = (async () => {
       const outcomes: DocumentIntakeOutcome[] = [];
@@ -134,146 +245,249 @@ export function createDocumentIntake({
         try {
           const document = await source.describe(requestedPath);
           const activateDocument = options.activate !== false && !hasActivatedDocument;
-          let outcome: Extract<DocumentIntakeOutcome, { status: 'opened' | 'activated' }>;
-          const preparation = await coordinator.prepare(
-            document.canonicalPath,
-            () => runtime.isOpen(document.canonicalPath),
-            async () => {
-              const bytes = await source.read(document.canonicalPath);
-              await runtime.open({
-                document,
-                bytes,
-                activate: activateDocument,
-                ...(index === 0 && options.page !== undefined ? { initialPage: options.page } : {}),
-              });
-              if (activateDocument) hasActivatedDocument = true;
-            },
-          );
-          if (preparation === 'existing') {
-            if (activateDocument) {
-              await runtime.activate(document.canonicalPath);
-              hasActivatedDocument = true;
-            }
-            if (index === 0 && options.page !== undefined) {
-              await runtime.goToPage(document.canonicalPath, options.page);
-            }
-            outcome = {
-              status: 'activated',
-              requestedPath,
-              filePath: document.canonicalPath,
-            };
-          } else {
-            outcome = { status: 'opened', requestedPath, filePath: document.canonicalPath };
-          }
+          const { outcome } = await intakeDescribedDocument(requestedPath, document, {
+            activate: activateDocument,
+            ...(index === 0 && options.page !== undefined ? { initialPage: options.page } : {}),
+            origin: 'explicit',
+          });
+          if (activateDocument) hasActivatedDocument = true;
           outcomes.push(outcome);
-          if (index === 0) resolveForeground(outcome);
-          try {
-            onSucceeded?.(outcome);
-          } catch (error) {
-            onObserverError(error);
-          }
+          if (index === 0) foreground.resolve(outcome);
         } catch (error) {
           const outcome: DocumentIntakeOutcome = { status: 'failed', requestedPath, error };
           outcomes.push(outcome);
-          if (index === 0) resolveForeground(outcome);
+          if (index === 0) foreground.resolve(outcome);
         }
       }
 
-      return {
-        outcomes,
-        opened: outcomes.filter(({ status }) => status === 'opened').length,
-        activated: outcomes.filter(({ status }) => status === 'activated').length,
-        failed: outcomes.filter(({ status }) => status === 'failed').length,
-      };
+      return summarizeOutcomes(outcomes);
     })();
 
-    return { foreground, completion };
+    return { foreground: foreground.promise, completion };
   };
 
-  const restore = async (
+  const beginRestore = (
     session: PersistedReadingSession,
-    { foregroundDocumentPath }: RestoreReadingSessionOptions = {},
-  ): Promise<RestoreSessionResult> => {
+    { explicitRequests = [] }: RestoreReadingSessionOptions = {},
+  ): RestoreSessionOperation => {
     if (!runtime.canonicalizeDocumentPaths || !runtime.setDocumentOrder) {
       throw new Error('Document Intake runtime cannot restore the Reading Session');
     }
+    const canonicalizeDocumentPaths = runtime.canonicalizeDocumentPaths;
+    const setDocumentOrder = runtime.setDocumentOrder;
 
-    let opened = 0;
-    let failed = 0;
-    const failedPaths: string[] = [];
-    const canonicalPaths = new Map<string, string>();
-    const runtimeStateSources = new Set<string>();
-    const availablePaths = new Set<string>();
-    let foregroundWasOpen = foregroundDocumentPath ? runtime.isOpen(foregroundDocumentPath) : false;
-    const savedActive = session.documents.find(
-      (document) => document.filePath === session.activeDocumentPath,
-    );
-    const restoreOrder = savedActive
-      ? [savedActive, ...session.documents.filter((document) => document !== savedActive)]
-      : session.documents;
+    const foreground = createForegroundSignal();
 
-    for (const document of restoreOrder) {
-      try {
-        const described = await source.describe(document.filePath);
-        if (
-          foregroundDocumentPath === document.filePath &&
-          runtime.isOpen(described.canonicalPath)
-        ) {
-          foregroundWasOpen = true;
+    const completion = (async () => {
+      const canonicalPaths = new Map<string, string>();
+      const runtimeStateSources = new Set<string>();
+      const handledSavedPaths = new Set<string>();
+      const restoredOutcomes = new Map<string, DocumentIntakeOutcome>();
+      const explicitOutcomes: DocumentIntakeOutcome[] = [];
+      let hasForegroundDocument = false;
+      const explicitEntries = explicitRequests.flatMap((request) =>
+        request.paths.map((requestedPath, index) => ({
+          requestedPath,
+          ...(index === 0 && request.page !== undefined ? { initialPage: request.page } : {}),
+        })),
+      );
+
+      const recordSavedOutcome = (
+        document: ReadingSessionDocument,
+        outcome: DocumentIntakeOutcome,
+      ): void => {
+        handledSavedPaths.add(document.filePath);
+        restoredOutcomes.set(document.filePath, outcome);
+      };
+
+      type SavedDescription =
+        | { readonly status: 'described'; readonly metadata: DocumentMetadata }
+        | { readonly status: 'failed'; readonly error: unknown };
+      const savedDescriptions = new Map<string, SavedDescription>();
+      const savedDocumentsByCanonicalPath = new Map<string, ReadingSessionDocument>();
+      for (const document of session.documents) {
+        try {
+          const metadata = await source.describe(document.filePath);
+          savedDescriptions.set(document.filePath, { status: 'described', metadata });
+          if (!savedDocumentsByCanonicalPath.has(metadata.canonicalPath)) {
+            savedDocumentsByCanonicalPath.set(metadata.canonicalPath, document);
+          }
+        } catch (error) {
+          savedDescriptions.set(document.filePath, { status: 'failed', error });
         }
-        const preparation = await coordinator.prepare(
-          described.canonicalPath,
-          () => runtime.isOpen(described.canonicalPath),
-          async () => {
-            const bytes = await source.read(described.canonicalPath);
-            await runtime.open({
-              document: described,
-              bytes,
-              activate: false,
-              restoredDocument: { ...document, filePath: described.canonicalPath },
-            });
-          },
-        );
-        canonicalPaths.set(document.filePath, described.canonicalPath);
-        if (preparation === 'opened') runtimeStateSources.add(document.filePath);
-        opened += 1;
-        availablePaths.add(described.canonicalPath);
-      } catch {
-        // Treat per-Document open failures as isolated restore failures so the remaining
-        // Documents still restore and the corrected Reading Session can be pruned deterministically.
-        failed += 1;
-        failedPaths.push(document.filePath);
       }
-    }
 
-    const pathMappings = Array.from(canonicalPaths, ([requestedPath, canonicalPath]) => ({
-      requestedPath,
-      canonicalPath,
-      runtimeStateSource: runtimeStateSources.has(requestedPath)
-        ? ('requested' as const)
-        : ('canonical' as const),
-    }));
-    await runtime.canonicalizeDocumentPaths(pathMappings);
-    runtime.setDocumentOrder(
-      Array.from(
-        new Set(
-          session.documents.map(
-            (document) => canonicalPaths.get(document.filePath) ?? document.filePath,
+      const findSavedDocument = (
+        requestedPath: string,
+        described: DocumentMetadata,
+      ): ReadingSessionDocument | undefined =>
+        session.documents.find((document) => document.filePath === requestedPath) ??
+        savedDocumentsByCanonicalPath.get(described.canonicalPath);
+
+      const processExplicitEntry = async (
+        entry: (typeof explicitEntries)[number],
+        activate: boolean,
+      ): Promise<DocumentIntakeOutcome | null> => {
+        let savedDocument = session.documents.find(
+          (document) => document.filePath === entry.requestedPath,
+        );
+        try {
+          const savedDescription = savedDocument
+            ? savedDescriptions.get(savedDocument.filePath)
+            : undefined;
+          if (savedDescription?.status === 'failed') throw savedDescription.error;
+          const described =
+            savedDescription?.status === 'described'
+              ? savedDescription.metadata
+              : await source.describe(entry.requestedPath);
+          savedDocument = findSavedDocument(entry.requestedPath, described);
+          const restoredDocument = savedDocument
+            ? {
+                ...savedDocument,
+                filePath: described.canonicalPath,
+                ...(entry.initialPage !== undefined
+                  ? { readingPosition: { page: entry.initialPage, location: 0 } }
+                  : {}),
+              }
+            : undefined;
+          const { outcome } = await intakeDescribedDocument(entry.requestedPath, described, {
+            activate,
+            ...(entry.initialPage !== undefined ? { initialPage: entry.initialPage } : {}),
+            origin: 'explicit',
+            ...(restoredDocument ? { restoredDocument } : {}),
+          });
+          explicitOutcomes.push(outcome);
+          if (savedDocument) {
+            canonicalPaths.set(savedDocument.filePath, described.canonicalPath);
+            recordSavedOutcome(savedDocument, {
+              ...outcome,
+              requestedPath: savedDocument.filePath,
+            });
+          }
+          return outcome;
+        } catch (error) {
+          explicitOutcomes.push({ status: 'failed', requestedPath: entry.requestedPath, error });
+          if (savedDocument) {
+            recordSavedOutcome(savedDocument, {
+              status: 'failed',
+              requestedPath: savedDocument.filePath,
+              error,
+            });
+          }
+          return null;
+        }
+      };
+
+      const processSavedDocument = async (
+        document: ReadingSessionDocument,
+        activate: boolean,
+      ): Promise<DocumentIntakeOutcome | null> => {
+        try {
+          const savedDescription = savedDescriptions.get(document.filePath);
+          if (!savedDescription || savedDescription.status === 'failed') {
+            throw savedDescription?.error ?? new Error('Saved Document metadata is unavailable');
+          }
+          const described = savedDescription.metadata;
+          const restoredDocument = { ...document, filePath: described.canonicalPath };
+          const { outcome, preparation } = await intakeDescribedDocument(
+            document.filePath,
+            described,
+            {
+              activate,
+              origin: 'restoration',
+              restoredDocument,
+            },
+          );
+          canonicalPaths.set(document.filePath, described.canonicalPath);
+          if (preparation === 'opened') {
+            runtimeStateSources.add(document.filePath);
+          }
+          recordSavedOutcome(document, outcome);
+          return outcome;
+        } catch (error) {
+          recordSavedOutcome(document, {
+            status: 'failed',
+            requestedPath: document.filePath,
+            error,
+          });
+          return null;
+        }
+      };
+
+      for (const entry of explicitEntries) {
+        const outcome = await processExplicitEntry(entry, !hasForegroundDocument);
+        if (outcome && !hasForegroundDocument) {
+          hasForegroundDocument = true;
+          foreground.resolve(outcome);
+          await allowForegroundConsumerToRun();
+        }
+      }
+
+      const savedActive = session.documents.find(
+        (document) => document.filePath === session.activeDocumentPath,
+      );
+      if (savedActive && !handledSavedPaths.has(savedActive.filePath)) {
+        const outcome = await processSavedDocument(savedActive, !hasForegroundDocument);
+        if (outcome && !hasForegroundDocument) {
+          hasForegroundDocument = true;
+          foreground.resolve(outcome);
+          await allowForegroundConsumerToRun();
+        }
+      }
+
+      for (const document of session.documents) {
+        if (handledSavedPaths.has(document.filePath)) continue;
+        const outcome = await processSavedDocument(document, !hasForegroundDocument);
+        if (outcome && !hasForegroundDocument) {
+          hasForegroundDocument = true;
+          foreground.resolve(outcome);
+          await allowForegroundConsumerToRun();
+        }
+      }
+
+      const pathMappings = Array.from(canonicalPaths, ([requestedPath, canonicalPath]) => ({
+        requestedPath,
+        canonicalPath,
+        runtimeStateSource: runtimeStateSources.has(requestedPath)
+          ? ('requested' as const)
+          : ('canonical' as const),
+      }));
+      await canonicalizeDocumentPaths(pathMappings);
+      setDocumentOrder(
+        Array.from(
+          new Set(
+            session.documents.map(
+              (document) => canonicalPaths.get(document.filePath) ?? document.filePath,
+            ),
           ),
         ),
-      ),
-    );
+      );
 
-    const requestedActivationPath = foregroundDocumentPath ?? session.activeDocumentPath;
-    const activationPath = requestedActivationPath
-      ? (canonicalPaths.get(requestedActivationPath) ?? requestedActivationPath)
-      : null;
-    if (activationPath && !foregroundWasOpen && availablePaths.has(activationPath)) {
-      await runtime.activate(activationPath, { notifyOpened: false });
-    }
+      const outcomes = session.documents.flatMap((document) => {
+        const outcome = restoredOutcomes.get(document.filePath);
+        return outcome ? [outcome] : [];
+      });
+      const failedPaths = outcomes.flatMap((outcome) =>
+        outcome.status === 'failed' ? [outcome.requestedPath] : [],
+      );
+      return {
+        outcomes,
+        opened: outcomes.length - failedPaths.length,
+        failed: failedPaths.length,
+        failedPaths,
+        explicitRequestResult: summarizeOutcomes(explicitOutcomes),
+      };
+    })().finally(() => {
+      foreground.resolve(null);
+    });
 
-    return { opened, failed, failedPaths };
+    return { foreground: foreground.promise, completion };
   };
+
+  const restore = (
+    session: PersistedReadingSession,
+    options?: RestoreReadingSessionOptions,
+  ): Promise<RestoreSessionResult> => beginRestore(session, options).completion;
 
   const open = (
     paths: readonly string[],
@@ -282,6 +496,7 @@ export function createDocumentIntake({
 
   return {
     begin,
+    beginRestore,
     open,
     restore,
   };

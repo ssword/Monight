@@ -226,11 +226,7 @@ export class TabManager {
       throw error;
     }
     if (notifyOpened) {
-      try {
-        await this.options.onDocumentOpened?.(tab);
-      } catch (error) {
-        console.error('Document Intake observer failed:', error);
-      }
+      await this.notifyDocumentOpened(filePath);
     }
 
     debugLog(`Created Document: ${title} (${id})`);
@@ -302,11 +298,17 @@ export class TabManager {
     if (!tab) return;
     await this.activateTab(id);
     if (notifyOpened) {
-      try {
-        await this.options.onDocumentOpened?.(tab);
-      } catch (error) {
-        console.error('Document Intake observer failed:', error);
-      }
+      await this.notifyDocumentOpened(tab.filePath);
+    }
+  }
+
+  async notifyDocumentOpened(filePath: string): Promise<void> {
+    const tab = this.getTabs().find((item) => item.filePath === filePath);
+    if (!tab) throw new Error(`Cannot notify for unopened Document: ${filePath}`);
+    try {
+      await this.options.onDocumentOpened?.(tab);
+    } catch (error) {
+      console.error('Document Intake observer failed:', error);
     }
   }
 

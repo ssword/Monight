@@ -50,7 +50,10 @@ export function createDocumentIntakeRuntime({
         }
         await tabManager.reactivateOpenDocument(tab.id);
       },
-      open: async ({ document, bytes, activate, initialPage, restoredDocument }) => {
+      notifyOpened: async (filePath) => {
+        await tabManager.notifyDocumentOpened(filePath);
+      },
+      open: async ({ document, bytes, activate, initialPage, notifyOpened, restoredDocument }) => {
         await tabManager.createTab(
           document.canonicalPath,
           document.title,
@@ -60,7 +63,8 @@ export function createDocumentIntakeRuntime({
           {
             activate,
             ...(initialPage !== undefined ? { initialPage } : {}),
-            ...(restoredDocument ? { notifyOpened: false, restoredDocument } : {}),
+            ...(notifyOpened !== undefined ? { notifyOpened } : {}),
+            ...(restoredDocument ? { restoredDocument } : {}),
           },
         );
       },

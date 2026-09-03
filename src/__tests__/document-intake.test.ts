@@ -73,6 +73,7 @@ describe('Document Intake', () => {
       document: { canonicalPath: '/docs/second.pdf', title: 'second.pdf' },
       bytes: expect.any(Uint8Array),
       activate: true,
+      notifyOpened: true,
     });
   });
 
@@ -125,6 +126,7 @@ describe('Document Intake', () => {
       bytes: expect.any(Uint8Array),
       activate: true,
       initialPage: 12,
+      notifyOpened: true,
     });
     expect(runtime.goToPage).not.toHaveBeenCalled();
   });

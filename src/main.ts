@@ -14,6 +14,7 @@ import {
   openPDFFile,
   openSettings,
   printCurrentPDF,
+  reportDocumentIntakeOutcomes,
   updatePrintMenuState,
 } from './app/file-actions';
 import { registerKeybindActions } from './app/keybinds';
@@ -21,8 +22,9 @@ import { PresentationController } from './app/presentation-controller';
 import { createReadingSessionStorage } from './app/reading-session-storage';
 import { SearchController } from './app/search-controller';
 import { SidebarController } from './app/sidebar-controller';
+import { restoreReadingSessionAtStartup } from './app/startup-restoration';
 import { restoreTabState } from './app/tab-state';
-import { setupTauriListeners } from './app/tauri-events';
+import { type ExternalOpenPayload, setupTauriListeners } from './app/tauri-events';
 import {
   renderRecentFiles,
   showSplash,
@@ -47,7 +49,11 @@ import {
   type ReaderActions,
   readerAction,
 } from './reader/reader-actions';
-import { loadReadingSession, type ReadingSessionStorage } from './reader/reading-session-store';
+import {
+  EMPTY_READING_SESSION,
+  loadReadingSession,
+  type ReadingSessionStorage,
+} from './reader/reading-session-store';
 import { buildFilterCSS, type FilterSettings, PRESETS } from './scripts/filters';
 import { KeybindManager } from './scripts/keybind-manager';
 import { type MoonightSettings, SettingsManager } from './scripts/settings';
@@ -287,16 +293,18 @@ const saveReadingSessionNow = async (): Promise<void> => {
   await readerActions.flush();
 };
 
-const restorePreviousReadingSession = async (): Promise<number> => {
-  if (!tabManager || !currentSettings?.general.restorePreviousSession) return 0;
+const restoreStartupReadingSession = async (
+  payloads: readonly ExternalOpenPayload[],
+): Promise<number> => {
+  if (!tabManager) return 0;
   const manager = tabManager;
-
-  const session = restoredReadingSession;
-  if (!session?.documents.length) return 0;
+  const session = currentSettings?.general.restorePreviousSession
+    ? (restoredReadingSession ?? EMPTY_READING_SESSION)
+    : EMPTY_READING_SESSION;
+  if (session.documents.length === 0 && payloads.length === 0) return 0;
 
   isRestoringSession = true;
   try {
-    const foregroundDocumentPath = tabManager.getActiveTab()?.filePath ?? null;
     const intake = createDocumentIntakeRuntime({
       tabManager: manager,
       initialFilterSettings: getInitialFilterSettings(),
@@ -307,27 +315,33 @@ const restorePreviousReadingSession = async (): Promise<number> => {
         if (outcome.status === 'failure') throw outcome.error;
       },
     });
-    const result = await intake.restore(session, {
-      foregroundDocumentPath,
+    const result = await restoreReadingSessionAtStartup({
+      intake,
+      session,
+      explicitRequests: payloads.map(({ files, page }) => ({
+        paths: files,
+        ...(page !== null && page > 0 ? { page } : {}),
+      })),
+      onForegroundReady: async () => {
+        showViewer();
+        updateTabBarVisibility(tabManager);
+        await updatePrintMenuState(tabManager);
+        await applyWindowAfterOpen();
+        const currentWindow = getCurrentWebviewWindow();
+        await currentWindow.show();
+        await currentWindow.setFocus();
+      },
+      pruneDocument: async (filePath) => {
+        const outcome = await readerActions?.dispatch({ type: 'removeDocument', filePath });
+        if (outcome?.status === 'failure') throw outcome.error;
+      },
+      reportFailure: (message) => showToast(message, 'error'),
     });
+    reportDocumentIntakeOutcomes(result.explicitRequestResult);
+    updateTabBarVisibility(tabManager);
+    await updatePrintMenuState(tabManager);
 
-    if (result.failed > 0) {
-      showToast(
-        `Skipped ${result.failed} Document${result.failed === 1 ? '' : 's'} while restoring the previous Reading Session.`,
-        'error',
-      );
-      for (const filePath of result.failedPaths) {
-        await readerActions?.dispatch({ type: 'removeDocument', filePath });
-      }
-    }
-
-    if (result.opened > 0) {
-      updateTabBarVisibility(tabManager);
-      await updatePrintMenuState(tabManager);
-      await applyWindowAfterOpen();
-    }
-
-    return result.opened;
+    return manager.size;
   } finally {
     isRestoringSession = false;
   }
@@ -351,6 +365,9 @@ async function initializeApp(): Promise<void> {
         activeDocumentPath: null,
         documents: [],
       };
+    }
+    if (!settings.general.restorePreviousSession) {
+      restoredReadingSession = EMPTY_READING_SESSION;
     }
     renderRecentFiles(settings.recentFiles);
     debugLog('Settings loaded:', settings);
@@ -595,6 +612,9 @@ async function initializeApp(): Promise<void> {
       openPdfAndRefresh,
       getInitialFilterSettings,
       getInitialViewMode,
+      handleStartupExternalOpenPayloads: async (payloads) => {
+        await restoreStartupReadingSession(payloads);
+      },
       reloadSettings: async () => {
         if (!settingsManager) return;
         const updated = await settingsManager.load();
@@ -638,9 +658,6 @@ async function initializeApp(): Promise<void> {
       printCurrentPDF: () => printCurrentPDF(tabManager),
       dispatchReaderAction,
     });
-
-    // Restore the saved active Document next, then the remaining Documents in saved order.
-    await restorePreviousReadingSession();
 
     // Show the correct initial surface after session/CLI restore has run.
     if ((tabManager?.size ?? 0) > 0) {

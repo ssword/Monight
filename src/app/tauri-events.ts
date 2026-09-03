@@ -12,9 +12,9 @@ import type { TabManager } from '../scripts/tabs';
 import { showToast } from './dialogs';
 import { intakeFiles, reportDocumentIntakeOutcomes } from './file-actions';
 
-type ExternalOpenSource = 'commandLine' | 'operatingSystem' | 'dragAndDrop';
+export type ExternalOpenSource = 'commandLine' | 'operatingSystem' | 'dragAndDrop';
 
-interface ExternalOpenPayload {
+export interface ExternalOpenPayload {
   files: string[];
   page: number | null;
   source: ExternalOpenSource;
@@ -28,6 +28,7 @@ interface TauriListenerContext {
   openPdfAndRefresh: () => Promise<void>;
   getInitialFilterSettings: () => FilterSettings;
   getInitialViewMode: () => ViewMode;
+  handleStartupExternalOpenPayloads: (payloads: readonly ExternalOpenPayload[]) => Promise<void>;
   reloadSettings: () => Promise<void>;
   readingHistoryCleared: () => void;
   applyWindowAfterOpen: () => Promise<void>;
@@ -45,6 +46,7 @@ export async function setupTauriListeners({
   openPdfAndRefresh,
   getInitialFilterSettings,
   getInitialViewMode,
+  handleStartupExternalOpenPayloads,
   reloadSettings,
   readingHistoryCleared,
   applyWindowAfterOpen,
@@ -106,9 +108,14 @@ export async function setupTauriListeners({
     }
   });
 
+  let releaseStartupGate!: () => void;
+  const startupGate = new Promise<void>((resolve) => {
+    releaseStartupGate = resolve;
+  });
   let externalOpenDrain = Promise.resolve();
   const drainExternalOpenPayloads = (): Promise<void> => {
     externalOpenDrain = externalOpenDrain.then(async () => {
+      await startupGate;
       while (true) {
         const payloads = await invoke<ExternalOpenPayload[]>('take_external_open_payloads');
         if (payloads.length === 0) return;
@@ -121,6 +128,12 @@ export async function setupTauriListeners({
   };
 
   await listen('external-open-files-available', drainExternalOpenPayloads);
+  const startupPayloads = await invoke<ExternalOpenPayload[]>('take_external_open_payloads');
+  try {
+    await handleStartupExternalOpenPayloads(startupPayloads);
+  } finally {
+    releaseStartupGate();
+  }
   await drainExternalOpenPayloads();
 
   // Listen for menu events

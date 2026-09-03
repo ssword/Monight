@@ -28,7 +28,7 @@ interface LegacyReadingSession {
   tabs: LegacyDocument[];
 }
 
-const EMPTY_READING_SESSION: PersistedReadingSession = {
+export const EMPTY_READING_SESSION: PersistedReadingSession = {
   schemaVersion: 2,
   activeDocumentPath: null,
   documents: [],

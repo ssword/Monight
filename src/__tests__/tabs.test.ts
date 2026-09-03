@@ -190,6 +190,34 @@ describe('Document navigation', () => {
     expect(goToReadingPosition).toHaveBeenCalledWith({ page: 4, location: 0.6 });
   });
 
+  it('notifies an explicit open without activating an existing Document', async () => {
+    const onDocumentOpened = vi.fn(async () => undefined);
+    const manager = new TabManager(vi.fn(), undefined, undefined, { onDocumentOpened });
+    const active = await manager.createTab(
+      '/tmp/active.pdf',
+      'active.pdf',
+      new Uint8Array([1]),
+      undefined,
+      'single',
+      { notifyOpened: false },
+    );
+    await manager.createTab(
+      '/tmp/background.pdf',
+      'background.pdf',
+      new Uint8Array([2]),
+      undefined,
+      'single',
+      { activate: false, notifyOpened: false },
+    );
+
+    await manager.notifyDocumentOpened('/tmp/background.pdf');
+
+    expect(manager.getActiveTab()?.id).toBe(active.id);
+    expect(onDocumentOpened).toHaveBeenCalledWith(
+      expect.objectContaining({ filePath: '/tmp/background.pdf' }),
+    );
+  });
+
   it('rolls back restored projection before Reading Session registration', async () => {
     vi.spyOn(PDFViewer.prototype, 'setRotation').mockRejectedValueOnce(
       new Error('rotation projection failed'),
