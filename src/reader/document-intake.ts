@@ -1,6 +1,9 @@
 import type { DocumentMetadata, PdfSource } from './pdf-source';
+import type { PersistedReadingSession, ReadingSessionDocument } from './reader-actions';
 
 export type { DocumentMetadata, PdfSource } from './pdf-source';
+
+export type RestoreDocumentResult = { status: 'restored' } | { status: 'failed'; message: string };
 
 export interface DocumentRuntimeIntake {
   isOpen(filePath: string): boolean;
@@ -12,6 +15,11 @@ export interface DocumentRuntimeIntake {
     initialPage?: number,
   ): Promise<void>;
   goToPage(filePath: string, page: number): Promise<void>;
+  restoreDocumentState?(
+    document: ReadingSessionDocument,
+    options: { preserveCurrentReadingPosition: boolean },
+  ): Promise<RestoreDocumentResult>;
+  setDocumentOrder?(filePaths: readonly string[]): void;
 }
 
 export type DocumentIntakeOutcome =
@@ -24,6 +32,12 @@ export interface DocumentIntakeResult {
   readonly opened: number;
   readonly activated: number;
   readonly failed: number;
+}
+
+export interface RestoreSessionResult {
+  opened: number;
+  failed: number;
+  failedPaths: string[];
 }
 
 type DocumentPreparationResult = 'opened' | 'existing';
@@ -75,9 +89,18 @@ export interface OpenDocumentsOptions {
   readonly activate?: boolean;
 }
 
+export interface RestoreReadingSessionOptions {
+  readonly foregroundDocumentPath?: string | null;
+  readonly preserveForegroundReadingPosition?: boolean;
+}
+
 export interface DocumentIntake {
   begin(paths: readonly string[], options?: OpenDocumentsOptions): DocumentIntakeOperation;
   open(paths: readonly string[], options?: OpenDocumentsOptions): Promise<DocumentIntakeResult>;
+  restore(
+    session: PersistedReadingSession,
+    options?: RestoreReadingSessionOptions,
+  ): Promise<RestoreSessionResult>;
 }
 
 export interface DocumentIntakeOperation {
@@ -159,8 +182,72 @@ export function createDocumentIntake({
     return { foreground, completion };
   };
 
+  const restore = async (
+    session: PersistedReadingSession,
+    {
+      foregroundDocumentPath,
+      preserveForegroundReadingPosition = false,
+    }: RestoreReadingSessionOptions = {},
+  ): Promise<RestoreSessionResult> => {
+    if (!runtime.restoreDocumentState || !runtime.setDocumentOrder) {
+      throw new Error('Document Intake runtime cannot restore the Reading Session');
+    }
+
+    let opened = 0;
+    let failed = 0;
+    const failedPaths: string[] = [];
+    const savedActive = session.documents.find(
+      (document) => document.filePath === session.activeDocumentPath,
+    );
+    const activationAnchorPath = foregroundDocumentPath ?? session.activeDocumentPath;
+    const restoreOrder = savedActive
+      ? [savedActive, ...session.documents.filter((document) => document !== savedActive)]
+      : session.documents;
+
+    for (const document of restoreOrder) {
+      const result = await open([document.filePath], {
+        activate: document.filePath === activationAnchorPath,
+      });
+      const outcome = result.outcomes[0];
+      if (!outcome || outcome.status === 'failed') {
+        failed += 1;
+        failedPaths.push(document.filePath);
+        continue;
+      }
+
+      try {
+        const restoreOutcome = await runtime.restoreDocumentState(document, {
+          preserveCurrentReadingPosition:
+            preserveForegroundReadingPosition && document.filePath === foregroundDocumentPath,
+        });
+        if (restoreOutcome.status === 'restored') {
+          opened += 1;
+          continue;
+        }
+      } catch {
+        // Treat adapter restore failures as per-Document failures so the remaining Documents
+        // still restore and the corrected Reading Session can be pruned deterministically.
+      }
+
+      failed += 1;
+      failedPaths.push(document.filePath);
+    }
+
+    runtime.setDocumentOrder(session.documents.map((document) => document.filePath));
+
+    if (activationAnchorPath) await runtime.activate(activationAnchorPath);
+
+    return { opened, failed, failedPaths };
+  };
+
+  const open = (
+    paths: readonly string[],
+    options?: OpenDocumentsOptions,
+  ): Promise<DocumentIntakeResult> => begin(paths, options).completion;
+
   return {
     begin,
-    open: (paths, options) => begin(paths, options).completion,
+    open,
+    restore,
   };
 }

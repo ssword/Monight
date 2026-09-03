@@ -1,155 +1,205 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { PRESETS } from '../scripts/filters';
-import type { ReadingSession } from '../scripts/settings';
+import { describe, expect, it, vi } from 'vitest';
+import { createDocumentIntake, type DocumentRuntimeIntake } from '../reader/document-intake';
+import type {
+  PersistedReadingSession,
+  ReadingSessionDocument,
+  ReadingSessionVisualState,
+} from '../reader/reader-actions';
 
-const mocks = vi.hoisted(() => ({
-  openFiles: vi.fn(),
-}));
+function visualState(viewMode: 'single' | 'continuous' | 'spread'): ReadingSessionVisualState {
+  return {
+    filterSettings: {
+      brightness: 0,
+      grayscale: 0,
+      invert: 100,
+      sepia: 0,
+      hue: 0,
+      extraBrightness: 0,
+    },
+    zoomIntent: { kind: 'fit-width' },
+    rotation: 0,
+    viewMode,
+  };
+}
 
-vi.mock('../app/file-actions', () => ({ openFiles: mocks.openFiles }));
-vi.mock('../app/ui', () => ({ updateActivePresetButton: vi.fn() }));
-
-import { restoreReadingSession } from '../app/session-state';
-
-function saved(filePath: string, currentPage: number) {
+function savedDocument(
+  filePath: string,
+  page: number,
+  options: {
+    location?: number;
+    viewMode?: 'single' | 'continuous' | 'spread';
+  } = {},
+): ReadingSessionDocument {
   return {
     filePath,
     title: filePath.split('/').pop() ?? filePath,
-    filterSettings: { ...PRESETS.default },
-    currentPage,
-    zoom: 1,
-    zoomIntent: { kind: 'fit-width' as const },
-    rotation: 0,
-    scrollPosition: 0,
-    viewMode: 'continuous' as const,
+    readingPosition: { page, location: options.location ?? 0.25 },
+    visualState: visualState(options.viewMode ?? 'continuous'),
   };
 }
 
-function fakeTab(filePath: string, currentPage: number) {
-  return {
-    id: filePath,
-    ...saved(filePath, currentPage),
-    annotations: [],
+function createRestoringIntake(
+  runtimeOverrides: Partial<DocumentRuntimeIntake> = {},
+  sourceOverrides: {
+    describe?: (path: string) => Promise<{ canonicalPath: string; title: string }>;
+    read?: (path: string) => Promise<Uint8Array>;
+  } = {},
+) {
+  const runtime: DocumentRuntimeIntake = {
+    isOpen: vi.fn(() => false),
+    activate: vi.fn(async () => undefined),
+    open: vi.fn(async () => undefined),
+    goToPage: vi.fn(async () => undefined),
+    restoreDocumentState: vi.fn(async () => ({ status: 'restored' as const })),
+    setDocumentOrder: vi.fn(),
+    ...runtimeOverrides,
   };
+  const intake = createDocumentIntake({
+    source: {
+      describe:
+        sourceOverrides.describe ??
+        (async (path: string) => ({
+          canonicalPath: path,
+          title: path.split('/').pop() ?? path,
+        })),
+      read: sourceOverrides.read ?? (async () => new Uint8Array([1])),
+    },
+    runtime,
+  });
+
+  return { intake, runtime };
 }
 
 describe('Reading Session restoration', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    vi.stubGlobal('document', { getElementById: vi.fn(() => null) });
-  });
-
   it('restores the saved active Document first without stealing explicit startup activation', async () => {
-    const explicit = fakeTab('/docs/explicit.pdf', 12);
-    const tabs = [explicit];
-    let active = explicit;
-    const activationOrder: string[] = [];
-    const restoredPositions: unknown[] = [];
-    const manager = {
-      getTabs: () => tabs,
-      getActiveTab: () => active,
-      setDocumentOrder: vi.fn((filePaths: readonly string[]) => {
-        tabs.sort(
-          (left, right) => filePaths.indexOf(left.filePath) - filePaths.indexOf(right.filePath),
-        );
+    const restoreCalls: Array<{
+      filePath: string;
+      preserveCurrentReadingPosition: boolean;
+    }> = [];
+    const { intake, runtime } = createRestoringIntake({
+      restoreDocumentState: vi.fn(async (document, options) => {
+        restoreCalls.push({
+          filePath: document.filePath,
+          preserveCurrentReadingPosition: options.preserveCurrentReadingPosition,
+        });
+        return { status: 'restored' as const };
       }),
-      activateTab: vi.fn(async (id: string) => {
-        const tab = tabs.find((item) => item.id === id);
-        if (tab) {
-          active = tab;
-          activationOrder.push(tab.filePath);
-        }
-      }),
-      getViewerForTab: vi.fn((id: string) => {
-        const tab = tabs.find((item) => item.id === id);
-        return {
-          applyFilter: vi.fn(),
-          setRotation: vi.fn(),
-          setZoomIntent: vi.fn(),
-          setViewMode: vi.fn(),
-          goToReadingPosition: vi.fn((position) => {
-            restoredPositions.push(position);
-          }),
-          getReadingPosition: () => ({ page: tab?.currentPage ?? 1, location: 0.4 }),
-        };
-      }),
-    };
-    mocks.openFiles.mockImplementation(
-      async ([filePath]: string[], options: { activate?: boolean }) => {
-        const existing = tabs.find((tab) => tab.filePath === filePath);
-        if (existing) {
-          if (options.activate !== false) await manager.activateTab(existing.id);
-          return 0;
-        }
-        const tab = fakeTab(filePath, 1);
-        tabs.push(tab);
-        if (options.activate !== false) await manager.activateTab(tab.id);
-        return 1;
-      },
-    );
-    const session: ReadingSession = {
-      version: 1,
-      activeFilePath: '/docs/saved-active.pdf',
-      tabs: [
-        saved('/docs/other.pdf', 3),
-        saved('/docs/saved-active.pdf', 7),
-        saved('/docs/explicit.pdf', 4),
+    });
+    const session: PersistedReadingSession = {
+      schemaVersion: 2,
+      activeDocumentPath: '/docs/saved-active.pdf',
+      documents: [
+        savedDocument('/docs/other.pdf', 3, { location: 0.6 }),
+        savedDocument('/docs/saved-active.pdf', 7),
+        savedDocument('/docs/explicit.pdf', 4, { viewMode: 'spread' }),
       ],
     };
-    session.tabs[0].readingPosition = { page: 3, location: 0.6 };
 
-    const result = await restoreReadingSession(session, {
-      tabManager: manager as never,
-      sliderManager: null,
-      getInitialFilterSettings: () => ({ ...PRESETS.default }),
-      getInitialViewMode: () => 'continuous',
+    const result = await intake.restore(session, {
       foregroundDocumentPath: '/docs/explicit.pdf',
+      preserveForegroundReadingPosition: true,
     });
 
-    expect(mocks.openFiles.mock.calls.map(([paths]) => paths[0])).toEqual([
-      '/docs/saved-active.pdf',
+    expect(
+      (runtime.open as ReturnType<typeof vi.fn>).mock.calls.map(
+        ([document]) => document.canonicalPath,
+      ),
+    ).toEqual(['/docs/saved-active.pdf', '/docs/other.pdf', '/docs/explicit.pdf']);
+    expect(
+      (runtime.open as ReturnType<typeof vi.fn>).mock.calls.map(([, , activate]) => activate),
+    ).toEqual([false, false, true]);
+    expect(restoreCalls).toEqual([
+      {
+        filePath: '/docs/saved-active.pdf',
+        preserveCurrentReadingPosition: false,
+      },
+      {
+        filePath: '/docs/other.pdf',
+        preserveCurrentReadingPosition: false,
+      },
+      {
+        filePath: '/docs/explicit.pdf',
+        preserveCurrentReadingPosition: true,
+      },
+    ]);
+    expect(runtime.setDocumentOrder).toHaveBeenCalledWith([
       '/docs/other.pdf',
+      '/docs/saved-active.pdf',
       '/docs/explicit.pdf',
     ]);
-    expect(active.filePath).toBe('/docs/explicit.pdf');
-    expect(tabs.map((tab) => tab.filePath)).toEqual([
-      '/docs/other.pdf',
-      '/docs/saved-active.pdf',
-      '/docs/explicit.pdf',
-    ]);
-    expect(explicit.currentPage).toBe(12);
-    expect(explicit.zoomIntent).toEqual({ kind: 'fit-width' });
+    expect(runtime.activate).toHaveBeenCalledWith('/docs/explicit.pdf');
     expect(result).toEqual({ opened: 3, failed: 0, failedPaths: [] });
-    expect(activationOrder).not.toContain('/docs/saved-active.pdf');
-    expect(activationOrder).not.toContain('/docs/other.pdf');
-    expect(restoredPositions).toContainEqual({ page: 3, location: 0.6 });
+  });
+
+  it('uses the saved Reading Position when startup did not request an explicit page', async () => {
+    const { intake, runtime } = createRestoringIntake();
+    const session: PersistedReadingSession = {
+      schemaVersion: 2,
+      activeDocumentPath: '/docs/saved-active.pdf',
+      documents: [
+        savedDocument('/docs/explicit.pdf', 4),
+        savedDocument('/docs/saved-active.pdf', 7),
+      ],
+    };
+
+    await intake.restore(session, {
+      foregroundDocumentPath: '/docs/explicit.pdf',
+      preserveForegroundReadingPosition: false,
+    });
+
+    expect(runtime.restoreDocumentState).toHaveBeenNthCalledWith(
+      2,
+      session.documents[0],
+      expect.objectContaining({ preserveCurrentReadingPosition: false }),
+    );
   });
 
   it('returns every failed restored path for authoritative pruning', async () => {
-    const manager = {
-      getTabs: () => [],
-      setDocumentOrder: vi.fn(),
-      activateTab: vi.fn(),
-      getViewerForTab: vi.fn(),
-    };
-    mocks.openFiles.mockResolvedValue(0);
-    const session: ReadingSession = {
-      version: 1,
-      activeFilePath: '/docs/missing.pdf',
-      tabs: [saved('/docs/missing.pdf', 1), saved('/docs/also-missing.pdf', 1)],
+    const { intake, runtime } = createRestoringIntake(
+      {},
+      {
+        describe: async (path: string) => {
+          if (path === '/docs/missing.pdf') throw new Error('missing');
+          return { canonicalPath: path, title: path.split('/').pop() ?? path };
+        },
+      },
+    );
+    const session: PersistedReadingSession = {
+      schemaVersion: 2,
+      activeDocumentPath: '/docs/missing.pdf',
+      documents: [savedDocument('/docs/missing.pdf', 1), savedDocument('/docs/kept.pdf', 9)],
     };
 
-    const result = await restoreReadingSession(session, {
-      tabManager: manager as never,
-      sliderManager: null,
-      getInitialFilterSettings: () => ({ ...PRESETS.default }),
-      getInitialViewMode: () => 'continuous',
-    });
+    const result = await intake.restore(session);
 
+    expect(runtime.restoreDocumentState).toHaveBeenCalledTimes(1);
     expect(result).toEqual({
-      opened: 0,
-      failed: 2,
-      failedPaths: ['/docs/missing.pdf', '/docs/also-missing.pdf'],
+      opened: 1,
+      failed: 1,
+      failedPaths: ['/docs/missing.pdf'],
+    });
+  });
+
+  it('continues after a thrown per-Document restore failure', async () => {
+    const { intake, runtime } = createRestoringIntake({
+      restoreDocumentState: vi
+        .fn()
+        .mockRejectedValueOnce(new Error('render failed'))
+        .mockResolvedValueOnce({ status: 'restored' as const }),
+    });
+    const session: PersistedReadingSession = {
+      schemaVersion: 2,
+      activeDocumentPath: '/docs/one.pdf',
+      documents: [savedDocument('/docs/one.pdf', 1), savedDocument('/docs/two.pdf', 2)],
+    };
+
+    const result = await intake.restore(session);
+
+    expect(runtime.restoreDocumentState).toHaveBeenCalledTimes(2);
+    expect(result).toEqual({
+      opened: 1,
+      failed: 1,
+      failedPaths: ['/docs/one.pdf'],
     });
   });
 });

@@ -20,6 +20,7 @@ interface TauriListenerContext {
   openPdfAndRefresh: () => Promise<void>;
   getInitialFilterSettings: () => FilterSettings;
   getInitialViewMode: () => ViewMode;
+  reportStartupIntent?: (payload: { files: string[]; page: number | null }) => void;
   reloadSettings: () => Promise<void>;
   readingHistoryCleared: () => void;
   applyWindowAfterOpen: () => Promise<void>;
@@ -37,6 +38,7 @@ export async function setupTauriListeners({
   openPdfAndRefresh,
   getInitialFilterSettings,
   getInitialViewMode,
+  reportStartupIntent,
   reloadSettings,
   readingHistoryCleared,
   applyWindowAfterOpen,
@@ -55,6 +57,7 @@ export async function setupTauriListeners({
     if (!tabManager) return;
 
     const { files, page } = payload;
+    reportStartupIntent?.(payload);
 
     try {
       const initialFilterSettings = getInitialFilterSettings();

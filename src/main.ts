@@ -16,10 +16,11 @@ import {
   updatePrintMenuState,
 } from './app/file-actions';
 import { registerKeybindActions } from './app/keybinds';
+import { createTauriPdfSource } from './app/pdf-source';
 import { PresentationController } from './app/presentation-controller';
 import { createReadingSessionStorage } from './app/reading-session-storage';
 import { SearchController } from './app/search-controller';
-import { restoreReadingSession } from './app/session-state';
+import { restoreDocumentStateInTabManager } from './app/session-restoration-runtime';
 import { SidebarController } from './app/sidebar-controller';
 import { restoreTabState } from './app/tab-state';
 import { setupTauriListeners } from './app/tauri-events';
@@ -39,6 +40,7 @@ import {
   updateRecentFiles,
   type ViewMode,
 } from './lib/document-features';
+import { createDocumentIntake } from './reader/document-intake';
 import {
   createReaderActions,
   type PersistedReadingSession,
@@ -150,6 +152,7 @@ const getInitialViewMode = (): ViewMode => {
 let lastFilterSaveTimer: number | null = null;
 let annotationSaveTimer: number | null = null;
 let isRestoringSession = false;
+let preserveStartupForegroundReadingPosition = false;
 
 const getActiveViewer = () => {
   const activeTab = tabManager?.getActiveTab();
@@ -288,43 +291,62 @@ const saveReadingSessionNow = async (): Promise<void> => {
 
 const restorePreviousReadingSession = async (): Promise<number> => {
   if (!tabManager || !currentSettings?.general.restorePreviousSession) return 0;
+  const manager = tabManager;
 
   const session = restoredReadingSession;
   if (!session?.documents.length) return 0;
-  const legacyProjection = {
-    version: 1 as const,
-    activeFilePath: session.activeDocumentPath,
-    tabs: session.documents.map((document) => ({
-      filePath: document.filePath,
-      title: document.title,
-      filterSettings: document.visualState?.filterSettings ?? getInitialFilterSettings(),
-      currentPage: document.readingPosition.page,
-      zoom:
-        document.visualState?.zoomIntent.kind === 'manual'
-          ? document.visualState.zoomIntent.scale
-          : 1,
-      zoomIntent: document.visualState?.zoomIntent ?? { kind: 'manual' as const, scale: 1 },
-      rotation: document.visualState?.rotation ?? 0,
-      scrollPosition:
-        'legacyOffset' in document.readingPosition ? document.readingPosition.legacyOffset : 0,
-      readingPosition: document.readingPosition,
-      viewMode: document.visualState?.viewMode ?? getInitialViewMode(),
-    })),
-  };
 
   isRestoringSession = true;
   try {
     const foregroundDocumentPath = tabManager.getActiveTab()?.filePath ?? null;
-    const result = await restoreReadingSession(legacyProjection, {
-      tabManager,
-      sliderManager,
-      getInitialFilterSettings,
-      getInitialViewMode,
+    const intake = createDocumentIntake({
+      source: createTauriPdfSource(),
+      runtime: {
+        isOpen: (filePath) => manager.getTabs().some((tab) => tab.filePath === filePath),
+        activate: async (filePath) => {
+          const tab = manager.getTabs().find((item) => item.filePath === filePath);
+          if (!tab) return;
+          await manager.reactivateOpenDocument(tab.id);
+        },
+        open: async (document, bytes, activate, initialPage) => {
+          await manager.createTab(
+            document.canonicalPath,
+            document.title,
+            bytes,
+            getInitialFilterSettings(),
+            getInitialViewMode(),
+            { activate, initialPage },
+          );
+        },
+        goToPage: async (filePath, page) => {
+          await manager.requestDocumentPage(filePath, page);
+        },
+        restoreDocumentState: async (document, options) =>
+          restoreDocumentStateInTabManager(
+            {
+              tabManager: manager,
+              sliderManager,
+              getInitialFilterSettings,
+              getInitialViewMode,
+            },
+            document,
+            options,
+          ),
+        setDocumentOrder: (filePaths) => {
+          manager.setDocumentOrder(filePaths);
+        },
+      },
+    });
+    const result = await intake.restore(session, {
       foregroundDocumentPath,
+      preserveForegroundReadingPosition: preserveStartupForegroundReadingPosition,
     });
 
     if (result.failed > 0) {
-      console.warn(`Skipped ${result.failed} PDF(s) while restoring the previous session.`);
+      showToast(
+        `Skipped ${result.failed} Document${result.failed === 1 ? '' : 's'} while restoring the previous Reading Session.`,
+        'error',
+      );
       for (const filePath of result.failedPaths) {
         await readerActions?.dispatch({ type: 'removeDocument', filePath });
       }
@@ -338,6 +360,7 @@ const restorePreviousReadingSession = async (): Promise<number> => {
 
     return result.opened;
   } finally {
+    preserveStartupForegroundReadingPosition = false;
     isRestoringSession = false;
   }
 };
@@ -610,6 +633,9 @@ async function initializeApp(): Promise<void> {
       openPdfAndRefresh,
       getInitialFilterSettings,
       getInitialViewMode,
+      reportStartupIntent: (payload) => {
+        preserveStartupForegroundReadingPosition = (payload.page ?? 0) > 0;
+      },
       reloadSettings: async () => {
         if (!settingsManager) return;
         const updated = await settingsManager.load();

@@ -9,7 +9,9 @@ const mocks = vi.hoisted(() => {
   const listeners = new Map<string, () => void | Promise<void>>();
 
   return {
-    invoke: vi.fn(async () => null),
+    invoke: vi.fn<(command: string) => Promise<{ files: string[]; page: number | null } | null>>(
+      async () => null,
+    ),
     listen: vi.fn(async (event: string, handler: () => void | Promise<void>) => {
       listeners.set(event, handler);
       return vi.fn();
@@ -145,6 +147,19 @@ describe('Tauri drag and drop events', () => {
     });
 
     expect(mocks.showToast).toHaveBeenCalledWith('Could not read /tmp/report.pdf', 'error');
+  });
+
+  it('reports startup CLI page intent before Reading Session restoration', async () => {
+    const reportStartupIntent = vi.fn();
+    mocks.invoke.mockImplementationOnce(async () => ({ files: ['/tmp/report.pdf'], page: 7 }));
+
+    await setupTauriListeners(context({ reportStartupIntent }));
+
+    expect(reportStartupIntent).toHaveBeenCalledWith({ files: ['/tmp/report.pdf'], page: 7 });
+    expect(mocks.openFiles).toHaveBeenCalledWith(
+      ['/tmp/report.pdf'],
+      expect.objectContaining({ page: 7 }),
+    );
   });
 
   it('handles the Settings clear-history request in the main window', async () => {
