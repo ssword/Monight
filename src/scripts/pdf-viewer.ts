@@ -35,6 +35,7 @@ import type {
   ReaderActionOptions,
   ReadingPosition,
   RestorableReadingPosition,
+  ZoomIntent,
 } from '../reader/reader-actions';
 import { captureReadingPosition, restoreReadingPosition } from '../reader/reading-position';
 
@@ -42,6 +43,7 @@ interface ViewState {
   currentPage: number;
   totalPages: number;
   zoom: number;
+  zoomIntent: ZoomIntent;
   rotation: number;
   fileName: string;
   filePath: string;
@@ -225,6 +227,7 @@ export class PDFViewer {
     currentPage: 1,
     totalPages: 0,
     zoom: 1.0,
+    zoomIntent: { kind: 'manual', scale: 1 },
     rotation: 0,
     fileName: '',
     filePath: '',
@@ -1643,6 +1646,7 @@ export class PDFViewer {
     const currentPage = this.state.currentPage;
     this.cancelGestureZoom();
     this.state.zoom = Math.min(this.state.zoom + 0.25, MAX_ZOOM);
+    this.state.zoomIntent = { kind: 'manual', scale: this.state.zoom };
 
     if (this.state.viewMode === 'continuous') {
       await this.calculateAllPageDimensions();
@@ -1657,6 +1661,7 @@ export class PDFViewer {
     const currentPage = this.state.currentPage;
     this.cancelGestureZoom();
     this.state.zoom = Math.max(this.state.zoom - 0.25, MIN_ZOOM);
+    this.state.zoomIntent = { kind: 'manual', scale: this.state.zoom };
 
     if (this.state.viewMode === 'continuous') {
       await this.calculateAllPageDimensions();
@@ -1948,6 +1953,7 @@ export class PDFViewer {
     const gestureEpoch = this.gestureCommit?.epoch ?? null;
     if (!this.isCurrentGestureCommit(gestureEpoch)) return;
     const clamped = clampZoom(zoom);
+    this.state.zoomIntent = { kind: 'manual', scale: clamped };
     if (!hasValueChanged(this.state.zoom, clamped)) return;
 
     const currentPage = this.state.currentPage;
@@ -1993,6 +1999,7 @@ export class PDFViewer {
         : this.container.clientWidth - 40;
 
     this.state.zoom = containerWidth / baseWidth;
+    this.state.zoomIntent = { kind: 'fit-width' };
 
     if (this.state.viewMode === 'continuous') {
       await this.calculateAllPageDimensions();
@@ -2036,6 +2043,7 @@ export class PDFViewer {
     const heightScale = containerHeight / baseHeight;
 
     this.state.zoom = Math.min(widthScale, heightScale);
+    this.state.zoomIntent = { kind: 'fit-page' };
 
     if (this.state.viewMode === 'continuous') {
       await this.calculateAllPageDimensions();
@@ -2066,6 +2074,20 @@ export class PDFViewer {
 
   getState(): Readonly<ViewState> {
     return { ...this.state };
+  }
+
+  async setZoomIntent(intent: ZoomIntent): Promise<void> {
+    switch (intent.kind) {
+      case 'manual':
+        await this.setZoom(intent.scale);
+        break;
+      case 'fit-width':
+        await this.fitToWidth();
+        break;
+      case 'fit-page':
+        await this.fitToPage();
+        break;
+    }
   }
 
   getScrollPosition(): number {

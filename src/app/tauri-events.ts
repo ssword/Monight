@@ -62,16 +62,12 @@ export async function setupTauriListeners({
       const initialFilterSettings = getInitialFilterSettings();
       const initialViewMode = getInitialViewMode();
       // Open each file
-      await openFiles(files, { tabManager, initialFilterSettings, initialViewMode });
-
-      // Navigate to specific page if provided (applies to first/active tab)
-      if (page && page > 0) {
-        await withActiveViewer(tabManager, async (viewer) => {
-          await viewer.goToPage(page);
-          updateUI();
-          debugLog(`Navigated to page ${page}`);
-        });
-      }
+      await openFiles(files, {
+        tabManager,
+        initialFilterSettings,
+        initialViewMode,
+        ...(page && page > 0 ? { page } : {}),
+      });
 
       // Update UI
       updateTabBarVisibility();

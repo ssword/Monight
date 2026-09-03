@@ -1,5 +1,6 @@
 import type { ViewMode } from '../lib/document-features';
 import type { FilterSettings } from '../scripts/filters';
+import { createReadingSession, type PersistenceUrgency } from './reading-session';
 
 export interface ReadingPosition {
   readonly page: number;
@@ -13,9 +14,14 @@ export interface LegacyReadingPosition {
 
 export type RestorableReadingPosition = ReadingPosition | LegacyReadingPosition;
 
+export type ZoomIntent =
+  | { readonly kind: 'manual'; readonly scale: number }
+  | { readonly kind: 'fit-width' }
+  | { readonly kind: 'fit-page' };
+
 export interface ReadingSessionVisualState {
   readonly filterSettings: Readonly<FilterSettings>;
-  readonly zoom: number;
+  readonly zoomIntent: ZoomIntent;
   readonly rotation: number;
   readonly viewMode: ViewMode;
 }
@@ -28,7 +34,7 @@ export interface ReadingSessionDocument {
 }
 
 export interface PersistedReadingSession {
-  readonly schemaVersion: 1;
+  readonly schemaVersion: 2;
   readonly activeDocumentPath: string | null;
   readonly documents: readonly ReadingSessionDocument[];
 }
@@ -44,6 +50,8 @@ export interface ReaderProjection {
     position: RestorableReadingPosition,
     options?: ReaderActionOptions,
   ): Promise<void>;
+  closeDocument?(filePath: string): Promise<void>;
+  exitPresentation?(): Promise<void>;
 }
 
 export interface ReaderActionOptions {
@@ -51,38 +59,24 @@ export interface ReaderActionOptions {
 }
 
 export type ReaderAction =
-  | {
-      type: 'activateDocument';
-      filePath: string;
-    }
-  | {
-      type: 'goToPage';
-      page: number;
-      filePath?: string;
-    }
-  | {
-      type: 'settleReadingPosition';
-      filePath: string;
-      readingPosition: ReadingPosition;
-    }
-  | {
-      type: 'registerDocument';
-      document: ReadingSessionDocument;
-    }
-  | {
-      type: 'removeDocument';
-      filePath: string;
-    };
+  | { type: 'activateDocument'; filePath: string }
+  | { type: 'goToPage'; page: number; filePath?: string }
+  | { type: 'settleReadingPosition'; filePath: string; readingPosition: ReadingPosition }
+  | { type: 'settleVisualState'; filePath: string; visualState: ReadingSessionVisualState }
+  | { type: 'registerDocument'; document: ReadingSessionDocument }
+  | { type: 'removeDocument'; filePath: string };
 
 export type ReaderActionOutcome =
   | { status: 'committed'; revision: number }
   | { status: 'no-op'; revision: number }
+  | { status: 'superseded'; revision: number }
   | { status: 'failure'; error: unknown; revision: number };
 
 interface CreateReaderActionsOptions {
   initialSession: PersistedReadingSession;
   projection: ReaderProjection;
   persist: (snapshot: ReadingSessionSnapshot) => Promise<void>;
+  persistenceDebounceMs?: number;
   onObserverError?: (error: unknown) => void;
 }
 
@@ -90,109 +84,228 @@ export interface ReaderActions {
   dispatch(action: ReaderAction, options?: ReaderActionOptions): Promise<ReaderActionOutcome>;
   snapshot(): ReadingSessionSnapshot;
   observe(observer: (snapshot: ReadingSessionSnapshot) => void): () => void;
+  flush(): Promise<void>;
+  hasDirtySession(): boolean;
 }
 
-function freezeSnapshot(
-  session: PersistedReadingSession,
-  revision: number,
-): ReadingSessionSnapshot {
-  const documents = session.documents.map((document) =>
-    Object.freeze({
-      ...document,
-      readingPosition: Object.freeze({ ...document.readingPosition }),
-      visualState: document.visualState
-        ? Object.freeze({
-            ...document.visualState,
-            filterSettings: Object.freeze({ ...document.visualState.filterSettings }),
-          })
-        : undefined,
-    }),
+interface PendingAbsoluteAction {
+  superseded: boolean;
+  resolve: (outcome: ReaderActionOutcome) => void;
+}
+
+interface DocumentLane {
+  tail: Promise<void>;
+  pendingAbsolute: Map<string, PendingAbsoluteAction>;
+}
+
+function visualStatesEqual(
+  left: ReadingSessionVisualState,
+  right: ReadingSessionVisualState,
+): boolean {
+  const filterKeys = [
+    'brightness',
+    'grayscale',
+    'invert',
+    'sepia',
+    'hue',
+    'extraBrightness',
+  ] as const;
+  return (
+    left.zoomIntent.kind === right.zoomIntent.kind &&
+    (left.zoomIntent.kind !== 'manual' ||
+      (right.zoomIntent.kind === 'manual' && left.zoomIntent.scale === right.zoomIntent.scale)) &&
+    left.rotation === right.rotation &&
+    left.viewMode === right.viewMode &&
+    filterKeys.every((key) => left.filterSettings[key] === right.filterSettings[key])
   );
-  return Object.freeze({
-    ...session,
-    revision,
-    documents: Object.freeze(documents),
-  });
 }
 
 export function createReaderActions({
   initialSession,
   projection,
   persist,
-  onObserverError = (error) => console.error('Reading Session observer failed:', error),
+  persistenceDebounceMs = 250,
+  onObserverError,
 }: CreateReaderActionsOptions): ReaderActions {
-  let snapshot = freezeSnapshot(initialSession, 0);
-  const observers = new Set<(value: ReadingSessionSnapshot) => void>();
-  let persistenceQueue = Promise.resolve();
+  const session = createReadingSession({
+    initialSession,
+    write: persist,
+    debounceMs: persistenceDebounceMs,
+    onObserverError,
+  });
+  const lanes = new Map<string, DocumentLane>();
+  const generations = new Map<string, number>();
+  let globalTail = Promise.resolve();
 
-  const commit = async (session: PersistedReadingSession): Promise<ReaderActionOutcome> => {
-    snapshot = freezeSnapshot(session, snapshot.revision + 1);
-    for (const observer of observers) {
+  const revision = (): number => session.snapshot().revision;
+  const generation = (filePath: string): number => generations.get(filePath) ?? 0;
+  const isDocumentOpen = (filePath: string): boolean =>
+    session.snapshot().documents.some((document) => document.filePath === filePath);
+  const cancelled = (
+    filePath: string,
+    expectedGeneration: number,
+    options?: ReaderActionOptions,
+  ): boolean =>
+    generation(filePath) !== expectedGeneration ||
+    !isDocumentOpen(filePath) ||
+    Boolean(options?.isCancelled?.());
+
+  const commit = async (
+    next: PersistedReadingSession,
+    urgency: PersistenceUrgency,
+  ): Promise<ReaderActionOutcome> => {
+    const committed = session.commit(next, urgency);
+    if (urgency === 'immediate') {
       try {
-        observer(snapshot);
+        await session.flush();
       } catch (error) {
-        onObserverError(error);
+        return { status: 'failure', error, revision: committed.revision };
       }
     }
-    const committedSnapshot = snapshot;
-    persistenceQueue = persistenceQueue
-      .catch(() => undefined)
-      .then(() => persist(committedSnapshot));
-    try {
-      await persistenceQueue;
-      return { status: 'committed', revision: committedSnapshot.revision };
-    } catch (error) {
-      return { status: 'failure', error, revision: committedSnapshot.revision };
+    return { status: 'committed', revision: committed.revision };
+  };
+
+  const laneFor = (filePath: string): DocumentLane => {
+    let lane = lanes.get(filePath);
+    if (!lane) {
+      lane = { tail: Promise.resolve(), pendingAbsolute: new Map() };
+      lanes.set(filePath, lane);
     }
+    return lane;
+  };
+
+  const enqueueAbsolute = (
+    filePath: string,
+    kind: string,
+    work: (expectedGeneration: number) => Promise<ReaderActionOutcome>,
+  ): Promise<ReaderActionOutcome> => {
+    const lane = laneFor(filePath);
+    const existing = lane.pendingAbsolute.get(kind);
+    if (existing) {
+      existing.superseded = true;
+      existing.resolve({ status: 'superseded', revision: revision() });
+    }
+
+    const expectedGeneration = generation(filePath);
+    let resolveOutcome!: (outcome: ReaderActionOutcome) => void;
+    const outcome = new Promise<ReaderActionOutcome>((resolve) => {
+      resolveOutcome = resolve;
+    });
+    const pending: PendingAbsoluteAction = {
+      superseded: false,
+      resolve: resolveOutcome,
+    };
+    lane.pendingAbsolute.set(kind, pending);
+    lane.tail = lane.tail
+      .catch(() => undefined)
+      .then(async () => {
+        if (pending.superseded) return;
+        if (lane.pendingAbsolute.get(kind) === pending) lane.pendingAbsolute.delete(kind);
+        try {
+          pending.resolve(await work(expectedGeneration));
+        } catch (error) {
+          pending.resolve({ status: 'failure', error, revision: revision() });
+        }
+      });
+    return outcome;
+  };
+
+  const enqueueGlobal = (
+    work: () => Promise<ReaderActionOutcome>,
+  ): Promise<ReaderActionOutcome> => {
+    const outcome = globalTail.catch(() => undefined).then(work);
+    globalTail = outcome.then(
+      () => undefined,
+      () => undefined,
+    );
+    return outcome;
   };
 
   return {
     async dispatch(action, options) {
       if (action.type === 'removeDocument') {
-        const index = snapshot.documents.findIndex((item) => item.filePath === action.filePath);
-        if (index === -1) return { status: 'no-op', revision: snapshot.revision };
-        const documents = snapshot.documents.filter((item) => item.filePath !== action.filePath);
-        const activeDocumentPath =
-          snapshot.activeDocumentPath === action.filePath
-            ? (documents[Math.min(index, documents.length - 1)]?.filePath ?? null)
-            : snapshot.activeDocumentPath;
-        return await commit({ schemaVersion: 1, activeDocumentPath, documents });
+        generations.set(action.filePath, generation(action.filePath) + 1);
+        const lane = lanes.get(action.filePath);
+        for (const pending of lane?.pendingAbsolute.values() ?? []) {
+          pending.superseded = true;
+          pending.resolve({ status: 'no-op', revision: revision() });
+        }
+        lane?.pendingAbsolute.clear();
+
+        return enqueueGlobal(async () => {
+          const current = session.snapshot();
+          const index = current.documents.findIndex((item) => item.filePath === action.filePath);
+          if (index === -1) return { status: 'no-op', revision: current.revision };
+          try {
+            await projection.exitPresentation?.();
+            await projection.closeDocument?.(action.filePath);
+          } catch (error) {
+            return { status: 'failure', error, revision: revision() };
+          }
+          const latest = session.snapshot();
+          const latestIndex = latest.documents.findIndex(
+            (item) => item.filePath === action.filePath,
+          );
+          if (latestIndex === -1) return { status: 'no-op', revision: latest.revision };
+          const documents = latest.documents.filter((item) => item.filePath !== action.filePath);
+          const activeDocumentPath =
+            latest.activeDocumentPath === action.filePath
+              ? (documents[Math.min(latestIndex, documents.length - 1)]?.filePath ?? null)
+              : latest.activeDocumentPath;
+          return commit({ schemaVersion: 2, activeDocumentPath, documents }, 'immediate');
+        });
       }
 
       if (action.type === 'registerDocument') {
-        if (snapshot.documents.some((item) => item.filePath === action.document.filePath)) {
-          return { status: 'no-op', revision: snapshot.revision };
-        }
-        return await commit({
-          schemaVersion: 1,
-          activeDocumentPath: snapshot.activeDocumentPath,
-          documents: [...snapshot.documents, action.document],
+        return enqueueGlobal(async () => {
+          const current = session.snapshot();
+          if (current.documents.some((item) => item.filePath === action.document.filePath)) {
+            return { status: 'no-op', revision: current.revision };
+          }
+          generations.set(action.document.filePath, generation(action.document.filePath));
+          return commit(
+            {
+              schemaVersion: 2,
+              activeDocumentPath: current.activeDocumentPath,
+              documents: [...current.documents, action.document],
+            },
+            'immediate',
+          );
         });
       }
 
       if (action.type === 'activateDocument') {
-        const document = snapshot.documents.find((item) => item.filePath === action.filePath);
-        if (!document) {
-          return { status: 'no-op', revision: snapshot.revision };
-        }
-
-        try {
-          await projection.activateDocument(document.filePath, document.readingPosition);
-          if (snapshot.activeDocumentPath === document.filePath) {
-            return { status: 'no-op', revision: snapshot.revision };
+        return enqueueGlobal(async () => {
+          const current = session.snapshot();
+          const document = current.documents.find((item) => item.filePath === action.filePath);
+          if (!document) return { status: 'no-op', revision: current.revision };
+          try {
+            await projection.exitPresentation?.();
+            await projection.activateDocument(document.filePath, document.readingPosition);
+          } catch (error) {
+            return { status: 'failure', error, revision: revision() };
           }
-          return await commit({
-            schemaVersion: 1,
-            activeDocumentPath: document.filePath,
-            documents: snapshot.documents,
-          });
-        } catch (error) {
-          return { status: 'failure', error, revision: snapshot.revision };
-        }
+          const latest = session.snapshot();
+          if (!latest.documents.some((item) => item.filePath === document.filePath)) {
+            return { status: 'no-op', revision: latest.revision };
+          }
+          if (latest.activeDocumentPath === document.filePath) {
+            return { status: 'no-op', revision: latest.revision };
+          }
+          return commit(
+            {
+              schemaVersion: 2,
+              activeDocumentPath: document.filePath,
+              documents: latest.documents,
+            },
+            'immediate',
+          );
+        });
       }
 
       if (action.type === 'settleReadingPosition') {
-        const document = snapshot.documents.find((item) => item.filePath === action.filePath);
+        const current = session.snapshot();
+        const document = current.documents.find((item) => item.filePath === action.filePath);
         const { page, location } = action.readingPosition;
         if (
           !document ||
@@ -202,62 +315,98 @@ export function createReaderActions({
           location < 0 ||
           location > 1
         ) {
-          return { status: 'no-op', revision: snapshot.revision };
+          return { status: 'no-op', revision: current.revision };
         }
         if (
           'location' in document.readingPosition &&
           document.readingPosition.page === page &&
           document.readingPosition.location === location
         ) {
-          return { status: 'no-op', revision: snapshot.revision };
+          return { status: 'no-op', revision: current.revision };
         }
-        const documents = snapshot.documents.map((item) =>
+        const documents = current.documents.map((item) =>
           item.filePath === document.filePath
             ? { ...item, readingPosition: { page, location } }
             : item,
         );
-        return await commit({
-          schemaVersion: 1,
-          activeDocumentPath: snapshot.activeDocumentPath,
-          documents,
-        });
+        return commit(
+          { schemaVersion: 2, activeDocumentPath: current.activeDocumentPath, documents },
+          'deferred',
+        );
       }
 
-      const targetPath = action.filePath ?? snapshot.activeDocumentPath;
-      const document = snapshot.documents.find((item) => item.filePath === targetPath);
+      if (action.type === 'settleVisualState') {
+        const current = session.snapshot();
+        const document = current.documents.find((item) => item.filePath === action.filePath);
+        if (!document) return { status: 'no-op', revision: current.revision };
+        const visualState = action.visualState;
+        if (
+          (visualState.zoomIntent.kind === 'manual' &&
+            (!Number.isFinite(visualState.zoomIntent.scale) ||
+              visualState.zoomIntent.scale <= 0)) ||
+          !Number.isFinite(visualState.rotation)
+        ) {
+          return { status: 'no-op', revision: current.revision };
+        }
+        if (document.visualState && visualStatesEqual(document.visualState, visualState)) {
+          return { status: 'no-op', revision: current.revision };
+        }
+        const documents = current.documents.map((item) =>
+          item.filePath === document.filePath
+            ? {
+                ...item,
+                visualState: {
+                  ...visualState,
+                  filterSettings: { ...visualState.filterSettings },
+                },
+              }
+            : item,
+        );
+        return commit(
+          { schemaVersion: 2, activeDocumentPath: current.activeDocumentPath, documents },
+          'deferred',
+        );
+      }
+
+      const targetPath = action.filePath ?? session.snapshot().activeDocumentPath;
+      const current = session.snapshot();
+      const document = current.documents.find((item) => item.filePath === targetPath);
       if (!document || !Number.isInteger(action.page) || action.page < 1) {
-        return { status: 'no-op', revision: snapshot.revision };
-      }
-      if (options?.isCancelled?.()) {
-        return { status: 'no-op', revision: snapshot.revision };
+        return { status: 'no-op', revision: current.revision };
       }
 
-      const readingPosition = { page: action.page, location: 0 };
-      try {
-        if (options) {
-          await projection.goToReadingPosition(document.filePath, readingPosition, options);
-        } else {
-          await projection.goToReadingPosition(document.filePath, readingPosition);
+      return enqueueAbsolute(document.filePath, 'goToPage', async (expectedGeneration) => {
+        if (cancelled(document.filePath, expectedGeneration, options)) {
+          return { status: 'no-op', revision: revision() };
         }
-        if (options?.isCancelled?.()) {
-          return { status: 'no-op', revision: snapshot.revision };
+        const readingPosition = { page: action.page, location: 0 };
+        try {
+          if (options) {
+            await projection.goToReadingPosition(document.filePath, readingPosition, {
+              isCancelled: () => cancelled(document.filePath, expectedGeneration, options),
+            });
+          } else {
+            await projection.goToReadingPosition(document.filePath, readingPosition);
+          }
+        } catch (error) {
+          return { status: 'failure', error, revision: revision() };
         }
-        const documents = snapshot.documents.map((item) =>
+        if (cancelled(document.filePath, expectedGeneration, options)) {
+          return { status: 'no-op', revision: revision() };
+        }
+        const latest = session.snapshot();
+        const documents = latest.documents.map((item) =>
           item.filePath === document.filePath ? { ...item, readingPosition } : item,
         );
-        return await commit({
-          schemaVersion: 1,
-          activeDocumentPath: snapshot.activeDocumentPath,
-          documents,
-        });
-      } catch (error) {
-        return { status: 'failure', error, revision: snapshot.revision };
-      }
+        return commit(
+          { schemaVersion: 2, activeDocumentPath: latest.activeDocumentPath, documents },
+          'deferred',
+        );
+      });
     },
-    snapshot: () => snapshot,
-    observe(observer) {
-      observers.add(observer);
-      return () => observers.delete(observer);
-    },
+    snapshot: session.snapshot,
+    observe: session.observe,
+    flush: session.flush,
+    hasDirtySession: session.isDirty,
   };
 }

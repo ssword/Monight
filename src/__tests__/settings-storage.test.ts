@@ -91,7 +91,7 @@ describe('settings storage', () => {
     expect(settings.annotations).toEqual(legacy.annotations);
     expect(settings.lastFilter).toEqual(legacy.lastFilter);
     expect(store.values.get('readingSession')).toEqual({
-      schemaVersion: 1,
+      schemaVersion: 2,
       activeDocumentPath: '/books/one.pdf',
       documents: [
         expect.objectContaining({
@@ -142,7 +142,7 @@ describe('settings storage', () => {
     keybinds.OpenFile.binds = ['Ctrl+Alt+O'];
     await settingsWindow.set('keybinds', keybinds);
     await mainWindow.writePersistedReadingSession({
-      schemaVersion: 1,
+      schemaVersion: 2,
       activeDocumentPath: '/books/two.pdf',
       documents: [
         {
@@ -167,7 +167,7 @@ describe('settings storage', () => {
     ]);
     await mainWindow.set('annotations', { '/books/one.pdf': [] });
     await mainWindow.writePersistedReadingSession({
-      schemaVersion: 1,
+      schemaVersion: 2,
       activeDocumentPath: '/books/one.pdf',
       documents: [
         {
@@ -186,7 +186,7 @@ describe('settings storage', () => {
     expect(store.values.get('recentFiles')).toEqual([]);
     expect(store.values.get('annotations')).toEqual({});
     expect(store.values.get('readingSession')).toEqual({
-      schemaVersion: 1,
+      schemaVersion: 2,
       activeDocumentPath: null,
       documents: [],
     });

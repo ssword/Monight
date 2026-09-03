@@ -13,10 +13,10 @@ function savedTab(): TabData {
     id: 'tab-1',
     title: 'report.pdf',
     filePath: '/tmp/report.pdf',
-    pdfData: new Uint8Array(),
     filterSettings: { ...PRESETS.default },
     currentPage: 12,
     zoom: 1.75,
+    zoomIntent: { kind: 'manual', scale: 1.75 },
     rotation: 270,
     scrollPosition: 4321,
     viewMode: 'continuous',
@@ -54,6 +54,7 @@ describe('reading session visual state', () => {
         currentPage: 7,
         totalPages: 20,
         zoom: 2,
+        zoomIntent: { kind: 'manual' as const, scale: 2 },
         rotation: 90,
         fileName: tab.title,
         filePath: tab.filePath,
@@ -83,8 +84,8 @@ describe('reading session visual state', () => {
       setRotation: vi.fn(async (rotation: number) => {
         calls.push(`rotation:${rotation}`);
       }),
-      setZoom: vi.fn(async (zoom: number) => {
-        calls.push(`zoom:${zoom}`);
+      setZoomIntent: vi.fn(async (intent: { kind: string; scale?: number }) => {
+        calls.push(`zoom:${intent.kind}:${intent.scale ?? ''}`);
       }),
       setViewMode: vi.fn(async (viewMode: string) => {
         calls.push(`viewMode:${viewMode}`);
@@ -106,7 +107,7 @@ describe('reading session visual state', () => {
 
     expect(calls).toEqual([
       'rotation:270',
-      'zoom:1.75',
+      'zoom:manual:1.75',
       'viewMode:continuous',
       'page:12:0',
       'scroll:4321',

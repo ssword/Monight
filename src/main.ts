@@ -1,6 +1,11 @@
 import { getName, getTauriVersion, getVersion } from '@tauri-apps/api/app';
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
-import { requestAnnotationNote, requestPdfPassword, showToast } from './app/dialogs';
+import {
+  requestAnnotationNote,
+  requestConfirmation,
+  requestPdfPassword,
+  showToast,
+} from './app/dialogs';
 import { setupEventListeners } from './app/dom-events';
 import {
   ensureMinimumViewingSize,
@@ -141,7 +146,6 @@ const getInitialViewMode = (): ViewMode => {
 };
 
 let lastFilterSaveTimer: number | null = null;
-let sessionSaveTimer: number | null = null;
 let annotationSaveTimer: number | null = null;
 let isRestoringSession = false;
 
@@ -249,34 +253,48 @@ const saveReadingSessionNow = async (): Promise<void> => {
   const activeTab = tabManager?.getActiveTab();
   const activeViewer = activeTab ? tabManager?.getViewerForTab(activeTab.id) : null;
   if (activeTab && activeViewer) {
-    await readerActions.dispatch({
-      type: 'settleReadingPosition',
-      filePath: activeTab.filePath,
-      readingPosition: activeViewer.getReadingPosition(),
-    });
+    const state = activeViewer.getState();
+    await Promise.all([
+      readerActions.dispatch({
+        type: 'settleReadingPosition',
+        filePath: activeTab.filePath,
+        readingPosition: activeViewer.getReadingPosition(),
+      }),
+      readerActions.dispatch({
+        type: 'settleVisualState',
+        filePath: activeTab.filePath,
+        visualState: {
+          filterSettings: activeTab.filterSettings,
+          zoomIntent: state.zoomIntent,
+          rotation: state.rotation,
+          viewMode: state.viewMode,
+        },
+      }),
+    ]);
   }
 
-  await readingSessionStorage.write(readerActions.snapshot());
+  await readerActions.flush();
 };
 
 const scheduleReadingSessionSave = (): void => {
   if (!settingsManager || !currentSettings?.general.restorePreviousSession || isRestoringSession) {
     return;
   }
-
-  if (sessionSaveTimer !== null) {
-    clearTimeout(sessionSaveTimer);
-  }
-
-  sessionSaveTimer = window.setTimeout(async () => {
-    try {
-      await saveReadingSessionNow();
-    } catch (error) {
-      console.error('Failed to save reading session:', error);
-    } finally {
-      sessionSaveTimer = null;
-    }
-  }, 250);
+  saveCurrentTabState(tabManager, sliderManager);
+  const activeTab = tabManager?.getActiveTab();
+  const activeViewer = activeTab ? tabManager?.getViewerForTab(activeTab.id) : null;
+  if (!activeTab || !activeViewer || !readerActions) return;
+  const state = activeViewer.getState();
+  void readerActions.dispatch({
+    type: 'settleVisualState',
+    filePath: activeTab.filePath,
+    visualState: {
+      filterSettings: activeTab.filterSettings,
+      zoomIntent: state.zoomIntent,
+      rotation: state.rotation,
+      viewMode: state.viewMode,
+    },
+  });
 };
 
 const restorePreviousReadingSession = async (): Promise<number> => {
@@ -292,7 +310,11 @@ const restorePreviousReadingSession = async (): Promise<number> => {
       title: document.title,
       filterSettings: document.visualState?.filterSettings ?? getInitialFilterSettings(),
       currentPage: document.readingPosition.page,
-      zoom: document.visualState?.zoom ?? 1,
+      zoom:
+        document.visualState?.zoomIntent.kind === 'manual'
+          ? document.visualState.zoomIntent.scale
+          : 1,
+      zoomIntent: document.visualState?.zoomIntent ?? { kind: 'manual' as const, scale: 1 },
       rotation: document.visualState?.rotation ?? 0,
       scrollPosition:
         'legacyOffset' in document.readingPosition ? document.readingPosition.legacyOffset : 0,
@@ -302,15 +324,20 @@ const restorePreviousReadingSession = async (): Promise<number> => {
 
   isRestoringSession = true;
   try {
+    const foregroundDocumentPath = tabManager.getActiveTab()?.filePath ?? null;
     const result = await restoreReadingSession(legacyProjection, {
       tabManager,
       sliderManager,
       getInitialFilterSettings,
       getInitialViewMode,
+      foregroundDocumentPath,
     });
 
     if (result.failed > 0) {
       console.warn(`Skipped ${result.failed} PDF(s) while restoring the previous session.`);
+      for (const filePath of result.failedPaths) {
+        await readerActions?.dispatch({ type: 'removeDocument', filePath });
+      }
     }
 
     if (result.opened > 0) {
@@ -340,7 +367,7 @@ async function initializeApp(): Promise<void> {
     } catch (error) {
       console.error('Reading Session migration failed; legacy data was retained:', error);
       restoredReadingSession = {
-        schemaVersion: 1,
+        schemaVersion: 2,
         activeDocumentPath: null,
         documents: [],
       };
@@ -380,7 +407,7 @@ async function initializeApp(): Promise<void> {
           persistAnnotations(filePath, annotations);
           sidebarController?.annotationsChanged();
         },
-        onDocumentOpened: async (tab) => {
+        onDocumentPrepared: async (tab) => {
           await readerActions?.dispatch({
             type: 'registerDocument',
             document: {
@@ -389,12 +416,14 @@ async function initializeApp(): Promise<void> {
               readingPosition: { page: tab.currentPage, location: 0 },
               visualState: {
                 filterSettings: tab.filterSettings,
-                zoom: tab.zoom,
+                zoomIntent: tab.zoomIntent,
                 rotation: tab.rotation,
                 viewMode: tab.viewMode,
               },
             },
           });
+        },
+        onDocumentOpened: (tab) => {
           if (!isRestoringSession) rememberRecentFile(tab.filePath, tab.title);
         },
         onDocumentClosed: async (filePath) => {
@@ -411,12 +440,18 @@ async function initializeApp(): Promise<void> {
         requestPassword: requestPdfPassword,
         requestAnnotationNote,
         reportError: (message) => showToast(message, 'error'),
+        beforeDocumentTransition: async () => {
+          await presentationController?.exit();
+        },
       },
     );
 
     readerActions = createReaderActions({
       initialSession: restoredReadingSession,
       projection: {
+        exitPresentation: async () => {
+          await presentationController?.exit();
+        },
         activateDocument: async (filePath, position) => {
           await tabManager?.projectActiveDocument(filePath, position);
         },
@@ -440,7 +475,10 @@ async function initializeApp(): Promise<void> {
         tab.currentPage = document.readingPosition.page;
         if (document.visualState) {
           tab.filterSettings = { ...document.visualState.filterSettings };
-          tab.zoom = document.visualState.zoom;
+          tab.zoomIntent = document.visualState.zoomIntent;
+          if (document.visualState.zoomIntent.kind === 'manual') {
+            tab.zoom = document.visualState.zoomIntent.scale;
+          }
           tab.rotation = document.visualState.rotation;
           tab.viewMode = document.visualState.viewMode;
         }
@@ -550,10 +588,7 @@ async function initializeApp(): Promise<void> {
     // Update keyboard hints for platform
     updateKeyboardHints(isMac);
 
-    // Restore saved tabs before processing pending OS/CLI file-open events.
-    await restorePreviousReadingSession();
-
-    // Listen for Tauri events
+    // Listen before restoration so an explicit startup Document wins foreground precedence.
     await setupTauriListeners({
       tabManager,
       settingsManager,
@@ -576,13 +611,9 @@ async function initializeApp(): Promise<void> {
           lastFilterSaveTimer = null;
         }
         if (!updated.general.restorePreviousSession) {
-          if (sessionSaveTimer !== null) {
-            clearTimeout(sessionSaveTimer);
-            sessionSaveTimer = null;
-          }
           await settingsManager.clearPersistedReadingSession();
           restoredReadingSession = {
-            schemaVersion: 1,
+            schemaVersion: 2,
             activeDocumentPath: null,
             documents: [],
           };
@@ -594,7 +625,7 @@ async function initializeApp(): Promise<void> {
         if (!currentSettings) return;
         currentSettings = { ...currentSettings, recentFiles: [], annotations: {} };
         restoredReadingSession = {
-          schemaVersion: 1,
+          schemaVersion: 2,
           activeDocumentPath: null,
           documents: [],
         };
@@ -613,6 +644,9 @@ async function initializeApp(): Promise<void> {
       printCurrentPDF: () => printCurrentPDF(tabManager),
     });
 
+    // Restore the saved active Document next, then the remaining Documents in saved order.
+    await restorePreviousReadingSession();
+
     // Show the correct initial surface after session/CLI restore has run.
     if ((tabManager?.size ?? 0) > 0) {
       showViewer();
@@ -623,13 +657,21 @@ async function initializeApp(): Promise<void> {
     // Get current window
     const currentWindow = getCurrentWebviewWindow();
 
-    await registerReadingSessionCloseGuard(currentWindow, async () => {
-      if (sessionSaveTimer !== null) {
-        clearTimeout(sessionSaveTimer);
-        sessionSaveTimer = null;
-      }
-      await saveReadingSessionNow();
-    });
+    await registerReadingSessionCloseGuard(
+      currentWindow,
+      async () => {
+        await saveReadingSessionNow();
+      },
+      async () =>
+        (await requestConfirmation({
+          title: 'Reading Session not saved',
+          message: 'Monight could not save your latest reading state.',
+          confirmLabel: 'Retry save',
+          cancelLabel: 'Quit without saving',
+        }))
+          ? 'retry'
+          : 'discard',
+    );
 
     // Show window after initialization
     await currentWindow.show();

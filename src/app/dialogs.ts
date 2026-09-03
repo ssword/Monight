@@ -4,6 +4,7 @@ export interface ConfirmationRequest {
   title: string;
   message: string;
   confirmLabel?: string;
+  cancelLabel?: string;
 }
 
 function requireDialog(id: string): HTMLDialogElement {
@@ -125,6 +126,7 @@ export function requestConfirmation({
   title,
   message,
   confirmLabel = 'Confirm',
+  cancelLabel = 'Cancel',
 }: ConfirmationRequest): Promise<boolean> {
   const dialog = requireDialog('confirmation-dialog');
   const form = dialog.querySelector<HTMLFormElement>('form');
@@ -140,6 +142,7 @@ export function requestConfirmation({
   titleElement.textContent = title;
   messageElement.textContent = message;
   confirmButton.textContent = confirmLabel;
+  cancelButton.textContent = cancelLabel;
 
   return requestDialogValue({
     dialog,

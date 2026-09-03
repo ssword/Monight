@@ -51,18 +51,38 @@ describe('Reading Session close lifecycle', () => {
     expect(appWindow.events).toEqual(['prevent', 'save:start', 'prevent', 'save:done', 'destroy']);
   });
 
-  it('closes after a failed save and ignores re-entrant close requests', async () => {
+  it('retries a failed final save before closing', async () => {
+    const appWindow = fakeWindow();
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const save = vi
+      .fn<() => Promise<void>>()
+      .mockRejectedValueOnce(new Error('store unavailable'))
+      .mockResolvedValueOnce(undefined);
+    const choose = vi.fn(async () => 'retry' as const);
+
+    await registerReadingSessionCloseGuard(appWindow, save, choose);
+    await appWindow.requestClose();
+    await appWindow.requestClose();
+
+    expect(save).toHaveBeenCalledTimes(2);
+    expect(choose).toHaveBeenCalledOnce();
+    expect(appWindow.destroy).toHaveBeenCalledOnce();
+    error.mockRestore();
+  });
+
+  it('only quits with dirty state after an explicit discard choice', async () => {
     const appWindow = fakeWindow();
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     const save = vi.fn(async () => {
       throw new Error('store unavailable');
     });
+    const choose = vi.fn(async () => 'discard' as const);
 
-    await registerReadingSessionCloseGuard(appWindow, save);
-    await appWindow.requestClose();
+    await registerReadingSessionCloseGuard(appWindow, save, choose);
     await appWindow.requestClose();
 
     expect(save).toHaveBeenCalledOnce();
+    expect(choose).toHaveBeenCalledOnce();
     expect(appWindow.destroy).toHaveBeenCalledOnce();
     error.mockRestore();
   });

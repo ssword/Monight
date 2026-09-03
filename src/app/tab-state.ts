@@ -18,7 +18,7 @@ export async function restoreTabState(
 
   // Apply geometry while still in single-page mode, then initialize the saved layout once.
   await viewer.setRotation(tab.rotation);
-  await viewer.setZoom(tab.zoom);
+  await viewer.setZoomIntent(tab.zoomIntent);
   await viewer.setViewMode(tab.viewMode);
   await viewer.goToReadingPosition({ page: tab.currentPage, location: 0 });
   await viewer.setScrollPosition(tab.scrollPosition);
@@ -58,6 +58,7 @@ export function saveCurrentTabState(
   // Save state to tab
   activeTab.currentPage = state.currentPage;
   activeTab.zoom = state.zoom;
+  activeTab.zoomIntent = state.zoomIntent;
   activeTab.rotation = state.rotation;
   activeTab.scrollPosition = viewer.getScrollPosition();
   activeTab.viewMode = state.viewMode;

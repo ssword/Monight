@@ -1,6 +1,6 @@
 import { Store } from '@tauri-apps/plugin-store';
 import type { PdfAnnotation, RecentFile, ViewMode } from '../lib/document-features';
-import type { PersistedReadingSession } from '../reader/reader-actions';
+import type { PersistedReadingSession, ZoomIntent } from '../reader/reader-actions';
 import type { FilterSettings } from './filters';
 
 export interface SavedTabSession {
@@ -9,6 +9,7 @@ export interface SavedTabSession {
   filterSettings: FilterSettings;
   currentPage: number;
   zoom: number;
+  zoomIntent?: ZoomIntent;
   rotation?: number;
   scrollPosition?: number;
   viewMode: ViewMode;
@@ -240,7 +241,7 @@ export const DEFAULT_SETTINGS: MoonightSettings = {
 };
 
 const EMPTY_READING_SESSION: PersistedReadingSession = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   activeDocumentPath: null,
   documents: [],
 };
@@ -261,14 +262,14 @@ function migrateLegacyReadingSession(session: ReadingSession | undefined): Persi
         : { page: tab.currentPage, location: 0 },
     visualState: {
       filterSettings: tab.filterSettings,
-      zoom: tab.zoom,
+      zoomIntent: tab.zoomIntent ?? { kind: 'manual' as const, scale: tab.zoom },
       rotation: tab.rotation ?? 0,
       viewMode: tab.viewMode,
     },
   }));
 
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     activeDocumentPath: documents.some((document) => document.filePath === session.activeFilePath)
       ? session.activeFilePath
       : null,

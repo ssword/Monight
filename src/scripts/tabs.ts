@@ -4,6 +4,7 @@ import type {
   ReaderActionOptions,
   ReadingPosition,
   RestorableReadingPosition,
+  ZoomIntent,
 } from '../reader/reader-actions';
 import { type FilterSettings, PRESETS } from './filters';
 import { type AnnotationNoteRequester, PDFViewer, type PdfPasswordRequester } from './pdf-viewer';
@@ -15,10 +16,10 @@ export interface TabData {
   id: string; // Unique UUID
   title: string; // Filename for display
   filePath: string; // Full file path
-  pdfData: Uint8Array; // PDF binary data
   filterSettings: FilterSettings; // Current filter preset
   currentPage: number; // Current page number
   zoom: number; // Current zoom level
+  zoomIntent: ZoomIntent; // Settled reader choice, independent of viewport
   rotation: number; // Clockwise page rotation in degrees
   scrollPosition: number; // Scroll position
   viewMode: ViewMode; // View mode
@@ -28,6 +29,7 @@ export interface TabData {
 interface TabManagerOptions {
   getAnnotations?: (filePath: string) => readonly PdfAnnotation[];
   onAnnotationsChanged?: (filePath: string, annotations: PdfAnnotation[]) => void;
+  onDocumentPrepared?: (tab: TabData) => void | Promise<void>;
   onDocumentOpened?: (tab: TabData) => void | Promise<void>;
   onDocumentClosed?: (filePath: string) => void | Promise<void>;
   onReadingPositionSettled?: (filePath: string, position: ReadingPosition) => void;
@@ -35,6 +37,7 @@ interface TabManagerOptions {
   requestPassword?: PdfPasswordRequester;
   requestAnnotationNote?: AnnotationNoteRequester;
   reportError?: (message: string) => void;
+  beforeDocumentTransition?: () => Promise<void>;
 }
 
 /**
@@ -81,10 +84,10 @@ export class TabManager {
       id,
       title,
       filePath,
-      pdfData,
       filterSettings: { ...initialFilterSettings },
       currentPage: 1,
       zoom: 1.0,
+      zoomIntent: { kind: 'manual', scale: 1 },
       rotation: 0,
       scrollPosition: 0,
       viewMode,
@@ -150,8 +153,9 @@ export class TabManager {
     this.onTabsChanged?.();
 
     // Activate the new tab (this will show its canvas)
-    await this.options.onDocumentOpened?.(tab);
+    await this.options.onDocumentPrepared?.(tab);
     await this.activateTab(id);
+    await this.options.onDocumentOpened?.(tab);
 
     debugLog(`Created Document: ${title} (${id})`);
     return tab;
@@ -163,6 +167,9 @@ export class TabManager {
   async closeTab(id: string): Promise<void> {
     const tab = this.tabs.get(id);
     if (!tab) return;
+    const orderedIds = Array.from(this.tabs.keys());
+    const closedIndex = orderedIds.indexOf(id);
+    await this.options.beforeDocumentTransition?.();
 
     // Add to closed history
     this.closedHistory.push(tab.filePath);
@@ -182,8 +189,8 @@ export class TabManager {
     if (this.activeTabId === id) {
       const remaining = Array.from(this.tabs.keys());
       if (remaining.length > 0) {
-        // Activate adjacent tab
-        await this.activateTab(remaining[0]);
+        const adjacentId = remaining[Math.min(closedIndex, remaining.length - 1)];
+        await this.activateTab(adjacentId);
       } else {
         // No tabs left
         this.activeTabId = null;
@@ -209,6 +216,13 @@ export class TabManager {
       return;
     }
     await this.activateTabDirect(id);
+  }
+
+  async reactivateOpenDocument(id: string): Promise<void> {
+    const tab = this.tabs.get(id);
+    if (!tab) return;
+    await this.activateTab(id);
+    await this.options.onDocumentOpened?.(tab);
   }
 
   setActivationRequester(requestActivation: (filePath: string) => Promise<void>): void {

@@ -27,7 +27,7 @@ describe('Document picker intake', () => {
 
   it('uses the authorizing Rust picker before validating and reading its selection', async () => {
     const tabManager = {
-      isFileOpen: vi.fn(() => false),
+      getTabs: vi.fn(() => []),
       createTab: vi.fn(async () => undefined),
     };
     const { openPDFFile } = await import('../app/file-actions');
@@ -38,8 +38,8 @@ describe('Document picker intake', () => {
     expect(mocks.invoke.mock.calls.map(([command]) => command)).toEqual([
       'open_pdf_dialog',
       'validate_open_path',
-      'read_pdf_file',
       'get_file_name',
+      'read_pdf_file',
     ]);
   });
 });

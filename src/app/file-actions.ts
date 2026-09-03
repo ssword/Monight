@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { debugLog } from '../lib/debug-log';
 import type { ViewMode } from '../lib/document-features';
+import { createDocumentIntake } from '../reader/document-intake';
 import type { FilterSettings } from '../scripts/filters';
 import type { TabManager } from '../scripts/tabs';
 import { showToast } from './dialogs';
@@ -12,6 +13,7 @@ interface OpenFilesOptions {
   onError?: (message: string) => void;
   initialFilterSettings?: FilterSettings;
   initialViewMode?: ViewMode;
+  page?: number;
 }
 
 interface EnsureViewingSizeOptions {
@@ -26,48 +28,63 @@ export async function openFiles(
     onError,
     initialFilterSettings,
     initialViewMode,
+    page,
   }: OpenFilesOptions,
 ): Promise<number> {
-  let opened = 0;
+  const intake = createDocumentIntake({
+    source: {
+      describe: async (requestedPath) => {
+        const canonicalPath: string = await invoke('validate_open_path', { path: requestedPath });
+        const title: string = await invoke('get_file_name', { path: canonicalPath });
+        return { canonicalPath, title };
+      },
+      read: async (canonicalPath) => {
+        const pdfData: ArrayBuffer = await invoke('read_pdf_file', { path: canonicalPath });
+        return new Uint8Array(pdfData);
+      },
+    },
+    runtime: {
+      isOpen: (filePath) => tabManager.getTabs().some((tab) => tab.filePath === filePath),
+      activate: async (filePath) => {
+        const tab = tabManager.getTabs().find((item) => item.filePath === filePath);
+        if (!tab) throw new Error(`Cannot activate unopened Document: ${filePath}`);
+        await tabManager.reactivateOpenDocument(tab.id);
+      },
+      open: async (document, bytes) => {
+        await tabManager.createTab(
+          document.canonicalPath,
+          document.title,
+          bytes,
+          initialFilterSettings,
+          initialViewMode ?? 'single',
+        );
+      },
+      goToPage: async (filePath, requestedPage) => {
+        const tab = tabManager.getTabs().find((item) => item.filePath === filePath);
+        const viewer = tab ? tabManager.getViewerForTab(tab.id) : null;
+        if (!viewer) throw new Error(`Cannot navigate unopened Document: ${filePath}`);
+        await viewer.goToPage(requestedPage);
+      },
+    },
+  });
+  const result = await intake.open(filePaths, { ...(page !== undefined ? { page } : {}) });
 
-  for (const filePath of filePaths) {
-    try {
-      const canonicalPath: string = await invoke('validate_open_path', { path: filePath });
-
-      // Check if already open
-      if (tabManager.isFileOpen(canonicalPath)) {
-        debugLog(`File already open: ${canonicalPath}`);
-        continue;
-      }
-
-      // Load PDF data (received as binary ArrayBuffer via Tauri's IPC)
-      const pdfData: ArrayBuffer = await invoke('read_pdf_file', { path: canonicalPath });
-      const fileName: string = await invoke('get_file_name', { path: canonicalPath });
-
-      // Create tab (TabManager handles viewer creation)
-      await tabManager.createTab(
-        canonicalPath,
-        fileName,
-        new Uint8Array(pdfData),
-        initialFilterSettings,
-        initialViewMode ?? 'single',
-      );
-      opened += 1;
-
-      debugLog(`Opened PDF: ${fileName}`);
-    } catch (error) {
-      const message = `Failed to open ${filePath}: ${error instanceof Error ? error.message : 'Unknown error'}`;
-      console.error(message, error);
-      if (onError) {
-        onError(message);
-      }
-      if (!continueOnError) {
-        throw error;
-      }
+  for (const outcome of result.outcomes) {
+    if (outcome.status === 'opened') {
+      debugLog(`Opened PDF: ${outcome.filePath}`);
+      continue;
     }
+    if (outcome.status === 'activated') {
+      debugLog(`Document already open: ${outcome.filePath}`);
+      continue;
+    }
+    const message = `Failed to open ${outcome.requestedPath}: ${outcome.error instanceof Error ? outcome.error.message : 'Unknown error'}`;
+    console.error(message, outcome.error);
+    onError?.(message);
+    if (!continueOnError) throw outcome.error;
   }
 
-  return opened;
+  return result.opened;
 }
 
 // Open PDF file dialog

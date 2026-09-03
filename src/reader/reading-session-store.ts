@@ -2,6 +2,7 @@ import type {
   PersistedReadingSession,
   ReadingSessionDocument,
   ReadingSessionVisualState,
+  ZoomIntent,
 } from './reader-actions';
 
 export interface ReadingSessionStorage {
@@ -28,13 +29,26 @@ interface LegacyReadingSession {
 }
 
 const EMPTY_READING_SESSION: PersistedReadingSession = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   activeDocumentPath: null,
   documents: [],
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function parseZoomIntent(value: unknown, legacyZoom: unknown): ZoomIntent | null {
+  if (isRecord(value)) {
+    if (value.kind === 'fit-width' || value.kind === 'fit-page') return { kind: value.kind };
+    if (value.kind === 'manual' && typeof value.scale === 'number' && value.scale > 0) {
+      return { kind: 'manual', scale: value.scale };
+    }
+  }
+  if (typeof legacyZoom === 'number' && Number.isFinite(legacyZoom) && legacyZoom > 0) {
+    return { kind: 'manual', scale: legacyZoom };
+  }
+  return null;
 }
 
 function parseVisualState(value: unknown): ReadingSessionVisualState | undefined {
@@ -50,12 +64,13 @@ function parseVisualState(value: unknown): ReadingSessionVisualState | undefined
   ] as const;
   if (filterKeys.some((key) => typeof filterSettings[key] !== 'number')) return undefined;
   if (
-    typeof value.zoom !== 'number' ||
     typeof value.rotation !== 'number' ||
     (value.viewMode !== 'single' && value.viewMode !== 'continuous' && value.viewMode !== 'spread')
   ) {
     return undefined;
   }
+  const zoomIntent = parseZoomIntent(value.zoomIntent, value.zoom);
+  if (!zoomIntent) return undefined;
   return {
     filterSettings: {
       brightness: filterSettings.brightness as number,
@@ -65,7 +80,7 @@ function parseVisualState(value: unknown): ReadingSessionVisualState | undefined
       hue: filterSettings.hue as number,
       extraBrightness: filterSettings.extraBrightness as number,
     },
-    zoom: value.zoom,
+    zoomIntent,
     rotation: value.rotation,
     viewMode: value.viewMode,
   };
@@ -100,7 +115,11 @@ function parseDocument(value: unknown): ReadingSessionDocument | null {
 }
 
 export function parseReadingSession(value: unknown): PersistedReadingSession | null {
-  if (!isRecord(value) || value.schemaVersion !== 1 || !Array.isArray(value.documents)) {
+  if (
+    !isRecord(value) ||
+    (value.schemaVersion !== 1 && value.schemaVersion !== 2) ||
+    !Array.isArray(value.documents)
+  ) {
     return null;
   }
   if (value.activeDocumentPath !== null && typeof value.activeDocumentPath !== 'string') {
@@ -113,7 +132,7 @@ export function parseReadingSession(value: unknown): PersistedReadingSession | n
   if (new Set(paths).size !== paths.length) return null;
   if (value.activeDocumentPath !== null && !paths.includes(value.activeDocumentPath)) return null;
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     activeDocumentPath: value.activeDocumentPath,
     documents: validDocuments,
   };
@@ -174,7 +193,7 @@ function migrateLegacyReadingSession(legacy: LegacyReadingSession): PersistedRea
       ? {
           visualState: {
             filterSettings: tab.filterSettings,
-            zoom: tab.zoom,
+            zoomIntent: { kind: 'manual' as const, scale: tab.zoom },
             rotation: tab.rotation ?? 0,
             viewMode: tab.viewMode,
           },
@@ -186,14 +205,23 @@ function migrateLegacyReadingSession(legacy: LegacyReadingSession): PersistedRea
   )
     ? legacy.activeFilePath
     : null;
-  return { schemaVersion: 1, activeDocumentPath, documents };
+  return { schemaVersion: 2, activeDocumentPath, documents };
 }
 
 export async function loadReadingSession(
   storage: ReadingSessionStorage,
 ): Promise<PersistedReadingSession> {
-  const stored = parseReadingSession(await storage.read());
+  const rawStored = await storage.read();
+  const stored = parseReadingSession(rawStored);
   if (stored) {
+    if (!isRecord(rawStored) || rawStored.schemaVersion !== 2) {
+      await storage.write(stored);
+      const verifiedRaw = await storage.read();
+      const verified = parseReadingSession(verifiedRaw);
+      if (!verified || !isRecord(verifiedRaw) || verifiedRaw.schemaVersion !== 2) {
+        throw new Error('Reading Session schema migration could not be verified');
+      }
+    }
     if ((await storage.readLegacy()) !== undefined) {
       try {
         await storage.removeLegacy();

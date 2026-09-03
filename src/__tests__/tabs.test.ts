@@ -75,4 +75,41 @@ describe('Document navigation', () => {
     expect(closeButtons[0].tabIndex).toBe(-1);
     expect(closeButtons[1].tabIndex).toBe(0);
   });
+
+  it('registers a prepared Document before activation and notifies success afterward', async () => {
+    const events: string[] = [];
+    const manager = new TabManager(
+      async () => {
+        events.push('activate');
+      },
+      undefined,
+      undefined,
+      {
+        onDocumentPrepared: async () => {
+          events.push('prepare');
+        },
+        onDocumentOpened: async () => {
+          events.push('opened');
+        },
+      },
+    );
+
+    await manager.createTab('/tmp/one.pdf', 'one.pdf', new Uint8Array([1]));
+
+    expect(events).toEqual(['prepare', 'activate', 'opened']);
+  });
+
+  it('closes to the right neighbor when available and otherwise to the left', async () => {
+    const manager = new TabManager(vi.fn());
+    const first = await manager.createTab('/tmp/one.pdf', 'one.pdf', new Uint8Array([1]));
+    const second = await manager.createTab('/tmp/two.pdf', 'two.pdf', new Uint8Array([2]));
+    const third = await manager.createTab('/tmp/three.pdf', 'three.pdf', new Uint8Array([3]));
+
+    await manager.activateTab(second.id);
+    await manager.closeTab(second.id);
+    expect(manager.getActiveTab()?.filePath).toBe('/tmp/three.pdf');
+
+    await manager.closeTab(third.id);
+    expect(manager.getActiveTab()?.filePath).toBe(first.filePath);
+  });
 });
