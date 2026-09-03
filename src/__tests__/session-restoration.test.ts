@@ -44,9 +44,15 @@ describe('Reading Session restoration', () => {
     const tabs = [explicit];
     let active = explicit;
     const activationOrder: string[] = [];
+    const restoredPositions: unknown[] = [];
     const manager = {
       getTabs: () => tabs,
       getActiveTab: () => active,
+      setDocumentOrder: vi.fn((filePaths: readonly string[]) => {
+        tabs.sort(
+          (left, right) => filePaths.indexOf(left.filePath) - filePaths.indexOf(right.filePath),
+        );
+      }),
       activateTab: vi.fn(async (id: string) => {
         const tab = tabs.find((item) => item.id === id);
         if (tab) {
@@ -54,26 +60,33 @@ describe('Reading Session restoration', () => {
           activationOrder.push(tab.filePath);
         }
       }),
-      getViewerForTab: vi.fn(() => ({
-        applyFilter: vi.fn(),
-        setRotation: vi.fn(),
-        setZoomIntent: vi.fn(),
-        setViewMode: vi.fn(),
-        goToReadingPosition: vi.fn(),
-        setScrollPosition: vi.fn(),
-      })),
+      getViewerForTab: vi.fn((id: string) => {
+        const tab = tabs.find((item) => item.id === id);
+        return {
+          applyFilter: vi.fn(),
+          setRotation: vi.fn(),
+          setZoomIntent: vi.fn(),
+          setViewMode: vi.fn(),
+          goToReadingPosition: vi.fn((position) => {
+            restoredPositions.push(position);
+          }),
+          getReadingPosition: () => ({ page: tab?.currentPage ?? 1, location: 0.4 }),
+        };
+      }),
     };
-    mocks.openFiles.mockImplementation(async ([filePath]: string[]) => {
-      const existing = tabs.find((tab) => tab.filePath === filePath);
-      if (existing) {
-        await manager.activateTab(existing.id);
-        return 0;
-      }
-      const tab = fakeTab(filePath, 1);
-      tabs.push(tab);
-      await manager.activateTab(tab.id);
-      return 1;
-    });
+    mocks.openFiles.mockImplementation(
+      async ([filePath]: string[], options: { activate?: boolean }) => {
+        const existing = tabs.find((tab) => tab.filePath === filePath);
+        if (existing) {
+          if (options.activate !== false) await manager.activateTab(existing.id);
+          return 0;
+        }
+        const tab = fakeTab(filePath, 1);
+        tabs.push(tab);
+        if (options.activate !== false) await manager.activateTab(tab.id);
+        return 1;
+      },
+    );
     const session: ReadingSession = {
       version: 1,
       activeFilePath: '/docs/saved-active.pdf',
@@ -83,6 +96,7 @@ describe('Reading Session restoration', () => {
         saved('/docs/explicit.pdf', 4),
       ],
     };
+    session.tabs[0].readingPosition = { page: 3, location: 0.6 };
 
     const result = await restoreReadingSession(session, {
       tabManager: manager as never,
@@ -98,15 +112,23 @@ describe('Reading Session restoration', () => {
       '/docs/explicit.pdf',
     ]);
     expect(active.filePath).toBe('/docs/explicit.pdf');
+    expect(tabs.map((tab) => tab.filePath)).toEqual([
+      '/docs/other.pdf',
+      '/docs/saved-active.pdf',
+      '/docs/explicit.pdf',
+    ]);
     expect(explicit.currentPage).toBe(12);
     expect(explicit.zoomIntent).toEqual({ kind: 'fit-width' });
     expect(result).toEqual({ opened: 3, failed: 0, failedPaths: [] });
-    expect(activationOrder[0]).toBe('/docs/saved-active.pdf');
+    expect(activationOrder).not.toContain('/docs/saved-active.pdf');
+    expect(activationOrder).not.toContain('/docs/other.pdf');
+    expect(restoredPositions).toContainEqual({ page: 3, location: 0.6 });
   });
 
   it('returns every failed restored path for authoritative pruning', async () => {
     const manager = {
       getTabs: () => [],
+      setDocumentOrder: vi.fn(),
       activateTab: vi.fn(),
       getViewerForTab: vi.fn(),
     };

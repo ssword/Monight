@@ -41,7 +41,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function parseZoomIntent(value: unknown, legacyZoom: unknown): ZoomIntent | null {
   if (isRecord(value)) {
     if (value.kind === 'fit-width' || value.kind === 'fit-page') return { kind: value.kind };
-    if (value.kind === 'manual' && typeof value.scale === 'number' && value.scale > 0) {
+    if (
+      value.kind === 'manual' &&
+      typeof value.scale === 'number' &&
+      Number.isFinite(value.scale) &&
+      value.scale > 0
+    ) {
       return { kind: 'manual', scale: value.scale };
     }
   }
@@ -104,6 +109,7 @@ function parseDocument(value: unknown): ReadingSessionDocument | null {
   if (!hasLocation && !hasLegacyOffset) return null;
 
   const visualState = parseVisualState(value.visualState);
+  if (value.visualState !== undefined && !visualState) return null;
   return {
     filePath: value.filePath,
     title: value.title,

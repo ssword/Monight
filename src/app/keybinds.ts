@@ -22,6 +22,7 @@ interface KeybindContext {
   openSearch: () => void;
   togglePresentationMode: () => Promise<void>;
   goToPage: (page: number) => Promise<void>;
+  goToRelativePage: (direction: 'next' | 'previous') => Promise<void>;
 }
 
 // Register all keybind actions with the KeybindManager
@@ -40,6 +41,7 @@ export function registerKeybindActions({
   openSearch,
   togglePresentationMode,
   goToPage,
+  goToRelativePage,
 }: KeybindContext): void {
   if (!keybindManager) {
     console.error('KeybindManager not initialized');
@@ -105,21 +107,13 @@ export function registerKeybindActions({
 
   // PDF navigation (requires active tab)
   keybindManager.registerAction('nextPage', async () => {
-    await withActiveViewer(tabManager, async (viewer) => {
-      const state = viewer.getState();
-      const step = state.viewMode === 'spread' ? 2 : 1;
-      await goToPage(Math.min(state.currentPage + step, state.totalPages));
-      updateUI();
-    });
+    await goToRelativePage('next');
+    updateUI();
   });
 
   keybindManager.registerAction('previousPage', async () => {
-    await withActiveViewer(tabManager, async (viewer) => {
-      const state = viewer.getState();
-      const step = state.viewMode === 'spread' ? 2 : 1;
-      await goToPage(Math.max(state.currentPage - step, 1));
-      updateUI();
-    });
+    await goToRelativePage('previous');
+    updateUI();
   });
 
   keybindManager.registerAction('firstPage', async () => {

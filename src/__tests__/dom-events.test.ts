@@ -26,6 +26,7 @@ describe('setupEventListeners', () => {
       openRecentFile: vi.fn(async () => undefined),
       clearRecentFiles: vi.fn(async () => undefined),
       goToPage: vi.fn(async () => undefined),
+      goToRelativePage: vi.fn(async () => undefined),
     });
 
     document.dispatchEvent(
@@ -59,6 +60,7 @@ describe('setupEventListeners', () => {
       openRecentFile: vi.fn(async () => undefined),
       clearRecentFiles: vi.fn(async () => undefined),
       goToPage: vi.fn(async () => undefined),
+      goToRelativePage: vi.fn(async () => undefined),
     });
 
     const secondTab = document.querySelector<HTMLElement>('[data-tab-id="two"]');

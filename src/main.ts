@@ -155,7 +155,15 @@ const getActiveViewer = () => {
 };
 
 const goToPage = async (page: number, options?: ReaderActionOptions): Promise<void> => {
-  await readerActions?.dispatch({ type: 'goToPage', page }, options);
+  const outcome = await readerActions?.dispatch({ type: 'goToPage', page }, options);
+  if (outcome?.status === 'failure') throw outcome.error;
+};
+
+const goToRelativePage = async (direction: 'next' | 'previous'): Promise<void> => {
+  const outcome = await readerActions?.dispatch({
+    type: direction === 'next' ? 'goToNextPage' : 'goToPreviousPage',
+  });
+  if (outcome?.status === 'failure') throw outcome.error;
 };
 
 const persistAnnotations = (filePath: string, annotations: PdfAnnotation[]): void => {
@@ -409,7 +417,7 @@ async function initializeApp(): Promise<void> {
           sidebarController?.annotationsChanged();
         },
         onDocumentPrepared: async (tab) => {
-          await readerActions?.dispatch({
+          const outcome = await readerActions?.dispatch({
             type: 'registerDocument',
             document: {
               filePath: tab.filePath,
@@ -423,12 +431,20 @@ async function initializeApp(): Promise<void> {
               },
             },
           });
+          if (outcome?.status === 'failure') throw outcome.error;
         },
         onDocumentOpened: (tab) => {
           if (!isRestoringSession) rememberRecentFile(tab.filePath, tab.title);
         },
         onDocumentClosed: async (filePath) => {
           await readerActions?.dispatch({ type: 'removeDocument', filePath });
+        },
+        onReadingPositionObserved: (filePath, readingPosition) => {
+          void readerActions?.dispatch({
+            type: 'settleReadingPosition',
+            filePath,
+            readingPosition,
+          });
         },
         onReadingPositionSettled: (filePath, readingPosition) => {
           void readerActions?.dispatch({
@@ -462,6 +478,10 @@ async function initializeApp(): Promise<void> {
           if (!viewer) throw new Error(`Cannot navigate unopened Document: ${filePath}`);
           await viewer.goToReadingPosition(position, options);
         },
+        getPageCount: (filePath) => {
+          const tab = tabManager?.getTabs().find((item) => item.filePath === filePath);
+          return tab ? (tabManager?.getViewerForTab(tab.id)?.getState().totalPages ?? 0) : 0;
+        },
       },
       persist: async (snapshot) => {
         if (currentSettings?.general.restorePreviousSession) {
@@ -487,7 +507,8 @@ async function initializeApp(): Promise<void> {
       updateUI(tabManager);
     });
     tabManager.setActivationRequester(async (filePath) => {
-      await readerActions?.dispatch({ type: 'activateDocument', filePath });
+      const outcome = await readerActions?.dispatch({ type: 'activateDocument', filePath });
+      if (outcome?.status === 'failure') throw outcome.error;
     });
 
     searchController = new SearchController(getActiveViewer);
@@ -551,6 +572,7 @@ async function initializeApp(): Promise<void> {
         await presentationController?.toggle();
       },
       goToPage,
+      goToRelativePage,
     });
 
     // Load keybinds from settings
@@ -586,6 +608,7 @@ async function initializeApp(): Promise<void> {
       openRecentFile,
       clearRecentFiles,
       goToPage,
+      goToRelativePage,
     });
 
     // Update keyboard hints for platform

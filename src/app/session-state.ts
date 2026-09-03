@@ -78,8 +78,9 @@ async function restoreSavedTab(
   const preservePosition = savedTab.filePath === foregroundDocumentPath;
   const currentPage = restoredTab.currentPage;
   const currentScrollPosition = restoredTab.scrollPosition;
+  const currentReadingPosition = tabManager.getViewerForTab(restoredTab.id)?.getReadingPosition();
   const readingPosition = preservePosition
-    ? { page: currentPage, legacyOffset: currentScrollPosition }
+    ? (currentReadingPosition ?? { page: currentPage, legacyOffset: currentScrollPosition })
     : (savedTab.readingPosition ?? {
         page: savedTab.currentPage,
         legacyOffset: savedTab.scrollPosition ?? 0,

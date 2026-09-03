@@ -6,6 +6,7 @@ const getPdfEngine = vi.hoisted(() => vi.fn());
 
 vi.mock('../lib/pdf-engine', () => ({ getPdfEngine }));
 
+import { PDFViewer } from '../scripts/pdf-viewer';
 import { TabManager } from '../scripts/tabs';
 
 describe('Document navigation', () => {
@@ -111,5 +112,89 @@ describe('Document navigation', () => {
 
     await manager.closeTab(third.id);
     expect(manager.getActiveTab()?.filePath).toBe(first.filePath);
+  });
+
+  it('projects the authoritative Reading Session order into the tab strip', async () => {
+    const manager = new TabManager(vi.fn());
+    await manager.createTab('/tmp/one.pdf', 'one.pdf', new Uint8Array([1]));
+    await manager.createTab('/tmp/two.pdf', 'two.pdf', new Uint8Array([2]));
+    await manager.createTab('/tmp/three.pdf', 'three.pdf', new Uint8Array([3]));
+
+    manager.setDocumentOrder(['/tmp/three.pdf', '/tmp/one.pdf', '/tmp/two.pdf']);
+
+    expect(manager.getTabs().map((tab) => tab.filePath)).toEqual([
+      '/tmp/three.pdf',
+      '/tmp/one.pdf',
+      '/tmp/two.pdf',
+    ]);
+  });
+
+  it('rolls back an unregistered runtime without closing an authoritative Document', async () => {
+    const onDocumentClosed = vi.fn(async () => undefined);
+    const manager = new TabManager(vi.fn(), undefined, undefined, {
+      onDocumentPrepared: async () => {
+        throw new Error('session commit failed');
+      },
+      onDocumentClosed,
+    });
+
+    await expect(
+      manager.createTab('/tmp/failing.pdf', 'failing.pdf', new Uint8Array([1])),
+    ).rejects.toThrow('session commit failed');
+
+    expect(manager.size).toBe(0);
+    expect(onDocumentClosed).not.toHaveBeenCalled();
+  });
+
+  it('removes a registered Document when activation fails', async () => {
+    const onDocumentClosed = vi.fn(async () => undefined);
+    const manager = new TabManager(
+      async () => {
+        throw new Error('activation failed');
+      },
+      undefined,
+      undefined,
+      {
+        onDocumentPrepared: vi.fn(async () => undefined),
+        onDocumentClosed,
+      },
+    );
+
+    await expect(
+      manager.createTab('/tmp/failing.pdf', 'failing.pdf', new Uint8Array([1])),
+    ).rejects.toThrow('activation failed');
+
+    expect(manager.size).toBe(0);
+    expect(onDocumentClosed).toHaveBeenCalledWith('/tmp/failing.pdf');
+  });
+
+  it('observes normalized Reading Position at most once per animation frame', async () => {
+    let frame: FrameRequestCallback | undefined;
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+      frame = callback;
+      return 1;
+    });
+    vi.spyOn(PDFViewer.prototype, 'getReadingPosition').mockReturnValue({
+      page: 1,
+      location: 0.375,
+    });
+    const onReadingPositionObserved = vi.fn();
+    const manager = new TabManager(vi.fn(), undefined, undefined, {
+      onReadingPositionObserved,
+    });
+    await manager.createTab('/tmp/one.pdf', 'one.pdf', new Uint8Array([1]));
+    const container = document.getElementById('pdf-container');
+
+    container?.dispatchEvent(new Event('scroll'));
+    container?.dispatchEvent(new Event('scroll'));
+    expect(onReadingPositionObserved).not.toHaveBeenCalled();
+
+    frame?.(0);
+
+    expect(onReadingPositionObserved).toHaveBeenCalledOnce();
+    expect(onReadingPositionObserved).toHaveBeenCalledWith('/tmp/one.pdf', {
+      page: 1,
+      location: 0.375,
+    });
   });
 });

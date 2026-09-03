@@ -1,8 +1,8 @@
 import { viewModeIcon, viewModeLabel } from '../lib/document-features';
+import type { RestorableReadingPosition } from '../reader/reader-actions';
 import { buildFilterCSS } from '../scripts/filters';
 import type { SliderManager } from '../scripts/sliders';
 import type { TabData, TabManager } from '../scripts/tabs';
-import type { RestorableReadingPosition } from '../reader/reader-actions';
 import { updateActivePresetButton } from './ui';
 
 // Restore tab state (filters, page, zoom, rotation, precise scroll position, view mode)
@@ -21,10 +21,10 @@ export async function restoreTabState(
   // Apply saved filter
   viewer.applyFilter(buildFilterCSS(tab.filterSettings));
 
-  // Apply geometry while still in single-page mode, then initialize the saved layout once.
+  // Restore the layout before resolving viewport-relative Zoom Intent.
   await viewer.setRotation(tab.rotation);
-  await viewer.setZoomIntent(tab.zoomIntent);
   await viewer.setViewMode(tab.viewMode);
+  await viewer.setZoomIntent(tab.zoomIntent);
   await viewer.goToReadingPosition(readingPosition);
 
   // Update slider if initialized

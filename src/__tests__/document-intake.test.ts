@@ -102,4 +102,37 @@ describe('Document Intake', () => {
     expect(result.outcomes[0].status).toBe('opened');
     expect(events).toEqual(['describe', 'read', 'open', 'observe', 'observer-error']);
   });
+
+  it('reports foreground readiness before remaining intake completes', async () => {
+    let releaseSecond: (() => void) | undefined;
+    const intake = createDocumentIntake({
+      source: {
+        describe: async (path) => ({ canonicalPath: path, title: path }),
+        read: async (path) => {
+          if (path.endsWith('second.pdf')) {
+            await new Promise<void>((resolve) => {
+              releaseSecond = resolve;
+            });
+          }
+          return new Uint8Array([1]);
+        },
+      },
+      runtime: {
+        isOpen: () => false,
+        activate: vi.fn(),
+        open: vi.fn(async () => undefined),
+        goToPage: vi.fn(),
+      },
+    });
+
+    const operation = intake.begin(['/docs/first.pdf', '/docs/second.pdf']);
+
+    await expect(operation.foreground).resolves.toMatchObject({
+      status: 'opened',
+      filePath: '/docs/first.pdf',
+    });
+    await vi.waitFor(() => expect(releaseSecond).toBeTypeOf('function'));
+    releaseSecond?.();
+    await expect(operation.completion).resolves.toMatchObject({ opened: 2, failed: 0 });
+  });
 });

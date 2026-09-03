@@ -50,6 +50,7 @@ export interface ReaderProjection {
     position: RestorableReadingPosition,
     options?: ReaderActionOptions,
   ): Promise<void>;
+  getPageCount?(filePath: string): number | Promise<number>;
   closeDocument?(filePath: string): Promise<void>;
   exitPresentation?(): Promise<void>;
 }
@@ -61,6 +62,8 @@ export interface ReaderActionOptions {
 export type ReaderAction =
   | { type: 'activateDocument'; filePath: string }
   | { type: 'goToPage'; page: number; filePath?: string }
+  | { type: 'goToNextPage'; filePath?: string }
+  | { type: 'goToPreviousPage'; filePath?: string }
   | { type: 'settleReadingPosition'; filePath: string; readingPosition: ReadingPosition }
   | { type: 'settleVisualState'; filePath: string; visualState: ReadingSessionVisualState }
   | { type: 'registerDocument'; document: ReadingSessionDocument }
@@ -156,11 +159,7 @@ export function createReaderActions({
   ): Promise<ReaderActionOutcome> => {
     const committed = session.commit(next, urgency);
     if (urgency === 'immediate') {
-      try {
-        await session.flush();
-      } catch (error) {
-        return { status: 'failure', error, revision: committed.revision };
-      }
+      await session.flush().catch(() => undefined);
     }
     return { status: 'committed', revision: committed.revision };
   };
@@ -207,6 +206,20 @@ export function createReaderActions({
           pending.resolve({ status: 'failure', error, revision: revision() });
         }
       });
+    return outcome;
+  };
+
+  const enqueueRelative = (
+    filePath: string,
+    work: (expectedGeneration: number) => Promise<ReaderActionOutcome>,
+  ): Promise<ReaderActionOutcome> => {
+    const lane = laneFor(filePath);
+    const expectedGeneration = generation(filePath);
+    const outcome = lane.tail
+      .catch(() => undefined)
+      .then(() => work(expectedGeneration))
+      .catch((error): ReaderActionOutcome => ({ status: 'failure', error, revision: revision() }));
+    lane.tail = outcome.then(() => undefined);
     return outcome;
   };
 
@@ -368,6 +381,59 @@ export function createReaderActions({
         );
       }
 
+      if (action.type === 'goToNextPage' || action.type === 'goToPreviousPage') {
+        const targetPath = action.filePath ?? session.snapshot().activeDocumentPath;
+        const target = session
+          .snapshot()
+          .documents.find((document) => document.filePath === targetPath);
+        if (!target) return { status: 'no-op', revision: revision() };
+
+        return enqueueRelative(target.filePath, async (expectedGeneration) => {
+          if (cancelled(target.filePath, expectedGeneration, options)) {
+            return { status: 'no-op', revision: revision() };
+          }
+          const current = session.snapshot();
+          const document = current.documents.find((item) => item.filePath === target.filePath);
+          if (!document) return { status: 'no-op', revision: current.revision };
+          const reportedPageCount = await projection.getPageCount?.(target.filePath);
+          const totalPages =
+            reportedPageCount === undefined
+              ? Number.MAX_SAFE_INTEGER
+              : Math.max(1, reportedPageCount);
+          const step = document.visualState?.viewMode === 'spread' ? 2 : 1;
+          const direction = action.type === 'goToNextPage' ? 1 : -1;
+          const page = Math.min(
+            Math.max(document.readingPosition.page + direction * step, 1),
+            totalPages,
+          );
+          if (page === document.readingPosition.page) {
+            return { status: 'no-op', revision: current.revision };
+          }
+          const readingPosition = { page, location: 0 };
+          try {
+            await projection.goToReadingPosition(target.filePath, readingPosition, {
+              isCancelled: () => cancelled(target.filePath, expectedGeneration, options),
+            });
+          } catch (error) {
+            if (cancelled(target.filePath, expectedGeneration, options)) {
+              return { status: 'no-op', revision: revision() };
+            }
+            return { status: 'failure', error, revision: revision() };
+          }
+          if (cancelled(target.filePath, expectedGeneration, options)) {
+            return { status: 'no-op', revision: revision() };
+          }
+          const latest = session.snapshot();
+          const documents = latest.documents.map((item) =>
+            item.filePath === target.filePath ? { ...item, readingPosition } : item,
+          );
+          return commit(
+            { schemaVersion: 2, activeDocumentPath: latest.activeDocumentPath, documents },
+            'deferred',
+          );
+        });
+      }
+
       const targetPath = action.filePath ?? session.snapshot().activeDocumentPath;
       const current = session.snapshot();
       const document = current.documents.find((item) => item.filePath === targetPath);
@@ -389,6 +455,9 @@ export function createReaderActions({
             await projection.goToReadingPosition(document.filePath, readingPosition);
           }
         } catch (error) {
+          if (cancelled(document.filePath, expectedGeneration, options)) {
+            return { status: 'no-op', revision: revision() };
+          }
           return { status: 'failure', error, revision: revision() };
         }
         if (cancelled(document.filePath, expectedGeneration, options)) {

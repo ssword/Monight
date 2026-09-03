@@ -42,7 +42,13 @@ export interface OpenDocumentsOptions {
 }
 
 export interface DocumentIntake {
+  begin(paths: readonly string[], options?: OpenDocumentsOptions): DocumentIntakeOperation;
   open(paths: readonly string[], options?: OpenDocumentsOptions): Promise<DocumentIntakeResult>;
+}
+
+export interface DocumentIntakeOperation {
+  readonly foreground: Promise<DocumentIntakeOutcome | null>;
+  readonly completion: Promise<DocumentIntakeResult>;
 }
 
 export function createDocumentIntake({
@@ -51,8 +57,17 @@ export function createDocumentIntake({
   onSucceeded,
   onObserverError = (error) => console.error('Document Intake observer failed:', error),
 }: DocumentIntakeOptions): DocumentIntake {
-  return {
-    async open(paths, options = {}) {
+  const begin = (
+    paths: readonly string[],
+    options: OpenDocumentsOptions = {},
+  ): DocumentIntakeOperation => {
+    let resolveForeground!: (outcome: DocumentIntakeOutcome | null) => void;
+    const foreground = new Promise<DocumentIntakeOutcome | null>((resolve) => {
+      resolveForeground = resolve;
+    });
+    if (paths.length === 0) resolveForeground(null);
+
+    const completion = (async () => {
       const outcomes: DocumentIntakeOutcome[] = [];
       for (const [index, requestedPath] of paths.entries()) {
         try {
@@ -77,13 +92,16 @@ export function createDocumentIntake({
             outcome = { status: 'opened', requestedPath, filePath: document.canonicalPath };
           }
           outcomes.push(outcome);
+          if (index === 0) resolveForeground(outcome);
           try {
             onSucceeded?.(outcome);
           } catch (error) {
             onObserverError(error);
           }
         } catch (error) {
-          outcomes.push({ status: 'failed', requestedPath, error });
+          const outcome: DocumentIntakeOutcome = { status: 'failed', requestedPath, error };
+          outcomes.push(outcome);
+          if (index === 0) resolveForeground(outcome);
         }
       }
 
@@ -93,6 +111,13 @@ export function createDocumentIntake({
         activated: outcomes.filter(({ status }) => status === 'activated').length,
         failed: outcomes.filter(({ status }) => status === 'failed').length,
       };
-    },
+    })();
+
+    return { foreground, completion };
+  };
+
+  return {
+    begin,
+    open: (paths, options) => begin(paths, options).completion,
   };
 }

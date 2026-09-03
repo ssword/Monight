@@ -20,6 +20,7 @@ interface DomEventContext {
   openRecentFile: (filePath: string) => Promise<void>;
   clearRecentFiles: () => Promise<void>;
   goToPage: (page: number) => Promise<void>;
+  goToRelativePage: (direction: 'next' | 'previous') => Promise<void>;
 }
 
 // Setup event listeners
@@ -36,6 +37,7 @@ export function setupEventListeners({
   openRecentFile,
   clearRecentFiles,
   goToPage,
+  goToRelativePage,
 }: DomEventContext): void {
   debugLog('Setting up event listeners...');
 
@@ -80,18 +82,12 @@ export function setupEventListeners({
   const prevBtn = document.getElementById('prev-page');
   const nextBtn = document.getElementById('next-page');
   prevBtn?.addEventListener('click', () => {
-    withActiveViewer(tabManager, async (viewer) => {
-      const state = viewer.getState();
-      const step = state.viewMode === 'spread' ? 2 : 1;
-      await goToPage(Math.max(state.currentPage - step, 1));
+    void goToRelativePage('previous').then(() => {
       updateUI();
     });
   });
   nextBtn?.addEventListener('click', () => {
-    withActiveViewer(tabManager, async (viewer) => {
-      const state = viewer.getState();
-      const step = state.viewMode === 'spread' ? 2 : 1;
-      await goToPage(Math.min(state.currentPage + step, state.totalPages));
+    void goToRelativePage('next').then(() => {
       updateUI();
     });
   });

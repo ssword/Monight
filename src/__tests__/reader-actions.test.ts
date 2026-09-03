@@ -151,6 +151,29 @@ describe('Reader Actions', () => {
     expect(persist).not.toHaveBeenCalled();
   });
 
+  it('treats a cancelled throwing page projection as a no-op', async () => {
+    let cancelled = false;
+    const reader = createReaderActions({
+      initialSession: INITIAL_SESSION,
+      projection: {
+        activateDocument: vi.fn(),
+        goToReadingPosition: vi.fn(async () => {
+          cancelled = true;
+          throw new Error('render aborted');
+        }),
+      },
+      persist: vi.fn(),
+    });
+
+    const outcome = await reader.dispatch(
+      { type: 'goToPage', page: 11 },
+      { isCancelled: () => cancelled },
+    );
+
+    expect(outcome).toMatchObject({ status: 'no-op', revision: 0 });
+    expect(reader.snapshot().documents[0].readingPosition).toEqual({ page: 2, location: 0.25 });
+  });
+
   it('commits settled scroll positions and isolates failing observers', async () => {
     const observerError = new Error('broken UI observer');
     const observedRevisions: number[] = [];
@@ -218,6 +241,34 @@ describe('Reader Actions', () => {
       '/docs/third.pdf',
     ]);
     expect(duplicate.status).toBe('no-op');
+  });
+
+  it('keeps an immediate semantic commit authoritative when persistence fails', async () => {
+    const persist = vi.fn(async () => {
+      throw new Error('disk full');
+    });
+    const reader = createReaderActions({
+      initialSession: INITIAL_SESSION,
+      projection: {
+        activateDocument: vi.fn(),
+        goToReadingPosition: vi.fn(),
+      },
+      persist,
+    });
+
+    const outcome = await reader.dispatch({
+      type: 'registerDocument',
+      document: {
+        filePath: '/docs/third.pdf',
+        title: 'third.pdf',
+        readingPosition: { page: 1, location: 0 },
+      },
+    });
+
+    expect(outcome).toMatchObject({ status: 'committed', revision: 1 });
+    expect(reader.snapshot().documents).toHaveLength(3);
+    expect(reader.hasDirtySession()).toBe(true);
+    await expect(reader.flush()).rejects.toThrow('disk full');
   });
 
   it('reports the revision committed by each concurrent action', async () => {
@@ -319,6 +370,84 @@ describe('Reader Actions', () => {
     expect(completed).toEqual(['/docs/second.pdf']);
     releaseFirst?.();
     await slow;
+  });
+
+  it('preserves dispatch order for successive relative page actions', async () => {
+    let releaseFirst: (() => void) | undefined;
+    const pages: number[] = [];
+    const reader = createReaderActions({
+      initialSession: INITIAL_SESSION,
+      projection: {
+        activateDocument: vi.fn(),
+        getPageCount: vi.fn(() => 20),
+        goToReadingPosition: vi.fn(async (_filePath, position) => {
+          pages.push(position.page);
+          if (position.page === 3) {
+            await new Promise<void>((resolve) => {
+              releaseFirst = resolve;
+            });
+          }
+        }),
+      },
+      persist: vi.fn(),
+    });
+
+    const first = reader.dispatch({ type: 'goToNextPage' });
+    await vi.waitFor(() => expect(releaseFirst).toBeTypeOf('function'));
+    const second = reader.dispatch({ type: 'goToNextPage' });
+    releaseFirst?.();
+
+    await expect(first).resolves.toMatchObject({ status: 'committed' });
+    await expect(second).resolves.toMatchObject({ status: 'committed' });
+    expect(pages).toEqual([3, 4]);
+    expect(reader.snapshot().documents[0].readingPosition).toEqual({ page: 4, location: 0 });
+  });
+
+  it('treats a generation-cancelled throwing relative projection as a no-op', async () => {
+    let removeDocument: (() => Promise<void>) | undefined;
+    const reader = createReaderActions({
+      initialSession: INITIAL_SESSION,
+      projection: {
+        activateDocument: vi.fn(),
+        getPageCount: vi.fn(() => 20),
+        goToReadingPosition: vi.fn(async () => {
+          await removeDocument?.();
+          throw new Error('render aborted');
+        }),
+      },
+      persist: vi.fn(),
+    });
+    removeDocument = async () => {
+      await reader.dispatch({ type: 'removeDocument', filePath: '/docs/first.pdf' });
+    };
+
+    const outcome = await reader.dispatch({ type: 'goToNextPage' });
+
+    expect(outcome.status).toBe('no-op');
+    expect(reader.snapshot().documents).toHaveLength(1);
+  });
+
+  it('never navigates below page one when the projection has no page count yet', async () => {
+    const goToReadingPosition = vi.fn(async () => undefined);
+    const reader = createReaderActions({
+      initialSession: INITIAL_SESSION,
+      projection: {
+        activateDocument: vi.fn(),
+        getPageCount: vi.fn(() => 0),
+        goToReadingPosition,
+      },
+      persist: vi.fn(),
+    });
+
+    const outcome = await reader.dispatch({ type: 'goToPreviousPage' });
+
+    expect(outcome).toMatchObject({ status: 'committed' });
+    expect(goToReadingPosition).toHaveBeenCalledWith(
+      '/docs/first.pdf',
+      { page: 1, location: 0 },
+      expect.any(Object),
+    );
+    expect(reader.snapshot().documents[0].readingPosition).toEqual({ page: 1, location: 0 });
   });
 
   it('cancels late page commits when a Document is removed', async () => {

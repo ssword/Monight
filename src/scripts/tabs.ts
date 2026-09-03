@@ -32,6 +32,7 @@ interface TabManagerOptions {
   onDocumentPrepared?: (tab: TabData) => void | Promise<void>;
   onDocumentOpened?: (tab: TabData) => void | Promise<void>;
   onDocumentClosed?: (filePath: string) => void | Promise<void>;
+  onReadingPositionObserved?: (filePath: string, position: ReadingPosition) => void;
   onReadingPositionSettled?: (filePath: string, position: ReadingPosition) => void;
   onPageNavigationRequested?: (page: number, options?: ReaderActionOptions) => Promise<void>;
   requestPassword?: PdfPasswordRequester;
@@ -120,6 +121,7 @@ export class TabManager {
     viewer.setOnScrollChange(() => {
       if (this.activeTabId !== id) return;
       tab.scrollPosition = viewer.getScrollPosition();
+      this.options.onReadingPositionObserved?.(filePath, viewer.getReadingPosition());
       this.onActiveViewerStateChange?.();
     });
     viewer.setOnScrollSettled(() => {
@@ -158,15 +160,17 @@ export class TabManager {
     this.onTabsChanged?.();
 
     // Registration and activation are transactional; observers run only after success.
+    let prepared = false;
     try {
       await this.options.onDocumentPrepared?.(tab);
+      prepared = true;
       if (activate) await this.activateTab(id);
     } catch (error) {
       viewer.destroy();
       this.pdfViewers.delete(id);
       this.tabs.delete(id);
       if (this.activeTabId === id) this.activeTabId = null;
-      await this.options.onDocumentClosed?.(filePath);
+      if (prepared) await this.options.onDocumentClosed?.(filePath);
       this.renderTabs();
       this.onTabsChanged?.();
       throw error;
