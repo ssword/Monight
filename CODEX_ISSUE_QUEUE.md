@@ -8,11 +8,11 @@
 
 | Issue | Title | Status |
 | ---: | --- | --- |
-| #25 | Spec: Center reader architecture on the Reading Session | incomplete |
+| #25 | Spec: Center reader architecture on the Reading Session | spec-skipped |
 | #27 | Guarantee Reader Action ordering, coalescing, and outcomes | completed |
 | #28 | Route Visual State and Zoom Intent through Reader Actions | completed |
 | #29 | Open and deduplicate Documents through transactional Document Intake | completed |
-| #30 | Route external file sources through Document Intake | pending |
+| #30 | Route external file sources through Document Intake | completed |
 | #31 | Restore Reading Session deterministically through Document Intake | pending |
 | #32 | Close, cancel, and reopen Documents through Reader Actions | pending |
 | #33 | Encapsulate PDF.js behind Document Content and Document Queries | pending |
@@ -26,6 +26,15 @@
 ## Results
 
 ### Issue #25
+
+- issue_number: `25`
+- status: `spec-skipped`
+- files_changed: none
+- tests_run: none
+- acceptance_criteria: Spec issue; implementation intentionally skipped per queue rules.
+- remaining_problems: none for queue processing; the spec remains the governing source for implementation issues.
+
+### Previous Issue #25 Implementation Baseline
 
 - issue_number: `25`
 - status: `incomplete`
@@ -68,3 +77,13 @@
 - test_results: 205 frontend tests and 26 Rust tests passed; typecheck, production build, lint, diff validation, and final Standards/Spec reviews passed with zero findings.
 - acceptance_criteria_results: All ten acceptance criteria passed, including early foreground/completion outcomes, source adapter encapsulation, canonical identity and concurrent alias deduplication, existing-Document page activation without reread, transactional PDF acceptance/password/first-render/registration/activation, rollback, independent multi-file outcomes, runtime-state ownership and byte release, post-commit observer isolation, and production/in-memory file-dialog contract coverage.
 - remaining_problems: none.
+
+### Issue #30
+
+- issue_number: `30`
+- status: `completed`
+- commit: `9809d8bb5b8bbcea332d2f38387ff24c76c01219`
+- files_changed: `src-tauri/src/commands.rs`, `src-tauri/src/lib.rs`, `src/__tests__/document-intake.test.ts`, `src/__tests__/file-actions.test.ts`, `src/__tests__/tauri-events.test.ts`, `src/app/file-actions.ts`, `src/app/tauri-events.ts`, `src/reader/document-intake.ts`
+- tests_run: focused Vitest (21 passed); `npx tsc --noEmit`; `npm test` (35 files, 208 tests); `npm run build`; `npm run lint` (91 files); `cargo test --manifest-path src-tauri/Cargo.toml` (30 passed); changed-file `rustfmt --check`; `git diff --check`; final two-axis `$code-review` with no remaining findings.
+- acceptance_criteria: Drag-and-drop, operating-system open/file association, and command-line requests use Document Intake; paths and outcomes preserve order and independence; command-line page targeting is confined to the first requested Document and is not transferred after failure; canonical existing Documents activate without rereading; typed outcomes produce consistent feedback; frontend and Rust adapter contracts are covered.
+- remaining_problems: none for Issue #30. Repository-wide `cargo fmt --check` still reports pre-existing indentation in `src-tauri/build.rs`, outside this change.
