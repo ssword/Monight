@@ -431,6 +431,10 @@ async function initializeApp(): Promise<void> {
           });
         },
         onPageNavigationRequested: goToPage,
+        onDocumentPageRequested: async (filePath, page) => {
+          const outcome = await readerActions?.dispatch({ type: 'goToPage', filePath, page });
+          if (outcome?.status === 'failure') throw outcome.error;
+        },
         onZoomIntentRequested: async (filePath, zoomIntent) => {
           await dispatchReaderAction(readerAction.setZoomIntent(zoomIntent, filePath));
         },

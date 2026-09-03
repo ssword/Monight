@@ -1,3 +1,4 @@
+use serde::Serialize;
 use std::path::{Path, PathBuf};
 use tauri::{
     command, AppHandle, Manager, PhysicalPosition, PhysicalSize, State, WebviewUrl,
@@ -153,6 +154,34 @@ pub fn get_file_directory(path: String) -> String {
         .to_string()
 }
 
+#[derive(Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PdfFileDescription {
+    canonical_path: String,
+    title: String,
+}
+
+fn describe_pdf_path(
+    path: String,
+    document_intake: &DocumentIntake,
+) -> Result<PdfFileDescription, String> {
+    let canonical_path = document_intake.validate(path)?;
+    let title = get_file_name(canonical_path.clone());
+    Ok(PdfFileDescription {
+        canonical_path,
+        title,
+    })
+}
+
+/// Validate a requested Document path and return JSON-compatible metadata.
+#[command]
+pub fn describe_pdf_file(
+    path: String,
+    document_intake: State<'_, DocumentIntake>,
+) -> Result<PdfFileDescription, String> {
+    describe_pdf_path(path, document_intake.inner())
+}
+
 /// Open settings window
 #[command]
 pub async fn open_settings(app: AppHandle) -> Result<(), String> {
@@ -286,6 +315,29 @@ mod tests {
         assert_eq!(
             get_file_name("/path/to/document.pdf".to_string()),
             "document.pdf"
+        );
+    }
+
+    #[test]
+    fn describe_pdf_path_returns_canonical_metadata_without_authorizing_reads() {
+        let fixture =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/sample.pdf");
+        let canonical = std::fs::canonicalize(&fixture).expect("fixture should canonicalize");
+        let document_intake = DocumentIntake::default();
+
+        let description =
+            describe_pdf_path(fixture.to_string_lossy().to_string(), &document_intake)
+                .expect("fixture should be described");
+
+        assert_eq!(
+            description,
+            PdfFileDescription {
+                canonical_path: canonical.to_string_lossy().to_string(),
+                title: "sample.pdf".to_string(),
+            }
+        );
+        assert!(
+            read_pdf_bytes(canonical.to_string_lossy().to_string(), &document_intake,).is_err()
         );
     }
 

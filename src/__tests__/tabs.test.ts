@@ -100,6 +100,31 @@ describe('Document navigation', () => {
     expect(events).toEqual(['prepare', 'activate', 'opened']);
   });
 
+  it('does not turn a successful reactivation into failure when an observer throws', async () => {
+    const onDocumentOpened = vi.fn(async () => {
+      throw new Error('history unavailable');
+    });
+    const manager = new TabManager(vi.fn(), undefined, undefined, { onDocumentOpened });
+    const tab = await manager.createTab('/tmp/one.pdf', 'one.pdf', new Uint8Array([1]));
+
+    await expect(manager.reactivateOpenDocument(tab.id)).resolves.toBeUndefined();
+
+    expect(manager.getActiveTab()?.filePath).toBe('/tmp/one.pdf');
+    expect(onDocumentOpened).toHaveBeenCalledTimes(2);
+  });
+
+  it('routes explicit Document pages through the semantic navigation adapter', async () => {
+    const onDocumentPageRequested = vi.fn(async () => undefined);
+    const manager = new TabManager(vi.fn(), undefined, undefined, {
+      onDocumentPageRequested,
+    });
+    await manager.createTab('/tmp/one.pdf', 'one.pdf', new Uint8Array([1]));
+
+    await manager.requestDocumentPage('/tmp/one.pdf', 9);
+
+    expect(onDocumentPageRequested).toHaveBeenCalledWith('/tmp/one.pdf', 9);
+  });
+
   it('closes to the right neighbor when available and otherwise to the left', async () => {
     const manager = new TabManager(vi.fn());
     const first = await manager.createTab('/tmp/one.pdf', 'one.pdf', new Uint8Array([1]));
@@ -166,6 +191,34 @@ describe('Document navigation', () => {
 
     expect(manager.size).toBe(0);
     expect(onDocumentClosed).toHaveBeenCalledWith('/tmp/failing.pdf');
+  });
+
+  it('restores the active Document when a new Document activation rolls back', async () => {
+    const manager = new TabManager(
+      async (tab) => {
+        if (tab?.filePath === '/tmp/failing.pdf') throw new Error('activation failed');
+      },
+      undefined,
+      undefined,
+      {
+        onDocumentPrepared: vi.fn(async () => undefined),
+        onDocumentClosed: vi.fn(async () => undefined),
+      },
+    );
+    const existing = await manager.createTab(
+      '/tmp/existing.pdf',
+      'existing.pdf',
+      new Uint8Array([1]),
+    );
+
+    await expect(
+      manager.createTab('/tmp/failing.pdf', 'failing.pdf', new Uint8Array([2])),
+    ).rejects.toThrow('activation failed');
+
+    const existingSurface = document.getElementById(`pdf-canvas-${existing.id}`)?.parentElement;
+    expect(manager.getTabs().map((tab) => tab.filePath)).toEqual(['/tmp/existing.pdf']);
+    expect(manager.getActiveTab()?.filePath).toBe('/tmp/existing.pdf');
+    expect(existingSurface?.style.display).toBe('block');
   });
 
   it('rolls back before registration when the explicit initial page fails to render', async () => {

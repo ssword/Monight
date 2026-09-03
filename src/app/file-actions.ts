@@ -1,10 +1,15 @@
 import { invoke } from '@tauri-apps/api/core';
 import { debugLog } from '../lib/debug-log';
 import type { ViewMode } from '../lib/document-features';
-import { createDocumentIntake } from '../reader/document-intake';
+import {
+  createDocumentIntake,
+  createDocumentIntakeCoordinator,
+  type DocumentIntakeCoordinator,
+} from '../reader/document-intake';
 import type { FilterSettings } from '../scripts/filters';
 import type { TabManager } from '../scripts/tabs';
 import { showToast } from './dialogs';
+import { createTauriPdfSource } from './pdf-source';
 import { withActiveViewer } from './viewer-helpers';
 
 interface OpenFilesOptions {
@@ -21,6 +26,16 @@ interface EnsureViewingSizeOptions {
   fillAvailableHeight?: boolean;
 }
 
+const intakeCoordinators = new WeakMap<TabManager, DocumentIntakeCoordinator>();
+
+function getIntakeCoordinator(tabManager: TabManager): DocumentIntakeCoordinator {
+  const existing = intakeCoordinators.get(tabManager);
+  if (existing) return existing;
+  const coordinator = createDocumentIntakeCoordinator();
+  intakeCoordinators.set(tabManager, coordinator);
+  return coordinator;
+}
+
 export async function openFiles(
   filePaths: string[],
   {
@@ -34,17 +49,8 @@ export async function openFiles(
   }: OpenFilesOptions,
 ): Promise<number> {
   const intake = createDocumentIntake({
-    source: {
-      describe: async (requestedPath) => {
-        const canonicalPath: string = await invoke('validate_open_path', { path: requestedPath });
-        const title: string = await invoke('get_file_name', { path: canonicalPath });
-        return { canonicalPath, title };
-      },
-      read: async (canonicalPath) => {
-        const pdfData: ArrayBuffer = await invoke('read_pdf_file', { path: canonicalPath });
-        return new Uint8Array(pdfData);
-      },
-    },
+    coordinator: getIntakeCoordinator(tabManager),
+    source: createTauriPdfSource(),
     runtime: {
       isOpen: (filePath) => tabManager.getTabs().some((tab) => tab.filePath === filePath),
       activate: async (filePath) => {
@@ -63,10 +69,7 @@ export async function openFiles(
         );
       },
       goToPage: async (filePath, requestedPage) => {
-        const tab = tabManager.getTabs().find((item) => item.filePath === filePath);
-        const viewer = tab ? tabManager.getViewerForTab(tab.id) : null;
-        if (!viewer) throw new Error(`Cannot navigate unopened Document: ${filePath}`);
-        await viewer.goToPage(requestedPage);
+        await tabManager.requestDocumentPage(filePath, requestedPage);
       },
     },
   });
@@ -112,7 +115,13 @@ export async function openPDFFile(
       return 0;
     }
 
-    return await openFiles(selected, { tabManager, initialFilterSettings, initialViewMode });
+    return await openFiles(selected, {
+      tabManager,
+      continueOnError: true,
+      onError: (message) => showToast(message, 'error'),
+      initialFilterSettings,
+      initialViewMode,
+    });
   } catch (error) {
     console.error('Error opening file:', error);
     const message = error instanceof Error ? error.message : 'Unknown error';

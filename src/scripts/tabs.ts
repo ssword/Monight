@@ -35,6 +35,7 @@ interface TabManagerOptions {
   onReadingPositionObserved?: (filePath: string, position: ReadingPosition) => void;
   onReadingPositionSettled?: (filePath: string, position: ReadingPosition) => void;
   onPageNavigationRequested?: (page: number, options?: ReaderActionOptions) => Promise<void>;
+  onDocumentPageRequested?: (filePath: string, page: number) => Promise<void>;
   onZoomIntentRequested?: (filePath: string, zoomIntent: ZoomIntent) => Promise<void>;
   requestPassword?: PdfPasswordRequester;
   requestAnnotationNote?: AnnotationNoteRequester;
@@ -85,6 +86,7 @@ export class TabManager {
     { activate = true, initialPage }: CreateTabOptions = {},
   ): Promise<TabData> {
     const id = crypto.randomUUID();
+    const previousActiveTabId = this.activeTabId;
     const initialFilterSettings = filterSettings ?? PRESETS.default;
 
     // Create tab data
@@ -179,10 +181,25 @@ export class TabManager {
       viewer.destroy();
       this.pdfViewers.delete(id);
       this.tabs.delete(id);
-      if (this.activeTabId === id) this.activeTabId = null;
+      let restoredTab: TabData | null = null;
+      if (this.activeTabId === id) {
+        this.activeTabId =
+          previousActiveTabId && this.tabs.has(previousActiveTabId) ? previousActiveTabId : null;
+        this.pdfViewers.forEach((existingViewer, viewerId) => {
+          existingViewer.setVisible(viewerId === this.activeTabId);
+        });
+        restoredTab = this.activeTabId ? (this.tabs.get(this.activeTabId) ?? null) : null;
+      }
       if (prepared) await this.options.onDocumentClosed?.(filePath);
       this.renderTabs();
       this.onTabsChanged?.();
+      if (restoredTab) {
+        try {
+          await this.onTabChange(restoredTab);
+        } catch (rollbackError) {
+          console.error('Failed to restore active Document after intake rollback:', rollbackError);
+        }
+      }
       throw error;
     }
     try {
@@ -256,7 +273,23 @@ export class TabManager {
     const tab = this.tabs.get(id);
     if (!tab) return;
     await this.activateTab(id);
-    await this.options.onDocumentOpened?.(tab);
+    try {
+      await this.options.onDocumentOpened?.(tab);
+    } catch (error) {
+      console.error('Document Intake observer failed:', error);
+    }
+  }
+
+  async requestDocumentPage(filePath: string, page: number): Promise<void> {
+    const tab = this.getTabs().find((item) => item.filePath === filePath);
+    if (!tab) throw new Error(`Cannot navigate unopened Document: ${filePath}`);
+    if (this.options.onDocumentPageRequested) {
+      await this.options.onDocumentPageRequested(filePath, page);
+      return;
+    }
+    const viewer = this.pdfViewers.get(tab.id);
+    if (!viewer) throw new Error(`Cannot render unopened Document: ${filePath}`);
+    await viewer.goToPage(page);
   }
 
   setActivationRequester(requestActivation: (filePath: string) => Promise<void>): void {

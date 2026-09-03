@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createDocumentIntake } from '../reader/document-intake';
+import { createDocumentIntake, createDocumentIntakeCoordinator } from '../reader/document-intake';
 
 describe('Document Intake', () => {
   it('activates an existing canonical Document without rereading bytes', async () => {
@@ -160,5 +160,87 @@ describe('Document Intake', () => {
     await vi.waitFor(() => expect(releaseSecond).toBeTypeOf('function'));
     releaseSecond?.();
     await expect(operation.completion).resolves.toMatchObject({ opened: 2, failed: 0 });
+  });
+
+  it('deduplicates concurrent aliases while the canonical Document is opening', async () => {
+    let releaseRead: (() => void) | undefined;
+    let opened = false;
+    const source = {
+      describe: vi.fn(async (requestedPath: string) => ({
+        canonicalPath: '/docs/report.pdf',
+        title: requestedPath.split('/').pop() ?? requestedPath,
+      })),
+      read: vi.fn(async () => {
+        await new Promise<void>((resolve) => {
+          releaseRead = resolve;
+        });
+        return new Uint8Array([1]);
+      }),
+    };
+    const runtime = {
+      isOpen: vi.fn(() => opened),
+      activate: vi.fn(async () => undefined),
+      open: vi.fn(async () => {
+        opened = true;
+      }),
+      goToPage: vi.fn(async () => undefined),
+    };
+    const coordinator = createDocumentIntakeCoordinator();
+    const first = createDocumentIntake({ source, runtime, coordinator });
+    const second = createDocumentIntake({ source, runtime, coordinator });
+
+    const firstResult = first.open(['/alias/report.pdf']);
+    await vi.waitFor(() => expect(releaseRead).toBeTypeOf('function'));
+    const secondResult = second.open(['/other-alias/report.pdf'], { page: 9 });
+    await vi.waitFor(() => expect(source.describe).toHaveBeenCalledTimes(2));
+    releaseRead?.();
+
+    await expect(firstResult).resolves.toMatchObject({ opened: 1, activated: 0, failed: 0 });
+    await expect(secondResult).resolves.toMatchObject({ opened: 0, activated: 1, failed: 0 });
+    expect(source.read).toHaveBeenCalledOnce();
+    expect(runtime.open).toHaveBeenCalledOnce();
+    expect(runtime.activate).toHaveBeenCalledWith('/docs/report.pdf');
+    expect(runtime.goToPage).toHaveBeenCalledWith('/docs/report.pdf', 9);
+  });
+
+  it('shares a failed preparation outcome but permits a later retry', async () => {
+    const preparationError = new Error('first render failed');
+    let attempt = 0;
+    let releaseOpen: (() => void) | undefined;
+    const source = {
+      describe: vi.fn(async () => ({ canonicalPath: '/docs/report.pdf', title: 'report.pdf' })),
+      read: vi.fn(async () => new Uint8Array([1])),
+    };
+    const runtime = {
+      isOpen: vi.fn(() => false),
+      activate: vi.fn(async () => undefined),
+      open: vi.fn(async () => {
+        attempt += 1;
+        if (attempt === 1) {
+          await new Promise<void>((resolve) => {
+            releaseOpen = resolve;
+          });
+          throw preparationError;
+        }
+      }),
+      goToPage: vi.fn(async () => undefined),
+    };
+    const coordinator = createDocumentIntakeCoordinator();
+    const first = createDocumentIntake({ source, runtime, coordinator });
+    const second = createDocumentIntake({ source, runtime, coordinator });
+
+    const firstResult = first.open(['/alias/report.pdf']);
+    await vi.waitFor(() => expect(releaseOpen).toBeTypeOf('function'));
+    const secondResult = second.open(['/other-alias/report.pdf']);
+    await vi.waitFor(() => expect(source.describe).toHaveBeenCalledTimes(2));
+    releaseOpen?.();
+
+    await expect(firstResult).resolves.toMatchObject({ opened: 0, activated: 0, failed: 1 });
+    await expect(secondResult).resolves.toMatchObject({ opened: 0, activated: 0, failed: 1 });
+    const retry = await first.open(['/alias/report.pdf']);
+
+    expect(retry).toMatchObject({ opened: 1, activated: 0, failed: 0 });
+    expect(source.read).toHaveBeenCalledTimes(2);
+    expect(runtime.open).toHaveBeenCalledTimes(2);
   });
 });

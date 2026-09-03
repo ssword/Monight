@@ -21,9 +21,8 @@ describe('PDFViewer initial load', () => {
         };
       }),
     };
-    getPdfEngine.mockResolvedValue({
-      getDocument: () => ({ promise: Promise.resolve(pdfDocument) }),
-    });
+    const getDocument = vi.fn(() => ({ promise: Promise.resolve(pdfDocument) }));
+    getPdfEngine.mockResolvedValue({ getDocument });
 
     const { PDFViewer } = await import('../scripts/pdf-viewer');
     const viewer = Object.create(PDFViewer.prototype) as InstanceType<typeof PDFViewer>;
@@ -50,9 +49,11 @@ describe('PDFViewer initial load', () => {
       events.push(`render:${pageNumber}`);
     });
 
-    await viewer.loadPDF(new Uint8Array([1]), 'report.pdf', '/tmp/report.pdf');
+    const intakeBytes = new Uint8Array([1]);
+    await viewer.loadPDF(intakeBytes, 'report.pdf', '/tmp/report.pdf');
 
     expect(events[0]).toBe('render:1');
+    expect(getDocument).toHaveBeenCalledWith({ data: intakeBytes });
   });
 
   it('makes the continuous view of a large Document scrollable before measuring all pages', async () => {

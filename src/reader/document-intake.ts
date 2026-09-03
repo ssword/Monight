@@ -1,12 +1,6 @@
-export interface DocumentMetadata {
-  readonly canonicalPath: string;
-  readonly title: string;
-}
+import type { DocumentMetadata, PdfSource } from './pdf-source';
 
-export interface PdfSource {
-  describe(requestedPath: string): Promise<DocumentMetadata>;
-  read(canonicalPath: string): Promise<Uint8Array>;
-}
+export type { DocumentMetadata, PdfSource } from './pdf-source';
 
 export interface DocumentRuntimeIntake {
   isOpen(filePath: string): boolean;
@@ -32,9 +26,44 @@ export interface DocumentIntakeResult {
   readonly failed: number;
 }
 
+type DocumentPreparationResult = 'opened' | 'existing';
+
+export interface DocumentIntakeCoordinator {
+  prepare(
+    canonicalPath: string,
+    isOpen: () => boolean,
+    open: () => Promise<void>,
+  ): Promise<DocumentPreparationResult>;
+}
+
+export function createDocumentIntakeCoordinator(): DocumentIntakeCoordinator {
+  const pending = new Map<string, Promise<void>>();
+
+  return {
+    async prepare(canonicalPath, isOpen, open) {
+      const existingPreparation = pending.get(canonicalPath);
+      if (existingPreparation) {
+        await existingPreparation;
+        return 'existing';
+      }
+      if (isOpen()) return 'existing';
+
+      const preparation = Promise.resolve().then(open);
+      pending.set(canonicalPath, preparation);
+      try {
+        await preparation;
+        return 'opened';
+      } finally {
+        if (pending.get(canonicalPath) === preparation) pending.delete(canonicalPath);
+      }
+    },
+  };
+}
+
 interface DocumentIntakeOptions {
   source: PdfSource;
   runtime: DocumentRuntimeIntake;
+  coordinator?: DocumentIntakeCoordinator;
   onSucceeded?: (
     outcome: Extract<DocumentIntakeOutcome, { status: 'opened' | 'activated' }>,
   ) => void;
@@ -59,6 +88,7 @@ export interface DocumentIntakeOperation {
 export function createDocumentIntake({
   source,
   runtime,
+  coordinator = createDocumentIntakeCoordinator(),
   onSucceeded,
   onObserverError = (error) => console.error('Document Intake observer failed:', error),
 }: DocumentIntakeOptions): DocumentIntake {
@@ -78,7 +108,20 @@ export function createDocumentIntake({
         try {
           const document = await source.describe(requestedPath);
           let outcome: Extract<DocumentIntakeOutcome, { status: 'opened' | 'activated' }>;
-          if (runtime.isOpen(document.canonicalPath)) {
+          const preparation = await coordinator.prepare(
+            document.canonicalPath,
+            () => runtime.isOpen(document.canonicalPath),
+            async () => {
+              const bytes = await source.read(document.canonicalPath);
+              await runtime.open(
+                document,
+                bytes,
+                options.activate !== false,
+                index === 0 ? options.page : undefined,
+              );
+            },
+          );
+          if (preparation === 'existing') {
             if (options.activate !== false) await runtime.activate(document.canonicalPath);
             if (index === 0 && options.page !== undefined) {
               await runtime.goToPage(document.canonicalPath, options.page);
@@ -89,13 +132,6 @@ export function createDocumentIntake({
               filePath: document.canonicalPath,
             };
           } else {
-            const bytes = await source.read(document.canonicalPath);
-            await runtime.open(
-              document,
-              bytes,
-              options.activate !== false,
-              index === 0 ? options.page : undefined,
-            );
             outcome = { status: 'opened', requestedPath, filePath: document.canonicalPath };
           }
           outcomes.push(outcome);

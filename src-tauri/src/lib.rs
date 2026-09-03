@@ -186,6 +186,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::read_pdf_file,
             commands::open_pdf_dialog,
+            commands::describe_pdf_file,
             commands::get_file_name,
             commands::get_file_directory,
             commands::open_settings,
