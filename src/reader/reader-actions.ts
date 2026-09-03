@@ -96,9 +96,13 @@ interface PendingAbsoluteAction {
   resolve: (outcome: ReaderActionOutcome) => void;
 }
 
+type AbsoluteActionKind = 'readingPosition' | 'visualState';
+
 interface DocumentLane {
   tail: Promise<void>;
-  pendingAbsolute: Map<string, PendingAbsoluteAction>;
+  pendingAbsolute: Map<AbsoluteActionKind, PendingAbsoluteAction>;
+  generation: number;
+  pendingRemovals: number;
 }
 
 function visualStatesEqual(
@@ -137,11 +141,12 @@ export function createReaderActions({
     onObserverError,
   });
   const lanes = new Map<string, DocumentLane>();
-  const generations = new Map<string, number>();
   let globalTail = Promise.resolve();
 
   const revision = (): number => session.snapshot().revision;
-  const generation = (filePath: string): number => generations.get(filePath) ?? 0;
+  const generation = (filePath: string): number => lanes.get(filePath)?.generation ?? 0;
+  const isRemovalPending = (filePath: string): boolean =>
+    (lanes.get(filePath)?.pendingRemovals ?? 0) > 0;
   const isDocumentOpen = (filePath: string): boolean =>
     session.snapshot().documents.some((document) => document.filePath === filePath);
   const cancelled = (
@@ -150,6 +155,7 @@ export function createReaderActions({
     options?: ReaderActionOptions,
   ): boolean =>
     generation(filePath) !== expectedGeneration ||
+    isRemovalPending(filePath) ||
     !isDocumentOpen(filePath) ||
     Boolean(options?.isCancelled?.());
 
@@ -167,7 +173,12 @@ export function createReaderActions({
   const laneFor = (filePath: string): DocumentLane => {
     let lane = lanes.get(filePath);
     if (!lane) {
-      lane = { tail: Promise.resolve(), pendingAbsolute: new Map() };
+      lane = {
+        tail: Promise.resolve(),
+        pendingAbsolute: new Map(),
+        generation: 0,
+        pendingRemovals: 0,
+      };
       lanes.set(filePath, lane);
     }
     return lane;
@@ -175,7 +186,7 @@ export function createReaderActions({
 
   const enqueueAbsolute = (
     filePath: string,
-    kind: string,
+    kind: AbsoluteActionKind,
     work: (expectedGeneration: number) => Promise<ReaderActionOutcome>,
   ): Promise<ReaderActionOutcome> => {
     const lane = laneFor(filePath);
@@ -234,38 +245,83 @@ export function createReaderActions({
     return outcome;
   };
 
+  const routeDocumentAction = (
+    requestedPath: string | undefined,
+    enqueue: (filePath: string) => Promise<ReaderActionOutcome>,
+  ): Promise<ReaderActionOutcome> => {
+    const precedingGlobal = globalTail;
+    return precedingGlobal
+      .catch(() => undefined)
+      .then(() => {
+        const filePath = requestedPath ?? session.snapshot().activeDocumentPath;
+        return filePath ? enqueue(filePath) : { status: 'no-op' as const, revision: revision() };
+      })
+      .catch((error): ReaderActionOutcome => ({ status: 'failure', error, revision: revision() }));
+  };
+
+  const enqueueSettledUpdate = (
+    filePath: string,
+    kind: AbsoluteActionKind,
+    options: ReaderActionOptions | undefined,
+    update: (document: ReadingSessionDocument) => ReadingSessionDocument | null,
+  ): Promise<ReaderActionOutcome> =>
+    routeDocumentAction(filePath, (routedPath) =>
+      enqueueAbsolute(routedPath, kind, async (expectedGeneration) => {
+        if (cancelled(routedPath, expectedGeneration, options)) {
+          return { status: 'no-op', revision: revision() };
+        }
+        const current = session.snapshot();
+        const document = current.documents.find((item) => item.filePath === routedPath);
+        if (!document) return { status: 'no-op', revision: current.revision };
+        const updated = update(document);
+        if (!updated) return { status: 'no-op', revision: current.revision };
+        const documents = current.documents.map((item) =>
+          item.filePath === routedPath ? updated : item,
+        );
+        return commit(
+          { schemaVersion: 2, activeDocumentPath: current.activeDocumentPath, documents },
+          'deferred',
+        );
+      }),
+    );
+
   return {
     async dispatch(action, options) {
       if (action.type === 'removeDocument') {
-        generations.set(action.filePath, generation(action.filePath) + 1);
-        const lane = lanes.get(action.filePath);
-        for (const pending of lane?.pendingAbsolute.values() ?? []) {
+        const lane = laneFor(action.filePath);
+        lane.pendingRemovals += 1;
+        lane.generation += 1;
+        for (const pending of lane.pendingAbsolute.values()) {
           pending.superseded = true;
           pending.resolve({ status: 'no-op', revision: revision() });
         }
-        lane?.pendingAbsolute.clear();
+        lane.pendingAbsolute.clear();
 
         return enqueueGlobal(async () => {
-          const current = session.snapshot();
-          const index = current.documents.findIndex((item) => item.filePath === action.filePath);
-          if (index === -1) return { status: 'no-op', revision: current.revision };
           try {
-            await projection.exitPresentation?.();
-            await projection.closeDocument?.(action.filePath);
-          } catch (error) {
-            return { status: 'failure', error, revision: revision() };
+            const current = session.snapshot();
+            const index = current.documents.findIndex((item) => item.filePath === action.filePath);
+            if (index === -1) return { status: 'no-op', revision: current.revision };
+            try {
+              await projection.exitPresentation?.();
+              await projection.closeDocument?.(action.filePath);
+            } catch (error) {
+              return { status: 'failure', error, revision: revision() };
+            }
+            const latest = session.snapshot();
+            const latestIndex = latest.documents.findIndex(
+              (item) => item.filePath === action.filePath,
+            );
+            if (latestIndex === -1) return { status: 'no-op', revision: latest.revision };
+            const documents = latest.documents.filter((item) => item.filePath !== action.filePath);
+            const activeDocumentPath =
+              latest.activeDocumentPath === action.filePath
+                ? (documents[Math.min(latestIndex, documents.length - 1)]?.filePath ?? null)
+                : latest.activeDocumentPath;
+            return commit({ schemaVersion: 2, activeDocumentPath, documents }, 'immediate');
+          } finally {
+            lane.pendingRemovals -= 1;
           }
-          const latest = session.snapshot();
-          const latestIndex = latest.documents.findIndex(
-            (item) => item.filePath === action.filePath,
-          );
-          if (latestIndex === -1) return { status: 'no-op', revision: latest.revision };
-          const documents = latest.documents.filter((item) => item.filePath !== action.filePath);
-          const activeDocumentPath =
-            latest.activeDocumentPath === action.filePath
-              ? (documents[Math.min(latestIndex, documents.length - 1)]?.filePath ?? null)
-              : latest.activeDocumentPath;
-          return commit({ schemaVersion: 2, activeDocumentPath, documents }, 'immediate');
         });
       }
 
@@ -275,7 +331,7 @@ export function createReaderActions({
           if (current.documents.some((item) => item.filePath === action.document.filePath)) {
             return { status: 'no-op', revision: current.revision };
           }
-          generations.set(action.document.filePath, generation(action.document.filePath));
+          laneFor(action.document.filePath);
           return commit(
             {
               schemaVersion: 2,
@@ -317,41 +373,30 @@ export function createReaderActions({
       }
 
       if (action.type === 'settleReadingPosition') {
-        const current = session.snapshot();
-        const document = current.documents.find((item) => item.filePath === action.filePath);
         const { page, location } = action.readingPosition;
         if (
-          !document ||
           !Number.isInteger(page) ||
           page < 1 ||
           !Number.isFinite(location) ||
           location < 0 ||
           location > 1
         ) {
-          return { status: 'no-op', revision: current.revision };
+          return { status: 'no-op', revision: revision() };
         }
-        if (
-          'location' in document.readingPosition &&
-          document.readingPosition.page === page &&
-          document.readingPosition.location === location
-        ) {
-          return { status: 'no-op', revision: current.revision };
-        }
-        const documents = current.documents.map((item) =>
-          item.filePath === document.filePath
-            ? { ...item, readingPosition: { page, location } }
-            : item,
-        );
-        return commit(
-          { schemaVersion: 2, activeDocumentPath: current.activeDocumentPath, documents },
-          'deferred',
-        );
+
+        return enqueueSettledUpdate(action.filePath, 'readingPosition', options, (document) => {
+          if (
+            'location' in document.readingPosition &&
+            document.readingPosition.page === page &&
+            document.readingPosition.location === location
+          ) {
+            return null;
+          }
+          return { ...document, readingPosition: { page, location } };
+        });
       }
 
       if (action.type === 'settleVisualState') {
-        const current = session.snapshot();
-        const document = current.documents.find((item) => item.filePath === action.filePath);
-        if (!document) return { status: 'no-op', revision: current.revision };
         const visualState = action.visualState;
         if (
           (visualState.zoomIntent.kind === 'manual' &&
@@ -359,119 +404,112 @@ export function createReaderActions({
               visualState.zoomIntent.scale <= 0)) ||
           !Number.isFinite(visualState.rotation)
         ) {
-          return { status: 'no-op', revision: current.revision };
+          return { status: 'no-op', revision: revision() };
         }
-        if (document.visualState && visualStatesEqual(document.visualState, visualState)) {
-          return { status: 'no-op', revision: current.revision };
-        }
-        const documents = current.documents.map((item) =>
-          item.filePath === document.filePath
-            ? {
-                ...item,
-                visualState: {
-                  ...visualState,
-                  filterSettings: { ...visualState.filterSettings },
-                },
-              }
-            : item,
-        );
-        return commit(
-          { schemaVersion: 2, activeDocumentPath: current.activeDocumentPath, documents },
-          'deferred',
-        );
+
+        return enqueueSettledUpdate(action.filePath, 'visualState', options, (document) => {
+          if (document.visualState && visualStatesEqual(document.visualState, visualState)) {
+            return null;
+          }
+          return {
+            ...document,
+            visualState: {
+              ...visualState,
+              filterSettings: { ...visualState.filterSettings },
+            },
+          };
+        });
       }
 
       if (action.type === 'goToNextPage' || action.type === 'goToPreviousPage') {
-        const targetPath = action.filePath ?? session.snapshot().activeDocumentPath;
-        const target = session
-          .snapshot()
-          .documents.find((document) => document.filePath === targetPath);
-        if (!target) return { status: 'no-op', revision: revision() };
+        return routeDocumentAction(action.filePath, (filePath) =>
+          enqueueRelative(filePath, async (expectedGeneration) => {
+            if (cancelled(filePath, expectedGeneration, options)) {
+              return { status: 'no-op', revision: revision() };
+            }
+            const current = session.snapshot();
+            const document = current.documents.find((item) => item.filePath === filePath);
+            if (!document) return { status: 'no-op', revision: current.revision };
+            const reportedPageCount = await projection.getPageCount?.(filePath);
+            if (cancelled(filePath, expectedGeneration, options)) {
+              return { status: 'no-op', revision: revision() };
+            }
+            const totalPages =
+              reportedPageCount === undefined
+                ? Number.MAX_SAFE_INTEGER
+                : Math.max(1, reportedPageCount);
+            const step = document.visualState?.viewMode === 'spread' ? 2 : 1;
+            const direction = action.type === 'goToNextPage' ? 1 : -1;
+            const page = Math.min(
+              Math.max(document.readingPosition.page + direction * step, 1),
+              totalPages,
+            );
+            if (page === document.readingPosition.page) {
+              return { status: 'no-op', revision: current.revision };
+            }
+            const readingPosition = { page, location: 0 };
+            try {
+              await projection.goToReadingPosition(filePath, readingPosition, {
+                isCancelled: () => cancelled(filePath, expectedGeneration, options),
+              });
+            } catch (error) {
+              if (cancelled(filePath, expectedGeneration, options)) {
+                return { status: 'no-op', revision: revision() };
+              }
+              return { status: 'failure', error, revision: revision() };
+            }
+            if (cancelled(filePath, expectedGeneration, options)) {
+              return { status: 'no-op', revision: revision() };
+            }
+            const latest = session.snapshot();
+            const documents = latest.documents.map((item) =>
+              item.filePath === filePath ? { ...item, readingPosition } : item,
+            );
+            return commit(
+              { schemaVersion: 2, activeDocumentPath: latest.activeDocumentPath, documents },
+              'deferred',
+            );
+          }),
+        );
+      }
 
-        return enqueueRelative(target.filePath, async (expectedGeneration) => {
-          if (cancelled(target.filePath, expectedGeneration, options)) {
+      if (!Number.isInteger(action.page) || action.page < 1) {
+        return { status: 'no-op', revision: revision() };
+      }
+
+      return routeDocumentAction(action.filePath, (filePath) =>
+        enqueueAbsolute(filePath, 'readingPosition', async (expectedGeneration) => {
+          if (cancelled(filePath, expectedGeneration, options)) {
             return { status: 'no-op', revision: revision() };
           }
-          const current = session.snapshot();
-          const document = current.documents.find((item) => item.filePath === target.filePath);
-          if (!document) return { status: 'no-op', revision: current.revision };
-          const reportedPageCount = await projection.getPageCount?.(target.filePath);
-          const totalPages =
-            reportedPageCount === undefined
-              ? Number.MAX_SAFE_INTEGER
-              : Math.max(1, reportedPageCount);
-          const step = document.visualState?.viewMode === 'spread' ? 2 : 1;
-          const direction = action.type === 'goToNextPage' ? 1 : -1;
-          const page = Math.min(
-            Math.max(document.readingPosition.page + direction * step, 1),
-            totalPages,
-          );
-          if (page === document.readingPosition.page) {
-            return { status: 'no-op', revision: current.revision };
-          }
-          const readingPosition = { page, location: 0 };
+          const readingPosition = { page: action.page, location: 0 };
           try {
-            await projection.goToReadingPosition(target.filePath, readingPosition, {
-              isCancelled: () => cancelled(target.filePath, expectedGeneration, options),
-            });
+            if (options) {
+              await projection.goToReadingPosition(filePath, readingPosition, {
+                isCancelled: () => cancelled(filePath, expectedGeneration, options),
+              });
+            } else {
+              await projection.goToReadingPosition(filePath, readingPosition);
+            }
           } catch (error) {
-            if (cancelled(target.filePath, expectedGeneration, options)) {
+            if (cancelled(filePath, expectedGeneration, options)) {
               return { status: 'no-op', revision: revision() };
             }
             return { status: 'failure', error, revision: revision() };
           }
-          if (cancelled(target.filePath, expectedGeneration, options)) {
+          if (cancelled(filePath, expectedGeneration, options)) {
             return { status: 'no-op', revision: revision() };
           }
           const latest = session.snapshot();
           const documents = latest.documents.map((item) =>
-            item.filePath === target.filePath ? { ...item, readingPosition } : item,
+            item.filePath === filePath ? { ...item, readingPosition } : item,
           );
           return commit(
             { schemaVersion: 2, activeDocumentPath: latest.activeDocumentPath, documents },
             'deferred',
           );
-        });
-      }
-
-      const targetPath = action.filePath ?? session.snapshot().activeDocumentPath;
-      const current = session.snapshot();
-      const document = current.documents.find((item) => item.filePath === targetPath);
-      if (!document || !Number.isInteger(action.page) || action.page < 1) {
-        return { status: 'no-op', revision: current.revision };
-      }
-
-      return enqueueAbsolute(document.filePath, 'goToPage', async (expectedGeneration) => {
-        if (cancelled(document.filePath, expectedGeneration, options)) {
-          return { status: 'no-op', revision: revision() };
-        }
-        const readingPosition = { page: action.page, location: 0 };
-        try {
-          if (options) {
-            await projection.goToReadingPosition(document.filePath, readingPosition, {
-              isCancelled: () => cancelled(document.filePath, expectedGeneration, options),
-            });
-          } else {
-            await projection.goToReadingPosition(document.filePath, readingPosition);
-          }
-        } catch (error) {
-          if (cancelled(document.filePath, expectedGeneration, options)) {
-            return { status: 'no-op', revision: revision() };
-          }
-          return { status: 'failure', error, revision: revision() };
-        }
-        if (cancelled(document.filePath, expectedGeneration, options)) {
-          return { status: 'no-op', revision: revision() };
-        }
-        const latest = session.snapshot();
-        const documents = latest.documents.map((item) =>
-          item.filePath === document.filePath ? { ...item, readingPosition } : item,
-        );
-        return commit(
-          { schemaVersion: 2, activeDocumentPath: latest.activeDocumentPath, documents },
-          'deferred',
-        );
-      });
+        }),
+      );
     },
     snapshot: session.snapshot,
     observe: session.observe,
