@@ -31,7 +31,7 @@ export function createTauriPdfSource(
       if (!(response instanceof ArrayBuffer)) {
         throw new Error('Invalid PDF source byte response');
       }
-      return new Uint8Array(response);
+      return new Uint8Array(response).slice();
     },
   };
 }

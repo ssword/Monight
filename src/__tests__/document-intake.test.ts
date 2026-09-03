@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createDocumentIntake, createDocumentIntakeCoordinator } from '../reader/document-intake';
+import { createInMemoryPdfSource } from '../reader/pdf-source';
 
 describe('Document Intake', () => {
   it('activates an existing canonical Document without rereading bytes', async () => {
@@ -242,5 +243,32 @@ describe('Document Intake', () => {
     expect(retry).toMatchObject({ opened: 1, activated: 0, failed: 0 });
     expect(source.read).toHaveBeenCalledTimes(2);
     expect(runtime.open).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps the in-memory source contract stable at the Document Intake seam', async () => {
+    const sourceDocument = {
+      requestedPaths: ['/alias/report.pdf'],
+      canonicalPath: '/docs/report.pdf',
+      title: 'report.pdf',
+      bytes: new Uint8Array([1, 2, 3]),
+    };
+    const runtime = {
+      isOpen: vi.fn(() => false),
+      activate: vi.fn(),
+      open: vi.fn(async (_document, bytes: Uint8Array) => {
+        sourceDocument.bytes[0] = 9;
+        expect(bytes).toEqual(new Uint8Array([1, 2, 3]));
+      }),
+      goToPage: vi.fn(),
+    };
+    const intake = createDocumentIntake({
+      source: createInMemoryPdfSource([sourceDocument]),
+      runtime,
+    });
+
+    await expect(intake.open(['/alias/report.pdf'])).resolves.toMatchObject({
+      opened: 1,
+      failed: 0,
+    });
   });
 });

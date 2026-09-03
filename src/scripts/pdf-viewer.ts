@@ -217,6 +217,14 @@ const isAbortLikeError = (error: unknown): boolean =>
       (error as { name?: string }).name === 'AbortException',
   );
 
+function releasePdfData(pdfData: Uint8Array): void {
+  try {
+    globalThis.structuredClone(pdfData, { transfer: [pdfData.buffer] });
+  } catch {
+    pdfData.fill(0);
+  }
+}
+
 export class PDFViewer {
   private container: HTMLElement;
   private canvas: HTMLCanvasElement | null = null;
@@ -535,7 +543,8 @@ export class PDFViewer {
       const pdfjsLib = await getPdfEngine();
 
       // Load PDF document
-      const loadingTask = pdfjsLib.getDocument({ data: pdfData });
+      const loadingTask = pdfjsLib.getDocument({ data: pdfData.slice() });
+      releasePdfData(pdfData);
       const passwordRequester = this.requestPassword;
       if (passwordRequester) {
         loadingTask.onPassword = (updatePassword: (password: string) => void, reason: number) => {

@@ -44,6 +44,34 @@ describe('Document picker intake', () => {
     ]);
   });
 
+  it('keeps the production byte contract stable through the file-dialog intake seam', async () => {
+    let responseBuffer: ArrayBuffer | undefined;
+    mocks.invoke.mockImplementation(async (command: string) => {
+      switch (command) {
+        case 'open_pdf_dialog':
+          return ['/docs/report.pdf'];
+        case 'describe_pdf_file':
+          return { canonicalPath: '/docs/report.pdf', title: 'report.pdf' };
+        case 'read_pdf_file':
+          responseBuffer = new Uint8Array([1, 2, 3]).buffer;
+          return responseBuffer;
+        default:
+          throw new Error(`Unexpected command: ${command}`);
+      }
+    });
+    const tabManager = {
+      getTabs: vi.fn(() => []),
+      createTab: vi.fn(async (_filePath: string, _title: string, bytes: Uint8Array) => {
+        expect(responseBuffer).toBeDefined();
+        new Uint8Array(responseBuffer as ArrayBuffer)[0] = 9;
+        expect(bytes).toEqual(new Uint8Array([1, 2, 3]));
+      }),
+    };
+    const { openPDFFile } = await import('../app/file-actions');
+
+    await expect(openPDFFile(tabManager as never)).resolves.toBe(1);
+  });
+
   it('routes an explicit page for an existing Document through its semantic runtime request', async () => {
     const tabManager = {
       getTabs: vi.fn(() => [{ id: 'report', filePath: '/docs/report.pdf' }]),
