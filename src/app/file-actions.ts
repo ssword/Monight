@@ -14,6 +14,7 @@ interface OpenFilesOptions {
   initialFilterSettings?: FilterSettings;
   initialViewMode?: ViewMode;
   page?: number;
+  activate?: boolean;
 }
 
 interface EnsureViewingSizeOptions {
@@ -29,6 +30,7 @@ export async function openFiles(
     initialFilterSettings,
     initialViewMode,
     page,
+    activate = true,
   }: OpenFilesOptions,
 ): Promise<number> {
   const intake = createDocumentIntake({
@@ -50,13 +52,14 @@ export async function openFiles(
         if (!tab) throw new Error(`Cannot activate unopened Document: ${filePath}`);
         await tabManager.reactivateOpenDocument(tab.id);
       },
-      open: async (document, bytes) => {
+      open: async (document, bytes, shouldActivate) => {
         await tabManager.createTab(
           document.canonicalPath,
           document.title,
           bytes,
           initialFilterSettings,
           initialViewMode ?? 'single',
+          { activate: shouldActivate },
         );
       },
       goToPage: async (filePath, requestedPage) => {
@@ -67,7 +70,10 @@ export async function openFiles(
       },
     },
   });
-  const result = await intake.open(filePaths, { ...(page !== undefined ? { page } : {}) });
+  const result = await intake.open(filePaths, {
+    ...(page !== undefined ? { page } : {}),
+    activate,
+  });
 
   for (const outcome of result.outcomes) {
     if (outcome.status === 'opened') {

@@ -40,6 +40,10 @@ interface TabManagerOptions {
   beforeDocumentTransition?: () => Promise<void>;
 }
 
+interface CreateTabOptions {
+  activate?: boolean;
+}
+
 /**
  * Manages multiple PDF tabs with individual state
  */
@@ -75,6 +79,7 @@ export class TabManager {
     pdfData: Uint8Array,
     filterSettings?: FilterSettings,
     viewMode: ViewMode = 'single',
+    { activate = true }: CreateTabOptions = {},
   ): Promise<TabData> {
     const id = crypto.randomUUID();
     const initialFilterSettings = filterSettings ?? PRESETS.default;
@@ -152,10 +157,25 @@ export class TabManager {
     this.renderTabs();
     this.onTabsChanged?.();
 
-    // Activate the new tab (this will show its canvas)
-    await this.options.onDocumentPrepared?.(tab);
-    await this.activateTab(id);
-    await this.options.onDocumentOpened?.(tab);
+    // Registration and activation are transactional; observers run only after success.
+    try {
+      await this.options.onDocumentPrepared?.(tab);
+      if (activate) await this.activateTab(id);
+    } catch (error) {
+      viewer.destroy();
+      this.pdfViewers.delete(id);
+      this.tabs.delete(id);
+      if (this.activeTabId === id) this.activeTabId = null;
+      await this.options.onDocumentClosed?.(filePath);
+      this.renderTabs();
+      this.onTabsChanged?.();
+      throw error;
+    }
+    try {
+      await this.options.onDocumentOpened?.(tab);
+    } catch (error) {
+      console.error('Document Intake observer failed:', error);
+    }
 
     debugLog(`Created Document: ${title} (${id})`);
     return tab;
@@ -281,6 +301,22 @@ export class TabManager {
 
   getTabs(): TabData[] {
     return Array.from(this.tabs.values());
+  }
+
+  setDocumentOrder(filePaths: readonly string[]): void {
+    const byPath = new Map(
+      Array.from(this.tabs.entries()).map(([id, tab]) => [tab.filePath, [id, tab] as const]),
+    );
+    const ordered = new Map<string, TabData>();
+    for (const filePath of filePaths) {
+      const entry = byPath.get(filePath);
+      if (!entry) continue;
+      ordered.set(entry[0], entry[1]);
+      byPath.delete(filePath);
+    }
+    for (const [id, tab] of byPath.values()) ordered.set(id, tab);
+    this.tabs = ordered;
+    this.renderTabs();
   }
 
   /**

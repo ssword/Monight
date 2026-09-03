@@ -11,7 +11,7 @@ export interface PdfSource {
 export interface DocumentRuntimeIntake {
   isOpen(filePath: string): boolean;
   activate(filePath: string): Promise<void>;
-  open(document: DocumentMetadata, bytes: Uint8Array): Promise<void>;
+  open(document: DocumentMetadata, bytes: Uint8Array, activate: boolean): Promise<void>;
   goToPage(filePath: string, page: number): Promise<void>;
 }
 
@@ -38,6 +38,7 @@ interface DocumentIntakeOptions {
 
 export interface OpenDocumentsOptions {
   readonly page?: number;
+  readonly activate?: boolean;
 }
 
 export interface DocumentIntake {
@@ -58,7 +59,7 @@ export function createDocumentIntake({
           const document = await source.describe(requestedPath);
           let outcome: Extract<DocumentIntakeOutcome, { status: 'opened' | 'activated' }>;
           if (runtime.isOpen(document.canonicalPath)) {
-            await runtime.activate(document.canonicalPath);
+            if (options.activate !== false) await runtime.activate(document.canonicalPath);
             if (index === 0 && options.page !== undefined) {
               await runtime.goToPage(document.canonicalPath, options.page);
             }
@@ -69,7 +70,7 @@ export function createDocumentIntake({
             };
           } else {
             const bytes = await source.read(document.canonicalPath);
-            await runtime.open(document, bytes);
+            await runtime.open(document, bytes, options.activate !== false);
             if (index === 0 && options.page !== undefined) {
               await runtime.goToPage(document.canonicalPath, options.page);
             }

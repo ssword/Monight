@@ -2,6 +2,7 @@ import { viewModeIcon, viewModeLabel } from '../lib/document-features';
 import { buildFilterCSS } from '../scripts/filters';
 import type { SliderManager } from '../scripts/sliders';
 import type { TabData, TabManager } from '../scripts/tabs';
+import type { RestorableReadingPosition } from '../reader/reader-actions';
 import { updateActivePresetButton } from './ui';
 
 // Restore tab state (filters, page, zoom, rotation, precise scroll position, view mode)
@@ -9,6 +10,10 @@ export async function restoreTabState(
   tabManager: TabManager | null,
   sliderManager: SliderManager | null,
   tab: TabData,
+  readingPosition: RestorableReadingPosition = {
+    page: tab.currentPage,
+    legacyOffset: tab.scrollPosition,
+  },
 ): Promise<void> {
   const viewer = tabManager?.getViewerForTab(tab.id);
   if (!viewer) return;
@@ -20,8 +25,7 @@ export async function restoreTabState(
   await viewer.setRotation(tab.rotation);
   await viewer.setZoomIntent(tab.zoomIntent);
   await viewer.setViewMode(tab.viewMode);
-  await viewer.goToReadingPosition({ page: tab.currentPage, location: 0 });
-  await viewer.setScrollPosition(tab.scrollPosition);
+  await viewer.goToReadingPosition(readingPosition);
 
   // Update slider if initialized
   if (sliderManager?.isInitialized()) {

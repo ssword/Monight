@@ -1,6 +1,10 @@
 import { Store } from '@tauri-apps/plugin-store';
 import type { PdfAnnotation, RecentFile, ViewMode } from '../lib/document-features';
-import type { PersistedReadingSession, ZoomIntent } from '../reader/reader-actions';
+import type {
+  PersistedReadingSession,
+  RestorableReadingPosition,
+  ZoomIntent,
+} from '../reader/reader-actions';
 import type { FilterSettings } from './filters';
 
 export interface SavedTabSession {
@@ -12,6 +16,7 @@ export interface SavedTabSession {
   zoomIntent?: ZoomIntent;
   rotation?: number;
   scrollPosition?: number;
+  readingPosition?: RestorableReadingPosition;
   viewMode: ViewMode;
 }
 

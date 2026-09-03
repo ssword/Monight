@@ -30,6 +30,7 @@ function toSavedTabSession(tab: TabData): SavedTabSession {
     zoomIntent: tab.zoomIntent,
     rotation: tab.rotation,
     scrollPosition: tab.scrollPosition,
+    readingPosition: { page: tab.currentPage, legacyOffset: tab.scrollPosition },
     viewMode: tab.viewMode,
   };
 }
@@ -46,6 +47,7 @@ export function captureReadingSession(tabManager: TabManager | null): ReadingSes
 
 async function restoreSavedTab(
   savedTab: SavedTabSession,
+  activate: boolean,
   {
     tabManager,
     sliderManager,
@@ -61,6 +63,7 @@ async function restoreSavedTab(
     onError: (message) => console.warn(message),
     initialFilterSettings: savedTab.filterSettings ?? getInitialFilterSettings(),
     initialViewMode: savedTab.viewMode ?? getInitialViewMode(),
+    activate,
   });
 
   const restoredTab = tabManager.getTabs().find((tab) => tab.filePath === savedTab.filePath);
@@ -75,6 +78,12 @@ async function restoreSavedTab(
   const preservePosition = savedTab.filePath === foregroundDocumentPath;
   const currentPage = restoredTab.currentPage;
   const currentScrollPosition = restoredTab.scrollPosition;
+  const readingPosition = preservePosition
+    ? { page: currentPage, legacyOffset: currentScrollPosition }
+    : (savedTab.readingPosition ?? {
+        page: savedTab.currentPage,
+        legacyOffset: savedTab.scrollPosition ?? 0,
+      });
   restoredTab.title = savedTab.title;
   restoredTab.filterSettings = { ...savedTab.filterSettings };
   restoredTab.currentPage = preservePosition ? currentPage : savedTab.currentPage;
@@ -86,7 +95,7 @@ async function restoreSavedTab(
     : (savedTab.scrollPosition ?? 0);
   restoredTab.viewMode = savedTab.viewMode;
 
-  await restoreTabState(tabManager, sliderManager, restoredTab);
+  await restoreTabState(tabManager, sliderManager, restoredTab, readingPosition);
   return true;
 }
 
@@ -98,39 +107,32 @@ export async function restoreReadingSession(
   let failed = 0;
   const failedPaths: string[] = [];
   const savedActive = session.tabs.find((tab) => tab.filePath === session.activeFilePath);
+  const activationAnchorPath = options.foregroundDocumentPath ?? session.activeFilePath;
   const restoreOrder = savedActive
     ? [savedActive, ...session.tabs.filter((tab) => tab !== savedActive)]
     : session.tabs;
 
   for (const savedTab of restoreOrder) {
-    const restored = await restoreSavedTab(savedTab, options);
+    const restored = await restoreSavedTab(
+      savedTab,
+      savedTab.filePath === activationAnchorPath,
+      options,
+    );
     if (restored) {
       opened += 1;
     } else {
       failed += 1;
       failedPaths.push(savedTab.filePath);
     }
-    if (options.foregroundDocumentPath && savedTab.filePath !== options.foregroundDocumentPath) {
-      const foreground = options.tabManager
-        .getTabs()
-        .find((tab) => tab.filePath === options.foregroundDocumentPath);
-      if (foreground) await options.tabManager.activateTab(foreground.id);
-    }
   }
 
-  if (options.foregroundDocumentPath) {
+  options.tabManager.setDocumentOrder(session.tabs.map((tab) => tab.filePath));
+
+  if (activationAnchorPath) {
     const foreground = options.tabManager
       .getTabs()
-      .find((tab) => tab.filePath === options.foregroundDocumentPath);
+      .find((tab) => tab.filePath === activationAnchorPath);
     if (foreground) await options.tabManager.activateTab(foreground.id);
-  } else if (session.activeFilePath) {
-    const activeTab = options.tabManager
-      .getTabs()
-      .find((tab) => tab.filePath === session.activeFilePath);
-
-    if (activeTab) {
-      await options.tabManager.activateTab(activeTab.id);
-    }
   }
 
   return { opened, failed, failedPaths };

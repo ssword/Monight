@@ -318,6 +318,7 @@ const restorePreviousReadingSession = async (): Promise<number> => {
       rotation: document.visualState?.rotation ?? 0,
       scrollPosition:
         'legacyOffset' in document.readingPosition ? document.readingPosition.legacyOffset : 0,
+      readingPosition: document.readingPosition,
       viewMode: document.visualState?.viewMode ?? getInitialViewMode(),
     })),
   };
@@ -497,10 +498,12 @@ async function initializeApp(): Promise<void> {
     sidebarController.setThumbnailsEnabled(settings.general.displayThumbs);
     presentationController = new PresentationController({
       getActiveViewer,
-      onStateChanged: () => {
-        saveCurrentTabState(tabManager, sliderManager);
+      onStateChanged: (active) => {
         updateUI(tabManager);
-        scheduleReadingSessionSave();
+        if (!active) {
+          saveCurrentTabState(tabManager, sliderManager);
+          scheduleReadingSessionSave();
+        }
       },
     });
 

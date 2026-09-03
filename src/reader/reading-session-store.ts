@@ -241,8 +241,9 @@ export async function loadReadingSession(
     throw new Error('Legacy Reading Session converted to invalid data');
   }
   await storage.write(validated);
-  const verified = parseReadingSession(await storage.read());
-  if (!verified) {
+  const verifiedRaw = await storage.read();
+  const verified = parseReadingSession(verifiedRaw);
+  if (!verified || !isRecord(verifiedRaw) || verifiedRaw.schemaVersion !== 2) {
     throw new Error('Reading Session migration could not be verified');
   }
   await storage.removeLegacy();
