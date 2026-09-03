@@ -1,15 +1,10 @@
 import { invoke } from '@tauri-apps/api/core';
 import { debugLog } from '../lib/debug-log';
 import type { ViewMode } from '../lib/document-features';
-import {
-  createDocumentIntake,
-  createDocumentIntakeCoordinator,
-  type DocumentIntakeCoordinator,
-} from '../reader/document-intake';
 import type { FilterSettings } from '../scripts/filters';
 import type { TabManager } from '../scripts/tabs';
 import { showToast } from './dialogs';
-import { createTauriPdfSource } from './pdf-source';
+import { createDocumentIntakeRuntime } from './document-intake-runtime';
 import { withActiveViewer } from './viewer-helpers';
 
 interface OpenFilesOptions {
@@ -26,16 +21,6 @@ interface EnsureViewingSizeOptions {
   fillAvailableHeight?: boolean;
 }
 
-const intakeCoordinators = new WeakMap<TabManager, DocumentIntakeCoordinator>();
-
-function getIntakeCoordinator(tabManager: TabManager): DocumentIntakeCoordinator {
-  const existing = intakeCoordinators.get(tabManager);
-  if (existing) return existing;
-  const coordinator = createDocumentIntakeCoordinator();
-  intakeCoordinators.set(tabManager, coordinator);
-  return coordinator;
-}
-
 export async function openFiles(
   filePaths: string[],
   {
@@ -48,30 +33,10 @@ export async function openFiles(
     activate = true,
   }: OpenFilesOptions,
 ): Promise<number> {
-  const intake = createDocumentIntake({
-    coordinator: getIntakeCoordinator(tabManager),
-    source: createTauriPdfSource(),
-    runtime: {
-      isOpen: (filePath) => tabManager.getTabs().some((tab) => tab.filePath === filePath),
-      activate: async (filePath) => {
-        const tab = tabManager.getTabs().find((item) => item.filePath === filePath);
-        if (!tab) throw new Error(`Cannot activate unopened Document: ${filePath}`);
-        await tabManager.reactivateOpenDocument(tab.id);
-      },
-      open: async (document, bytes, shouldActivate, initialPage) => {
-        await tabManager.createTab(
-          document.canonicalPath,
-          document.title,
-          bytes,
-          initialFilterSettings,
-          initialViewMode ?? 'single',
-          { activate: shouldActivate, initialPage },
-        );
-      },
-      goToPage: async (filePath, requestedPage) => {
-        await tabManager.requestDocumentPage(filePath, requestedPage);
-      },
-    },
+  const intake = createDocumentIntakeRuntime({
+    tabManager,
+    initialFilterSettings,
+    initialViewMode,
   });
   const result = await intake.open(filePaths, {
     ...(page !== undefined ? { page } : {}),

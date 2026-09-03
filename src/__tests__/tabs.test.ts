@@ -6,8 +6,30 @@ const getPdfEngine = vi.hoisted(() => vi.fn());
 
 vi.mock('../lib/pdf-engine', () => ({ getPdfEngine }));
 
+import type { ReadingSessionDocument } from '../reader/reader-actions';
 import { PDFViewer } from '../scripts/pdf-viewer';
 import { TabManager } from '../scripts/tabs';
+
+function restoredDocument(filePath: string): ReadingSessionDocument {
+  return {
+    filePath,
+    title: filePath.split('/').pop() ?? filePath,
+    readingPosition: { page: 4, location: 0.6 },
+    visualState: {
+      filterSettings: {
+        brightness: 8,
+        grayscale: 100,
+        invert: 92,
+        sepia: 100,
+        hue: 295,
+        extraBrightness: -6,
+      },
+      zoomIntent: { kind: 'fit-width' },
+      rotation: 90,
+      viewMode: 'continuous',
+    },
+  };
+}
 
 describe('Document navigation', () => {
   beforeEach(() => {
@@ -100,6 +122,31 @@ describe('Document navigation', () => {
     expect(events).toEqual(['prepare', 'activate', 'opened']);
   });
 
+  it('routes a new Document explicit page through semantic activation', async () => {
+    const requestActivation = vi.fn(async () => undefined);
+    const manager = new TabManager(vi.fn());
+    manager.setActivationRequester(requestActivation);
+    vi.spyOn(PDFViewer.prototype, 'goToPage').mockResolvedValueOnce();
+    vi.spyOn(PDFViewer.prototype, 'getReadingPosition').mockReturnValueOnce({
+      page: 7,
+      location: 0,
+    });
+
+    await manager.createTab(
+      '/tmp/report.pdf',
+      'report.pdf',
+      new Uint8Array([1]),
+      undefined,
+      'single',
+      { initialPage: 7 },
+    );
+
+    expect(requestActivation).toHaveBeenCalledWith('/tmp/report.pdf', {
+      page: 7,
+      location: 0,
+    });
+  });
+
   it('does not turn a successful reactivation into failure when an observer throws', async () => {
     const onDocumentOpened = vi.fn(async () => {
       throw new Error('history unavailable');
@@ -111,6 +158,62 @@ describe('Document navigation', () => {
 
     expect(manager.getActiveTab()?.filePath).toBe('/tmp/one.pdf');
     expect(onDocumentOpened).toHaveBeenCalledTimes(2);
+  });
+
+  it('can restore a Document quietly without explicit-open observer semantics', async () => {
+    const onDocumentOpened = vi.fn(async () => undefined);
+    const onTabChange = vi.fn(async () => undefined);
+    const manager = new TabManager(onTabChange, undefined, undefined, { onDocumentOpened });
+    const goToReadingPosition = vi.spyOn(PDFViewer.prototype, 'goToReadingPosition');
+
+    const tab = await manager.createTab(
+      '/tmp/restored.pdf',
+      'restored.pdf',
+      new Uint8Array([1]),
+      undefined,
+      'single',
+      {
+        activate: false,
+        notifyOpened: false,
+        restoredDocument: restoredDocument('/tmp/restored.pdf'),
+      },
+    );
+
+    await expect(
+      manager.reactivateOpenDocument(tab.id, { notifyOpened: false }),
+    ).resolves.toBeUndefined();
+
+    expect(onDocumentOpened).not.toHaveBeenCalled();
+    expect(onTabChange).toHaveBeenCalledTimes(1);
+    expect(tab.currentPage).toBe(4);
+    expect(tab.viewMode).toBe('continuous');
+    expect(goToReadingPosition).toHaveBeenCalledWith({ page: 4, location: 0.6 });
+  });
+
+  it('rolls back restored projection before Reading Session registration', async () => {
+    vi.spyOn(PDFViewer.prototype, 'setRotation').mockRejectedValueOnce(
+      new Error('rotation projection failed'),
+    );
+    const onDocumentPrepared = vi.fn(async () => undefined);
+    const manager = new TabManager(vi.fn(), undefined, undefined, { onDocumentPrepared });
+
+    await expect(
+      manager.createTab(
+        '/tmp/restored.pdf',
+        'restored.pdf',
+        new Uint8Array([1]),
+        undefined,
+        'single',
+        {
+          activate: false,
+          notifyOpened: false,
+          restoredDocument: restoredDocument('/tmp/restored.pdf'),
+        },
+      ),
+    ).rejects.toThrow('rotation projection failed');
+
+    expect(manager.size).toBe(0);
+    expect(onDocumentPrepared).not.toHaveBeenCalled();
   });
 
   it('routes explicit Document pages through the semantic navigation adapter', async () => {

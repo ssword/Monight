@@ -1,24 +1,27 @@
 import type { DocumentMetadata, PdfSource } from './pdf-source';
 import type { PersistedReadingSession, ReadingSessionDocument } from './reader-actions';
+import type { DocumentPathReconciliation } from './reading-session';
 
 export type { DocumentMetadata, PdfSource } from './pdf-source';
 
-export type RestoreDocumentResult = { status: 'restored' } | { status: 'failed'; message: string };
+export interface DocumentRuntimeActivateOptions {
+  notifyOpened?: boolean;
+}
+
+export interface DocumentRuntimeOpenRequest {
+  document: DocumentMetadata;
+  bytes: Uint8Array;
+  activate: boolean;
+  initialPage?: number;
+  restoredDocument?: ReadingSessionDocument;
+}
 
 export interface DocumentRuntimeIntake {
   isOpen(filePath: string): boolean;
-  activate(filePath: string): Promise<void>;
-  open(
-    document: DocumentMetadata,
-    bytes: Uint8Array,
-    activate: boolean,
-    initialPage?: number,
-  ): Promise<void>;
+  activate(filePath: string, options?: DocumentRuntimeActivateOptions): Promise<void>;
+  open(request: DocumentRuntimeOpenRequest): Promise<void>;
   goToPage(filePath: string, page: number): Promise<void>;
-  restoreDocumentState?(
-    document: ReadingSessionDocument,
-    options: { preserveCurrentReadingPosition: boolean },
-  ): Promise<RestoreDocumentResult>;
+  canonicalizeDocumentPaths?(paths: readonly DocumentPathReconciliation[]): Promise<void>;
   setDocumentOrder?(filePaths: readonly string[]): void;
 }
 
@@ -91,7 +94,6 @@ export interface OpenDocumentsOptions {
 
 export interface RestoreReadingSessionOptions {
   readonly foregroundDocumentPath?: string | null;
-  readonly preserveForegroundReadingPosition?: boolean;
 }
 
 export interface DocumentIntake {
@@ -136,12 +138,12 @@ export function createDocumentIntake({
             () => runtime.isOpen(document.canonicalPath),
             async () => {
               const bytes = await source.read(document.canonicalPath);
-              await runtime.open(
+              await runtime.open({
                 document,
                 bytes,
-                options.activate !== false,
-                index === 0 ? options.page : undefined,
-              );
+                activate: options.activate !== false,
+                ...(index === 0 && options.page !== undefined ? { initialPage: options.page } : {}),
+              });
             },
           );
           if (preparation === 'existing') {
@@ -184,58 +186,85 @@ export function createDocumentIntake({
 
   const restore = async (
     session: PersistedReadingSession,
-    {
-      foregroundDocumentPath,
-      preserveForegroundReadingPosition = false,
-    }: RestoreReadingSessionOptions = {},
+    { foregroundDocumentPath }: RestoreReadingSessionOptions = {},
   ): Promise<RestoreSessionResult> => {
-    if (!runtime.restoreDocumentState || !runtime.setDocumentOrder) {
+    if (!runtime.canonicalizeDocumentPaths || !runtime.setDocumentOrder) {
       throw new Error('Document Intake runtime cannot restore the Reading Session');
     }
 
     let opened = 0;
     let failed = 0;
     const failedPaths: string[] = [];
+    const canonicalPaths = new Map<string, string>();
+    const runtimeStateSources = new Set<string>();
+    const availablePaths = new Set<string>();
+    let foregroundWasOpen = foregroundDocumentPath ? runtime.isOpen(foregroundDocumentPath) : false;
     const savedActive = session.documents.find(
       (document) => document.filePath === session.activeDocumentPath,
     );
-    const activationAnchorPath = foregroundDocumentPath ?? session.activeDocumentPath;
     const restoreOrder = savedActive
       ? [savedActive, ...session.documents.filter((document) => document !== savedActive)]
       : session.documents;
 
     for (const document of restoreOrder) {
-      const result = await open([document.filePath], {
-        activate: document.filePath === activationAnchorPath,
-      });
-      const outcome = result.outcomes[0];
-      if (!outcome || outcome.status === 'failed') {
+      try {
+        const described = await source.describe(document.filePath);
+        if (
+          foregroundDocumentPath === document.filePath &&
+          runtime.isOpen(described.canonicalPath)
+        ) {
+          foregroundWasOpen = true;
+        }
+        const preparation = await coordinator.prepare(
+          described.canonicalPath,
+          () => runtime.isOpen(described.canonicalPath),
+          async () => {
+            const bytes = await source.read(described.canonicalPath);
+            await runtime.open({
+              document: described,
+              bytes,
+              activate: false,
+              restoredDocument: { ...document, filePath: described.canonicalPath },
+            });
+          },
+        );
+        canonicalPaths.set(document.filePath, described.canonicalPath);
+        if (preparation === 'opened') runtimeStateSources.add(document.filePath);
+        opened += 1;
+        availablePaths.add(described.canonicalPath);
+      } catch {
+        // Treat per-Document open failures as isolated restore failures so the remaining
+        // Documents still restore and the corrected Reading Session can be pruned deterministically.
         failed += 1;
         failedPaths.push(document.filePath);
-        continue;
       }
-
-      try {
-        const restoreOutcome = await runtime.restoreDocumentState(document, {
-          preserveCurrentReadingPosition:
-            preserveForegroundReadingPosition && document.filePath === foregroundDocumentPath,
-        });
-        if (restoreOutcome.status === 'restored') {
-          opened += 1;
-          continue;
-        }
-      } catch {
-        // Treat adapter restore failures as per-Document failures so the remaining Documents
-        // still restore and the corrected Reading Session can be pruned deterministically.
-      }
-
-      failed += 1;
-      failedPaths.push(document.filePath);
     }
 
-    runtime.setDocumentOrder(session.documents.map((document) => document.filePath));
+    const pathMappings = Array.from(canonicalPaths, ([requestedPath, canonicalPath]) => ({
+      requestedPath,
+      canonicalPath,
+      runtimeStateSource: runtimeStateSources.has(requestedPath)
+        ? ('requested' as const)
+        : ('canonical' as const),
+    }));
+    await runtime.canonicalizeDocumentPaths(pathMappings);
+    runtime.setDocumentOrder(
+      Array.from(
+        new Set(
+          session.documents.map(
+            (document) => canonicalPaths.get(document.filePath) ?? document.filePath,
+          ),
+        ),
+      ),
+    );
 
-    if (activationAnchorPath) await runtime.activate(activationAnchorPath);
+    const requestedActivationPath = foregroundDocumentPath ?? session.activeDocumentPath;
+    const activationPath = requestedActivationPath
+      ? (canonicalPaths.get(requestedActivationPath) ?? requestedActivationPath)
+      : null;
+    if (activationPath && !foregroundWasOpen && availablePaths.has(activationPath)) {
+      await runtime.activate(activationPath, { notifyOpened: false });
+    }
 
     return { opened, failed, failedPaths };
   };

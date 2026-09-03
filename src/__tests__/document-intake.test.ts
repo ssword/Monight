@@ -87,12 +87,12 @@ describe('Document Intake', () => {
 
     await intake.open(['/docs/report.pdf'], { page: 12 });
 
-    expect(runtime.open).toHaveBeenCalledWith(
-      { canonicalPath: '/docs/report.pdf', title: 'report.pdf' },
-      expect.any(Uint8Array),
-      true,
-      12,
-    );
+    expect(runtime.open).toHaveBeenCalledWith({
+      document: { canonicalPath: '/docs/report.pdf', title: 'report.pdf' },
+      bytes: expect.any(Uint8Array),
+      activate: true,
+      initialPage: 12,
+    });
     expect(runtime.goToPage).not.toHaveBeenCalled();
   });
 
@@ -255,7 +255,7 @@ describe('Document Intake', () => {
     const runtime = {
       isOpen: vi.fn(() => false),
       activate: vi.fn(),
-      open: vi.fn(async (_document, bytes: Uint8Array) => {
+      open: vi.fn(async ({ bytes }: { bytes: Uint8Array }) => {
         sourceDocument.bytes[0] = 9;
         expect(bytes).toEqual(new Uint8Array([1, 2, 3]));
       }),

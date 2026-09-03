@@ -50,7 +50,7 @@ function createRestoringIntake(
     activate: vi.fn(async () => undefined),
     open: vi.fn(async () => undefined),
     goToPage: vi.fn(async () => undefined),
-    restoreDocumentState: vi.fn(async () => ({ status: 'restored' as const })),
+    canonicalizeDocumentPaths: vi.fn(async () => undefined),
     setDocumentOrder: vi.fn(),
     ...runtimeOverrides,
   };
@@ -71,19 +71,9 @@ function createRestoringIntake(
 }
 
 describe('Reading Session restoration', () => {
-  it('restores the saved active Document first without stealing explicit startup activation', async () => {
-    const restoreCalls: Array<{
-      filePath: string;
-      preserveCurrentReadingPosition: boolean;
-    }> = [];
+  it('restores the saved active Document first without reopening the explicit startup foreground', async () => {
     const { intake, runtime } = createRestoringIntake({
-      restoreDocumentState: vi.fn(async (document, options) => {
-        restoreCalls.push({
-          filePath: document.filePath,
-          preserveCurrentReadingPosition: options.preserveCurrentReadingPosition,
-        });
-        return { status: 'restored' as const };
-      }),
+      isOpen: vi.fn((filePath: string) => filePath === '/docs/explicit.pdf'),
     });
     const session: PersistedReadingSession = {
       schemaVersion: 2,
@@ -97,29 +87,26 @@ describe('Reading Session restoration', () => {
 
     const result = await intake.restore(session, {
       foregroundDocumentPath: '/docs/explicit.pdf',
-      preserveForegroundReadingPosition: true,
     });
 
     expect(
       (runtime.open as ReturnType<typeof vi.fn>).mock.calls.map(
-        ([document]) => document.canonicalPath,
+        ([request]) => request.document.canonicalPath,
       ),
-    ).toEqual(['/docs/saved-active.pdf', '/docs/other.pdf', '/docs/explicit.pdf']);
+    ).toEqual(['/docs/saved-active.pdf', '/docs/other.pdf']);
     expect(
-      (runtime.open as ReturnType<typeof vi.fn>).mock.calls.map(([, , activate]) => activate),
-    ).toEqual([false, false, true]);
-    expect(restoreCalls).toEqual([
+      (runtime.open as ReturnType<typeof vi.fn>).mock.calls.map(([request]) => ({
+        activate: request.activate,
+        restored: request.restoredDocument?.filePath,
+      })),
+    ).toEqual([
       {
-        filePath: '/docs/saved-active.pdf',
-        preserveCurrentReadingPosition: false,
+        activate: false,
+        restored: '/docs/saved-active.pdf',
       },
       {
-        filePath: '/docs/other.pdf',
-        preserveCurrentReadingPosition: false,
-      },
-      {
-        filePath: '/docs/explicit.pdf',
-        preserveCurrentReadingPosition: true,
+        activate: false,
+        restored: '/docs/other.pdf',
       },
     ]);
     expect(runtime.setDocumentOrder).toHaveBeenCalledWith([
@@ -127,11 +114,11 @@ describe('Reading Session restoration', () => {
       '/docs/saved-active.pdf',
       '/docs/explicit.pdf',
     ]);
-    expect(runtime.activate).toHaveBeenCalledWith('/docs/explicit.pdf');
+    expect(runtime.activate).not.toHaveBeenCalled();
     expect(result).toEqual({ opened: 3, failed: 0, failedPaths: [] });
   });
 
-  it('uses the saved Reading Position when startup did not request an explicit page', async () => {
+  it('restores the saved active Document first when no explicit foreground is already open', async () => {
     const { intake, runtime } = createRestoringIntake();
     const session: PersistedReadingSession = {
       schemaVersion: 2,
@@ -144,14 +131,61 @@ describe('Reading Session restoration', () => {
 
     await intake.restore(session, {
       foregroundDocumentPath: '/docs/explicit.pdf',
-      preserveForegroundReadingPosition: false,
     });
 
-    expect(runtime.restoreDocumentState).toHaveBeenNthCalledWith(
-      2,
-      session.documents[0],
-      expect.objectContaining({ preserveCurrentReadingPosition: false }),
+    expect(
+      (runtime.open as ReturnType<typeof vi.fn>).mock.calls.map(
+        ([request]) => request.document.canonicalPath,
+      ),
+    ).toEqual(['/docs/saved-active.pdf', '/docs/explicit.pdf']);
+    expect(runtime.activate).toHaveBeenCalledWith('/docs/explicit.pdf', {
+      notifyOpened: false,
+    });
+  });
+
+  it('deduplicates restored aliases by canonical Document identity', async () => {
+    let canonicalOpen = false;
+    const { intake, runtime } = createRestoringIntake(
+      {
+        isOpen: vi.fn((filePath: string) => canonicalOpen && filePath === '/docs/report.pdf'),
+        open: vi.fn(async () => {
+          canonicalOpen = true;
+        }),
+      },
+      {
+        describe: async (path: string) => ({
+          canonicalPath: '/docs/report.pdf',
+          title: path.split('/').pop() ?? path,
+        }),
+      },
     );
+    const session: PersistedReadingSession = {
+      schemaVersion: 2,
+      activeDocumentPath: '/alias/report.pdf',
+      documents: [
+        savedDocument('/alias/report.pdf', 3),
+        savedDocument('/other-alias/report.pdf', 8),
+      ],
+    };
+
+    const result = await intake.restore(session);
+
+    expect(runtime.open).toHaveBeenCalledOnce();
+    expect(runtime.activate).toHaveBeenCalledWith('/docs/report.pdf', { notifyOpened: false });
+    expect(runtime.canonicalizeDocumentPaths).toHaveBeenCalledWith([
+      {
+        requestedPath: '/alias/report.pdf',
+        canonicalPath: '/docs/report.pdf',
+        runtimeStateSource: 'requested',
+      },
+      {
+        requestedPath: '/other-alias/report.pdf',
+        canonicalPath: '/docs/report.pdf',
+        runtimeStateSource: 'canonical',
+      },
+    ]);
+    expect(runtime.setDocumentOrder).toHaveBeenCalledWith(['/docs/report.pdf']);
+    expect(result).toEqual({ opened: 2, failed: 0, failedPaths: [] });
   });
 
   it('returns every failed restored path for authoritative pruning', async () => {
@@ -172,7 +206,7 @@ describe('Reading Session restoration', () => {
 
     const result = await intake.restore(session);
 
-    expect(runtime.restoreDocumentState).toHaveBeenCalledTimes(1);
+    expect(runtime.open).toHaveBeenCalledTimes(1);
     expect(result).toEqual({
       opened: 1,
       failed: 1,
@@ -180,12 +214,12 @@ describe('Reading Session restoration', () => {
     });
   });
 
-  it('continues after a thrown per-Document restore failure', async () => {
+  it('continues after a cancelled password prompt and prunes that Document', async () => {
     const { intake, runtime } = createRestoringIntake({
-      restoreDocumentState: vi
+      open: vi
         .fn()
-        .mockRejectedValueOnce(new Error('render failed'))
-        .mockResolvedValueOnce({ status: 'restored' as const }),
+        .mockRejectedValueOnce(new Error('Password entry cancelled'))
+        .mockResolvedValueOnce(undefined),
     });
     const session: PersistedReadingSession = {
       schemaVersion: 2,
@@ -195,11 +229,38 @@ describe('Reading Session restoration', () => {
 
     const result = await intake.restore(session);
 
-    expect(runtime.restoreDocumentState).toHaveBeenCalledTimes(2);
+    expect(runtime.open).toHaveBeenCalledTimes(2);
     expect(result).toEqual({
       opened: 1,
       failed: 1,
       failedPaths: ['/docs/one.pdf'],
+    });
+  });
+
+  it('does not canonicalize a restored alias whose transactional open failed', async () => {
+    const { intake, runtime } = createRestoringIntake(
+      {
+        open: vi.fn(async () => {
+          throw new Error('first render failed');
+        }),
+      },
+      {
+        describe: async () => ({ canonicalPath: '/docs/report.pdf', title: 'report.pdf' }),
+      },
+    );
+    const session: PersistedReadingSession = {
+      schemaVersion: 2,
+      activeDocumentPath: '/alias/report.pdf',
+      documents: [savedDocument('/alias/report.pdf', 3)],
+    };
+
+    const result = await intake.restore(session);
+
+    expect(runtime.canonicalizeDocumentPaths).toHaveBeenCalledWith([]);
+    expect(result).toEqual({
+      opened: 0,
+      failed: 1,
+      failedPaths: ['/alias/report.pdf'],
     });
   });
 });

@@ -6,6 +6,12 @@ import type {
 
 export type PersistenceUrgency = 'deferred' | 'immediate';
 
+export interface DocumentPathReconciliation {
+  readonly requestedPath: string;
+  readonly canonicalPath: string;
+  readonly runtimeStateSource: 'requested' | 'canonical';
+}
+
 interface ReadingSessionOptions {
   initialSession: PersistedReadingSession;
   write: (snapshot: ReadingSessionSnapshot) => Promise<void>;

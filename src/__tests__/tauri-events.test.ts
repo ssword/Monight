@@ -149,13 +149,11 @@ describe('Tauri drag and drop events', () => {
     expect(mocks.showToast).toHaveBeenCalledWith('Could not read /tmp/report.pdf', 'error');
   });
 
-  it('reports startup CLI page intent before Reading Session restoration', async () => {
-    const reportStartupIntent = vi.fn();
+  it('passes the startup CLI page into Document Intake', async () => {
     mocks.invoke.mockImplementationOnce(async () => ({ files: ['/tmp/report.pdf'], page: 7 }));
 
-    await setupTauriListeners(context({ reportStartupIntent }));
+    await setupTauriListeners(context());
 
-    expect(reportStartupIntent).toHaveBeenCalledWith({ files: ['/tmp/report.pdf'], page: 7 });
     expect(mocks.openFiles).toHaveBeenCalledWith(
       ['/tmp/report.pdf'],
       expect.objectContaining({ page: 7 }),

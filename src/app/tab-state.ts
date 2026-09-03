@@ -1,7 +1,7 @@
 import { viewModeIcon, viewModeLabel } from '../lib/document-features';
 import type { RestorableReadingPosition } from '../reader/reader-actions';
-import { buildFilterCSS } from '../scripts/filters';
 import type { SliderManager } from '../scripts/sliders';
+import { projectTabStateToViewer } from '../scripts/tab-reading-session';
 import type { TabData, TabManager } from '../scripts/tabs';
 import { updateActivePresetButton } from './ui';
 
@@ -18,14 +18,7 @@ export async function restoreTabState(
   const viewer = tabManager?.getViewerForTab(tab.id);
   if (!viewer) return;
 
-  // Apply saved filter
-  viewer.applyFilter(buildFilterCSS(tab.filterSettings));
-
-  // Restore the layout before resolving viewport-relative Zoom Intent.
-  await viewer.setRotation(tab.rotation);
-  await viewer.setViewMode(tab.viewMode);
-  await viewer.setZoomIntent(tab.zoomIntent);
-  await viewer.goToReadingPosition(readingPosition);
+  await projectTabStateToViewer(viewer, tab, readingPosition);
 
   // Update slider if initialized
   if (sliderManager?.isInitialized()) {

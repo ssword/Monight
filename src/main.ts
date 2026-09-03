@@ -6,6 +6,7 @@ import {
   requestPdfPassword,
   showToast,
 } from './app/dialogs';
+import { createDocumentIntakeRuntime } from './app/document-intake-runtime';
 import { setupEventListeners } from './app/dom-events';
 import {
   ensureMinimumViewingSize,
@@ -16,11 +17,9 @@ import {
   updatePrintMenuState,
 } from './app/file-actions';
 import { registerKeybindActions } from './app/keybinds';
-import { createTauriPdfSource } from './app/pdf-source';
 import { PresentationController } from './app/presentation-controller';
 import { createReadingSessionStorage } from './app/reading-session-storage';
 import { SearchController } from './app/search-controller';
-import { restoreDocumentStateInTabManager } from './app/session-restoration-runtime';
 import { SidebarController } from './app/sidebar-controller';
 import { restoreTabState } from './app/tab-state';
 import { setupTauriListeners } from './app/tauri-events';
@@ -40,7 +39,6 @@ import {
   updateRecentFiles,
   type ViewMode,
 } from './lib/document-features';
-import { createDocumentIntake } from './reader/document-intake';
 import {
   createReaderActions,
   type PersistedReadingSession,
@@ -54,6 +52,7 @@ import { buildFilterCSS, type FilterSettings, PRESETS } from './scripts/filters'
 import { KeybindManager } from './scripts/keybind-manager';
 import { type MoonightSettings, SettingsManager } from './scripts/settings';
 import { SliderManager } from './scripts/sliders';
+import { applyProjectedDocumentStateToTab } from './scripts/tab-reading-session';
 import { type TabData, TabManager } from './scripts/tabs';
 import './styles/main.css';
 import './styles/dialogs.css';
@@ -152,7 +151,6 @@ const getInitialViewMode = (): ViewMode => {
 let lastFilterSaveTimer: number | null = null;
 let annotationSaveTimer: number | null = null;
 let isRestoringSession = false;
-let preserveStartupForegroundReadingPosition = false;
 
 const getActiveViewer = () => {
   const activeTab = tabManager?.getActiveTab();
@@ -299,47 +297,18 @@ const restorePreviousReadingSession = async (): Promise<number> => {
   isRestoringSession = true;
   try {
     const foregroundDocumentPath = tabManager.getActiveTab()?.filePath ?? null;
-    const intake = createDocumentIntake({
-      source: createTauriPdfSource(),
-      runtime: {
-        isOpen: (filePath) => manager.getTabs().some((tab) => tab.filePath === filePath),
-        activate: async (filePath) => {
-          const tab = manager.getTabs().find((item) => item.filePath === filePath);
-          if (!tab) return;
-          await manager.reactivateOpenDocument(tab.id);
-        },
-        open: async (document, bytes, activate, initialPage) => {
-          await manager.createTab(
-            document.canonicalPath,
-            document.title,
-            bytes,
-            getInitialFilterSettings(),
-            getInitialViewMode(),
-            { activate, initialPage },
-          );
-        },
-        goToPage: async (filePath, page) => {
-          await manager.requestDocumentPage(filePath, page);
-        },
-        restoreDocumentState: async (document, options) =>
-          restoreDocumentStateInTabManager(
-            {
-              tabManager: manager,
-              sliderManager,
-              getInitialFilterSettings,
-              getInitialViewMode,
-            },
-            document,
-            options,
-          ),
-        setDocumentOrder: (filePaths) => {
-          manager.setDocumentOrder(filePaths);
-        },
+    const intake = createDocumentIntakeRuntime({
+      tabManager: manager,
+      initialFilterSettings: getInitialFilterSettings(),
+      initialViewMode: getInitialViewMode(),
+      canonicalizeDocumentPaths: async (paths) => {
+        if (!readerActions) throw new Error('Reader Actions are unavailable during restoration');
+        const outcome = await readerActions.canonicalizeDocumentPaths(paths);
+        if (outcome.status === 'failure') throw outcome.error;
       },
     });
     const result = await intake.restore(session, {
       foregroundDocumentPath,
-      preserveForegroundReadingPosition: preserveStartupForegroundReadingPosition,
     });
 
     if (result.failed > 0) {
@@ -360,7 +329,6 @@ const restorePreviousReadingSession = async (): Promise<number> => {
 
     return result.opened;
   } finally {
-    preserveStartupForegroundReadingPosition = false;
     isRestoringSession = false;
   }
 };
@@ -433,9 +401,7 @@ async function initializeApp(): Promise<void> {
           });
           if (outcome?.status === 'failure') throw outcome.error;
         },
-        onDocumentOpened: (tab) => {
-          if (!isRestoringSession) rememberRecentFile(tab.filePath, tab.title);
-        },
+        onDocumentOpened: (tab) => rememberRecentFile(tab.filePath, tab.title),
         onDocumentClosed: async (filePath) => {
           await readerActions?.dispatch({ type: 'removeDocument', filePath });
         },
@@ -522,21 +488,17 @@ async function initializeApp(): Promise<void> {
       for (const document of snapshot.documents) {
         const tab = tabManager?.getTabs().find((item) => item.filePath === document.filePath);
         if (!tab) continue;
-        tab.currentPage = document.readingPosition.page;
-        if (document.visualState) {
-          tab.filterSettings = { ...document.visualState.filterSettings };
-          tab.zoomIntent = document.visualState.zoomIntent;
-          if (document.visualState.zoomIntent.kind === 'manual') {
-            tab.zoom = document.visualState.zoomIntent.scale;
-          }
-          tab.rotation = document.visualState.rotation;
-          tab.viewMode = document.visualState.viewMode;
-        }
+        applyProjectedDocumentStateToTab(tab, document);
       }
+      tabManager?.setDocumentOrder(snapshot.documents.map((document) => document.filePath));
       updateUI(tabManager);
     });
-    tabManager.setActivationRequester(async (filePath) => {
-      const outcome = await readerActions?.dispatch({ type: 'activateDocument', filePath });
+    tabManager.setActivationRequester(async (filePath, readingPosition) => {
+      const outcome = await readerActions?.dispatch({
+        type: 'activateDocument',
+        filePath,
+        ...(readingPosition ? { readingPosition } : {}),
+      });
       if (outcome?.status === 'failure') throw outcome.error;
     });
 
@@ -633,9 +595,6 @@ async function initializeApp(): Promise<void> {
       openPdfAndRefresh,
       getInitialFilterSettings,
       getInitialViewMode,
-      reportStartupIntent: (payload) => {
-        preserveStartupForegroundReadingPosition = (payload.page ?? 0) > 0;
-      },
       reloadSettings: async () => {
         if (!settingsManager) return;
         const updated = await settingsManager.load();

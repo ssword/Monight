@@ -97,6 +97,133 @@ describe('Reader Actions', () => {
     expect(Object.isFrozen(persisted[0].documents)).toBe(true);
   });
 
+  it('commits an explicit Reading Position supplied with Document activation', async () => {
+    const projection: ReaderProjection = {
+      activateDocument: vi.fn(async () => undefined),
+      goToReadingPosition: vi.fn(),
+    };
+    const reader = createReaderActions({
+      initialSession: INITIAL_SESSION,
+      projection,
+      persist: vi.fn(async () => undefined),
+    });
+
+    const outcome = await reader.dispatch({
+      type: 'activateDocument',
+      filePath: '/docs/second.pdf',
+      readingPosition: { page: 7, location: 0 },
+    });
+
+    expect(outcome.status).toBe('committed');
+    expect(projection.activateDocument).toHaveBeenCalledWith(
+      '/docs/second.pdf',
+      { page: 7, location: 0 },
+      expect.anything(),
+    );
+    expect(
+      reader.snapshot().documents.find(({ filePath }) => filePath === '/docs/second.pdf')
+        ?.readingPosition,
+    ).toEqual({ page: 7, location: 0 });
+  });
+
+  it('canonicalizes Document identities and removes alias duplicates', async () => {
+    const reader = createReaderActions({
+      initialSession: {
+        schemaVersion: 2,
+        activeDocumentPath: '/alias/report.pdf',
+        documents: [
+          {
+            ...INITIAL_SESSION.documents[0],
+            filePath: '/alias/report.pdf',
+            title: 'report.pdf',
+          },
+          {
+            ...INITIAL_SESSION.documents[1],
+            filePath: '/other-alias/report.pdf',
+            title: 'report.pdf',
+          },
+          {
+            ...INITIAL_SESSION.documents[1],
+            filePath: '/docs/extra.pdf',
+            title: 'extra.pdf',
+          },
+        ],
+      },
+      projection: { activateDocument: vi.fn(), goToReadingPosition: vi.fn() },
+      persist: vi.fn(async () => undefined),
+    });
+
+    const outcome = await reader.canonicalizeDocumentPaths([
+      {
+        requestedPath: '/alias/report.pdf',
+        canonicalPath: '/docs/report.pdf',
+        runtimeStateSource: 'requested',
+      },
+      {
+        requestedPath: '/other-alias/report.pdf',
+        canonicalPath: '/docs/report.pdf',
+        runtimeStateSource: 'canonical',
+      },
+    ]);
+
+    expect(outcome.status).toBe('committed');
+    expect(reader.snapshot()).toMatchObject({
+      activeDocumentPath: '/docs/report.pdf',
+      documents: [
+        { filePath: '/docs/report.pdf', title: 'report.pdf' },
+        { filePath: '/docs/extra.pdf', title: 'extra.pdf' },
+      ],
+    });
+  });
+
+  it('prefers the registered canonical runtime state when aliases collapse', async () => {
+    const reader = createReaderActions({
+      initialSession: {
+        schemaVersion: 2,
+        activeDocumentPath: '/alias/saved-active.pdf',
+        documents: [
+          {
+            ...INITIAL_SESSION.documents[0],
+            filePath: '/alias/other.pdf',
+            readingPosition: { page: 2, location: 0.2 },
+          },
+          {
+            ...INITIAL_SESSION.documents[1],
+            filePath: '/alias/saved-active.pdf',
+            readingPosition: { page: 8, location: 0.8 },
+          },
+          {
+            ...INITIAL_SESSION.documents[1],
+            filePath: '/docs/report.pdf',
+            readingPosition: { page: 2, location: 0.2 },
+          },
+        ],
+      },
+      projection: { activateDocument: vi.fn(), goToReadingPosition: vi.fn() },
+      persist: vi.fn(async () => undefined),
+    });
+
+    await reader.canonicalizeDocumentPaths([
+      {
+        requestedPath: '/alias/saved-active.pdf',
+        canonicalPath: '/docs/report.pdf',
+        runtimeStateSource: 'requested',
+      },
+      {
+        requestedPath: '/alias/other.pdf',
+        canonicalPath: '/docs/report.pdf',
+        runtimeStateSource: 'canonical',
+      },
+    ]);
+
+    expect(reader.snapshot().documents).toEqual([
+      expect.objectContaining({
+        filePath: '/docs/report.pdf',
+        readingPosition: { page: 8, location: 0.8 },
+      }),
+    ]);
+  });
+
   it('captures the active Document when explicit page navigation is dispatched', async () => {
     let finishNavigation: (() => void) | undefined;
     const projection: ReaderProjection = {

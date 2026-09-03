@@ -1,6 +1,10 @@
 import type { ViewMode } from '../lib/document-features';
 import { type FilterSettings, PRESETS } from '../scripts/filters';
-import { createReadingSession, type PersistenceUrgency } from './reading-session';
+import {
+  createReadingSession,
+  type DocumentPathReconciliation,
+  type PersistenceUrgency,
+} from './reading-session';
 
 export interface ReadingPosition {
   readonly page: number;
@@ -85,7 +89,11 @@ export interface ReaderActionOptions {
 }
 
 export type ReaderAction =
-  | { type: 'activateDocument'; filePath: string }
+  | {
+      type: 'activateDocument';
+      filePath: string;
+      readingPosition?: RestorableReadingPosition;
+    }
   | { type: 'goToPage'; page: number; filePath?: string }
   | { type: 'goToNextPage'; filePath?: string }
   | { type: 'goToPreviousPage'; filePath?: string }
@@ -142,6 +150,9 @@ interface CreateReaderActionsOptions {
 
 export interface ReaderActions {
   dispatch(action: ReaderAction, options?: ReaderActionOptions): Promise<ReaderActionOutcome>;
+  canonicalizeDocumentPaths(
+    paths: readonly DocumentPathReconciliation[],
+  ): Promise<ReaderActionOutcome>;
   snapshot(): ReadingSessionSnapshot;
   observe(observer: (snapshot: ReadingSessionSnapshot) => void): () => void;
   flush(): Promise<void>;
@@ -201,6 +212,30 @@ function validZoomIntent(zoomIntent: ZoomIntent): boolean {
 
 function validFilterSettings(filterSettings: Readonly<FilterSettings>): boolean {
   return Object.values(filterSettings).every(Number.isFinite);
+}
+
+function validReadingPosition(readingPosition: RestorableReadingPosition): boolean {
+  if (!Number.isInteger(readingPosition.page) || readingPosition.page < 1) return false;
+  if ('location' in readingPosition) {
+    return (
+      Number.isFinite(readingPosition.location) &&
+      readingPosition.location >= 0 &&
+      readingPosition.location <= 1
+    );
+  }
+  return Number.isFinite(readingPosition.legacyOffset) && readingPosition.legacyOffset >= 0;
+}
+
+function readingPositionsEqual(
+  left: RestorableReadingPosition,
+  right: RestorableReadingPosition,
+): boolean {
+  if (left.page !== right.page) return false;
+  if ('location' in left && 'location' in right) return left.location === right.location;
+  if ('legacyOffset' in left && 'legacyOffset' in right) {
+    return left.legacyOffset === right.legacyOffset;
+  }
+  return false;
 }
 
 function filterSettingsEqual(
@@ -449,6 +484,69 @@ export function createReaderActions({
     return commitVisualState(filePath, visualState);
   };
 
+  const canonicalizeDocumentPaths = (
+    paths: readonly DocumentPathReconciliation[],
+  ): Promise<ReaderActionOutcome> =>
+    enqueueGlobal(async () => {
+      const canonicalByRequestedPath = new Map(
+        paths.map(({ requestedPath, canonicalPath }) => [requestedPath, canonicalPath]),
+      );
+      const current = session.snapshot();
+      const preferredDocumentByCanonicalPath = new Map<string, ReadingSessionDocument>();
+      for (const { requestedPath, canonicalPath, runtimeStateSource } of paths) {
+        if (
+          runtimeStateSource !== 'requested' ||
+          preferredDocumentByCanonicalPath.has(canonicalPath)
+        ) {
+          continue;
+        }
+        const document = current.documents.find((item) => item.filePath === requestedPath);
+        if (document) preferredDocumentByCanonicalPath.set(canonicalPath, document);
+      }
+      for (const document of current.documents) {
+        const canonicalPath = canonicalByRequestedPath.get(document.filePath) ?? document.filePath;
+        if (
+          document.filePath === canonicalPath &&
+          !preferredDocumentByCanonicalPath.has(canonicalPath)
+        ) {
+          preferredDocumentByCanonicalPath.set(canonicalPath, document);
+        }
+      }
+      for (const { requestedPath, canonicalPath } of paths) {
+        if (preferredDocumentByCanonicalPath.has(canonicalPath)) continue;
+        const document = current.documents.find((item) => item.filePath === requestedPath);
+        if (document) preferredDocumentByCanonicalPath.set(canonicalPath, document);
+      }
+      const seen = new Set<string>();
+      let changed = false;
+      const documents: ReadingSessionDocument[] = [];
+
+      for (const document of current.documents) {
+        const filePath = canonicalByRequestedPath.get(document.filePath) ?? document.filePath;
+        if (filePath !== document.filePath) changed = true;
+        if (seen.has(filePath)) {
+          changed = true;
+          continue;
+        }
+        seen.add(filePath);
+        const preferredDocument = preferredDocumentByCanonicalPath.get(filePath) ?? document;
+        documents.push(
+          preferredDocument.filePath === filePath
+            ? preferredDocument
+            : { ...preferredDocument, filePath },
+        );
+        laneFor(filePath);
+      }
+
+      const activeDocumentPath = current.activeDocumentPath
+        ? (canonicalByRequestedPath.get(current.activeDocumentPath) ?? current.activeDocumentPath)
+        : null;
+      if (activeDocumentPath !== current.activeDocumentPath) changed = true;
+      if (!changed) return { status: 'no-op', revision: current.revision };
+
+      return commit({ schemaVersion: 2, activeDocumentPath, documents }, 'immediate');
+    });
+
   return {
     async dispatch(action, options) {
       if (action.type === 'removeDocument') {
@@ -508,32 +606,48 @@ export function createReaderActions({
       }
 
       if (action.type === 'activateDocument') {
+        if (action.readingPosition && !validReadingPosition(action.readingPosition)) {
+          return { status: 'no-op', revision: revision() };
+        }
         return enqueueGlobal(async () => {
           const current = session.snapshot();
           const document = current.documents.find((item) => item.filePath === action.filePath);
           if (!document) return { status: 'no-op', revision: current.revision };
+          const readingPosition = action.readingPosition ?? document.readingPosition;
           try {
             await projection.exitPresentation?.();
             await projection.activateDocument(
               document.filePath,
-              document.readingPosition,
+              readingPosition,
               document.visualState,
             );
           } catch (error) {
             return { status: 'failure', error, revision: revision() };
           }
           const latest = session.snapshot();
-          if (!latest.documents.some((item) => item.filePath === document.filePath)) {
+          const latestDocument = latest.documents.find(
+            (item) => item.filePath === document.filePath,
+          );
+          if (!latestDocument) {
             return { status: 'no-op', revision: latest.revision };
           }
-          if (latest.activeDocumentPath === document.filePath) {
+          const readingPositionChanged = !readingPositionsEqual(
+            latestDocument.readingPosition,
+            readingPosition,
+          );
+          if (latest.activeDocumentPath === document.filePath && !readingPositionChanged) {
             return { status: 'no-op', revision: latest.revision };
           }
+          const documents = readingPositionChanged
+            ? latest.documents.map((item) =>
+                item.filePath === document.filePath ? { ...item, readingPosition } : item,
+              )
+            : latest.documents;
           return commit(
             {
               schemaVersion: 2,
               activeDocumentPath: document.filePath,
-              documents: latest.documents,
+              documents,
             },
             'immediate',
           );
@@ -766,6 +880,7 @@ export function createReaderActions({
         }),
       );
     },
+    canonicalizeDocumentPaths,
     snapshot: session.snapshot,
     observe: session.observe,
     flush: session.flush,
