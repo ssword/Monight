@@ -11,7 +11,12 @@ export interface PdfSource {
 export interface DocumentRuntimeIntake {
   isOpen(filePath: string): boolean;
   activate(filePath: string): Promise<void>;
-  open(document: DocumentMetadata, bytes: Uint8Array, activate: boolean): Promise<void>;
+  open(
+    document: DocumentMetadata,
+    bytes: Uint8Array,
+    activate: boolean,
+    initialPage?: number,
+  ): Promise<void>;
   goToPage(filePath: string, page: number): Promise<void>;
 }
 
@@ -85,10 +90,12 @@ export function createDocumentIntake({
             };
           } else {
             const bytes = await source.read(document.canonicalPath);
-            await runtime.open(document, bytes, options.activate !== false);
-            if (index === 0 && options.page !== undefined) {
-              await runtime.goToPage(document.canonicalPath, options.page);
-            }
+            await runtime.open(
+              document,
+              bytes,
+              options.activate !== false,
+              index === 0 ? options.page : undefined,
+            );
             outcome = { status: 'opened', requestedPath, filePath: document.canonicalPath };
           }
           outcomes.push(outcome);

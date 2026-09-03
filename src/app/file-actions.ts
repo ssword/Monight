@@ -52,14 +52,14 @@ export async function openFiles(
         if (!tab) throw new Error(`Cannot activate unopened Document: ${filePath}`);
         await tabManager.reactivateOpenDocument(tab.id);
       },
-      open: async (document, bytes, shouldActivate) => {
+      open: async (document, bytes, shouldActivate, initialPage) => {
         await tabManager.createTab(
           document.canonicalPath,
           document.title,
           bytes,
           initialFilterSettings,
           initialViewMode ?? 'single',
-          { activate: shouldActivate },
+          { activate: shouldActivate, initialPage },
         );
       },
       goToPage: async (filePath, requestedPage) => {

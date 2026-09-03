@@ -168,6 +168,28 @@ describe('Document navigation', () => {
     expect(onDocumentClosed).toHaveBeenCalledWith('/tmp/failing.pdf');
   });
 
+  it('rolls back before registration when the explicit initial page fails to render', async () => {
+    vi.spyOn(PDFViewer.prototype, 'goToPage').mockRejectedValueOnce(
+      new Error('page render failed'),
+    );
+    const onDocumentPrepared = vi.fn(async () => undefined);
+    const manager = new TabManager(vi.fn(), undefined, undefined, { onDocumentPrepared });
+
+    await expect(
+      manager.createTab(
+        '/tmp/failing.pdf',
+        'failing.pdf',
+        new Uint8Array([1]),
+        undefined,
+        'single',
+        { initialPage: 12 },
+      ),
+    ).rejects.toThrow('page render failed');
+
+    expect(manager.size).toBe(0);
+    expect(onDocumentPrepared).not.toHaveBeenCalled();
+  });
+
   it('observes normalized Reading Position at most once per animation frame', async () => {
     let frame: FrameRequestCallback | undefined;
     vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {

@@ -43,6 +43,7 @@ interface TabManagerOptions {
 
 interface CreateTabOptions {
   activate?: boolean;
+  initialPage?: number;
 }
 
 /**
@@ -80,7 +81,7 @@ export class TabManager {
     pdfData: Uint8Array,
     filterSettings?: FilterSettings,
     viewMode: ViewMode = 'single',
-    { activate = true }: CreateTabOptions = {},
+    { activate = true, initialPage }: CreateTabOptions = {},
   ): Promise<TabData> {
     const id = crypto.randomUUID();
     const initialFilterSettings = filterSettings ?? PRESETS.default;
@@ -142,6 +143,10 @@ export class TabManager {
     // do not leave a dead tab/surface behind.
     try {
       await viewer.loadPDF(pdfData, title, filePath);
+      if (initialPage !== undefined) {
+        await viewer.goToPage(initialPage);
+        tab.currentPage = viewer.getState().currentPage;
+      }
     } catch (error) {
       viewer.destroy();
       this.tabs.delete(id);

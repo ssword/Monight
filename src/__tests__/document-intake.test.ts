@@ -69,6 +69,32 @@ describe('Document Intake', () => {
     expect(runtime.goToPage).not.toHaveBeenCalled();
   });
 
+  it('passes the first explicit page into new-Document preparation', async () => {
+    const runtime = {
+      isOpen: vi.fn(() => false),
+      activate: vi.fn(),
+      open: vi.fn(async () => undefined),
+      goToPage: vi.fn(),
+    };
+    const intake = createDocumentIntake({
+      source: {
+        describe: async (path) => ({ canonicalPath: path, title: 'report.pdf' }),
+        read: async () => new Uint8Array([1]),
+      },
+      runtime,
+    });
+
+    await intake.open(['/docs/report.pdf'], { page: 12 });
+
+    expect(runtime.open).toHaveBeenCalledWith(
+      { canonicalPath: '/docs/report.pdf', title: 'report.pdf' },
+      expect.any(Uint8Array),
+      true,
+      12,
+    );
+    expect(runtime.goToPage).not.toHaveBeenCalled();
+  });
+
   it('notifies observers only after a new Document is fully open', async () => {
     const events: string[] = [];
     const intake = createDocumentIntake({
