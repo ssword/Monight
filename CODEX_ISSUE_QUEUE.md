@@ -10,7 +10,7 @@
 | ---: | --- | --- |
 | #25 | Spec: Center reader architecture on the Reading Session | incomplete |
 | #27 | Guarantee Reader Action ordering, coalescing, and outcomes | completed |
-| #28 | Route Visual State and Zoom Intent through Reader Actions | pending |
+| #28 | Route Visual State and Zoom Intent through Reader Actions | completed |
 | #29 | Open and deduplicate Documents through transactional Document Intake | pending |
 | #30 | Route external file sources through Document Intake | pending |
 | #31 | Restore Reading Session deterministically through Document Intake | pending |
@@ -45,4 +45,15 @@
 - tests_run: focused Reader Actions tests; `npx tsc --noEmit`; focused Biome check; `npm test`; `npm run build`; `npm run lint`; `cargo test --manifest-path src-tauri/Cargo.toml`; `git diff --check HEAD^ HEAD`
 - test_results: 29 focused tests, 169 full frontend tests, 25 Rust tests, typecheck, production build, lint, and diff validation all passed.
 - acceptance_criteria_results: Target capture, per-Document/global ordering, relative ordering, absolute coalescing with superseded outcomes, cross-Document independence, commit-after-success, unchanged state on failure/supersession, typed outcomes, and behavior coverage passed. Generation/removal barriers and recovery after projection, persistence, or removal failures were also verified.
+- remaining_problems: none.
+
+### Issue #28
+
+- issue_number: `28`
+- status: `completed`
+- commit: `5fa788cccb1001bd2b1a207ebfd2c44f8eb8ea05`
+- files_changed: `src/__tests__/dom-events.test.ts`, `src/__tests__/fit-position.test.ts`, `src/__tests__/gesture-zoom.test.ts`, `src/__tests__/reader-actions.test.ts`, `src/__tests__/reader-input-actions.test.ts`, `src/__tests__/reading-session.test.ts`, `src/__tests__/tauri-events.test.ts`, `src/app/dom-events.ts`, `src/app/keybinds.ts`, `src/app/presets.ts`, `src/app/tauri-events.ts`, `src/main.ts`, `src/reader/reader-actions.ts`, `src/reader/reading-session.ts`, `src/scripts/pdf-viewer.ts`, `src/scripts/tabs.ts`
+- tests_run: `npm test`; `npm run lint`; `npm run build`; `cargo test`
+- test_results: 181 frontend tests and 25 Rust tests passed; lint, TypeScript, production build, diff checks, and two-axis code review passed.
+- acceptance_criteria_results: All seven acceptance criteria passed, including semantic actions for all settled view choices, authoritative per-Document Visual State, Zoom Intent restoration/recalculation, transient-state exclusion, commit-after-render, adapter equivalence, and behavior coverage.
 - remaining_problems: none.
