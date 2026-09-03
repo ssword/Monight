@@ -1,4 +1,5 @@
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
+import { debugLog } from '../lib/debug-log';
 import type { ViewMode } from '../lib/document-features';
 import type { FilterSettings } from '../scripts/filters';
 import type { KeybindManager } from '../scripts/keybind-manager';
@@ -205,5 +206,5 @@ export function registerKeybindActions({
     await togglePresentationMode();
   });
 
-  console.log('All keybind actions registered');
+  debugLog('All keybind actions registered');
 }

@@ -1,10 +1,22 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildOffsetArray,
+  correctScrollTopForPageAnchor,
   currentPageAt,
   positionAtPage,
   visiblePageRange,
 } from '../lib/scroll-geometry';
+
+describe('correctScrollTopForPageAnchor', () => {
+  it('keeps the viewed page at the same on-screen position after estimates are refined', () => {
+    const estimatedOffsets = buildOffsetArray([800, 800, 800, 800], 20, 20);
+    const refinedOffsets = buildOffsetArray([700, 800, 750, 850], 20, 20);
+
+    expect(correctScrollTopForPageAnchor(estimatedOffsets, refinedOffsets, 3, 1_700)).toBe(
+      1_700 - 100,
+    );
+  });
+});
 
 describe('buildOffsetArray', () => {
   it('builds correct offsets for uniform page heights', () => {

@@ -47,11 +47,59 @@ describe('Reading Session store', () => {
         {
           filePath: '/docs/report.pdf',
           title: 'report.pdf',
-          readingPosition: { page: 6, location: 0 },
+          readingPosition: { page: 6, legacyOffset: 842 },
         },
       ],
     });
     expect(events).toEqual(['read:new', 'read:legacy', 'write:new', 'read:new', 'remove:legacy']);
+  });
+
+  it('normalizes a schema-one position with only an absolute offset', async () => {
+    const stored = {
+      schemaVersion: 1,
+      activeDocumentPath: '/docs/report.pdf',
+      documents: [
+        {
+          filePath: '/docs/report.pdf',
+          title: 'report.pdf',
+          readingPosition: { page: 6, scrollPosition: 842 },
+        },
+      ],
+    };
+    const storage: ReadingSessionStorage = {
+      read: vi.fn(async () => stored),
+      write: vi.fn(),
+      readLegacy: vi.fn(async () => undefined),
+      removeLegacy: vi.fn(),
+    };
+
+    await expect(loadReadingSession(storage)).resolves.toMatchObject({
+      documents: [{ readingPosition: { page: 6, legacyOffset: 842 } }],
+    });
+  });
+
+  it('prefers a fractional location over a stale absolute offset', async () => {
+    const stored = {
+      schemaVersion: 1,
+      activeDocumentPath: '/docs/report.pdf',
+      documents: [
+        {
+          filePath: '/docs/report.pdf',
+          title: 'report.pdf',
+          readingPosition: { page: 6, location: 0.5, scrollPosition: 842 },
+        },
+      ],
+    };
+    const storage: ReadingSessionStorage = {
+      read: vi.fn(async () => stored),
+      write: vi.fn(),
+      readLegacy: vi.fn(async () => undefined),
+      removeLegacy: vi.fn(),
+    };
+
+    const session = await loadReadingSession(storage);
+
+    expect(session.documents[0].readingPosition).toEqual({ page: 6, location: 0.5 });
   });
 
   it('retains the legacy value when migration persistence fails', async () => {

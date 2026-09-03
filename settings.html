@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Settings - Monight (墨页)</title>
     <meta http-equiv="Content-Security-Policy"
-          content="default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; frame-src blob:; img-src 'self' blob: data:" />
+          content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; frame-src blob:; img-src 'self' blob: data:" />
     <style>
         * {
             margin: 0;
@@ -372,6 +372,7 @@
             font-size: 13px;
             margin-top: 15px;
         }
+
     </style>
 </head>
 <body>
@@ -437,6 +438,15 @@
                 </div>
                 <div class="setting-item">
                     <div class="setting-label">
+                        <h3>Clear Reading History</h3>
+                        <p>Clear Recent Documents, the saved Reading Session, and all annotations</p>
+                    </div>
+                    <div class="setting-control">
+                        <button class="btn btn-secondary" id="clear-reading-history">Clear History</button>
+                    </div>
+                </div>
+                <div class="setting-item">
+                    <div class="setting-label">
                         <h3>Continuous Scroll by Default</h3>
                         <p>Open PDFs in continuous scroll view</p>
                     </div>
@@ -492,15 +502,15 @@
                 </div>
                 <div class="version-row">
                     <span class="version-label">Version:</span>
-                    <span class="version-value" id="app-version">1.0.0</span>
+                    <span class="version-value" id="app-version">Loading...</span>
                 </div>
                 <div class="version-row">
                     <span class="version-label">Tauri Version:</span>
-                    <span class="version-value" id="tauri-version">2.0</span>
+                    <span class="version-value" id="tauri-version">Loading...</span>
                 </div>
                 <div class="version-row">
                     <span class="version-label">PDF.js Version:</span>
-                    <span class="version-value" id="pdfjs-version">4.9.155</span>
+                    <span class="version-value" id="pdfjs-version">Loading...</span>
                 </div>
             </div>
 
@@ -532,6 +542,17 @@
             <p class="capture-hint">Press Escape to cancel, Enter to save</p>
         </div>
     </div>
+
+    <dialog id="confirmation-dialog" class="app-dialog">
+        <form method="dialog">
+            <h2 data-confirmation-title>Confirm action</h2>
+            <p data-confirmation-message></p>
+            <div class="dialog-actions">
+                <button type="button" class="btn btn-secondary" data-dialog-cancel>Cancel</button>
+                <button type="submit" class="btn" data-dialog-confirm>Confirm</button>
+            </div>
+        </form>
+    </dialog>
 
     <script type="module" src="/src/scripts/settings-page.ts"></script>
 </body>

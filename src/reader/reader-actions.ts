@@ -6,6 +6,13 @@ export interface ReadingPosition {
   readonly location: number;
 }
 
+export interface LegacyReadingPosition {
+  readonly page: number;
+  readonly legacyOffset: number;
+}
+
+export type RestorableReadingPosition = ReadingPosition | LegacyReadingPosition;
+
 export interface ReadingSessionVisualState {
   readonly filterSettings: Readonly<FilterSettings>;
   readonly zoom: number;
@@ -16,7 +23,7 @@ export interface ReadingSessionVisualState {
 export interface ReadingSessionDocument {
   readonly filePath: string;
   readonly title: string;
-  readonly readingPosition: ReadingPosition;
+  readonly readingPosition: RestorableReadingPosition;
   readonly visualState?: ReadingSessionVisualState;
 }
 
@@ -31,8 +38,16 @@ export interface ReadingSessionSnapshot extends PersistedReadingSession {
 }
 
 export interface ReaderProjection {
-  activateDocument(filePath: string, position: ReadingPosition): Promise<void>;
-  goToReadingPosition(filePath: string, position: ReadingPosition): Promise<void>;
+  activateDocument(filePath: string, position: RestorableReadingPosition): Promise<void>;
+  goToReadingPosition(
+    filePath: string,
+    position: RestorableReadingPosition,
+    options?: ReaderActionOptions,
+  ): Promise<void>;
+}
+
+export interface ReaderActionOptions {
+  readonly isCancelled?: () => boolean;
 }
 
 export type ReaderAction =
@@ -72,7 +87,7 @@ interface CreateReaderActionsOptions {
 }
 
 export interface ReaderActions {
-  dispatch(action: ReaderAction): Promise<ReaderActionOutcome>;
+  dispatch(action: ReaderAction, options?: ReaderActionOptions): Promise<ReaderActionOutcome>;
   snapshot(): ReadingSessionSnapshot;
   observe(observer: (snapshot: ReadingSessionSnapshot) => void): () => void;
 }
@@ -132,7 +147,7 @@ export function createReaderActions({
   };
 
   return {
-    async dispatch(action) {
+    async dispatch(action, options) {
       if (action.type === 'removeDocument') {
         const index = snapshot.documents.findIndex((item) => item.filePath === action.filePath);
         if (index === -1) return { status: 'no-op', revision: snapshot.revision };
@@ -190,6 +205,7 @@ export function createReaderActions({
           return { status: 'no-op', revision: snapshot.revision };
         }
         if (
+          'location' in document.readingPosition &&
           document.readingPosition.page === page &&
           document.readingPosition.location === location
         ) {
@@ -212,10 +228,20 @@ export function createReaderActions({
       if (!document || !Number.isInteger(action.page) || action.page < 1) {
         return { status: 'no-op', revision: snapshot.revision };
       }
+      if (options?.isCancelled?.()) {
+        return { status: 'no-op', revision: snapshot.revision };
+      }
 
       const readingPosition = { page: action.page, location: 0 };
       try {
-        await projection.goToReadingPosition(document.filePath, readingPosition);
+        if (options) {
+          await projection.goToReadingPosition(document.filePath, readingPosition, options);
+        } else {
+          await projection.goToReadingPosition(document.filePath, readingPosition);
+        }
+        if (options?.isCancelled?.()) {
+          return { status: 'no-op', revision: snapshot.revision };
+        }
         const documents = snapshot.documents.map((item) =>
           item.filePath === document.filePath ? { ...item, readingPosition } : item,
         );

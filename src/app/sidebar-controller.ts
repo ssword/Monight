@@ -2,6 +2,8 @@ import type { PdfAnnotation, PdfOutlineItem } from '../lib/document-features';
 import type { PDFViewer } from '../scripts/pdf-viewer';
 
 type SidebarPanel = 'outline' | 'thumbnails' | 'annotations';
+type ThumbnailCanvasesByPage = Map<number, HTMLCanvasElement>;
+type ThumbnailCanvasesByRotation = Map<number, ThumbnailCanvasesByPage>;
 
 interface SidebarControllerOptions {
   getActiveViewer: () => PDFViewer | null;
@@ -17,6 +19,9 @@ export class SidebarController {
   private thumbnailsEnabled = true;
   private renderEpoch = 0;
   private thumbnailObserver: IntersectionObserver | null = null;
+  private readonly thumbnailCanvases = new WeakMap<PDFViewer, ThumbnailCanvasesByRotation>();
+  private thumbnailPanelContext: { viewer: PDFViewer; rotation: number } | null = null;
+  private readonly noteCommitTimers = new WeakMap<HTMLTextAreaElement, number>();
 
   constructor(options: SidebarControllerOptions) {
     this.getActiveViewer = options.getActiveViewer;
@@ -68,22 +73,28 @@ export class SidebarController {
   }
 
   viewerStateChanged(): void {
-    const state = this.getActiveViewer()?.getState();
-    if (!state) return;
-    this.content.querySelectorAll<HTMLElement>('[data-page-number]').forEach((element) => {
-      element.classList.toggle(
-        'active',
-        Number.parseInt(element.dataset.pageNumber ?? '0', 10) === state.currentPage,
-      );
-    });
-    if (this.panel === 'annotations') {
-      this.renderAnnotations();
+    const viewer = this.getActiveViewer();
+    const state = viewer?.getState();
+    if (!viewer || !state) return;
+    if (
+      this.panel === 'thumbnails' &&
+      !this.sidebar.classList.contains('hidden') &&
+      (this.thumbnailPanelContext?.viewer !== viewer ||
+        this.thumbnailPanelContext.rotation !== state.rotation)
+    ) {
+      void this.render();
+      return;
     }
+    this.updateActivePageMarkers(state.currentPage);
   }
 
   annotationsChanged(): void {
     if (this.panel === 'annotations' && !this.sidebar.classList.contains('hidden')) {
-      this.renderAnnotations();
+      const viewer = this.getActiveViewer();
+      const container = this.content.querySelector<HTMLElement>(
+        '[data-sidebar-panel="annotations"]',
+      );
+      if (viewer && container) this.reconcileAnnotations(viewer, container);
     }
   }
 
@@ -200,7 +211,15 @@ export class SidebarController {
   private renderThumbnails(viewer: PDFViewer, epoch: number): void {
     const list = document.createElement('div');
     list.className = 'thumbnail-list';
-    const { totalPages, currentPage } = viewer.getState();
+    const { totalPages, currentPage, rotation } = viewer.getState();
+    this.thumbnailPanelContext = { viewer, rotation };
+    let rotationCache = this.thumbnailCanvases.get(viewer)?.get(rotation);
+    if (!rotationCache) {
+      rotationCache = new Map();
+      const canvasesByRotation = this.thumbnailCanvases.get(viewer) ?? new Map();
+      canvasesByRotation.set(rotation, rotationCache);
+      this.thumbnailCanvases.set(viewer, canvasesByRotation);
+    }
 
     for (let pageNumber = 1; pageNumber <= totalPages; pageNumber++) {
       const button = document.createElement('button');
@@ -211,7 +230,13 @@ export class SidebarController {
 
       const preview = document.createElement('div');
       preview.className = 'thumbnail-preview';
-      preview.textContent = 'Loading…';
+      const cachedCanvas = rotationCache.get(pageNumber);
+      if (cachedCanvas) {
+        preview.dataset.loaded = 'true';
+        preview.appendChild(cachedCanvas);
+      } else {
+        preview.textContent = 'Loading…';
+      }
       const label = document.createElement('span');
       label.textContent = `Page ${pageNumber}`;
       button.append(preview, label);
@@ -229,8 +254,9 @@ export class SidebarController {
       if (!preview || pageNumber < 1 || preview.dataset.loaded === 'true') return;
       preview.dataset.loaded = 'true';
       void viewer
-        .renderThumbnail(pageNumber)
+        .renderThumbnail(pageNumber, { rotation })
         .then((canvas) => {
+          rotationCache.set(pageNumber, canvas);
           if (epoch !== this.renderEpoch || viewer !== this.getActiveViewer()) return;
           preview.replaceChildren(canvas);
         })
@@ -268,25 +294,47 @@ export class SidebarController {
     }
 
     const container = document.createElement('div');
+    container.dataset.sidebarPanel = 'annotations';
     const toolbar = document.createElement('div');
     toolbar.className = 'annotation-toolbar';
     const addNote = document.createElement('button');
     addNote.type = 'button';
     addNote.className = 'annotation-add';
-    addNote.textContent = `Add note to page ${viewer.getState().currentPage}`;
+    addNote.textContent = 'Add note to current page';
     addNote.addEventListener('click', async () => {
       const note = await this.requestAnnotationNote();
       if (note) {
         await viewer.addPageNote(note);
-        this.renderAnnotations();
       }
     });
     toolbar.appendChild(addNote);
     container.appendChild(toolbar);
 
+    this.content.replaceChildren(container);
+    this.reconcileAnnotations(viewer, container);
+  }
+
+  private reconcileAnnotations(viewer: PDFViewer, container: HTMLElement): void {
     const annotations = viewer
       .getAnnotations()
       .sort((a, b) => a.pageNumber - b.pageNumber || a.createdAt - b.createdAt);
+    const existingCards = new Map<string, HTMLElement>();
+    container.querySelectorAll<HTMLElement>('.annotation-card').forEach((card) => {
+      const annotationId = card.dataset.annotationId;
+      if (annotationId) existingCards.set(annotationId, card);
+    });
+    container.querySelector('.sidebar-empty')?.remove();
+    const annotationIds = new Set(annotations.map((annotation) => annotation.id));
+    existingCards.forEach((card, annotationId) => {
+      if (annotationIds.has(annotationId)) return;
+      const note = card.querySelector<HTMLTextAreaElement>('textarea');
+      const pendingCommit = note ? this.noteCommitTimers.get(note) : undefined;
+      if (pendingCommit !== undefined) window.clearTimeout(pendingCommit);
+      if (note) this.noteCommitTimers.delete(note);
+      card.remove();
+      existingCards.delete(annotationId);
+    });
+
     if (annotations.length === 0) {
       container.appendChild(
         this.message(
@@ -294,12 +342,36 @@ export class SidebarController {
           'sidebar-empty',
         ),
       );
-    } else {
-      annotations.forEach((annotation) => {
-        container.appendChild(this.createAnnotationCard(annotation, viewer));
-      });
     }
-    this.content.replaceChildren(container);
+
+    let previousElement = container.querySelector<HTMLElement>('.annotation-toolbar');
+    for (const annotation of annotations) {
+      const card = existingCards.get(annotation.id);
+      let nextCard: HTMLElement;
+      if (card) {
+        this.updateAnnotationCard(card, annotation);
+        existingCards.delete(annotation.id);
+        nextCard = card;
+      } else {
+        nextCard = this.createAnnotationCard(annotation, viewer);
+      }
+      if (previousElement?.nextElementSibling !== nextCard) {
+        container.insertBefore(nextCard, previousElement?.nextSibling ?? null);
+      }
+      previousElement = nextCard;
+    }
+    this.updateActivePageMarkers(viewer.getState().currentPage);
+  }
+
+  private updateAnnotationCard(card: HTMLElement, annotation: PdfAnnotation): void {
+    card.dataset.color = annotation.color;
+    card.dataset.pageNumber = annotation.pageNumber.toString();
+    const note = card.querySelector<HTMLTextAreaElement>('textarea');
+    if (note && document.activeElement !== note && !this.noteCommitTimers.has(note)) {
+      note.value = annotation.note;
+    }
+    const color = card.querySelector<HTMLSelectElement>('select');
+    if (color) color.value = annotation.color;
   }
 
   private createAnnotationCard(annotation: PdfAnnotation, viewer: PDFViewer): HTMLElement {
@@ -307,6 +379,7 @@ export class SidebarController {
     card.className = 'annotation-card';
     card.dataset.color = annotation.color;
     card.dataset.annotationId = annotation.id;
+    card.dataset.pageNumber = annotation.pageNumber.toString();
 
     const header = document.createElement('div');
     header.className = 'annotation-card-header';
@@ -330,7 +403,15 @@ export class SidebarController {
     note.placeholder = 'Add a note…';
     note.setAttribute('aria-label', `Note for annotation on page ${annotation.pageNumber}`);
     note.addEventListener('input', () => {
-      viewer.updateAnnotation(annotation.id, { note: note.value.trim() });
+      const pendingCommit = this.noteCommitTimers.get(note);
+      if (pendingCommit !== undefined) window.clearTimeout(pendingCommit);
+      this.noteCommitTimers.set(
+        note,
+        window.setTimeout(() => {
+          this.noteCommitTimers.delete(note);
+          viewer.updateAnnotation(annotation.id, { note: note.value.trim() });
+        }, 200),
+      );
     });
     card.appendChild(note);
 
@@ -357,7 +438,6 @@ export class SidebarController {
     remove.textContent = 'Delete';
     remove.addEventListener('click', () => {
       viewer.removeAnnotation(annotation.id);
-      this.renderAnnotations();
     });
     actions.append(color, remove);
     card.appendChild(actions);
@@ -366,6 +446,19 @@ export class SidebarController {
 
   private renderEmpty(text: string): void {
     this.content.replaceChildren(this.message(text, 'sidebar-empty'));
+  }
+
+  private updateActivePageMarkers(currentPage: number): void {
+    this.content.querySelectorAll<HTMLElement>('[data-page-number].active').forEach((element) => {
+      if (Number.parseInt(element.dataset.pageNumber ?? '0', 10) !== currentPage) {
+        element.classList.remove('active');
+      }
+    });
+    this.content
+      .querySelectorAll<HTMLElement>(`[data-page-number="${currentPage}"]`)
+      .forEach((element) => {
+        element.classList.add('active');
+      });
   }
 
   private message(text: string, className: string): HTMLElement {

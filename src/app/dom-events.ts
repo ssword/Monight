@@ -1,3 +1,4 @@
+import { debugLog } from '../lib/debug-log';
 import { nextViewMode, viewModeIcon, viewModeLabel } from '../lib/document-features';
 import type { FilterSettings } from '../scripts/filters';
 import type { KeybindManager } from '../scripts/keybind-manager';
@@ -15,6 +16,7 @@ interface DomEventContext {
   onPresetApplied: (settings: FilterSettings) => void;
   saveCurrentTabState: () => void;
   updateUI: () => void;
+  activateDocument: (filePath: string) => Promise<void>;
   openRecentFile: (filePath: string) => Promise<void>;
   clearRecentFiles: () => Promise<void>;
   goToPage: (page: number) => Promise<void>;
@@ -30,20 +32,21 @@ export function setupEventListeners({
   onPresetApplied,
   saveCurrentTabState,
   updateUI,
+  activateDocument,
   openRecentFile,
   clearRecentFiles,
   goToPage,
 }: DomEventContext): void {
-  console.log('Setting up event listeners...');
+  debugLog('Setting up event listeners...');
 
   // Splash screen open button
   const splashOpenBtn = document.getElementById('splash-open-btn');
   if (splashOpenBtn) {
     splashOpenBtn.addEventListener('click', () => {
-      console.log('Splash open button clicked');
+      debugLog('Splash open button clicked');
       openPdfAndRefresh();
     });
-    console.log('Splash open button listener attached');
+    debugLog('Splash open button listener attached');
   } else {
     console.error('Splash open button not found!');
   }
@@ -62,14 +65,14 @@ export function setupEventListeners({
   // Open file button (in toolbar)
   const openBtn = document.getElementById('open-file');
   openBtn?.addEventListener('click', () => {
-    console.log('Open button clicked');
+    debugLog('Open button clicked');
     openPdfAndRefresh();
   });
 
   // Print button
   const printBtn = document.getElementById('print-file');
   printBtn?.addEventListener('click', () => {
-    console.log('Print button clicked');
+    debugLog('Print button clicked');
     printCurrentPDF();
   });
 
@@ -187,21 +190,55 @@ export function setupEventListeners({
     toggleDarkConfigurator(sliderManager);
   });
 
+  const tabContainer = document.getElementById('tab-container');
+  tabContainer?.addEventListener('keydown', (event) => {
+    const focusedTab =
+      event.target instanceof Element ? event.target.closest<HTMLElement>('[role="tab"]') : null;
+    if (!focusedTab) return;
+
+    const tabs = Array.from(tabContainer.querySelectorAll<HTMLElement>('[role="tab"]'));
+    const currentIndex = tabs.indexOf(focusedTab);
+    let targetTab: HTMLElement | undefined;
+    switch (event.key) {
+      case 'ArrowLeft':
+        targetTab = tabs[(currentIndex - 1 + tabs.length) % tabs.length];
+        break;
+      case 'ArrowRight':
+        targetTab = tabs[(currentIndex + 1) % tabs.length];
+        break;
+      case 'Home':
+        targetTab = tabs[0];
+        break;
+      case 'End':
+        targetTab = tabs[tabs.length - 1];
+        break;
+      default:
+        return;
+    }
+
+    const tabId = targetTab?.dataset.tabId;
+    const filePath = targetTab?.dataset.filePath;
+    if (!tabId || !filePath) return;
+    event.preventDefault();
+    event.stopPropagation();
+    void activateDocument(filePath).then(() => {
+      document.getElementById(`document-tab-${tabId}`)?.focus();
+    });
+  });
+
   // Keyboard shortcuts - use KeybindManager for dynamic keybind handling
   const handleKeyDown = async (e: KeyboardEvent) => {
     if (!keybindManager) return;
 
     const actionId = keybindManager.matchEvent(e);
     if (actionId) {
-      console.log(`Keybind matched: ${actionId}`);
+      debugLog(`Keybind matched: ${actionId}`);
       e.preventDefault();
       e.stopPropagation();
       await keybindManager.handleEvent(e);
     }
   };
 
-  // Add to both document and window for maximum compatibility
   document.addEventListener('keydown', handleKeyDown);
-  window.addEventListener('keydown', handleKeyDown);
-  console.log('Keyboard event listeners attached');
+  debugLog('Keyboard event listeners attached');
 }

@@ -64,7 +64,7 @@ fn build_app_menu(app: &AppHandle) -> Result<Submenu<Wry>, tauri::Error> {
             &PredefinedMenuItem::hide(app, None)?,
             &PredefinedMenuItem::hide_others(app, None)?,
             &PredefinedMenuItem::separator(app)?,
-            &PredefinedMenuItem::quit(app, None)?,
+            &MenuItem::with_id(app, "quit", "Quit", true, Some("Cmd+Q"))?,
         ],
     )
 }
@@ -230,6 +230,13 @@ pub fn handle_menu_event(app: &AppHandle, event_id: &str) {
         }
         "toggle_fullscreen" => {
             emit_to_main(app, "menu-toggle-fullscreen");
+        }
+        "quit" => {
+            // Route application quit through the frontend close guard so its final
+            // Reading Session write completes before the process exits.
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.close();
+            }
         }
         "close_tab" => {
             emit_to_main(app, "menu-close-tab");

@@ -1,3 +1,4 @@
+import { Window } from 'happy-dom';
 import { describe, expect, it, vi } from 'vitest';
 
 const getPdfEngine = vi.hoisted(() => vi.fn());
@@ -52,6 +53,135 @@ describe('PDFViewer initial load', () => {
     await viewer.loadPDF(new Uint8Array([1]), 'report.pdf', '/tmp/report.pdf');
 
     expect(events[0]).toBe('render:1');
+  });
+
+  it('makes the continuous view of a large Document scrollable before measuring all pages', async () => {
+    const browser = new Window();
+    vi.stubGlobal('document', browser.document);
+    vi.stubGlobal('window', browser);
+    const requestFrame = vi.fn((callback: FrameRequestCallback) => {
+      callback(0);
+      return 1;
+    });
+    vi.stubGlobal('requestAnimationFrame', requestFrame);
+    Object.defineProperty(browser.HTMLCanvasElement.prototype, 'getContext', {
+      configurable: true,
+      value: vi.fn(() => ({
+        drawImage: vi.fn(),
+        fillRect: vi.fn(),
+        fillStyle: '',
+      })),
+    });
+
+    const events: string[] = [];
+    const page = {
+      getViewport: ({ scale = 1 }: { scale?: number }) => ({
+        width: 600 * scale,
+        height: 800 * scale,
+        scale,
+      }),
+      render: () => ({ promise: Promise.resolve(), cancel: vi.fn() }),
+      getTextContent: async () => ({ items: [] }),
+      getAnnotations: async () => [],
+    };
+    const pdfProxy = {
+      numPages: 1_001,
+      getPage: vi.fn(async (pageNumber: number) => {
+        events.push(`dimensions:${pageNumber}`);
+        return page;
+      }),
+      destroy: vi.fn(),
+    };
+    getPdfEngine.mockResolvedValue({
+      TextLayer: class {
+        render = async () => {};
+        cancel = vi.fn();
+      },
+    });
+
+    const { PDFViewer } = await import('../scripts/pdf-viewer');
+    const viewer = Object.create(PDFViewer.prototype) as InstanceType<typeof PDFViewer>;
+    const container = browser.document.createElement('div');
+    Object.defineProperties(container, {
+      clientHeight: { value: 900 },
+      clientWidth: { value: 1_200 },
+    });
+    const wrapper = browser.document.createElement('div');
+    const canvas = browser.document.createElement('canvas');
+    const textLayer = browser.document.createElement('div');
+    const linkLayer = browser.document.createElement('div');
+    const userAnnotationLayer = browser.document.createElement('div');
+    wrapper.append(canvas, userAnnotationLayer, textLayer, linkLayer);
+    const singlePageSurface = {
+      wrapper,
+      canvas,
+      textLayer,
+      linkLayer,
+      userAnnotationLayer,
+      textLayerTask: null,
+      layerEpoch: 0,
+      pageNumber: 1,
+      viewport: null,
+    };
+    container.appendChild(wrapper);
+    Object.assign(viewer, {
+      pdfDoc: pdfProxy,
+      container,
+      canvas,
+      singlePageSurface,
+      spreadPageSurface: null,
+      state: {
+        currentPage: 1,
+        totalPages: 1_001,
+        zoom: 1,
+        rotation: 0,
+        fileName: 'large.pdf',
+        filePath: '/tmp/large.pdf',
+        viewMode: 'single',
+      },
+      canvasId: 'pdf-canvas',
+      currentFilterCSS: '',
+      isVisible: true,
+      canvases: new Map(),
+      pageSurfaces: new Map(),
+      renderedPages: new Set(),
+      visiblePages: new Set(),
+      renderTasks: new Map(),
+      pageHeights: new Map(),
+      pageWidths: new Map(),
+      baseDimensions: new Map([[1, { width: 600, height: 800 }]]),
+      offsetArray: [],
+      visibleRenderLoop: null,
+      queuedVisibleRender: null,
+      dimensionRefinementTimer: null,
+      dimensionRefinementEpoch: 0,
+      pageGap: 20,
+      pagePadding: 20,
+      renderBufferPages: 2,
+      cleanupBufferPages: 5,
+      annotations: [],
+      searchQuery: '',
+      activeSearchMatch: null,
+      pendingSelectionHighlights: [],
+    });
+
+    await viewer.setViewMode('continuous');
+    events.push('scrollable');
+
+    const requestedPageCount = new Set(
+      events
+        .filter((event) => event.startsWith('dimensions:'))
+        .map((event) => Number.parseInt(event.slice('dimensions:'.length), 10)),
+    ).size;
+    const scrollWrapper = container.querySelector('.scroll-wrapper') as unknown as {
+      style: { minHeight: string };
+    } | null;
+    expect(Number.parseInt(scrollWrapper?.style.minHeight ?? '0', 10)).toBeGreaterThan(
+      container.clientHeight,
+    );
+    expect(requestedPageCount).toBeLessThan(20);
+    expect(events).not.toContain('dimensions:1001');
+    viewer.destroy();
   });
 
   it('requests and applies an encrypted-document password', async () => {
@@ -152,12 +282,131 @@ describe('PDFViewer initial load', () => {
       activeSearchMatch: null,
     });
 
-    const matches = await viewer.searchText('moon');
+    const progress: number[] = [];
+    const matches = await viewer.searchText('moon', (event) => {
+      progress.push(event.pageNumber);
+    });
     expect(matches).toHaveLength(2);
     expect(matches.map((match) => match.pageOccurrence)).toEqual([0, 1]);
+    expect(progress).toEqual([1, 2]);
     await expect(viewer.getOutlineItems()).resolves.toEqual([
       expect.objectContaining({ title: 'Second page', pageNumber: 2 }),
     ]);
+  });
+
+  it('guards search match navigation with the current query token', async () => {
+    const requestAnimationFrame = vi.fn();
+    vi.stubGlobal('window', { requestAnimationFrame });
+    const { PDFViewer } = await import('../scripts/pdf-viewer');
+    const viewer = Object.create(PDFViewer.prototype) as InstanceType<typeof PDFViewer>;
+    let navigationOptions: { isCancelled?: () => boolean } | undefined;
+    Object.assign(viewer, {
+      searchToken: 1,
+      searchQuery: 'moon',
+      searchMatches: [],
+      activeSearchMatch: null,
+      pageSurfaces: new Map(),
+      singlePageSurface: null,
+      spreadPageSurface: null,
+    });
+    const goToPage = vi.spyOn(viewer, 'goToPage').mockImplementation(async (...args: unknown[]) => {
+      navigationOptions = args[1] as typeof navigationOptions;
+      viewer.clearSearch();
+    });
+
+    await viewer.revealSearchMatch({
+      pageNumber: 2,
+      pageOccurrence: 0,
+      index: 4,
+      excerpt: 'moon',
+    });
+
+    expect(goToPage).toHaveBeenCalledWith(
+      2,
+      expect.objectContaining({ isCancelled: expect.any(Function) }),
+    );
+    expect(navigationOptions?.isCancelled?.()).toBe(true);
+    expect(requestAnimationFrame).not.toHaveBeenCalled();
+  });
+
+  it('discards a staged page when navigation is cancelled during rendering', async () => {
+    const browser = new Window();
+    vi.stubGlobal('document', browser.document);
+    vi.stubGlobal('window', browser);
+    Object.defineProperty(browser.HTMLCanvasElement.prototype, 'getContext', {
+      configurable: true,
+      value: vi.fn(() => ({
+        drawImage: vi.fn(),
+        fillRect: vi.fn(),
+        fillStyle: '',
+      })),
+    });
+
+    let finishRender: (() => void) | undefined;
+    const page = {
+      getViewport: ({ scale = 1 }: { scale?: number }) => ({
+        width: 600 * scale,
+        height: 800 * scale,
+        scale,
+      }),
+      render: () => ({
+        promise: new Promise<void>((resolve) => {
+          finishRender = resolve;
+        }),
+        cancel: vi.fn(),
+      }),
+    };
+    const { PDFViewer } = await import('../scripts/pdf-viewer');
+    const viewer = Object.create(PDFViewer.prototype) as InstanceType<typeof PDFViewer>;
+    const wrapper = browser.document.createElement('div');
+    const canvas = browser.document.createElement('canvas');
+    const textLayer = browser.document.createElement('div');
+    const linkLayer = browser.document.createElement('div');
+    const userAnnotationLayer = browser.document.createElement('div');
+    wrapper.append(canvas, userAnnotationLayer, textLayer, linkLayer);
+    const singlePageSurface = {
+      wrapper,
+      canvas,
+      textLayer,
+      linkLayer,
+      userAnnotationLayer,
+      textLayerTask: null,
+      layerEpoch: 0,
+      pageNumber: 1,
+      viewport: null,
+    };
+    const onPageChange = vi.fn();
+    Object.assign(viewer, {
+      pdfDoc: { getPage: vi.fn(async () => page) },
+      canvas,
+      singlePageSurface,
+      spreadPageSurface: null,
+      state: {
+        currentPage: 1,
+        totalPages: 2,
+        zoom: 1,
+        rotation: 0,
+        fileName: 'book.pdf',
+        filePath: '/tmp/book.pdf',
+        viewMode: 'single',
+      },
+      renderTask: null,
+      canvasId: 'pdf-canvas',
+      currentFilterCSS: '',
+      baseDimensions: new Map(),
+      onPageChange,
+    });
+    let cancelled = false;
+
+    const render = viewer.renderPage(2, null, { isCancelled: () => cancelled });
+    await vi.waitFor(() => expect(finishRender).toBeTypeOf('function'));
+    cancelled = true;
+    finishRender?.();
+    await render;
+
+    expect(viewer.getState().currentPage).toBe(1);
+    expect(singlePageSurface.pageNumber).toBe(1);
+    expect(onPageChange).not.toHaveBeenCalled();
   });
 
   it('advances two pages at a time in spread view', async () => {
@@ -219,7 +468,7 @@ describe('PDFViewer initial load', () => {
     });
     const { PDFViewer } = await import('../scripts/pdf-viewer');
     const viewer = Object.create(PDFViewer.prototype) as InstanceType<typeof PDFViewer>;
-    const zoomAtPoint = vi.fn(async () => {});
+    const previewZoomAtPoint = vi.fn();
     Object.assign(viewer, {
       state: {
         currentPage: 1,
@@ -231,12 +480,18 @@ describe('PDFViewer initial load', () => {
         viewMode: 'single',
       },
       container: {
+        scrollLeft: 0,
+        scrollTop: 0,
         getBoundingClientRect: () => ({ left: 0, top: 0, width: 800, height: 600 }),
       },
       pendingWheelDelta: 0,
       wheelZoomRafId: null,
       pinchStartZoom: 2,
-      zoomAtPoint,
+      gestureZoomActive: false,
+      gestureBaseZoom: 2,
+      gesturePendingZoom: 2,
+      gestureSettleTimer: null,
+      previewZoomAtPoint,
     });
     const privateViewer = viewer as unknown as {
       handleWheel: (event: WheelEvent) => void;
@@ -254,14 +509,14 @@ describe('PDFViewer initial load', () => {
       preventDefault,
     } as unknown as WheelEvent);
     expect(preventDefault).toHaveBeenCalled();
-    expect(zoomAtPoint).toHaveBeenCalledWith(expect.any(Number), 120, 180);
+    expect(previewZoomAtPoint).toHaveBeenCalledWith(expect.any(Number), 120, 180);
 
     privateViewer.handleGestureStart({ preventDefault } as unknown as Event);
     privateViewer.handleGestureChange({
       scale: 1.5,
       preventDefault,
     } as unknown as Event & { scale: number });
-    expect(zoomAtPoint).toHaveBeenLastCalledWith(3, 400, 300);
+    expect(previewZoomAtPoint).toHaveBeenLastCalledWith(3, 400, 300);
   });
 
   it('updates annotation notes and emits a persistence snapshot', async () => {

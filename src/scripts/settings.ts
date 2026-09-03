@@ -34,7 +34,6 @@ export interface KeybindConfig {
  * Main settings interface
  */
 export interface MoonightSettings {
-  version: string;
   general: {
     maximizeOnOpen: boolean;
     displayThumbs: boolean;
@@ -45,16 +44,28 @@ export interface MoonightSettings {
   };
   keybinds: Record<string, KeybindConfig>;
   lastFilter?: FilterSettings;
-  lastSession?: ReadingSession;
   recentFiles: RecentFile[];
   annotations: Record<string, PdfAnnotation[]>;
+}
+
+export const SETTINGS_SCHEMA_VERSION = 1;
+
+export type SettingsOwner = 'main' | 'settings';
+type SettingsWindowKey = 'general' | 'keybinds';
+type MainWindowKey = 'recentFiles' | 'annotations' | 'lastFilter';
+type OwnedKey<Owner extends SettingsOwner> = Owner extends 'settings'
+  ? SettingsWindowKey
+  : MainWindowKey;
+
+interface LegacyMoonightSettings extends Partial<MoonightSettings> {
+  version?: string;
+  lastSession?: ReadingSession;
 }
 
 /**
  * Default settings
  */
 export const DEFAULT_SETTINGS: MoonightSettings = {
-  version: '1.0.6',
   general: {
     maximizeOnOpen: true,
     displayThumbs: true,
@@ -228,172 +239,199 @@ export const DEFAULT_SETTINGS: MoonightSettings = {
   annotations: {},
 };
 
-/**
- * Settings Manager class for persistent storage
- */
-export class SettingsManager {
+const EMPTY_READING_SESSION: PersistedReadingSession = {
+  schemaVersion: 1,
+  activeDocumentPath: null,
+  documents: [],
+};
+
+function cloneDefaults(): MoonightSettings {
+  return structuredClone(DEFAULT_SETTINGS);
+}
+
+function migrateLegacyReadingSession(session: ReadingSession | undefined): PersistedReadingSession {
+  if (!session) return structuredClone(EMPTY_READING_SESSION);
+
+  const documents = session.tabs.map((tab) => ({
+    filePath: tab.filePath,
+    title: tab.title,
+    readingPosition:
+      tab.scrollPosition !== undefined
+        ? { page: tab.currentPage, legacyOffset: tab.scrollPosition }
+        : { page: tab.currentPage, location: 0 },
+    visualState: {
+      filterSettings: tab.filterSettings,
+      zoom: tab.zoom,
+      rotation: tab.rotation ?? 0,
+      viewMode: tab.viewMode,
+    },
+  }));
+
+  return {
+    schemaVersion: 1,
+    activeDocumentPath: documents.some((document) => document.filePath === session.activeFilePath)
+      ? session.activeFilePath
+      : null,
+    documents,
+  };
+}
+
+/** Persistent storage split by concern and constrained by window ownership. */
+export class SettingsManager<Owner extends SettingsOwner = 'main'> {
   private store: Store | null = null;
-  private settings: MoonightSettings;
+  private settings: MoonightSettings = cloneDefaults();
 
-  constructor() {
-    this.settings = { ...DEFAULT_SETTINGS };
-  }
+  constructor(private readonly owner: Owner = 'main' as Owner) {}
 
-  /**
-   * Initialize the store
-   */
   private async initStore(): Promise<Store> {
-    if (!this.store) {
-      this.store = await Store.load('settings.json');
-    }
+    if (!this.store) this.store = await Store.load('settings.json');
     return this.store;
   }
 
-  /**
-   * Load settings from persistent storage
-   */
+  private async ensureMigrated(store: Store): Promise<void> {
+    if ((await store.get<number>('storageSchemaVersion')) === SETTINGS_SCHEMA_VERSION) return;
+    if (this.owner !== 'main') {
+      throw new Error('The main window must complete settings storage migration');
+    }
+
+    const legacy = await store.get<LegacyMoonightSettings>('settings');
+    const legacyGeneral =
+      legacy?.version === '1.0.0'
+        ? { ...legacy.general, maximizeOnOpen: true, defaultViewMode: 'continuous' as const }
+        : legacy?.general;
+    const values = {
+      general: (await store.get<MoonightSettings['general']>('general')) ?? {
+        ...DEFAULT_SETTINGS.general,
+        ...legacyGeneral,
+      },
+      keybinds: (await store.get<MoonightSettings['keybinds']>('keybinds')) ?? {
+        ...DEFAULT_SETTINGS.keybinds,
+        ...legacy?.keybinds,
+      },
+      readingSession:
+        (await store.get<PersistedReadingSession>('readingSession')) ??
+        migrateLegacyReadingSession(legacy?.lastSession),
+      recentFiles: (await store.get<RecentFile[]>('recentFiles')) ?? legacy?.recentFiles ?? [],
+      annotations:
+        (await store.get<Record<string, PdfAnnotation[]>>('annotations')) ??
+        legacy?.annotations ??
+        {},
+      lastFilter:
+        (await store.get<FilterSettings | null>('lastFilter')) ?? legacy?.lastFilter ?? null,
+    };
+
+    await store.set('general', values.general);
+    await store.set('keybinds', values.keybinds);
+    await store.set('readingSession', values.readingSession);
+    await store.set('recentFiles', values.recentFiles);
+    await store.set('annotations', values.annotations);
+    await store.set('lastFilter', values.lastFilter);
+    await store.set('storageSchemaVersion', SETTINGS_SCHEMA_VERSION);
+    await store.delete('settings');
+    await store.save();
+  }
+
   async load(): Promise<MoonightSettings> {
     try {
       const store = await this.initStore();
-      const stored = await store.get<MoonightSettings>('settings');
-      if (stored?.version) {
-        const { settings: migratedSettings, changed } = this.migrateSettings(stored);
-        // Merge with defaults to handle new settings added in updates
-        this.settings = this.mergeSettings(DEFAULT_SETTINGS, migratedSettings);
-        if (changed) {
-          await this.save();
-        }
-      }
-      return this.settings;
+      await this.ensureMigrated(store);
+      const [general, keybinds, recentFiles, annotations, lastFilter] = await Promise.all([
+        store.get<MoonightSettings['general']>('general'),
+        store.get<MoonightSettings['keybinds']>('keybinds'),
+        store.get<RecentFile[]>('recentFiles'),
+        store.get<Record<string, PdfAnnotation[]>>('annotations'),
+        store.get<FilterSettings | null>('lastFilter'),
+      ]);
+      this.settings = {
+        general: { ...DEFAULT_SETTINGS.general, ...general },
+        keybinds: { ...DEFAULT_SETTINGS.keybinds, ...keybinds },
+        recentFiles: recentFiles ?? [],
+        annotations: annotations ?? {},
+        ...(lastFilter ? { lastFilter } : {}),
+      };
+      return structuredClone(this.settings);
     } catch (error) {
       console.error('Error loading settings:', error);
-      return DEFAULT_SETTINGS;
+      return cloneDefaults();
     }
   }
 
-  /**
-   * Save settings to persistent storage
-   */
-  async save(): Promise<void> {
-    try {
-      const store = await this.initStore();
-      await store.set('settings', this.settings);
-      await store.save();
-    } catch (error) {
-      console.error('Error saving settings:', error);
-      throw error;
-    }
-  }
-
-  /**
-   * Get a specific setting value
-   */
   get<K extends keyof MoonightSettings>(key: K): MoonightSettings[K] {
-    return this.settings[key];
+    return structuredClone(this.settings[key]);
   }
 
-  /**
-   * Set a specific setting value and save
-   */
-  async set<K extends keyof MoonightSettings>(key: K, value: MoonightSettings[K]): Promise<void> {
-    this.settings[key] = value;
-    await this.save();
+  async set<K extends OwnedKey<Owner>>(key: K, value: MoonightSettings[K]): Promise<void> {
+    this.assertOwnership(key);
+    const store = await this.initStore();
+    await store.set(key, value);
+    await store.save();
+    this.settings = { ...this.settings, [key]: structuredClone(value) };
   }
 
-  /**
-   * Get all settings
-   */
   getAll(): MoonightSettings {
-    return { ...this.settings };
-  }
-
-  /**
-   * Update multiple settings at once
-   */
-  async updateMultiple(updates: Partial<MoonightSettings>): Promise<void> {
-    this.settings = { ...this.settings, ...updates };
-    await this.save();
+    return structuredClone(this.settings);
   }
 
   async readPersistedReadingSession(): Promise<unknown> {
     const store = await this.initStore();
+    await this.ensureMigrated(store);
     return await store.get('readingSession');
   }
 
   async writePersistedReadingSession(session: PersistedReadingSession): Promise<void> {
+    this.assertMainOwnership('readingSession');
     const store = await this.initStore();
     await store.set('readingSession', session);
     await store.save();
   }
 
   async clearPersistedReadingSession(): Promise<void> {
+    this.assertMainOwnership('readingSession');
     const store = await this.initStore();
-    await store.delete('readingSession');
+    await store.set('readingSession', EMPTY_READING_SESSION);
     await store.save();
   }
 
-  readLegacyReadingSession(): unknown {
-    return this.settings.lastSession;
+  async readLegacyReadingSession(): Promise<undefined> {
+    return undefined;
   }
 
-  async removeLegacyReadingSession(): Promise<void> {
-    delete this.settings.lastSession;
-    await this.save();
-  }
+  async removeLegacyReadingSession(): Promise<void> {}
 
-  /**
-   * Reset settings to defaults
-   */
   async reset(): Promise<void> {
-    this.settings = { ...DEFAULT_SETTINGS };
-    await this.clearPersistedReadingSession();
-    await this.save();
+    if (this.owner !== 'settings') throw new Error('Only the Settings window can reset settings');
+    const defaults = cloneDefaults();
+    await this.writeConcern('general', defaults.general);
+    await this.writeConcern('keybinds', defaults.keybinds);
+    this.settings = defaults;
   }
 
-  /**
-   * Merge stored settings with defaults (for backward compatibility)
-   */
-  private mergeSettings(
-    defaults: MoonightSettings,
-    stored: Partial<MoonightSettings>,
-  ): MoonightSettings {
-    return {
-      ...defaults,
-      ...stored,
-      general: { ...defaults.general, ...stored.general },
-      keybinds: { ...defaults.keybinds, ...stored.keybinds },
-    };
+  async clearReadingHistory(): Promise<void> {
+    this.assertMainOwnership('reading history');
+    await this.writeConcern('recentFiles', []);
+    await this.writeConcern('readingSession', EMPTY_READING_SESSION);
+    await this.writeConcern('annotations', {});
+    this.settings = { ...this.settings, recentFiles: [], annotations: {} };
   }
 
-  /**
-   * Apply one-time migrations for settings that previously used different defaults.
-   */
-  private migrateSettings(stored: MoonightSettings): {
-    settings: Partial<MoonightSettings>;
-    changed: boolean;
-  } {
-    const migrated =
-      stored.version === '1.0.0'
-        ? {
-            ...stored,
-            general: {
-              ...stored.general,
-              maximizeOnOpen: true,
-              defaultViewMode: 'continuous' as const,
-            },
-          }
-        : stored;
+  private async writeConcern(key: string, value: unknown): Promise<void> {
+    const store = await this.initStore();
+    await store.set(key, value);
+    await store.save();
+  }
 
-    if (migrated.version === DEFAULT_SETTINGS.version) {
-      return { settings: migrated, changed: false };
+  private assertOwnership(key: string): void {
+    const allowed =
+      this.owner === 'settings'
+        ? new Set<string>(['general', 'keybinds'])
+        : new Set<string>(['recentFiles', 'annotations', 'lastFilter']);
+    if (!allowed.has(key)) {
+      const label = this.owner === 'settings' ? 'Settings' : 'Main';
+      throw new Error(`${label} window cannot write ${key}`);
     }
+  }
 
-    return {
-      settings: {
-        ...migrated,
-        version: DEFAULT_SETTINGS.version,
-      },
-      changed: true,
-    };
+  private assertMainOwnership(key: string): void {
+    if (this.owner !== 'main') throw new Error(`Settings window cannot write ${key}`);
   }
 }

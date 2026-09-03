@@ -1,13 +1,16 @@
 import { getName, getTauriVersion, getVersion } from '@tauri-apps/api/app';
-import { emit } from '@tauri-apps/api/event';
+import { emit, listen } from '@tauri-apps/api/event';
 import { version as pdfjsVersion } from 'pdfjs-dist';
+import { requestConfirmation } from '../app/dialogs';
+import { debugLog } from '../lib/debug-log';
+import '../styles/dialogs.css';
 import { KeybindEditor } from './keybind-editor';
 import { KeybindManager } from './keybind-manager';
 import type { MoonightSettings } from './settings';
 import { type KeybindConfig, SettingsManager } from './settings';
 
 // Initialize settings manager
-const settingsManager = new SettingsManager();
+const settingsManager = new SettingsManager('settings');
 let currentSettings: MoonightSettings;
 
 // Detect platform
@@ -106,7 +109,7 @@ async function updateAboutPanel(): Promise<void> {
 async function notifyMainSettingsChanged(): Promise<void> {
   try {
     await emit('settings-changed');
-    console.log('Emitted settings-changed event to main window');
+    debugLog('Emitted settings-changed event to main window');
   } catch (error) {
     console.error('Error emitting settings-changed event:', error);
   }
@@ -141,11 +144,6 @@ function setupSettingListeners(): void {
   ) as HTMLInputElement;
   restorePreviousSession?.addEventListener('change', async () => {
     currentSettings.general.restorePreviousSession = restorePreviousSession.checked;
-    if (!restorePreviousSession.checked) {
-      currentSettings.lastSession = undefined;
-      await settingsManager.set('lastSession', undefined);
-      await settingsManager.clearPersistedReadingSession();
-    }
     await settingsManager.set('general', currentSettings.general);
     await notifyMainSettingsChanged();
   });
@@ -169,10 +167,27 @@ function setupSettingListeners(): void {
     await notifyMainSettingsChanged();
   });
 
+  const clearHistoryButton = document.getElementById('clear-reading-history');
+  clearHistoryButton?.addEventListener('click', async () => {
+    const confirmed = await requestConfirmation({
+      title: 'Clear reading history?',
+      message: 'Clear Recent Documents, the saved Reading Session, and all annotations?',
+      confirmLabel: 'Clear history',
+    });
+    if (confirmed) {
+      await emit('clear-reading-history');
+    }
+  });
+
   // Reset settings button
   const resetButton = document.getElementById('reset-settings');
   resetButton?.addEventListener('click', async () => {
-    if (confirm('Are you sure you want to reset all settings to default values?')) {
+    const confirmed = await requestConfirmation({
+      title: 'Reset all settings?',
+      message: 'Reset all settings and keyboard shortcuts to their default values?',
+      confirmLabel: 'Reset settings',
+    });
+    if (confirmed) {
       await settingsManager.reset();
       currentSettings = await settingsManager.load();
       await loadSettings();
@@ -271,6 +286,23 @@ function formatKeybindForDisplay(bind: string): string {
     .replace('ArrowDown', '↓');
 }
 
+async function resolveKeybindConflict(newKeybind: string, actionId: string): Promise<boolean> {
+  const conflict = keybindEditor?.findConflict(newKeybind, actionId);
+  if (!conflict) return true;
+
+  const confirmed = await requestConfirmation({
+    title: 'Replace keyboard shortcut?',
+    message: `This key combination is already used for "${conflict.displayName}". Replace it?`,
+    confirmLabel: 'Replace',
+  });
+  if (!confirmed) return false;
+
+  currentSettings.keybinds[conflict.actionId].binds = currentSettings.keybinds[
+    conflict.actionId
+  ].binds.filter((bind) => bind !== newKeybind);
+  return true;
+}
+
 // Start editing a keybind
 function startEditingKeybind(actionId: string, config: KeybindConfig, bindIndex: number = 0): void {
   if (!keybindEditor) {
@@ -282,21 +314,7 @@ function startEditingKeybind(actionId: string, config: KeybindConfig, bindIndex:
   keybindEditor.startRecording(
     currentBind,
     async (newKeybind) => {
-      // Check for conflicts
-      const conflict = keybindEditor?.findConflict(newKeybind, actionId);
-      if (conflict) {
-        const confirmed = confirm(
-          `This key combination is already used for "${conflict.displayName}".\n\n` +
-            `Do you want to replace it?`,
-        );
-
-        if (!confirmed) return;
-
-        // Clear the conflicting keybind
-        currentSettings.keybinds[conflict.actionId].binds = currentSettings.keybinds[
-          conflict.actionId
-        ].binds.filter((b) => b !== newKeybind);
-      }
+      if (!(await resolveKeybindConflict(newKeybind, actionId))) return;
 
       // Update settings
       if (config.binds[bindIndex]) {
@@ -334,21 +352,7 @@ function addKeybind(actionId: string): void {
   keybindEditor.startRecording(
     '',
     async (newKeybind) => {
-      // Check for conflicts
-      const conflict = keybindEditor?.findConflict(newKeybind, actionId);
-      if (conflict) {
-        const confirmed = confirm(
-          `This key combination is already used for "${conflict.displayName}".\n\n` +
-            `Do you want to replace it?`,
-        );
-
-        if (!confirmed) return;
-
-        // Clear the conflicting keybind
-        currentSettings.keybinds[conflict.actionId].binds = currentSettings.keybinds[
-          conflict.actionId
-        ].binds.filter((b) => b !== newKeybind);
-      }
+      if (!(await resolveKeybindConflict(newKeybind, actionId))) return;
 
       // Add new binding
       currentSettings.keybinds[actionId].binds.push(newKeybind);
@@ -365,7 +369,7 @@ async function notifyMainKeybindsChanged(): Promise<void> {
   try {
     // Emit event to main window to reload keybinds
     await emit('keybinds-changed');
-    console.log('Emitted keybinds-changed event to main window');
+    debugLog('Emitted keybinds-changed event to main window');
   } catch (error) {
     console.error('Error emitting keybinds-changed event:', error);
   }
@@ -373,7 +377,7 @@ async function notifyMainKeybindsChanged(): Promise<void> {
 
 // Initialize settings page
 async function init(): Promise<void> {
-  console.log('Initializing settings page...');
+  debugLog('Initializing settings page...');
 
   // Setup panel switching
   initializePanelSwitching();
@@ -383,8 +387,10 @@ async function init(): Promise<void> {
 
   // Setup event listeners
   setupSettingListeners();
+  await listen('settings-changed', loadSettings);
+  await listen('keybinds-changed', loadSettings);
 
-  console.log('Settings page initialized!');
+  debugLog('Settings page initialized!');
 }
 
 // Wait for DOM to be ready

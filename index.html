@@ -9,7 +9,7 @@
     <link rel="stylesheet" href="/src/styles/configurator.css" />
     <link rel="stylesheet" href="/src/styles/tabs.css" />
     <meta http-equiv="Content-Security-Policy"
-          content="default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; frame-src blob:; img-src 'self' blob: data:" />
+          content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; frame-src blob:; img-src 'self' blob: data:" />
 </head>
 <body>
     <div id="app">
@@ -22,7 +22,7 @@
             <p class="hint-text">Press Cmd+O to open a PDF file</p>
             <section id="recent-files-section" class="recent-files hidden" aria-labelledby="recent-files-title">
                 <div class="recent-files-heading">
-                    <h3 id="recent-files-title">Recent files</h3>
+                    <h3 id="recent-files-title">Recent Documents</h3>
                     <button id="clear-recent-files" type="button">Clear</button>
                 </div>
                 <div id="recent-files-list" class="recent-files-list"></div>
@@ -132,13 +132,13 @@
 
             <!-- Tab Bar -->
             <div id="tab-bar" class="tab-bar hidden">
-                <div id="tab-container" class="tab-list">
+                <div id="tab-container" class="tab-list" role="tablist" aria-label="Open documents">
                     <!-- Tabs rendered dynamically -->
                 </div>
                 <button id="new-tab-btn" class="new-tab-btn" title="Open New PDF (Ctrl+T)">+</button>
             </div>
 
-            <div id="document-workspace">
+            <div id="document-workspace" role="tabpanel">
                 <aside id="document-sidebar" class="document-sidebar hidden" aria-label="Document sidebar">
                     <div class="sidebar-tabs" role="tablist">
                         <button type="button" data-sidebar-tab="outline" role="tab">Contents</button>

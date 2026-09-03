@@ -26,6 +26,8 @@ import {
   updateTabBarVisibility,
   updateUI,
 } from './app/ui';
+import { registerReadingSessionCloseGuard } from './app/window-lifecycle';
+import { debugLog } from './lib/debug-log';
 import {
   type PdfAnnotation,
   type RecentFile,
@@ -35,6 +37,7 @@ import {
 import {
   createReaderActions,
   type PersistedReadingSession,
+  type ReaderActionOptions,
   type ReaderActions,
 } from './reader/reader-actions';
 import { loadReadingSession, type ReadingSessionStorage } from './reader/reading-session-store';
@@ -44,6 +47,7 @@ import { type MoonightSettings, SettingsManager } from './scripts/settings';
 import { SliderManager } from './scripts/sliders';
 import { type TabData, TabManager } from './scripts/tabs';
 import './styles/main.css';
+import './styles/dialogs.css';
 import './styles/pdf-viewer.css';
 import './styles/configurator.css';
 import './styles/document-features.css';
@@ -78,7 +82,7 @@ let presentationController: PresentationController | null = null;
 // Detect if we're on macOS
 const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
 
-console.log('Platform:', navigator.platform, 'isMac:', isMac);
+debugLog('Platform:', navigator.platform, 'isMac:', isMac);
 
 async function getAppInfo(): Promise<AppInfo> {
   try {
@@ -91,7 +95,7 @@ async function getAppInfo(): Promise<AppInfo> {
     return { name, version, tauriVersion };
   } catch (error) {
     console.error('Failed to get app info:', error);
-    return { name: 'Monight', version: '1.0.6', tauriVersion: 'Unknown' };
+    return { name: 'Monight', version: 'Unknown', tauriVersion: 'Unknown' };
   }
 }
 
@@ -146,8 +150,8 @@ const getActiveViewer = () => {
   return activeTab ? (tabManager?.getViewerForTab(activeTab.id) ?? null) : null;
 };
 
-const goToPage = async (page: number): Promise<void> => {
-  await readerActions?.dispatch({ type: 'goToPage', page });
+const goToPage = async (page: number, options?: ReaderActionOptions): Promise<void> => {
+  await readerActions?.dispatch({ type: 'goToPage', page }, options);
 };
 
 const persistAnnotations = (filePath: string, annotations: PdfAnnotation[]): void => {
@@ -204,7 +208,7 @@ const openRecentFile = async (filePath: string): Promise<void> => {
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';
     if (!message.includes('Password entry cancelled')) {
-      showToast(`Could not open recent file: ${message}`, 'error');
+      showToast(`Could not open Recent Document: ${message}`, 'error');
     }
   }
 };
@@ -241,6 +245,17 @@ const saveReadingSessionNow = async (): Promise<void> => {
   }
 
   saveCurrentTabState(tabManager, sliderManager);
+
+  const activeTab = tabManager?.getActiveTab();
+  const activeViewer = activeTab ? tabManager?.getViewerForTab(activeTab.id) : null;
+  if (activeTab && activeViewer) {
+    await readerActions.dispatch({
+      type: 'settleReadingPosition',
+      filePath: activeTab.filePath,
+      readingPosition: activeViewer.getReadingPosition(),
+    });
+  }
+
   await readingSessionStorage.write(readerActions.snapshot());
 };
 
@@ -279,7 +294,8 @@ const restorePreviousReadingSession = async (): Promise<number> => {
       currentPage: document.readingPosition.page,
       zoom: document.visualState?.zoom ?? 1,
       rotation: document.visualState?.rotation ?? 0,
-      scrollPosition: 0,
+      scrollPosition:
+        'legacyOffset' in document.readingPosition ? document.readingPosition.legacyOffset : 0,
       viewMode: document.visualState?.viewMode ?? getInitialViewMode(),
     })),
   };
@@ -312,7 +328,7 @@ const restorePreviousReadingSession = async (): Promise<number> => {
 
 async function initializeApp(): Promise<void> {
   try {
-    console.log('Initializing app...');
+    debugLog('Initializing app...');
 
     // Initialize settings manager
     settingsManager = new SettingsManager();
@@ -330,7 +346,7 @@ async function initializeApp(): Promise<void> {
       };
     }
     renderRecentFiles(settings.recentFiles);
-    console.log('Settings loaded:', settings);
+    debugLog('Settings loaded:', settings);
 
     // Initialize tab manager
     tabManager = new TabManager(
@@ -394,6 +410,7 @@ async function initializeApp(): Promise<void> {
         onPageNavigationRequested: goToPage,
         requestPassword: requestPdfPassword,
         requestAnnotationNote,
+        reportError: (message) => showToast(message, 'error'),
       },
     );
 
@@ -403,11 +420,11 @@ async function initializeApp(): Promise<void> {
         activateDocument: async (filePath, position) => {
           await tabManager?.projectActiveDocument(filePath, position);
         },
-        goToReadingPosition: async (filePath, position) => {
+        goToReadingPosition: async (filePath, position, options) => {
           const tab = tabManager?.getTabs().find((item) => item.filePath === filePath);
           const viewer = tab ? tabManager?.getViewerForTab(tab.id) : null;
           if (!viewer) throw new Error(`Cannot navigate unopened Document: ${filePath}`);
-          await viewer.goToReadingPosition(position);
+          await viewer.goToReadingPosition(position, options);
         },
       },
       persist: async (snapshot) => {
@@ -501,7 +518,7 @@ async function initializeApp(): Promise<void> {
       settings.keybinds.Settings.binds = ['Cmd+,'];
     }
     keybindManager.loadFromSettings(settings);
-    console.log('KeybindManager initialized with settings keybinds');
+    debugLog('KeybindManager initialized with settings keybinds');
 
     // Get app information
     const info = await getAppInfo();
@@ -522,6 +539,9 @@ async function initializeApp(): Promise<void> {
       onPresetApplied: scheduleLastFilterSave,
       saveCurrentTabState: saveStateForTab,
       updateUI: updateUIForTab,
+      activateDocument: async (filePath) => {
+        await readerActions?.dispatch({ type: 'activateDocument', filePath });
+      },
       openRecentFile,
       clearRecentFiles,
       goToPage,
@@ -555,13 +575,35 @@ async function initializeApp(): Promise<void> {
           clearTimeout(lastFilterSaveTimer);
           lastFilterSaveTimer = null;
         }
-        if (!updated.general.restorePreviousSession && sessionSaveTimer !== null) {
-          clearTimeout(sessionSaveTimer);
-          sessionSaveTimer = null;
-        }
-        if (updated.general.restorePreviousSession) {
+        if (!updated.general.restorePreviousSession) {
+          if (sessionSaveTimer !== null) {
+            clearTimeout(sessionSaveTimer);
+            sessionSaveTimer = null;
+          }
+          await settingsManager.clearPersistedReadingSession();
+          restoredReadingSession = {
+            schemaVersion: 1,
+            activeDocumentPath: null,
+            documents: [],
+          };
+        } else {
           scheduleReadingSessionSave();
         }
+      },
+      readingHistoryCleared: () => {
+        if (!currentSettings) return;
+        currentSettings = { ...currentSettings, recentFiles: [], annotations: {} };
+        restoredReadingSession = {
+          schemaVersion: 1,
+          activeDocumentPath: null,
+          documents: [],
+        };
+        renderRecentFiles([]);
+        for (const tab of tabManager?.getTabs() ?? []) {
+          tab.annotations = [];
+          tabManager?.getViewerForTab(tab.id)?.setAnnotations([]);
+        }
+        sidebarController?.annotationsChanged();
       },
       applyWindowAfterOpen,
       updateTabBarVisibility: updateTabBar,
@@ -581,15 +623,19 @@ async function initializeApp(): Promise<void> {
     // Get current window
     const currentWindow = getCurrentWebviewWindow();
 
-    window.addEventListener('beforeunload', () => {
-      void saveReadingSessionNow();
+    await registerReadingSessionCloseGuard(currentWindow, async () => {
+      if (sessionSaveTimer !== null) {
+        clearTimeout(sessionSaveTimer);
+        sessionSaveTimer = null;
+      }
+      await saveReadingSessionNow();
     });
 
     // Show window after initialization
     await currentWindow.show();
     await currentWindow.setFocus();
 
-    console.log(`${info.name} initialized successfully!`);
+    debugLog(`${info.name} initialized successfully!`);
   } catch (error) {
     console.error('Initialization error:', error);
   }

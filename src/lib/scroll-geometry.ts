@@ -49,6 +49,21 @@ export function positionAtPage(offsets: number[], pageNum: number): number {
 }
 
 /**
+ * Adjust a scroll position so a page retains its viewport-relative position
+ * when estimated page offsets are replaced by refined offsets.
+ */
+export function correctScrollTopForPageAnchor(
+  previousOffsets: number[],
+  nextOffsets: number[],
+  anchorPage: number,
+  scrollTop: number,
+): number {
+  const previousPageTop = positionAtPage(previousOffsets, anchorPage);
+  const nextPageTop = positionAtPage(nextOffsets, anchorPage);
+  return Math.max(0, scrollTop + nextPageTop - previousPageTop);
+}
+
+/**
  * Find the range of visible pages using binary search over the offset array.
  *
  * A page is "visible" if any part of it falls within the viewport

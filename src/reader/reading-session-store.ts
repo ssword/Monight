@@ -15,6 +15,7 @@ interface LegacyDocument {
   filePath: string;
   title: string;
   currentPage: number;
+  scrollPosition?: number;
   filterSettings?: ReadingSessionVisualState['filterSettings'];
   zoom?: number;
   rotation?: number;
@@ -75,22 +76,25 @@ function parseDocument(value: unknown): ReadingSessionDocument | null {
     return null;
   }
   if (typeof value.title !== 'string' || !isRecord(value.readingPosition)) return null;
-  const { page, location } = value.readingPosition;
-  if (
-    !Number.isInteger(page) ||
-    (page as number) < 1 ||
-    typeof location !== 'number' ||
-    !Number.isFinite(location) ||
-    location < 0 ||
-    location > 1
-  ) {
-    return null;
-  }
+  const { page, location, legacyOffset, scrollPosition } = value.readingPosition;
+  if (!Number.isInteger(page) || (page as number) < 1) return null;
+
+  const hasLocation =
+    typeof location === 'number' && Number.isFinite(location) && location >= 0 && location <= 1;
+  const oldScrollPosition = legacyOffset ?? scrollPosition;
+  const hasLegacyOffset =
+    typeof oldScrollPosition === 'number' &&
+    Number.isFinite(oldScrollPosition) &&
+    oldScrollPosition >= 0;
+  if (!hasLocation && !hasLegacyOffset) return null;
+
   const visualState = parseVisualState(value.visualState);
   return {
     filePath: value.filePath,
     title: value.title,
-    readingPosition: { page: page as number, location },
+    readingPosition: hasLocation
+      ? { page: page as number, location: location as number }
+      : { page: page as number, legacyOffset: oldScrollPosition as number },
     ...(visualState ? { visualState } : {}),
   };
 }
@@ -133,6 +137,11 @@ function parseLegacyReadingSession(value: unknown): LegacyReadingSession | null 
       filePath: tab.filePath,
       title: tab.title,
       currentPage: tab.currentPage as number,
+      ...(typeof tab.scrollPosition === 'number' &&
+      Number.isFinite(tab.scrollPosition) &&
+      tab.scrollPosition >= 0
+        ? { scrollPosition: tab.scrollPosition }
+        : {}),
       ...(isRecord(tab.filterSettings)
         ? {
             filterSettings: parseVisualState({
@@ -157,7 +166,10 @@ function migrateLegacyReadingSession(legacy: LegacyReadingSession): PersistedRea
   const documents = legacy.tabs.map((tab) => ({
     filePath: tab.filePath,
     title: tab.title,
-    readingPosition: { page: tab.currentPage, location: 0 },
+    readingPosition:
+      tab.scrollPosition !== undefined
+        ? { page: tab.currentPage, legacyOffset: tab.scrollPosition }
+        : { page: tab.currentPage, location: 0 },
     ...(tab.filterSettings && tab.zoom !== undefined && tab.viewMode
       ? {
           visualState: {

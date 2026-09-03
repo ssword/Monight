@@ -120,6 +120,37 @@ describe('Reader Actions', () => {
     expect(reader.snapshot().documents[0].readingPosition).toEqual({ page: 2, location: 0.25 });
   });
 
+  it('does not commit page navigation cancelled while projection is in flight', async () => {
+    let finishNavigation: (() => void) | undefined;
+    let cancelled = false;
+    const persist = vi.fn();
+    const reader = createReaderActions({
+      initialSession: INITIAL_SESSION,
+      projection: {
+        activateDocument: vi.fn(),
+        goToReadingPosition: vi.fn(
+          () =>
+            new Promise<void>((resolve) => {
+              finishNavigation = resolve;
+            }),
+        ),
+      },
+      persist,
+    });
+
+    const navigation = reader.dispatch(
+      { type: 'goToPage', page: 11 },
+      { isCancelled: () => cancelled },
+    );
+    await vi.waitFor(() => expect(finishNavigation).toBeTypeOf('function'));
+    cancelled = true;
+    finishNavigation?.();
+
+    await expect(navigation).resolves.toMatchObject({ status: 'no-op', revision: 0 });
+    expect(reader.snapshot().documents[0].readingPosition).toEqual({ page: 2, location: 0.25 });
+    expect(persist).not.toHaveBeenCalled();
+  });
+
   it('commits settled scroll positions and isolates failing observers', async () => {
     const observerError = new Error('broken UI observer');
     const observedRevisions: number[] = [];

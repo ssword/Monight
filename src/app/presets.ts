@@ -1,3 +1,4 @@
+import { debugLog } from '../lib/debug-log';
 import { buildFilterCSS, type FilterSettings, PRESETS } from '../scripts/filters';
 import type { SliderManager } from '../scripts/sliders';
 import type { TabManager } from '../scripts/tabs';
@@ -78,7 +79,7 @@ export function setupPresetButtons(
       });
       btn.classList.add('active');
 
-      console.log(`Applied preset: ${presetName}`);
+      debugLog(`Applied preset: ${presetName}`);
     });
   });
 }

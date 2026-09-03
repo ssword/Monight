@@ -2,11 +2,13 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
+import { debugLog } from '../lib/debug-log';
 import type { ViewMode } from '../lib/document-features';
 import type { FilterSettings } from '../scripts/filters';
 import type { KeybindManager } from '../scripts/keybind-manager';
 import type { SettingsManager } from '../scripts/settings';
 import type { TabManager } from '../scripts/tabs';
+import { showToast } from './dialogs';
 import { openFiles } from './file-actions';
 import { withActiveViewer } from './viewer-helpers';
 
@@ -19,6 +21,7 @@ interface TauriListenerContext {
   getInitialFilterSettings: () => FilterSettings;
   getInitialViewMode: () => ViewMode;
   reloadSettings: () => Promise<void>;
+  readingHistoryCleared: () => void;
   applyWindowAfterOpen: () => Promise<void>;
   updateTabBarVisibility: () => void;
   updatePrintMenuState: () => Promise<void>;
@@ -36,6 +39,7 @@ export async function setupTauriListeners({
   getInitialFilterSettings,
   getInitialViewMode,
   reloadSettings,
+  readingHistoryCleared,
   applyWindowAfterOpen,
   updateTabBarVisibility,
   updatePrintMenuState,
@@ -49,7 +53,7 @@ export async function setupTauriListeners({
   };
 
   const handleCliOpenPayload = async (payload: { files: string[]; page: number | null }) => {
-    console.log('CLI open files event:', payload);
+    debugLog('CLI open files event:', payload);
     if (!tabManager) return;
 
     const { files, page } = payload;
@@ -65,7 +69,7 @@ export async function setupTauriListeners({
         await withActiveViewer(tabManager, async (viewer) => {
           await viewer.goToPage(page);
           updateUI();
-          console.log(`Navigated to page ${page}`);
+          debugLog(`Navigated to page ${page}`);
         });
       }
 
@@ -78,18 +82,21 @@ export async function setupTauriListeners({
       await applyWindowAfterOpen();
     } catch (error) {
       console.error('Error opening CLI files:', error);
-      alert(`Failed to open files: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      showToast(
+        `Failed to open files: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        'error',
+      );
     }
   };
 
   const handleDroppedFiles = async (paths: string[]): Promise<void> => {
-    console.log('File drop detected:', paths);
+    debugLog('File drop detected:', paths);
     if (!tabManager) return;
 
     const pdfFiles = paths.filter((path) => isSupportedFile(path));
 
     if (pdfFiles.length === 0) {
-      alert('Please drop PDF files only.');
+      showToast('Please drop PDF files only.', 'error');
       return;
     }
 
@@ -99,7 +106,7 @@ export async function setupTauriListeners({
       await openFiles(pdfFiles, {
         tabManager,
         continueOnError: true,
-        onError: (message) => alert(message),
+        onError: (message) => showToast(message, 'error'),
         initialFilterSettings,
         initialViewMode,
       });
@@ -148,12 +155,12 @@ export async function setupTauriListeners({
 
   // Listen for menu events
   await listen('menu-open', async () => {
-    console.log('Menu open event received');
+    debugLog('Menu open event received');
     await openPdfAndRefresh();
   });
 
   await listen('menu-print', async () => {
-    console.log('Menu print event received');
+    debugLog('Menu print event received');
     await printCurrentPDF();
   });
 
@@ -182,15 +189,15 @@ export async function setupTauriListeners({
   });
 
   await listen('menu-toggle-fullscreen', async () => {
-    console.log('Menu toggle fullscreen event received');
+    debugLog('Menu toggle fullscreen event received');
     const currentWindow = getCurrentWebviewWindow();
     const isFullscreen = await currentWindow.isFullscreen();
     await currentWindow.setFullscreen(!isFullscreen);
-    console.log(`Fullscreen ${!isFullscreen ? 'enabled' : 'disabled'}`);
+    debugLog(`Fullscreen ${!isFullscreen ? 'enabled' : 'disabled'}`);
   });
 
   await listen('menu-close-tab', async () => {
-    console.log('Menu close tab event received');
+    debugLog('Menu close tab event received');
     const activeTab = tabManager?.getActiveTab();
     if (activeTab) {
       await tabManager?.closeTab(activeTab.id);
@@ -198,9 +205,15 @@ export async function setupTauriListeners({
     }
   });
 
+  await listen('clear-reading-history', async () => {
+    if (!settingsManager) return;
+    await settingsManager.clearReadingHistory();
+    readingHistoryCleared();
+  });
+
   // Listen for keybinds changed event from settings window
   await listen('keybinds-changed', async () => {
-    console.log('Keybinds changed event received, reloading keybinds...');
+    debugLog('Keybinds changed event received, reloading keybinds...');
     if (settingsManager && keybindManager) {
       const settings = await settingsManager.load();
       // Override Settings keybind for macOS with Cmd+,
@@ -208,12 +221,12 @@ export async function setupTauriListeners({
         settings.keybinds.Settings.binds = ['Cmd+,'];
       }
       keybindManager.loadFromSettings(settings);
-      console.log('Keybinds reloaded successfully');
+      debugLog('Keybinds reloaded successfully');
     }
   });
 
   await listen('settings-changed', async () => {
-    console.log('Settings changed event received, reloading settings...');
+    debugLog('Settings changed event received, reloading settings...');
     await reloadSettings();
   });
 }

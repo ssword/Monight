@@ -72,6 +72,61 @@ export function findPageTextMatches(
   return matches;
 }
 
+export interface SearchProgress {
+  /** Page that was just scanned. */
+  pageNumber: number;
+  totalPages: number;
+  /** Matches found on this page only, in document order. */
+  pageMatches: PdfSearchMatch[];
+  /** Every match found so far, in document order. */
+  matches: PdfSearchMatch[];
+}
+
+export interface IncrementalSearchOptions {
+  query: string;
+  totalPages: number;
+  getPageText: (pageNumber: number) => Promise<string>;
+  /** Returns true once the search token is stale. */
+  isCancelled: () => boolean;
+  /** Called once per scanned page, in ascending page order, while not cancelled. */
+  onProgress?: (progress: SearchProgress) => void;
+}
+
+/**
+ * Scans a Document page by page, emitting partial results as they are found.
+ * Returns the complete match list, or an empty list if the search is cancelled.
+ */
+export async function searchDocumentIncrementally({
+  query,
+  totalPages,
+  getPageText,
+  isCancelled,
+  onProgress,
+}: IncrementalSearchOptions): Promise<PdfSearchMatch[]> {
+  const needle = query.trim();
+  if (!needle || totalPages <= 0) return [];
+
+  const matches: PdfSearchMatch[] = [];
+  for (let pageNumber = 1; pageNumber <= totalPages; pageNumber++) {
+    if (isCancelled()) return [];
+
+    const pageText = await getPageText(pageNumber);
+    if (isCancelled()) return [];
+
+    const pageMatches = findPageTextMatches(pageText, needle, pageNumber);
+    matches.push(...pageMatches);
+    onProgress?.({
+      pageNumber,
+      totalPages,
+      pageMatches: pageMatches.map((match) => ({ ...match })),
+      matches: matches.map((match) => ({ ...match })),
+    });
+    if (isCancelled()) return [];
+  }
+
+  return isCancelled() ? [] : matches;
+}
+
 export interface PdfOutlineItem {
   title: string;
   pageNumber: number | null;

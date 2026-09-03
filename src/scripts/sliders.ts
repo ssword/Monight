@@ -1,4 +1,5 @@
 import noUiSlider, { type API } from 'nouislider';
+import { debugLog } from '../lib/debug-log';
 import type { FilterSettings } from './filters';
 import { PRESETS } from './filters';
 
@@ -30,7 +31,7 @@ export class SliderManager {
     this.createSlider('extraBrightness', PRESETS.default.extraBrightness, -100, 200, 1);
 
     this.initialized = true;
-    console.log('SliderManager initialized');
+    debugLog('SliderManager initialized');
   }
 
   /**
@@ -75,7 +76,7 @@ export class SliderManager {
     // Add update listener with debouncing
     slider.on('update', () => this.handleUpdate());
 
-    console.log(`Created slider: ${name} (${min}-${max}, start: ${start})`);
+    debugLog(`Created slider: ${name} (${min}-${max}, start: ${start})`);
   }
 
   /**
@@ -139,7 +140,7 @@ export class SliderManager {
     this.sliders.get('hue')?.set(settings.hue);
     this.sliders.get('extraBrightness')?.set(settings.extraBrightness);
 
-    console.log('Updated sliders to preset:', settings);
+    debugLog('Updated sliders to preset:', settings);
   }
 
   /**
@@ -160,7 +161,7 @@ export class SliderManager {
     this.sliders.forEach((slider, name) => {
       try {
         slider.destroy();
-        console.log(`Destroyed slider: ${name}`);
+        debugLog(`Destroyed slider: ${name}`);
       } catch (error) {
         console.error(`Error destroying slider ${name}:`, error);
       }

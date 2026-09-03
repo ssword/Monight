@@ -1,5 +1,10 @@
+import { debugLog } from '../lib/debug-log';
 import type { PdfAnnotation, ViewMode } from '../lib/document-features';
-import type { ReadingPosition } from '../reader/reader-actions';
+import type {
+  ReaderActionOptions,
+  ReadingPosition,
+  RestorableReadingPosition,
+} from '../reader/reader-actions';
 import { type FilterSettings, PRESETS } from './filters';
 import { type AnnotationNoteRequester, PDFViewer, type PdfPasswordRequester } from './pdf-viewer';
 
@@ -26,9 +31,10 @@ interface TabManagerOptions {
   onDocumentOpened?: (tab: TabData) => void | Promise<void>;
   onDocumentClosed?: (filePath: string) => void | Promise<void>;
   onReadingPositionSettled?: (filePath: string, position: ReadingPosition) => void;
-  onPageNavigationRequested?: (page: number) => Promise<void>;
+  onPageNavigationRequested?: (page: number, options?: ReaderActionOptions) => Promise<void>;
   requestPassword?: PdfPasswordRequester;
   requestAnnotationNote?: AnnotationNoteRequester;
+  reportError?: (message: string) => void;
 }
 
 /**
@@ -97,6 +103,7 @@ export class TabManager {
     const viewer = new PDFViewer('pdf-container', canvasId, {
       requestPassword: this.options.requestPassword,
       requestAnnotationNote: this.options.requestAnnotationNote,
+      reportError: this.options.reportError,
     });
     viewer.setOnPageChange(() => {
       if (this.activeTabId !== id) return;
@@ -146,7 +153,7 @@ export class TabManager {
     await this.options.onDocumentOpened?.(tab);
     await this.activateTab(id);
 
-    console.log(`Created tab: ${title} (${id})`);
+    debugLog(`Created Document: ${title} (${id})`);
     return tab;
   }
 
@@ -188,7 +195,7 @@ export class TabManager {
     this.renderTabs();
     this.onTabsChanged?.();
 
-    console.log(`Closed tab: ${tab.title} (${id})`);
+    debugLog(`Closed Document: ${tab.title} (${id})`);
   }
 
   /**
@@ -208,7 +215,10 @@ export class TabManager {
     this.requestActivation = requestActivation;
   }
 
-  async projectActiveDocument(filePath: string, position: ReadingPosition): Promise<void> {
+  async projectActiveDocument(
+    filePath: string,
+    position: RestorableReadingPosition,
+  ): Promise<void> {
     const tab = this.getTabs().find((item) => item.filePath === filePath);
     if (!tab) throw new Error(`Cannot activate unopened Document: ${filePath}`);
     tab.currentPage = position.page;
@@ -244,7 +254,7 @@ export class TabManager {
     // Notify callback
     await this.onTabChange(tab);
 
-    console.log(`Activated tab: ${tab.title} (${id})`);
+    debugLog(`Activated Document: ${tab.title} (${id})`);
   }
 
   /**
@@ -332,15 +342,29 @@ export class TabManager {
   private renderTabs(): void {
     const container = document.getElementById('tab-container');
     if (!container) return;
+    const workspace = document.getElementById('document-workspace');
 
     // Clear existing tabs
     container.innerHTML = '';
 
     // Render each tab
     this.tabs.forEach((tab, id) => {
-      const tabElement = document.createElement('div');
+      const itemElement = document.createElement('div');
+      itemElement.className = `tab-item ${id === this.activeTabId ? 'active' : ''}`;
+
+      const tabElement = document.createElement('button');
+      tabElement.type = 'button';
       tabElement.className = `tab ${id === this.activeTabId ? 'active' : ''}`;
       tabElement.dataset.tabId = id;
+      tabElement.dataset.filePath = tab.filePath;
+      tabElement.id = `document-tab-${id}`;
+      tabElement.setAttribute('role', 'tab');
+      tabElement.setAttribute('aria-selected', id === this.activeTabId ? 'true' : 'false');
+      tabElement.setAttribute('aria-controls', 'document-workspace');
+      tabElement.tabIndex = id === this.activeTabId ? 0 : -1;
+      if (id === this.activeTabId) {
+        workspace?.setAttribute('aria-labelledby', tabElement.id);
+      }
 
       // Tab title
       const titleSpan = document.createElement('span');
@@ -348,19 +372,20 @@ export class TabManager {
       titleSpan.textContent = tab.title;
       titleSpan.title = tab.title; // Tooltip shows full name
       tabElement.appendChild(titleSpan);
+      itemElement.appendChild(tabElement);
 
       // Close button
       const closeBtn = document.createElement('button');
       closeBtn.className = 'tab-close';
       closeBtn.textContent = '✕';
-      closeBtn.title = 'Close tab';
-      tabElement.appendChild(closeBtn);
+      closeBtn.title = 'Close document';
+      closeBtn.setAttribute('aria-label', `Close ${tab.title}`);
+      closeBtn.tabIndex = id === this.activeTabId ? 0 : -1;
+      itemElement.appendChild(closeBtn);
 
       // Tab click handler
-      tabElement.addEventListener('click', (e) => {
-        // Don't activate if clicking close button
-        if (e.target === closeBtn) return;
-        this.activateTab(id);
+      tabElement.addEventListener('click', () => {
+        void this.activateTab(id);
       });
 
       // Close button handler
@@ -369,10 +394,10 @@ export class TabManager {
         this.closeTab(id);
       });
 
-      container.appendChild(tabElement);
+      container.appendChild(itemElement);
     });
 
-    console.log(`Rendered ${this.tabs.size} tabs`);
+    debugLog(`Rendered ${this.tabs.size} Documents`);
   }
 
   /**
