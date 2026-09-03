@@ -38,6 +38,45 @@ describe('Reading Session', () => {
     expect(Object.isFrozen(second.documents[0].readingPosition)).toBe(true);
   });
 
+  it('excludes transient reader state from Visual State snapshots', () => {
+    const session = createReadingSession({
+      initialSession: {
+        ...INITIAL_SESSION,
+        documents: [
+          {
+            ...INITIAL_SESSION.documents[0],
+            visualState: {
+              filterSettings: {
+                brightness: 0,
+                grayscale: 0,
+                invert: 0,
+                sepia: 0,
+                hue: 0,
+                extraBrightness: 0,
+              },
+              zoomIntent: { kind: 'fit-width' },
+              rotation: 90,
+              viewMode: 'continuous',
+              presentation: true,
+              searchQuery: 'needle',
+              sidebar: 'outline',
+              selection: { page: 1 },
+              hoveredLink: 'https://example.com',
+            } as never,
+          },
+        ],
+      },
+      write: vi.fn(),
+    });
+
+    expect(Object.keys(session.snapshot().documents[0].visualState ?? {}).sort()).toEqual([
+      'filterSettings',
+      'rotation',
+      'viewMode',
+      'zoomIntent',
+    ]);
+  });
+
   it('debounces settled-state persistence and flushes the newest snapshot', async () => {
     vi.useFakeTimers();
     const write = vi.fn(async () => undefined);

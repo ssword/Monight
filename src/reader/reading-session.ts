@@ -27,7 +27,8 @@ function freezeDocument(document: ReadingSessionDocument): ReadingSessionDocumen
     readingPosition: Object.freeze({ ...document.readingPosition }),
     visualState: document.visualState
       ? Object.freeze({
-          ...document.visualState,
+          rotation: document.visualState.rotation,
+          viewMode: document.visualState.viewMode,
           zoomIntent: Object.freeze({ ...document.visualState.zoomIntent }),
           filterSettings: Object.freeze({ ...document.visualState.filterSettings }),
         })

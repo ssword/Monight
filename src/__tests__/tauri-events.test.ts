@@ -78,9 +78,8 @@ describe('Tauri drag and drop events', () => {
     applyWindowAfterOpen: vi.fn(async () => undefined),
     updateTabBarVisibility: vi.fn(),
     updatePrintMenuState: vi.fn(async () => undefined),
-    updateUI: vi.fn(),
-    saveCurrentTabState: vi.fn(),
     printCurrentPDF: vi.fn(async () => undefined),
+    dispatchReaderAction: vi.fn(async () => undefined),
     ...overrides,
   });
 
@@ -162,5 +161,14 @@ describe('Tauri drag and drop events', () => {
 
     expect(clearReadingHistory).toHaveBeenCalledOnce();
     expect(readingHistoryCleared).toHaveBeenCalledOnce();
+  });
+
+  it('dispatches native menu zoom as the same typed Reader Action', async () => {
+    const dispatchReaderAction = vi.fn(async () => undefined);
+    await setupTauriListeners(context({ dispatchReaderAction }));
+
+    await mocks.getListener('menu-zoom-in')?.();
+
+    expect(dispatchReaderAction).toHaveBeenCalledWith({ type: 'zoomIn' });
   });
 });

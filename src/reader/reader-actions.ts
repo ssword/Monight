@@ -1,5 +1,5 @@
 import type { ViewMode } from '../lib/document-features';
-import type { FilterSettings } from '../scripts/filters';
+import { type FilterSettings, PRESETS } from '../scripts/filters';
 import { createReadingSession, type PersistenceUrgency } from './reading-session';
 
 export interface ReadingPosition {
@@ -44,7 +44,11 @@ export interface ReadingSessionSnapshot extends PersistedReadingSession {
 }
 
 export interface ReaderProjection {
-  activateDocument(filePath: string, position: RestorableReadingPosition): Promise<void>;
+  activateDocument(
+    filePath: string,
+    position: RestorableReadingPosition,
+    visualState?: ReadingSessionVisualState,
+  ): Promise<void>;
   goToReadingPosition(
     filePath: string,
     position: RestorableReadingPosition,
@@ -53,6 +57,27 @@ export interface ReaderProjection {
   getPageCount?(filePath: string): number | Promise<number>;
   closeDocument?(filePath: string): Promise<void>;
   exitPresentation?(): Promise<void>;
+  applyZoomIntent?(
+    filePath: string,
+    zoomIntent: ZoomIntent,
+    options?: ReaderActionOptions,
+  ): Promise<ZoomIntent>;
+  applyRelativeZoom?(
+    filePath: string,
+    direction: 'in' | 'out',
+    options?: ReaderActionOptions,
+  ): Promise<ZoomIntent>;
+  applyRotation?(filePath: string, rotation: number, options?: ReaderActionOptions): Promise<void>;
+  applyViewMode?(
+    filePath: string,
+    viewMode: ViewMode,
+    options?: ReaderActionOptions,
+  ): Promise<void>;
+  applyFilterSettings?(
+    filePath: string,
+    filterSettings: Readonly<FilterSettings>,
+    options?: ReaderActionOptions,
+  ): Promise<void>;
 }
 
 export interface ReaderActionOptions {
@@ -65,9 +90,40 @@ export type ReaderAction =
   | { type: 'goToNextPage'; filePath?: string }
   | { type: 'goToPreviousPage'; filePath?: string }
   | { type: 'settleReadingPosition'; filePath: string; readingPosition: ReadingPosition }
-  | { type: 'settleVisualState'; filePath: string; visualState: ReadingSessionVisualState }
+  | { type: 'setZoomIntent'; zoomIntent: ZoomIntent; filePath?: string }
+  | { type: 'zoomIn'; filePath?: string }
+  | { type: 'zoomOut'; filePath?: string }
+  | { type: 'rotateClockwise'; filePath?: string }
+  | { type: 'rotateCounterClockwise'; filePath?: string }
+  | { type: 'setViewMode'; viewMode: ViewMode; filePath?: string }
+  | { type: 'cycleViewMode'; filePath?: string }
+  | { type: 'setFilterSettings'; filterSettings: FilterSettings; filePath?: string }
   | { type: 'registerDocument'; document: ReadingSessionDocument }
   | { type: 'removeDocument'; filePath: string };
+
+const withOptionalFilePath = <T extends { type: ReaderAction['type'] }>(
+  action: T,
+  filePath?: string,
+): T & { filePath?: string } => (filePath ? { ...action, filePath } : action);
+
+export const readerAction = {
+  zoomIn: (filePath?: string): ReaderAction => withOptionalFilePath({ type: 'zoomIn' }, filePath),
+  zoomOut: (filePath?: string): ReaderAction => withOptionalFilePath({ type: 'zoomOut' }, filePath),
+  setZoomIntent: (zoomIntent: ZoomIntent, filePath?: string): ReaderAction =>
+    withOptionalFilePath({ type: 'setZoomIntent', zoomIntent }, filePath),
+  rotateClockwise: (filePath?: string): ReaderAction =>
+    withOptionalFilePath({ type: 'rotateClockwise' }, filePath),
+  rotateCounterClockwise: (filePath?: string): ReaderAction =>
+    withOptionalFilePath({ type: 'rotateCounterClockwise' }, filePath),
+  cycleViewMode: (filePath?: string): ReaderAction =>
+    withOptionalFilePath({ type: 'cycleViewMode' }, filePath),
+  setViewMode: (viewMode: ViewMode, filePath?: string): ReaderAction =>
+    withOptionalFilePath({ type: 'setViewMode', viewMode }, filePath),
+  setFilterSettings: (filterSettings: FilterSettings, filePath?: string): ReaderAction =>
+    withOptionalFilePath({ type: 'setFilterSettings', filterSettings }, filePath),
+};
+
+export type DispatchReaderAction = (action: ReaderAction) => Promise<void>;
 
 export type ReaderActionOutcome =
   | { status: 'committed'; revision: number }
@@ -77,6 +133,7 @@ export type ReaderActionOutcome =
 
 interface CreateReaderActionsOptions {
   initialSession: PersistedReadingSession;
+  defaultVisualState?: ReadingSessionVisualState;
   projection: ReaderProjection;
   persist: (snapshot: ReadingSessionSnapshot) => Promise<void>;
   persistenceDebounceMs?: number;
@@ -96,7 +153,7 @@ interface PendingAbsoluteAction {
   resolve: (outcome: ReaderActionOutcome) => void;
 }
 
-type AbsoluteActionKind = 'readingPosition' | 'visualState';
+type AbsoluteActionKind = 'readingPosition' | 'zoomIntent' | 'viewMode' | 'filterSettings';
 
 interface DocumentLane {
   tail: Promise<void>;
@@ -127,15 +184,70 @@ function visualStatesEqual(
   );
 }
 
+function createDefaultVisualState(): ReadingSessionVisualState {
+  return {
+    filterSettings: { ...PRESETS.default },
+    zoomIntent: { kind: 'manual', scale: 1 },
+    rotation: 0,
+    viewMode: 'single',
+  };
+}
+
+function validZoomIntent(zoomIntent: ZoomIntent): boolean {
+  return (
+    zoomIntent.kind !== 'manual' || (Number.isFinite(zoomIntent.scale) && zoomIntent.scale > 0)
+  );
+}
+
+function validFilterSettings(filterSettings: Readonly<FilterSettings>): boolean {
+  return Object.values(filterSettings).every(Number.isFinite);
+}
+
+function filterSettingsEqual(
+  left: Readonly<FilterSettings>,
+  right: Readonly<FilterSettings>,
+): boolean {
+  return (Object.keys(left) as Array<keyof FilterSettings>).every(
+    (key) => left[key] === right[key],
+  );
+}
+
+function normalizeRotation(rotation: number): number {
+  return (((Math.round(rotation / 90) * 90) % 360) + 360) % 360;
+}
+
+function nextViewMode(viewMode: ViewMode): ViewMode {
+  switch (viewMode) {
+    case 'single':
+      return 'continuous';
+    case 'continuous':
+      return 'spread';
+    case 'spread':
+      return 'single';
+  }
+}
+
 export function createReaderActions({
   initialSession,
+  defaultVisualState = createDefaultVisualState(),
   projection,
   persist,
   persistenceDebounceMs = 250,
   onObserverError,
 }: CreateReaderActionsOptions): ReaderActions {
+  const normalizedInitialSession: PersistedReadingSession = {
+    ...initialSession,
+    documents: initialSession.documents.map((document) => ({
+      ...document,
+      visualState: document.visualState ?? {
+        ...defaultVisualState,
+        zoomIntent: { ...defaultVisualState.zoomIntent },
+        filterSettings: { ...defaultVisualState.filterSettings },
+      },
+    })),
+  };
   const session = createReadingSession({
-    initialSession,
+    initialSession: normalizedInitialSession,
     write: persist,
     debounceMs: persistenceDebounceMs,
     onObserverError,
@@ -285,6 +397,58 @@ export function createReaderActions({
       }),
     );
 
+  const commitVisualState = async (
+    filePath: string,
+    visualState: ReadingSessionVisualState,
+  ): Promise<ReaderActionOutcome> => {
+    const latest = session.snapshot();
+    const document = latest.documents.find((item) => item.filePath === filePath);
+    if (!document) return { status: 'no-op', revision: latest.revision };
+    if (document.visualState && visualStatesEqual(document.visualState, visualState)) {
+      return { status: 'no-op', revision: latest.revision };
+    }
+    const documents = latest.documents.map((item) =>
+      item.filePath === filePath
+        ? {
+            ...item,
+            visualState: {
+              ...visualState,
+              zoomIntent: { ...visualState.zoomIntent },
+              filterSettings: { ...visualState.filterSettings },
+            },
+          }
+        : item,
+    );
+    return commit(
+      { schemaVersion: 2, activeDocumentPath: latest.activeDocumentPath, documents },
+      'deferred',
+    );
+  };
+
+  const projectVisualState = async (
+    filePath: string,
+    expectedGeneration: number,
+    options: ReaderActionOptions | undefined,
+    project: (current: ReadingSessionVisualState) => Promise<ReadingSessionVisualState | null>,
+  ): Promise<ReaderActionOutcome> => {
+    if (cancelled(filePath, expectedGeneration, options)) {
+      return { status: 'no-op', revision: revision() };
+    }
+    const document = session.snapshot().documents.find((item) => item.filePath === filePath);
+    if (!document) return { status: 'no-op', revision: revision() };
+
+    let visualState: ReadingSessionVisualState | null;
+    try {
+      visualState = await project(document.visualState ?? createDefaultVisualState());
+    } catch (error) {
+      return { status: 'failure', error, revision: revision() };
+    }
+    if (!visualState || cancelled(filePath, expectedGeneration, options)) {
+      return { status: 'no-op', revision: revision() };
+    }
+    return commitVisualState(filePath, visualState);
+  };
+
   return {
     async dispatch(action, options) {
       if (action.type === 'removeDocument') {
@@ -350,7 +514,11 @@ export function createReaderActions({
           if (!document) return { status: 'no-op', revision: current.revision };
           try {
             await projection.exitPresentation?.();
-            await projection.activateDocument(document.filePath, document.readingPosition);
+            await projection.activateDocument(
+              document.filePath,
+              document.readingPosition,
+              document.visualState,
+            );
           } catch (error) {
             return { status: 'failure', error, revision: revision() };
           }
@@ -396,29 +564,116 @@ export function createReaderActions({
         });
       }
 
-      if (action.type === 'settleVisualState') {
-        const visualState = action.visualState;
-        if (
-          (visualState.zoomIntent.kind === 'manual' &&
-            (!Number.isFinite(visualState.zoomIntent.scale) ||
-              visualState.zoomIntent.scale <= 0)) ||
-          !Number.isFinite(visualState.rotation)
-        ) {
+      if (action.type === 'setZoomIntent') {
+        if (!validZoomIntent(action.zoomIntent)) {
           return { status: 'no-op', revision: revision() };
         }
 
-        return enqueueSettledUpdate(action.filePath, 'visualState', options, (document) => {
-          if (document.visualState && visualStatesEqual(document.visualState, visualState)) {
-            return null;
-          }
-          return {
-            ...document,
-            visualState: {
-              ...visualState,
-              filterSettings: { ...visualState.filterSettings },
-            },
-          };
-        });
+        return routeDocumentAction(action.filePath, (filePath) =>
+          enqueueAbsolute(filePath, 'zoomIntent', (expectedGeneration) =>
+            projectVisualState(filePath, expectedGeneration, options, async (current) => {
+              if (
+                action.zoomIntent.kind === 'manual' &&
+                current.zoomIntent.kind === 'manual' &&
+                current.zoomIntent.scale === action.zoomIntent.scale
+              ) {
+                return null;
+              }
+              if (!projection.applyZoomIntent) {
+                throw new Error('Reader projection cannot apply Zoom Intent');
+              }
+              const zoomIntent = await projection.applyZoomIntent(
+                filePath,
+                action.zoomIntent,
+                options,
+              );
+              return validZoomIntent(zoomIntent) ? { ...current, zoomIntent } : null;
+            }),
+          ),
+        );
+      }
+
+      if (action.type === 'zoomIn' || action.type === 'zoomOut') {
+        return routeDocumentAction(action.filePath, (filePath) =>
+          enqueueRelative(filePath, (expectedGeneration) =>
+            projectVisualState(filePath, expectedGeneration, options, async (current) => {
+              if (!projection.applyRelativeZoom) {
+                throw new Error('Reader projection cannot apply relative zoom');
+              }
+              const zoomIntent = await projection.applyRelativeZoom(
+                filePath,
+                action.type === 'zoomIn' ? 'in' : 'out',
+                options,
+              );
+              return validZoomIntent(zoomIntent) ? { ...current, zoomIntent } : null;
+            }),
+          ),
+        );
+      }
+
+      if (action.type === 'rotateClockwise' || action.type === 'rotateCounterClockwise') {
+        return routeDocumentAction(action.filePath, (filePath) =>
+          enqueueRelative(filePath, (expectedGeneration) =>
+            projectVisualState(filePath, expectedGeneration, options, async (current) => {
+              const rotation = normalizeRotation(
+                current.rotation + (action.type === 'rotateClockwise' ? 90 : -90),
+              );
+              if (!projection.applyRotation) {
+                throw new Error('Reader projection cannot apply rotation');
+              }
+              await projection.applyRotation(filePath, rotation, options);
+              return { ...current, rotation };
+            }),
+          ),
+        );
+      }
+
+      if (action.type === 'setViewMode') {
+        return routeDocumentAction(action.filePath, (filePath) =>
+          enqueueAbsolute(filePath, 'viewMode', (expectedGeneration) =>
+            projectVisualState(filePath, expectedGeneration, options, async (current) => {
+              if (current.viewMode === action.viewMode) return null;
+              if (!projection.applyViewMode) {
+                throw new Error('Reader projection cannot apply view mode');
+              }
+              await projection.applyViewMode(filePath, action.viewMode, options);
+              return { ...current, viewMode: action.viewMode };
+            }),
+          ),
+        );
+      }
+
+      if (action.type === 'cycleViewMode') {
+        return routeDocumentAction(action.filePath, (filePath) =>
+          enqueueRelative(filePath, (expectedGeneration) =>
+            projectVisualState(filePath, expectedGeneration, options, async (current) => {
+              const viewMode = nextViewMode(current.viewMode);
+              if (!projection.applyViewMode) {
+                throw new Error('Reader projection cannot apply view mode');
+              }
+              await projection.applyViewMode(filePath, viewMode, options);
+              return { ...current, viewMode };
+            }),
+          ),
+        );
+      }
+
+      if (action.type === 'setFilterSettings') {
+        if (!validFilterSettings(action.filterSettings)) {
+          return { status: 'no-op', revision: revision() };
+        }
+        return routeDocumentAction(action.filePath, (filePath) =>
+          enqueueAbsolute(filePath, 'filterSettings', (expectedGeneration) =>
+            projectVisualState(filePath, expectedGeneration, options, async (current) => {
+              if (filterSettingsEqual(current.filterSettings, action.filterSettings)) return null;
+              if (!projection.applyFilterSettings) {
+                throw new Error('Reader projection cannot apply filter settings');
+              }
+              await projection.applyFilterSettings(filePath, action.filterSettings, options);
+              return { ...current, filterSettings: { ...action.filterSettings } };
+            }),
+          ),
+        );
       }
 
       if (action.type === 'goToNextPage' || action.type === 'goToPreviousPage') {

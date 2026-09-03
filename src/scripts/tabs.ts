@@ -35,6 +35,7 @@ interface TabManagerOptions {
   onReadingPositionObserved?: (filePath: string, position: ReadingPosition) => void;
   onReadingPositionSettled?: (filePath: string, position: ReadingPosition) => void;
   onPageNavigationRequested?: (page: number, options?: ReaderActionOptions) => Promise<void>;
+  onZoomIntentRequested?: (filePath: string, zoomIntent: ZoomIntent) => Promise<void>;
   requestPassword?: PdfPasswordRequester;
   requestAnnotationNote?: AnnotationNoteRequester;
   reportError?: (message: string) => void;
@@ -130,6 +131,10 @@ export class TabManager {
       this.options.onReadingPositionSettled?.(filePath, viewer.getReadingPosition());
     });
     viewer.setOnPageNavigationRequest(this.options.onPageNavigationRequested ?? null);
+    const onZoomIntentRequested = this.options.onZoomIntentRequested;
+    viewer.setOnZoomIntentRequest(
+      onZoomIntentRequested ? (zoomIntent) => onZoomIntentRequested(filePath, zoomIntent) : null,
+    );
     viewer.setAnnotations(tab.annotations);
     viewer.setOnAnnotationsChange((annotations) => {
       tab.annotations = annotations;
@@ -261,10 +266,23 @@ export class TabManager {
   async projectActiveDocument(
     filePath: string,
     position: RestorableReadingPosition,
+    visualState?: {
+      filterSettings: Readonly<FilterSettings>;
+      zoomIntent: ZoomIntent;
+      rotation: number;
+      viewMode: ViewMode;
+    },
   ): Promise<void> {
     const tab = this.getTabs().find((item) => item.filePath === filePath);
     if (!tab) throw new Error(`Cannot activate unopened Document: ${filePath}`);
     tab.currentPage = position.page;
+    if (visualState) {
+      tab.filterSettings = { ...visualState.filterSettings };
+      tab.zoomIntent = visualState.zoomIntent;
+      if (visualState.zoomIntent.kind === 'manual') tab.zoom = visualState.zoomIntent.scale;
+      tab.rotation = visualState.rotation;
+      tab.viewMode = visualState.viewMode;
+    }
     await this.activateTabDirect(tab.id);
     const viewer = this.pdfViewers.get(tab.id);
     if (!viewer) throw new Error(`Cannot render unopened Document: ${filePath}`);

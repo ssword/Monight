@@ -23,6 +23,38 @@ const INITIAL_SESSION = {
 };
 
 describe('Reader Actions', () => {
+  it('initializes missing Visual State from configured reader defaults', () => {
+    const reader = createReaderActions({
+      initialSession: INITIAL_SESSION,
+      defaultVisualState: {
+        filterSettings: {
+          brightness: 8,
+          grayscale: 100,
+          invert: 92,
+          sepia: 100,
+          hue: 295,
+          extraBrightness: -6,
+        },
+        zoomIntent: { kind: 'manual', scale: 1 },
+        rotation: 0,
+        viewMode: 'continuous',
+      },
+      projection: { activateDocument: vi.fn(), goToReadingPosition: vi.fn() },
+      persist: vi.fn(),
+    });
+
+    expect(reader.snapshot().documents).toEqual([
+      expect.objectContaining({
+        filePath: '/docs/first.pdf',
+        visualState: expect.objectContaining({ viewMode: 'continuous' }),
+      }),
+      expect.objectContaining({
+        filePath: '/docs/second.pdf',
+        visualState: expect.objectContaining({ viewMode: 'continuous' }),
+      }),
+    ]);
+  });
+
   it('activates an existing Document before committing and persisting the Reading Session', async () => {
     const events: string[] = [];
     const projection: ReaderProjection = {
@@ -826,7 +858,9 @@ describe('Reader Actions', () => {
     releaseClose?.();
     await expect(removal).resolves.toMatchObject({ status: 'committed', revision: 1 });
     await expect(settled).resolves.toMatchObject({ status: 'no-op', revision: 1 });
-    expect(reader.snapshot().documents).toEqual([INITIAL_SESSION.documents[1]]);
+    expect(reader.snapshot().documents).toEqual([
+      expect.objectContaining(INITIAL_SESSION.documents[1]),
+    ]);
   });
 
   it('preserves later actions when a Document removal fails', async () => {
@@ -878,43 +912,279 @@ describe('Reader Actions', () => {
     expect(persist).toHaveBeenCalledWith(expect.objectContaining({ revision: 1 }));
   });
 
-  it('commits settled Visual State through the semantic dispatcher', async () => {
+  it('projects manual Zoom Intent before committing and keeps settled state on failure', async () => {
+    const events: string[] = [];
+    const applyZoomIntent = vi.fn(async (_filePath, zoomIntent) => {
+      events.push(`render:${zoomIntent.kind}`);
+      if (zoomIntent.kind === 'manual' && zoomIntent.scale === 2) {
+        throw new Error('zoom render failed');
+      }
+      return zoomIntent;
+    });
     const reader = createReaderActions({
-      initialSession: INITIAL_SESSION,
-      projection: { activateDocument: vi.fn(), goToReadingPosition: vi.fn() },
+      initialSession: {
+        ...INITIAL_SESSION,
+        documents: INITIAL_SESSION.documents.map((document) => ({
+          ...document,
+          visualState: {
+            filterSettings: {
+              brightness: 0,
+              grayscale: 0,
+              invert: 0,
+              sepia: 0,
+              hue: 0,
+              extraBrightness: 0,
+            },
+            zoomIntent: { kind: 'manual' as const, scale: 1 },
+            rotation: 0,
+            viewMode: 'single' as const,
+          },
+        })),
+      },
+      projection: {
+        activateDocument: vi.fn(),
+        goToReadingPosition: vi.fn(),
+        applyZoomIntent,
+      },
+      persist: vi.fn(),
+    });
+    reader.observe((snapshot) => {
+      events.push(`commit:${snapshot.revision}`);
+    });
+
+    const committed = await reader.dispatch({
+      type: 'setZoomIntent',
+      zoomIntent: { kind: 'manual', scale: 1.5 },
+    });
+    const failed = await reader.dispatch({
+      type: 'setZoomIntent',
+      zoomIntent: { kind: 'manual', scale: 2 },
+    });
+
+    expect(committed).toMatchObject({ status: 'committed', revision: 1 });
+    expect(failed).toMatchObject({ status: 'failure', revision: 1 });
+    expect(events).toEqual(['render:manual', 'commit:1', 'render:manual']);
+    expect(reader.snapshot().documents[0].visualState?.zoomIntent).toEqual({
+      kind: 'manual',
+      scale: 1.5,
+    });
+  });
+
+  it('reprojects an unchanged fit intent so it recalculates for the current viewport', async () => {
+    const applyZoomIntent = vi.fn(async (_filePath, zoomIntent) => zoomIntent);
+    const reader = createReaderActions({
+      initialSession: {
+        ...INITIAL_SESSION,
+        documents: INITIAL_SESSION.documents.map((document) => ({
+          ...document,
+          visualState: {
+            filterSettings: {
+              brightness: 0,
+              grayscale: 0,
+              invert: 0,
+              sepia: 0,
+              hue: 0,
+              extraBrightness: 0,
+            },
+            zoomIntent: { kind: 'fit-width' as const },
+            rotation: 0,
+            viewMode: 'single' as const,
+          },
+        })),
+      },
+      projection: {
+        activateDocument: vi.fn(),
+        goToReadingPosition: vi.fn(),
+        applyZoomIntent,
+      },
       persist: vi.fn(),
     });
 
     const outcome = await reader.dispatch({
-      type: 'settleVisualState',
-      filePath: '/docs/first.pdf',
-      visualState: {
-        filterSettings: {
-          brightness: 90,
-          grayscale: 10,
-          invert: 0,
-          sepia: 5,
-          hue: 0,
-          extraBrightness: 100,
-        },
-        zoomIntent: { kind: 'manual', scale: 1.5 },
-        rotation: 90,
-        viewMode: 'continuous',
-      },
+      type: 'setZoomIntent',
+      zoomIntent: { kind: 'fit-width' },
     });
 
-    expect(outcome).toMatchObject({ status: 'committed', revision: 1 });
+    expect(applyZoomIntent).toHaveBeenCalledWith(
+      '/docs/first.pdf',
+      { kind: 'fit-width' },
+      undefined,
+    );
+    expect(outcome).toMatchObject({ status: 'no-op', revision: 0 });
+  });
+
+  it('orders relative zoom and rotation while committing the resolved Visual State', async () => {
+    let scale = 1;
+    const applyRelativeZoom = vi.fn(async (_filePath, direction: 'in' | 'out') => {
+      scale += direction === 'in' ? 0.25 : -0.25;
+      return { kind: 'manual' as const, scale };
+    });
+    const applyRotation = vi.fn(async (_filePath: string, _rotation: number) => undefined);
+    const reader = createReaderActions({
+      initialSession: {
+        ...INITIAL_SESSION,
+        documents: INITIAL_SESSION.documents.map((document) => ({
+          ...document,
+          visualState: {
+            filterSettings: {
+              brightness: 0,
+              grayscale: 0,
+              invert: 0,
+              sepia: 0,
+              hue: 0,
+              extraBrightness: 0,
+            },
+            zoomIntent: { kind: 'manual' as const, scale: 1 },
+            rotation: 0,
+            viewMode: 'single' as const,
+          },
+        })),
+      },
+      projection: {
+        activateDocument: vi.fn(),
+        goToReadingPosition: vi.fn(),
+        applyRelativeZoom,
+        applyRotation,
+      },
+      persist: vi.fn(),
+    });
+
+    await reader.dispatch({ type: 'zoomIn' });
+    await reader.dispatch({ type: 'zoomIn' });
+    await reader.dispatch({ type: 'rotateClockwise' });
+    await reader.dispatch({ type: 'rotateCounterClockwise' });
+
+    expect(applyRelativeZoom.mock.calls.map((call) => call[1])).toEqual(['in', 'in']);
+    expect(applyRotation.mock.calls.map((call) => call[1])).toEqual([90, 0]);
     expect(reader.snapshot().documents[0].visualState).toMatchObject({
       zoomIntent: { kind: 'manual', scale: 1.5 },
-      rotation: 90,
+      rotation: 0,
+    });
+  });
+
+  it('routes view mode and visual filters without admitting transient reader state', async () => {
+    const applyViewMode = vi.fn(async () => undefined);
+    const applyFilterSettings = vi.fn(async () => undefined);
+    const reader = createReaderActions({
+      initialSession: {
+        ...INITIAL_SESSION,
+        documents: INITIAL_SESSION.documents.map((document) => ({
+          ...document,
+          visualState: {
+            filterSettings: {
+              brightness: 0,
+              grayscale: 0,
+              invert: 0,
+              sepia: 0,
+              hue: 0,
+              extraBrightness: 0,
+            },
+            zoomIntent: { kind: 'fit-width' as const },
+            rotation: 0,
+            viewMode: 'single' as const,
+          },
+        })),
+      },
+      projection: {
+        activateDocument: vi.fn(),
+        goToReadingPosition: vi.fn(),
+        applyViewMode,
+        applyFilterSettings,
+      },
+      persist: vi.fn(),
+    });
+    const filterSettings = {
+      brightness: 10,
+      grayscale: 20,
+      invert: 30,
+      sepia: 40,
+      hue: 50,
+      extraBrightness: 60,
+    };
+
+    await reader.dispatch({ type: 'setViewMode', viewMode: 'continuous' });
+    await reader.dispatch({ type: 'setFilterSettings', filterSettings });
+
+    expect(applyViewMode).toHaveBeenCalledWith('/docs/first.pdf', 'continuous', undefined);
+    expect(applyFilterSettings).toHaveBeenCalledWith('/docs/first.pdf', filterSettings, undefined);
+    expect(Object.keys(reader.snapshot().documents[0].visualState ?? {}).sort()).toEqual([
+      'filterSettings',
+      'rotation',
+      'viewMode',
+      'zoomIntent',
+    ]);
+  });
+
+  it('restores each Document Visual State independently through activation', async () => {
+    const activateDocument = vi.fn(async () => undefined);
+    const reader = createReaderActions({
+      initialSession: {
+        ...INITIAL_SESSION,
+        documents: INITIAL_SESSION.documents.map((document, index) => ({
+          ...document,
+          visualState: {
+            filterSettings: {
+              brightness: index,
+              grayscale: 0,
+              invert: 0,
+              sepia: 0,
+              hue: 0,
+              extraBrightness: 0,
+            },
+            zoomIntent:
+              index === 0
+                ? { kind: 'manual' as const, scale: 1.75 }
+                : { kind: 'fit-page' as const },
+            rotation: index * 90,
+            viewMode: index === 0 ? ('continuous' as const) : ('spread' as const),
+          },
+        })),
+      },
+      projection: { activateDocument, goToReadingPosition: vi.fn() },
+      persist: vi.fn(),
+    });
+
+    await reader.dispatch({ type: 'activateDocument', filePath: '/docs/second.pdf' });
+
+    expect(activateDocument).toHaveBeenCalledWith(
+      '/docs/second.pdf',
+      { page: 7, location: 0.5 },
+      expect.objectContaining({
+        zoomIntent: { kind: 'fit-page' },
+        rotation: 90,
+        viewMode: 'spread',
+      }),
+    );
+    expect(reader.snapshot().documents[0].visualState).toMatchObject({
+      zoomIntent: { kind: 'manual', scale: 1.75 },
+      rotation: 0,
       viewMode: 'continuous',
     });
   });
 
-  it('orders and coalesces settled Visual State within a Document lane', async () => {
+  it('coalesces queued absolute Zoom Intent and lets other Documents progress', async () => {
     let releaseNavigation: (() => void) | undefined;
+    const applied: string[] = [];
     const reader = createReaderActions({
-      initialSession: INITIAL_SESSION,
+      initialSession: {
+        ...INITIAL_SESSION,
+        documents: INITIAL_SESSION.documents.map((document) => ({
+          ...document,
+          visualState: {
+            filterSettings: {
+              brightness: 0,
+              grayscale: 0,
+              invert: 0,
+              sepia: 0,
+              hue: 0,
+              extraBrightness: 0,
+            },
+            zoomIntent: { kind: 'manual' as const, scale: 1 },
+            rotation: 0,
+            viewMode: 'single' as const,
+          },
+        })),
+      },
       projection: {
         activateDocument: vi.fn(),
         goToReadingPosition: vi.fn(
@@ -923,39 +1193,33 @@ describe('Reader Actions', () => {
               releaseNavigation = resolve;
             }),
         ),
+        applyZoomIntent: vi.fn(async (filePath, zoomIntent) => {
+          applied.push(`${filePath}:${zoomIntent.kind}`);
+          return zoomIntent;
+        }),
       },
       persist: vi.fn(),
     });
-    const visualState = {
-      filterSettings: {
-        brightness: 90,
-        grayscale: 10,
-        invert: 0,
-        sepia: 5,
-        hue: 0,
-        extraBrightness: 100,
-      },
-      rotation: 0,
-      viewMode: 'single' as const,
-    };
 
     const navigation = reader.dispatch({ type: 'goToPage', page: 3 });
     await vi.waitFor(() => expect(releaseNavigation).toBeTypeOf('function'));
     const obsolete = reader.dispatch({
-      type: 'settleVisualState',
-      filePath: '/docs/first.pdf',
-      visualState: { ...visualState, zoomIntent: { kind: 'manual', scale: 1.25 } },
+      type: 'setZoomIntent',
+      zoomIntent: { kind: 'manual', scale: 1.25 },
     });
-    const newest = reader.dispatch({
-      type: 'settleVisualState',
-      filePath: '/docs/first.pdf',
-      visualState: { ...visualState, zoomIntent: { kind: 'fit-width' } },
+    const newest = reader.dispatch({ type: 'setZoomIntent', zoomIntent: { kind: 'fit-width' } });
+    const independent = reader.dispatch({
+      type: 'setZoomIntent',
+      filePath: '/docs/second.pdf',
+      zoomIntent: { kind: 'fit-page' },
     });
-    releaseNavigation?.();
 
-    await expect(navigation).resolves.toMatchObject({ status: 'committed', revision: 1 });
+    await expect(independent).resolves.toMatchObject({ status: 'committed', revision: 1 });
+    expect(applied).toEqual(['/docs/second.pdf:fit-page']);
+    releaseNavigation?.();
+    await expect(navigation).resolves.toMatchObject({ status: 'committed' });
     await expect(obsolete).resolves.toMatchObject({ status: 'superseded' });
-    await expect(newest).resolves.toMatchObject({ status: 'committed', revision: 2 });
-    expect(reader.snapshot().documents[0].visualState?.zoomIntent).toEqual({ kind: 'fit-width' });
+    await expect(newest).resolves.toMatchObject({ status: 'committed' });
+    expect(applied).toEqual(['/docs/second.pdf:fit-page', '/docs/first.pdf:fit-width']);
   });
 });

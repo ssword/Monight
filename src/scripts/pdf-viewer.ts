@@ -243,6 +243,7 @@ export class PDFViewer {
   private onPageNavigationRequest:
     | ((page: number, options?: ReaderActionOptions) => Promise<void>)
     | null = null;
+  private onZoomIntentRequest: ((zoomIntent: ZoomIntent) => Promise<void>) | null = null;
   private onAnnotationsChange: ((annotations: PdfAnnotation[]) => void) | null = null;
   private annotations: PdfAnnotation[] = [];
   private searchQuery = '';
@@ -352,6 +353,10 @@ export class PDFViewer {
     handler: ((page: number, options?: ReaderActionOptions) => Promise<void>) | null,
   ): void {
     this.onPageNavigationRequest = handler;
+  }
+
+  setOnZoomIntentRequest(handler: ((zoomIntent: ZoomIntent) => Promise<void>) | null): void {
+    this.onZoomIntentRequest = handler;
   }
 
   setOnAnnotationsChange(handler: ((annotations: PdfAnnotation[]) => void) | null): void {
@@ -1915,7 +1920,11 @@ export class PDFViewer {
     // The scroll offsets were kept anchored while previewing, so they already describe the
     // target layout; restore them after the re-render reflows the real geometry.
     try {
-      await this.setZoom(targetZoom);
+      if (this.onZoomIntentRequest) {
+        await this.onZoomIntentRequest({ kind: 'manual', scale: targetZoom });
+      } else {
+        await this.setZoom(targetZoom);
+      }
     } finally {
       if (this.gestureCommit?.epoch === epoch) {
         this.gestureCommit = null;

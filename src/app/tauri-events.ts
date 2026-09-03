@@ -4,13 +4,13 @@ import { getCurrentWebview } from '@tauri-apps/api/webview';
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 import { debugLog } from '../lib/debug-log';
 import type { ViewMode } from '../lib/document-features';
+import { type DispatchReaderAction, readerAction } from '../reader/reader-actions';
 import type { FilterSettings } from '../scripts/filters';
 import type { KeybindManager } from '../scripts/keybind-manager';
 import type { SettingsManager } from '../scripts/settings';
 import type { TabManager } from '../scripts/tabs';
 import { showToast } from './dialogs';
 import { openFiles } from './file-actions';
-import { withActiveViewer } from './viewer-helpers';
 
 interface TauriListenerContext {
   tabManager: TabManager | null;
@@ -25,9 +25,8 @@ interface TauriListenerContext {
   applyWindowAfterOpen: () => Promise<void>;
   updateTabBarVisibility: () => void;
   updatePrintMenuState: () => Promise<void>;
-  updateUI: () => void;
-  saveCurrentTabState: () => void;
   printCurrentPDF: () => Promise<void>;
+  dispatchReaderAction: DispatchReaderAction;
 }
 
 export async function setupTauriListeners({
@@ -43,9 +42,8 @@ export async function setupTauriListeners({
   applyWindowAfterOpen,
   updateTabBarVisibility,
   updatePrintMenuState,
-  updateUI,
-  saveCurrentTabState,
   printCurrentPDF,
+  dispatchReaderAction,
 }: TauriListenerContext): Promise<void> {
   const isSupportedFile = (path: string): boolean => {
     const ext = path.split('.').pop()?.toLowerCase();
@@ -161,27 +159,15 @@ export async function setupTauriListeners({
   });
 
   await listen('menu-zoom-in', async () => {
-    await withActiveViewer(tabManager, async (viewer) => {
-      await viewer.zoomIn();
-      saveCurrentTabState();
-      updateUI();
-    });
+    await dispatchReaderAction(readerAction.zoomIn());
   });
 
   await listen('menu-zoom-out', async () => {
-    await withActiveViewer(tabManager, async (viewer) => {
-      await viewer.zoomOut();
-      saveCurrentTabState();
-      updateUI();
-    });
+    await dispatchReaderAction(readerAction.zoomOut());
   });
 
   await listen('menu-reset-zoom', async () => {
-    await withActiveViewer(tabManager, async (viewer) => {
-      await viewer.setZoom(1.0);
-      saveCurrentTabState();
-      updateUI();
-    });
+    await dispatchReaderAction(readerAction.setZoomIntent({ kind: 'manual', scale: 1 }));
   });
 
   await listen('menu-toggle-fullscreen', async () => {

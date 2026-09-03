@@ -1,6 +1,7 @@
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 import { debugLog } from '../lib/debug-log';
 import type { ViewMode } from '../lib/document-features';
+import { type DispatchReaderAction, readerAction } from '../reader/reader-actions';
 import type { FilterSettings } from '../scripts/filters';
 import type { KeybindManager } from '../scripts/keybind-manager';
 import type { TabManager } from '../scripts/tabs';
@@ -17,12 +18,12 @@ interface KeybindContext {
   getInitialViewMode: () => ViewMode;
   applyWindowAfterOpen: () => Promise<void>;
   updateTabBarVisibility: () => void;
-  saveCurrentTabState: () => void;
   updateUI: () => void;
   openSearch: () => void;
   togglePresentationMode: () => Promise<void>;
   goToPage: (page: number) => Promise<void>;
   goToRelativePage: (direction: 'next' | 'previous') => Promise<void>;
+  dispatchReaderAction: DispatchReaderAction;
 }
 
 // Register all keybind actions with the KeybindManager
@@ -36,12 +37,12 @@ export function registerKeybindActions({
   getInitialViewMode,
   applyWindowAfterOpen,
   updateTabBarVisibility,
-  saveCurrentTabState,
   updateUI,
   openSearch,
   togglePresentationMode,
   goToPage,
   goToRelativePage,
+  dispatchReaderAction,
 }: KeybindContext): void {
   if (!keybindManager) {
     console.error('KeybindManager not initialized');
@@ -132,61 +133,33 @@ export function registerKeybindActions({
 
   // Zoom
   keybindManager.registerAction('zoomIn', async () => {
-    await withActiveViewer(tabManager, async (viewer) => {
-      await viewer.zoomIn();
-      saveCurrentTabState();
-      updateUI();
-    });
+    await dispatchReaderAction(readerAction.zoomIn());
   });
 
   keybindManager.registerAction('zoomOut', async () => {
-    await withActiveViewer(tabManager, async (viewer) => {
-      await viewer.zoomOut();
-      saveCurrentTabState();
-      updateUI();
-    });
+    await dispatchReaderAction(readerAction.zoomOut());
   });
 
   keybindManager.registerAction('resetZoom', async () => {
-    await withActiveViewer(tabManager, async (viewer) => {
-      await viewer.setZoom(1.0);
-      saveCurrentTabState();
-      updateUI();
-    });
+    await dispatchReaderAction(readerAction.setZoomIntent({ kind: 'manual', scale: 1 }));
   });
 
   // Fit modes
   keybindManager.registerAction('fitToWidth', async () => {
-    await withActiveViewer(tabManager, async (viewer) => {
-      await viewer.fitToWidth();
-      saveCurrentTabState();
-      updateUI();
-    });
+    await dispatchReaderAction(readerAction.setZoomIntent({ kind: 'fit-width' }));
   });
 
   keybindManager.registerAction('fitToPage', async () => {
-    await withActiveViewer(tabManager, async (viewer) => {
-      await viewer.fitToPage();
-      saveCurrentTabState();
-      updateUI();
-    });
+    await dispatchReaderAction(readerAction.setZoomIntent({ kind: 'fit-page' }));
   });
 
   // Rotation
   keybindManager.registerAction('rotateRight', async () => {
-    await withActiveViewer(tabManager, async (viewer) => {
-      await viewer.rotateClockwise();
-      saveCurrentTabState();
-      updateUI();
-    });
+    await dispatchReaderAction(readerAction.rotateClockwise());
   });
 
   keybindManager.registerAction('rotateLeft', async () => {
-    await withActiveViewer(tabManager, async (viewer) => {
-      await viewer.rotateCounterClockwise();
-      saveCurrentTabState();
-      updateUI();
-    });
+    await dispatchReaderAction(readerAction.rotateCounterClockwise());
   });
 
   // Fullscreen

@@ -21,7 +21,7 @@ import { createReadingSessionStorage } from './app/reading-session-storage';
 import { SearchController } from './app/search-controller';
 import { restoreReadingSession } from './app/session-state';
 import { SidebarController } from './app/sidebar-controller';
-import { restoreTabState, saveCurrentTabState } from './app/tab-state';
+import { restoreTabState } from './app/tab-state';
 import { setupTauriListeners } from './app/tauri-events';
 import {
   renderRecentFiles,
@@ -42,8 +42,10 @@ import {
 import {
   createReaderActions,
   type PersistedReadingSession,
+  type ReaderAction,
   type ReaderActionOptions,
   type ReaderActions,
+  readerAction,
 } from './reader/reader-actions';
 import { loadReadingSession, type ReadingSessionStorage } from './reader/reading-session-store';
 import { buildFilterCSS, type FilterSettings, PRESETS } from './scripts/filters';
@@ -154,6 +156,13 @@ const getActiveViewer = () => {
   return activeTab ? (tabManager?.getViewerForTab(activeTab.id) ?? null) : null;
 };
 
+const getDocumentViewer = (filePath: string) => {
+  const tab = tabManager?.getTabs().find((item) => item.filePath === filePath);
+  const viewer = tab ? tabManager?.getViewerForTab(tab.id) : null;
+  if (!viewer) throw new Error(`Cannot project unopened Document: ${filePath}`);
+  return viewer;
+};
+
 const goToPage = async (page: number, options?: ReaderActionOptions): Promise<void> => {
   const outcome = await readerActions?.dispatch({ type: 'goToPage', page }, options);
   if (outcome?.status === 'failure') throw outcome.error;
@@ -164,6 +173,14 @@ const goToRelativePage = async (direction: 'next' | 'previous'): Promise<void> =
     type: direction === 'next' ? 'goToNextPage' : 'goToPreviousPage',
   });
   if (outcome?.status === 'failure') throw outcome.error;
+};
+
+const dispatchReaderAction = async (action: ReaderAction): Promise<void> => {
+  const outcome = await readerActions?.dispatch(action);
+  if (outcome?.status === 'failure') throw outcome.error;
+  if (action.type === 'setFilterSettings' && outcome?.status === 'committed') {
+    scheduleLastFilterSave(action.filterSettings);
+  }
 };
 
 const persistAnnotations = (filePath: string, annotations: PdfAnnotation[]): void => {
@@ -256,53 +273,17 @@ const saveReadingSessionNow = async (): Promise<void> => {
     return;
   }
 
-  saveCurrentTabState(tabManager, sliderManager);
-
   const activeTab = tabManager?.getActiveTab();
   const activeViewer = activeTab ? tabManager?.getViewerForTab(activeTab.id) : null;
   if (activeTab && activeViewer) {
-    const state = activeViewer.getState();
-    await Promise.all([
-      readerActions.dispatch({
-        type: 'settleReadingPosition',
-        filePath: activeTab.filePath,
-        readingPosition: activeViewer.getReadingPosition(),
-      }),
-      readerActions.dispatch({
-        type: 'settleVisualState',
-        filePath: activeTab.filePath,
-        visualState: {
-          filterSettings: activeTab.filterSettings,
-          zoomIntent: state.zoomIntent,
-          rotation: state.rotation,
-          viewMode: state.viewMode,
-        },
-      }),
-    ]);
+    await readerActions.dispatch({
+      type: 'settleReadingPosition',
+      filePath: activeTab.filePath,
+      readingPosition: activeViewer.getReadingPosition(),
+    });
   }
 
   await readerActions.flush();
-};
-
-const scheduleReadingSessionSave = (): void => {
-  if (!settingsManager || !currentSettings?.general.restorePreviousSession || isRestoringSession) {
-    return;
-  }
-  saveCurrentTabState(tabManager, sliderManager);
-  const activeTab = tabManager?.getActiveTab();
-  const activeViewer = activeTab ? tabManager?.getViewerForTab(activeTab.id) : null;
-  if (!activeTab || !activeViewer || !readerActions) return;
-  const state = activeViewer.getState();
-  void readerActions.dispatch({
-    type: 'settleVisualState',
-    filePath: activeTab.filePath,
-    visualState: {
-      filterSettings: activeTab.filterSettings,
-      zoomIntent: state.zoomIntent,
-      rotation: state.rotation,
-      viewMode: state.viewMode,
-    },
-  });
 };
 
 const restorePreviousReadingSession = async (): Promise<number> => {
@@ -358,7 +339,6 @@ const restorePreviousReadingSession = async (): Promise<number> => {
     return result.opened;
   } finally {
     isRestoringSession = false;
-    scheduleReadingSessionSave();
   }
 };
 
@@ -401,15 +381,12 @@ async function initializeApp(): Promise<void> {
         updateTabBarVisibility(tabManager);
         // Update print menu state
         await updatePrintMenuState(tabManager);
-        scheduleReadingSessionSave();
       },
       () => {
-        saveCurrentTabState(tabManager, sliderManager);
         updateUI(tabManager);
         sidebarController?.viewerStateChanged();
-        scheduleReadingSessionSave();
       },
-      scheduleReadingSessionSave,
+      undefined,
       {
         getAnnotations: (filePath) => currentSettings?.annotations[filePath] ?? [],
         onAnnotationsChanged: (filePath, annotations) => {
@@ -454,6 +431,9 @@ async function initializeApp(): Promise<void> {
           });
         },
         onPageNavigationRequested: goToPage,
+        onZoomIntentRequested: async (filePath, zoomIntent) => {
+          await dispatchReaderAction(readerAction.setZoomIntent(zoomIntent, filePath));
+        },
         requestPassword: requestPdfPassword,
         requestAnnotationNote,
         reportError: (message) => showToast(message, 'error'),
@@ -465,22 +445,44 @@ async function initializeApp(): Promise<void> {
 
     readerActions = createReaderActions({
       initialSession: restoredReadingSession,
+      defaultVisualState: {
+        filterSettings: getInitialFilterSettings(),
+        zoomIntent: { kind: 'manual', scale: 1 },
+        rotation: 0,
+        viewMode: getInitialViewMode(),
+      },
       projection: {
         exitPresentation: async () => {
           await presentationController?.exit();
         },
-        activateDocument: async (filePath, position) => {
-          await tabManager?.projectActiveDocument(filePath, position);
+        activateDocument: async (filePath, position, visualState) => {
+          await tabManager?.projectActiveDocument(filePath, position, visualState);
         },
         goToReadingPosition: async (filePath, position, options) => {
-          const tab = tabManager?.getTabs().find((item) => item.filePath === filePath);
-          const viewer = tab ? tabManager?.getViewerForTab(tab.id) : null;
-          if (!viewer) throw new Error(`Cannot navigate unopened Document: ${filePath}`);
-          await viewer.goToReadingPosition(position, options);
+          await getDocumentViewer(filePath).goToReadingPosition(position, options);
         },
         getPageCount: (filePath) => {
           const tab = tabManager?.getTabs().find((item) => item.filePath === filePath);
           return tab ? (tabManager?.getViewerForTab(tab.id)?.getState().totalPages ?? 0) : 0;
+        },
+        applyZoomIntent: async (filePath, zoomIntent) => {
+          const viewer = getDocumentViewer(filePath);
+          await viewer.setZoomIntent(zoomIntent);
+          return viewer.getState().zoomIntent;
+        },
+        applyRelativeZoom: async (filePath, direction) => {
+          const viewer = getDocumentViewer(filePath);
+          await (direction === 'in' ? viewer.zoomIn() : viewer.zoomOut());
+          return viewer.getState().zoomIntent;
+        },
+        applyRotation: async (filePath, rotation) => {
+          await getDocumentViewer(filePath).setRotation(rotation);
+        },
+        applyViewMode: async (filePath, viewMode) => {
+          await getDocumentViewer(filePath).setViewMode(viewMode);
+        },
+        applyFilterSettings: async (filePath, filterSettings) => {
+          getDocumentViewer(filePath).applyFilter(buildFilterCSS(filterSettings));
         },
       },
       persist: async (snapshot) => {
@@ -521,37 +523,19 @@ async function initializeApp(): Promise<void> {
       getActiveViewer,
       onStateChanged: (active) => {
         updateUI(tabManager);
-        if (!active) {
-          saveCurrentTabState(tabManager, sliderManager);
-          scheduleReadingSessionSave();
-        }
+        if (!active) sidebarController?.viewerStateChanged();
       },
     });
 
     // Initialize slider manager
     sliderManager = new SliderManager((filterSettings) => {
-      const activeTab = tabManager?.getActiveTab();
-      if (activeTab) {
-        const viewer = tabManager?.getViewerForTab(activeTab.id);
-        if (viewer) {
-          const filterCSS = buildFilterCSS(filterSettings);
-          viewer.applyFilter(filterCSS);
-          // Save filter to tab state
-          activeTab.filterSettings = filterSettings;
-          scheduleLastFilterSave(filterSettings);
-          scheduleReadingSessionSave();
-        }
-      }
+      void dispatchReaderAction(readerAction.setFilterSettings(filterSettings));
     });
 
     // Initialize keybind manager
     keybindManager = new KeybindManager(isMac);
 
     const updateUIForTab = () => updateUI(tabManager);
-    const saveStateForTab = () => {
-      saveCurrentTabState(tabManager, sliderManager);
-      scheduleReadingSessionSave();
-    };
     const updateTabBar = () => updateTabBarVisibility(tabManager);
 
     // Register all action handlers
@@ -565,7 +549,6 @@ async function initializeApp(): Promise<void> {
       getInitialViewMode,
       applyWindowAfterOpen,
       updateTabBarVisibility: updateTabBar,
-      saveCurrentTabState: saveStateForTab,
       updateUI: updateUIForTab,
       openSearch: () => searchController?.open(),
       togglePresentationMode: async () => {
@@ -573,6 +556,7 @@ async function initializeApp(): Promise<void> {
       },
       goToPage,
       goToRelativePage,
+      dispatchReaderAction,
     });
 
     // Load keybinds from settings
@@ -599,8 +583,6 @@ async function initializeApp(): Promise<void> {
       keybindManager,
       openPdfAndRefresh,
       printCurrentPDF: () => printCurrentPDF(tabManager),
-      onPresetApplied: scheduleLastFilterSave,
-      saveCurrentTabState: saveStateForTab,
       updateUI: updateUIForTab,
       activateDocument: async (filePath) => {
         await readerActions?.dispatch({ type: 'activateDocument', filePath });
@@ -609,6 +591,7 @@ async function initializeApp(): Promise<void> {
       clearRecentFiles,
       goToPage,
       goToRelativePage,
+      dispatchReaderAction,
     });
 
     // Update keyboard hints for platform
@@ -643,8 +626,6 @@ async function initializeApp(): Promise<void> {
             activeDocumentPath: null,
             documents: [],
           };
-        } else {
-          scheduleReadingSessionSave();
         }
       },
       readingHistoryCleared: () => {
@@ -665,9 +646,8 @@ async function initializeApp(): Promise<void> {
       applyWindowAfterOpen,
       updateTabBarVisibility: updateTabBar,
       updatePrintMenuState: () => updatePrintMenuState(tabManager),
-      updateUI: updateUIForTab,
-      saveCurrentTabState: saveStateForTab,
       printCurrentPDF: () => printCurrentPDF(tabManager),
+      dispatchReaderAction,
     });
 
     // Restore the saved active Document next, then the remaining Documents in saved order.
