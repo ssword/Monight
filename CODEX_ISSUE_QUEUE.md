@@ -9,7 +9,7 @@
 | Issue | Title | Status |
 | ---: | --- | --- |
 | #25 | Spec: Center reader architecture on the Reading Session | incomplete |
-| #27 | Guarantee Reader Action ordering, coalescing, and outcomes | pending |
+| #27 | Guarantee Reader Action ordering, coalescing, and outcomes | completed |
 | #28 | Route Visual State and Zoom Intent through Reader Actions | pending |
 | #29 | Open and deduplicate Documents through transactional Document Intake | pending |
 | #30 | Route external file sources through Document Intake | pending |
@@ -35,3 +35,14 @@
 - test_results: 33 TypeScript files / 155 tests passed; 25 Rust tests passed; focused tests, lint, production build, and diff checks passed.
 - acceptance_criteria_results: Criteria 1-8, 10, 13, 15-27, 29-41, 46-53, 57-60, and 65-67 passed or passed for the implemented boundary. Criteria 9, 11-12, 14, 28, 43-44, 55, 62-63 were partial. Criteria 42, 45, 54, 56, 61, and 64 were not met. Criterion 68 was unverifiable without Windows/Linux and full Tauri smoke checks. Detailed per-criterion evidence is retained in the coordinator transcript.
 - remaining_problems: Document Content and generation-bound Document Queries remain unimplemented; printing, links, visual mutations, Annotations, and Recent Documents are not fully routed through deep semantic modules; TabManager/PDFViewer still duplicate Reading Session authority and `main.ts` is not only a composition root; Windows/Linux automated runs and cross-platform Tauri smoke checks were not performed.
+
+### Issue #27
+
+- issue_number: `27`
+- status: `completed`
+- commit: `eb3d5749716b5a035e6db285d0967841eae7719a`
+- files_changed: `src/reader/reader-actions.ts`, `src/__tests__/reader-actions.test.ts`
+- tests_run: focused Reader Actions tests; `npx tsc --noEmit`; focused Biome check; `npm test`; `npm run build`; `npm run lint`; `cargo test --manifest-path src-tauri/Cargo.toml`; `git diff --check HEAD^ HEAD`
+- test_results: 29 focused tests, 169 full frontend tests, 25 Rust tests, typecheck, production build, lint, and diff validation all passed.
+- acceptance_criteria_results: Target capture, per-Document/global ordering, relative ordering, absolute coalescing with superseded outcomes, cross-Document independence, commit-after-success, unchanged state on failure/supersession, typed outcomes, and behavior coverage passed. Generation/removal barriers and recovery after projection, persistence, or removal failures were also verified.
+- remaining_problems: none.
