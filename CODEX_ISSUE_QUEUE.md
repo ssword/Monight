@@ -11,7 +11,7 @@
 | #25 | Spec: Center reader architecture on the Reading Session | incomplete |
 | #27 | Guarantee Reader Action ordering, coalescing, and outcomes | completed |
 | #28 | Route Visual State and Zoom Intent through Reader Actions | completed |
-| #29 | Open and deduplicate Documents through transactional Document Intake | pending |
+| #29 | Open and deduplicate Documents through transactional Document Intake | completed |
 | #30 | Route external file sources through Document Intake | pending |
 | #31 | Restore Reading Session deterministically through Document Intake | pending |
 | #32 | Close, cancel, and reopen Documents through Reader Actions | pending |
@@ -56,4 +56,15 @@
 - tests_run: `npm test`; `npm run lint`; `npm run build`; `cargo test`
 - test_results: 181 frontend tests and 25 Rust tests passed; lint, TypeScript, production build, diff checks, and two-axis code review passed.
 - acceptance_criteria_results: All seven acceptance criteria passed, including semantic actions for all settled view choices, authoritative per-Document Visual State, Zoom Intent restoration/recalculation, transient-state exclusion, commit-after-render, adapter equivalence, and behavior coverage.
+- remaining_problems: none.
+
+### Issue #29
+
+- issue_number: `29`
+- status: `completed`
+- commit: `08b216e36d6e9f47d3314d0331a9af0f1a5648ed`
+- files_changed: `src/__tests__/document-intake.test.ts`, `src/__tests__/reader-actions.test.ts`, `src/__tests__/session-restoration-runtime.test.ts` (removed), `src/__tests__/session-restoration.test.ts`, `src/__tests__/tabs.test.ts`, `src/__tests__/tauri-events.test.ts`, `src/app/document-intake-runtime.ts`, `src/app/file-actions.ts`, `src/app/session-restoration-runtime.ts` (removed), `src/app/tab-state.ts`, `src/app/tauri-events.ts`, `src/main.ts`, `src/reader/document-intake.ts`, `src/reader/reader-actions.ts`, `src/reader/reading-session.ts`, `src/scripts/tab-reading-session.ts`, `src/scripts/tabs.ts`
+- tests_run: focused Document Intake, Reader Actions, Reading Session restoration, TabManager, and file-dialog suites; `npx tsc --noEmit`; focused Biome checks; `npm test`; `npm run build`; `npm run lint`; `cargo test --manifest-path src-tauri/Cargo.toml`; `git diff --check`; final two-axis code review.
+- test_results: 205 frontend tests and 26 Rust tests passed; typecheck, production build, lint, diff validation, and final Standards/Spec reviews passed with zero findings.
+- acceptance_criteria_results: All ten acceptance criteria passed, including early foreground/completion outcomes, source adapter encapsulation, canonical identity and concurrent alias deduplication, existing-Document page activation without reread, transactional PDF acceptance/password/first-render/registration/activation, rollback, independent multi-file outcomes, runtime-state ownership and byte release, post-commit observer isolation, and production/in-memory file-dialog contract coverage.
 - remaining_problems: none.
