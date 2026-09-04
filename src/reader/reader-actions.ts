@@ -1,4 +1,5 @@
 import type { ViewMode } from '../lib/document-features';
+import type { PdfLinkTarget } from '../lib/pdf-links';
 import { type FilterSettings, PRESETS } from '../scripts/filters';
 import { createDocumentQuery, type DocumentQuery, type DocumentRuntime } from './document-queries';
 import {
@@ -112,6 +113,8 @@ export type ReaderAction =
   | { type: 'cycleViewMode'; filePath?: string }
   | { type: 'setFilterSettings'; filterSettings: FilterSettings; filePath?: string }
   | { type: 'registerDocument'; document: ReadingSessionDocument; runtime: DocumentRuntime }
+  | { type: 'activateDocumentTarget'; filePath: string; target: PdfLinkTarget }
+  | { type: 'printDocument'; filePath?: string }
   | { type: 'closeDocument'; filePath: string }
   | { type: 'reopenLastClosedDocument' }
   | { type: 'removeDocument'; filePath: string };
@@ -142,14 +145,31 @@ export type DispatchReaderAction = (action: ReaderAction) => Promise<void>;
 
 export type ReaderActionOutcome =
   | { status: 'committed'; revision: number }
+  | { status: 'performed'; revision: number }
   | { status: 'no-op'; revision: number }
   | { status: 'superseded'; revision: number }
   | { status: 'failure'; error: unknown; revision: number };
+
+export interface ExternalLinkAdapter {
+  open(url: string): Promise<void>;
+}
+
+export interface PrintDocumentRequest {
+  readonly filePath: string;
+  readonly title: string;
+  readonly bytes: Uint8Array;
+}
+
+export interface PrintAdapter {
+  print(request: PrintDocumentRequest): Promise<void>;
+}
 
 interface CreateReaderActionsOptions {
   initialSession: PersistedReadingSession;
   defaultVisualState?: ReadingSessionVisualState;
   projection: ReaderProjection;
+  externalLinkAdapter?: ExternalLinkAdapter;
+  printAdapter?: PrintAdapter;
   reopenDocument?: (filePath: string) => Promise<void>;
   persist: (snapshot: ReadingSessionSnapshot) => Promise<void>;
   persistenceDebounceMs?: number;
@@ -191,6 +211,10 @@ interface RegisteredDocumentRuntime {
   generation: number;
   readonly runtime: DocumentRuntime;
 }
+
+type DocumentContentOperationResult<T> =
+  | { readonly status: 'ready'; readonly value: T }
+  | Extract<ReaderActionOutcome, { status: 'no-op' | 'failure' }>;
 
 function visualStatesEqual(
   left: ReadingSessionVisualState,
@@ -299,6 +323,8 @@ export function createReaderActions({
   initialSession,
   defaultVisualState = createDefaultVisualState(),
   projection,
+  externalLinkAdapter,
+  printAdapter,
   reopenDocument,
   persist,
   persistenceDebounceMs = 250,
@@ -366,6 +392,31 @@ export function createReaderActions({
     isRemovalPending(filePath) ||
     !isDocumentOpen(filePath) ||
     Boolean(options?.isCancelled?.());
+
+  const runDocumentContentOperation = async <T>(
+    filePath: string,
+    expectedGeneration: number,
+    options: ReaderActionOptions | undefined,
+    operation: (runtime: DocumentRuntime, isCancelled: () => boolean) => Promise<T>,
+  ): Promise<DocumentContentOperationResult<T>> => {
+    if (cancelled(filePath, expectedGeneration, options)) {
+      return { status: 'no-op', revision: revision() };
+    }
+    const registered = runtimes.get(filePath);
+    if (!registered) {
+      return {
+        status: 'failure',
+        error: new Error(`Document Content is unavailable: ${filePath}`),
+        revision: revision(),
+      };
+    }
+    const operationCancelled = () =>
+      cancelled(filePath, expectedGeneration, options) || runtimes.get(filePath) !== registered;
+    const value = await operation(registered.runtime, operationCancelled);
+    return operationCancelled()
+      ? { status: 'no-op', revision: revision() }
+      : { status: 'ready', value };
+  };
 
   const commit = async (
     next: PersistedReadingSession,
@@ -834,6 +885,86 @@ export function createReaderActions({
           }
           return { ...document, readingPosition: { page, location } };
         });
+      }
+
+      if (action.type === 'activateDocumentTarget') {
+        return routeDocumentAction(action.filePath, (filePath) =>
+          enqueueRelative(filePath, async (expectedGeneration) => {
+            const resolution = await runDocumentContentOperation(
+              filePath,
+              expectedGeneration,
+              options,
+              (runtime, isCancelled) =>
+                runtime.content.resolveLinkTarget(action.target, { isCancelled }),
+            );
+            if (resolution.status !== 'ready') return resolution;
+            const resolved = resolution.value;
+            if (!resolved) return { status: 'no-op', revision: revision() };
+            if (resolved.kind === 'external') {
+              if (externalLinkAdapter) {
+                await externalLinkAdapter.open(resolved.url);
+                return { status: 'performed', revision: revision() };
+              }
+              return {
+                status: 'failure',
+                error: new Error('Reader Actions cannot open an external link'),
+                revision: revision(),
+              };
+            }
+
+            const readingPosition = { page: resolved.pageNumber, location: 0 };
+            try {
+              await projection.goToReadingPosition(filePath, readingPosition, {
+                isCancelled: () => cancelled(filePath, expectedGeneration, options),
+              });
+            } catch (error) {
+              if (cancelled(filePath, expectedGeneration, options)) {
+                return { status: 'no-op', revision: revision() };
+              }
+              return { status: 'failure', error, revision: revision() };
+            }
+            if (cancelled(filePath, expectedGeneration, options)) {
+              return { status: 'no-op', revision: revision() };
+            }
+            const latest = session.snapshot();
+            const documents = latest.documents.map((document) =>
+              document.filePath === filePath ? { ...document, readingPosition } : document,
+            );
+            return commit(
+              { schemaVersion: 2, activeDocumentPath: latest.activeDocumentPath, documents },
+              'deferred',
+            );
+          }),
+        );
+      }
+
+      if (action.type === 'printDocument') {
+        return routeDocumentAction(action.filePath, (filePath) =>
+          enqueueRelative(filePath, async (expectedGeneration) => {
+            if (cancelled(filePath, expectedGeneration, options)) {
+              return { status: 'no-op', revision: revision() };
+            }
+            const current = session.snapshot();
+            const document = current.documents.find((item) => item.filePath === filePath);
+            if (!document) return { status: 'no-op', revision: current.revision };
+            if (!printAdapter) {
+              return {
+                status: 'failure',
+                error: new Error('Reader Actions cannot print a Document'),
+                revision: current.revision,
+              };
+            }
+            const data = await runDocumentContentOperation(
+              filePath,
+              expectedGeneration,
+              options,
+              (runtime) => runtime.content.getData(),
+            );
+            if (data.status !== 'ready') return data;
+            await printAdapter.print({ filePath, title: document.title, bytes: data.value });
+            return { status: 'performed', revision: revision() };
+          }),
+        );
       }
 
       if (action.type === 'setZoomIntent') {

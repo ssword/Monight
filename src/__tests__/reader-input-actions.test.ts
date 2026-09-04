@@ -16,7 +16,6 @@ describe('reader visual input adapters', () => {
       keybindManager,
       tabManager: null,
       openPdfAndRefresh: vi.fn(async () => undefined),
-      printCurrentPDF: vi.fn(async () => undefined),
       openSettings: vi.fn(async () => undefined),
       updateTabBarVisibility: vi.fn(),
       updateUI: vi.fn(),
@@ -47,7 +46,6 @@ describe('reader visual input adapters', () => {
         getActiveTab: () => ({ id: 'first', filePath: '/docs/first.pdf' }),
       } as never,
       openPdfAndRefresh: vi.fn(async () => undefined),
-      printCurrentPDF: vi.fn(async () => undefined),
       openSettings: vi.fn(async () => undefined),
       updateTabBarVisibility: vi.fn(),
       updateUI: vi.fn(),
@@ -65,5 +63,33 @@ describe('reader visual input adapters', () => {
       [{ type: 'closeDocument', filePath: '/docs/first.pdf' }],
       [{ type: 'reopenLastClosedDocument' }],
     ]);
+  });
+
+  it('dispatches print keybinds as a semantic Reader Action', async () => {
+    const handlers = new Map<string, () => void | Promise<void>>();
+    const keybindManager = {
+      registerAction: (name: string, handler: () => void | Promise<void>) => {
+        handlers.set(name, handler);
+      },
+    } as unknown as KeybindManager;
+    const dispatchReaderAction = vi.fn(async () => undefined);
+
+    registerKeybindActions({
+      keybindManager,
+      tabManager: null,
+      openPdfAndRefresh: vi.fn(async () => undefined),
+      openSettings: vi.fn(async () => undefined),
+      updateTabBarVisibility: vi.fn(),
+      updateUI: vi.fn(),
+      openSearch: vi.fn(),
+      togglePresentationMode: vi.fn(async () => undefined),
+      goToPage: vi.fn(async () => undefined),
+      goToRelativePage: vi.fn(async () => undefined),
+      dispatchReaderAction,
+    });
+
+    await handlers.get('print')?.();
+
+    expect(dispatchReaderAction).toHaveBeenCalledWith({ type: 'printDocument' });
   });
 });

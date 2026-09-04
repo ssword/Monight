@@ -49,6 +49,5 @@ export interface DocumentRendering {
     updates: { note?: string; color?: PdfAnnotationColor },
   ): void;
   removeAnnotation(annotationId: string): void;
-  print(): Promise<void>;
   destroy(): void;
 }

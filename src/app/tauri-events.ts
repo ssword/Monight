@@ -34,7 +34,6 @@ interface TauriListenerContext {
   applyWindowAfterOpen: () => Promise<void>;
   updateTabBarVisibility: () => void;
   updatePrintMenuState: () => Promise<void>;
-  printCurrentPDF: () => Promise<void>;
   dispatchReaderAction: DispatchReaderAction;
 }
 
@@ -52,7 +51,6 @@ export async function setupTauriListeners({
   applyWindowAfterOpen,
   updateTabBarVisibility,
   updatePrintMenuState,
-  printCurrentPDF,
   dispatchReaderAction,
 }: TauriListenerContext): Promise<void> {
   const handleExternalOpenPayload = async (payload: ExternalOpenPayload) => {
@@ -144,7 +142,7 @@ export async function setupTauriListeners({
 
   await listen('menu-print', async () => {
     debugLog('Menu print event received');
-    await printCurrentPDF();
+    await dispatchReaderAction({ type: 'printDocument' });
   });
 
   await listen('menu-zoom-in', async () => {

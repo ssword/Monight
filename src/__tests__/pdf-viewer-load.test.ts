@@ -48,7 +48,10 @@ function installViewerBrowser(
   return { browser, container };
 }
 
-async function loadViewer(pdfDocument: unknown) {
+async function loadViewer(
+  pdfDocument: unknown,
+  options: { activateLinkTarget?: (target: unknown) => Promise<void> } = {},
+) {
   getPdfEngine.mockResolvedValue({
     getDocument: () => ({ promise: Promise.resolve(pdfDocument) }),
     TextLayer: class {
@@ -58,12 +61,50 @@ async function loadViewer(pdfDocument: unknown) {
     AnnotationType: { LINK: 2 },
   });
   const { PDFViewer } = await import('../scripts/pdf-viewer');
-  const viewer = new PDFViewer('pdf-container');
+  const viewer = new PDFViewer('pdf-container', 'pdf-canvas', options as never);
   await viewer.loadPDF(new Uint8Array([1]), 'report.pdf', '/tmp/report.pdf');
   return viewer;
 }
 
 describe('PDFViewer initial load', () => {
+  it('reports PDF link intent without navigating or opening the target itself', async () => {
+    const { browser } = installViewerBrowser();
+    const activateLinkTarget = vi.fn(async () => undefined);
+    const page = {
+      getViewport: ({ scale = 1 }: { scale?: number }) => ({
+        width: 600 * scale,
+        height: 800 * scale,
+        scale,
+        convertToViewportRectangle: (rect: number[]) => rect,
+      }),
+      render: () => ({ promise: Promise.resolve(), cancel: vi.fn() }),
+      getTextContent: async () => ({ items: [] }),
+      getAnnotations: async () => [
+        {
+          annotationType: 2,
+          rect: [10, 20, 110, 40],
+          dest: 'chapter-2',
+        },
+      ],
+    };
+    const viewer = await loadViewer(
+      {
+        numPages: 1,
+        getPage: vi.fn(async () => page),
+        destroy: vi.fn(async () => undefined),
+      },
+      { activateLinkTarget },
+    );
+    const goToPage = vi.spyOn(viewer, 'goToPage');
+
+    const link = browser.document.querySelector('[data-pdf-link="true"]');
+    link?.dispatchEvent(new browser.MouseEvent('click', { bubbles: true, cancelable: true }));
+
+    await vi.waitFor(() => expect(activateLinkTarget).toHaveBeenCalledWith({ dest: 'chapter-2' }));
+    expect(goToPage).not.toHaveBeenCalled();
+    viewer.destroy();
+  });
+
   it('renders page one before requesting dimensions for the remaining pages', async () => {
     vi.stubGlobal('document', {
       createElement: () => ({ style: { width: '' } }),

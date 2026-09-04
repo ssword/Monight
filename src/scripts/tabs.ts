@@ -56,7 +56,7 @@ interface TabManagerOptions {
     filePath: string,
     target: PdfLinkTarget,
   ) => Promise<ResolvedDocumentLinkTarget | null>;
-  openExternalUrl?: (url: string) => Promise<void>;
+  onDocumentLinkTargetActivated?: (filePath: string, target: PdfLinkTarget) => Promise<void>;
 }
 
 interface CreateTabOptions {
@@ -157,7 +157,12 @@ export class TabManager {
             resolveLinkTarget: (target) => resolveLinkTarget(filePath, target),
           }
         : {}),
-      ...(this.options.openExternalUrl ? { openExternalUrl: this.options.openExternalUrl } : {}),
+      ...(this.options.onDocumentLinkTargetActivated
+        ? {
+            activateLinkTarget: (target) =>
+              this.options.onDocumentLinkTargetActivated?.(filePath, target) ?? Promise.resolve(),
+          }
+        : {}),
     });
     let runtimeDestroyed = false;
     const runtime: DocumentRuntime = {

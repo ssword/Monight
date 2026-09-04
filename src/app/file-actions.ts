@@ -6,7 +6,6 @@ import type { FilterSettings } from '../scripts/filters';
 import type { TabManager } from '../scripts/tabs';
 import { showToast } from './dialogs';
 import { createDocumentIntakeRuntime } from './document-intake-runtime';
-import { withActiveViewer } from './viewer-helpers';
 
 interface IntakeFilesOptions {
   tabManager: TabManager;
@@ -133,27 +132,6 @@ export async function ensureMinimumViewingSize({
   fillAvailableHeight = false,
 }: EnsureViewingSizeOptions = {}): Promise<void> {
   await invoke('fit_main_window_for_pdf', { fillAvailableHeight });
-}
-
-// Print current PDF
-export async function printCurrentPDF(tabManager: TabManager | null): Promise<void> {
-  const activeTab = tabManager?.getActiveTab();
-  if (!activeTab) {
-    showToast('No PDF is currently open.', 'error');
-    return;
-  }
-
-  await withActiveViewer(tabManager, async (viewer) => {
-    try {
-      await viewer.print();
-    } catch (error) {
-      console.error('Print error:', error);
-      showToast(
-        `Failed to print: ${error instanceof Error ? error.message : 'Unknown error'}`,
-        'error',
-      );
-    }
-  });
 }
 
 // Open settings window

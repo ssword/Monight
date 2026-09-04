@@ -11,7 +11,6 @@ interface DomEventContext {
   sliderManager: SliderManager | null;
   keybindManager: KeybindManager | null;
   openPdfAndRefresh: () => Promise<void>;
-  printCurrentPDF: () => Promise<void>;
   updateUI: () => void;
   activateDocument: (filePath: string) => Promise<void>;
   openRecentFile: (filePath: string) => Promise<void>;
@@ -27,7 +26,6 @@ export function setupEventListeners({
   sliderManager,
   keybindManager,
   openPdfAndRefresh,
-  printCurrentPDF,
   updateUI,
   activateDocument,
   openRecentFile,
@@ -72,7 +70,7 @@ export function setupEventListeners({
   const printBtn = document.getElementById('print-file');
   printBtn?.addEventListener('click', () => {
     debugLog('Print button clicked');
-    printCurrentPDF();
+    void dispatchReaderAction({ type: 'printDocument' });
   });
 
   // Navigation buttons

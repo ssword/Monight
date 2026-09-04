@@ -1,6 +1,7 @@
 import { getName, getTauriVersion, getVersion } from '@tauri-apps/api/app';
 import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
+import { browserPrintAdapter } from './app/browser-print-adapter';
 import {
   requestAnnotationNote,
   requestConfirmation,
@@ -14,7 +15,6 @@ import {
   openFiles,
   openPDFFile,
   openSettings,
-  printCurrentPDF,
   reportDocumentIntakeOutcomes,
   updatePrintMenuState,
 } from './app/file-actions';
@@ -194,7 +194,20 @@ const goToRelativePage = async (direction: 'next' | 'previous'): Promise<void> =
 
 const dispatchReaderAction = async (action: ReaderAction): Promise<void> => {
   const outcome = await readerActions?.dispatch(action);
-  if (outcome?.status === 'failure') throw outcome.error;
+  if (outcome?.status === 'failure') {
+    if (action.type === 'printDocument') {
+      console.error('Print error:', outcome.error);
+      showToast(
+        `Failed to print: ${outcome.error instanceof Error ? outcome.error.message : 'Unknown error'}`,
+        'error',
+      );
+      return;
+    }
+    throw outcome.error;
+  }
+  if (action.type === 'printDocument' && outcome?.status === 'no-op') {
+    showToast('No PDF is currently open.', 'error');
+  }
   if (action.type === 'setFilterSettings' && outcome?.status === 'committed') {
     scheduleLastFilterSave(action.filterSettings);
   }
@@ -468,8 +481,8 @@ async function initializeApp(): Promise<void> {
         requestAnnotationNote,
         reportError: (message) => showToast(message, 'error'),
         resolveLinkTarget: resolveDocumentLinkTarget,
-        openExternalUrl: async (url) => {
-          await invoke('open_external_url', { url });
+        onDocumentLinkTargetActivated: async (filePath, target) => {
+          await dispatchReaderAction({ type: 'activateDocumentTarget', filePath, target });
         },
       },
     );
@@ -519,6 +532,12 @@ async function initializeApp(): Promise<void> {
           getDocumentViewer(filePath).applyFilter(buildFilterCSS(filterSettings), options);
         },
       },
+      externalLinkAdapter: {
+        open: async (url) => {
+          await invoke('open_external_url', { url });
+        },
+      },
+      printAdapter: browserPrintAdapter,
       reopenDocument: async (filePath) => {
         if (!tabManager) throw new Error('Document Intake is unavailable');
         await openFiles([filePath], {
@@ -558,7 +577,13 @@ async function initializeApp(): Promise<void> {
       getActiveDocument: getActiveDocumentAccess,
       requestAnnotationNote,
       openExternalUrl: async (url) => {
-        await invoke('open_external_url', { url });
+        const filePath = readerActions?.snapshot().activeDocumentPath;
+        if (!filePath) return;
+        await dispatchReaderAction({
+          type: 'activateDocumentTarget',
+          filePath,
+          target: { url },
+        });
       },
     });
     sidebarController.setThumbnailsEnabled(settings.general.displayThumbs);
@@ -586,7 +611,6 @@ async function initializeApp(): Promise<void> {
       keybindManager,
       tabManager,
       openPdfAndRefresh,
-      printCurrentPDF: () => printCurrentPDF(tabManager),
       openSettings,
       updateTabBarVisibility: updateTabBar,
       updateUI: updateUIForTab,
@@ -622,7 +646,6 @@ async function initializeApp(): Promise<void> {
       sliderManager,
       keybindManager,
       openPdfAndRefresh,
-      printCurrentPDF: () => printCurrentPDF(tabManager),
       updateUI: updateUIForTab,
       activateDocument: async (filePath) => {
         await readerActions?.dispatch({ type: 'activateDocument', filePath });
@@ -689,7 +712,6 @@ async function initializeApp(): Promise<void> {
       applyWindowAfterOpen,
       updateTabBarVisibility: updateTabBar,
       updatePrintMenuState: () => updatePrintMenuState(tabManager),
-      printCurrentPDF: () => printCurrentPDF(tabManager),
       dispatchReaderAction,
     });
 

@@ -1,4 +1,3 @@
-import { invoke } from '@tauri-apps/api/core';
 import type { PDFPageProxy, RenderTask, TextLayer } from 'pdfjs-dist';
 import { debugLog } from '../lib/debug-log';
 import { deriveScaledDimensions } from '../lib/dimensions';
@@ -128,7 +127,7 @@ export interface PDFViewerOptions {
   requestAnnotationNote?: AnnotationNoteRequester;
   reportError?: (message: string) => void;
   resolveLinkTarget?: (target: PdfLinkTarget) => Promise<ResolvedDocumentLinkTarget | null>;
-  openExternalUrl?: (url: string) => Promise<void>;
+  activateLinkTarget?: (target: PdfLinkTarget) => Promise<void>;
 }
 
 // Align canvas size to PDF.js viewer rounding to avoid subpixel blur.
@@ -243,7 +242,7 @@ export class PDFViewer implements DocumentRendering {
   private requestAnnotationNote?: AnnotationNoteRequester;
   private reportError?: (message: string) => void;
   private readonly resolveLinkTargetQuery?: PDFViewerOptions['resolveLinkTarget'];
-  private readonly openExternalUrl?: PDFViewerOptions['openExternalUrl'];
+  private readonly requestLinkTargetActivation?: PDFViewerOptions['activateLinkTarget'];
   private readonly linkTargets = new WeakMap<HTMLElement, PdfLinkTarget>();
   private contextMenu: HTMLDivElement | null = null;
   private handleDocumentPointerDownBound: (event: PointerEvent) => void;
@@ -316,7 +315,7 @@ export class PDFViewer implements DocumentRendering {
     this.requestAnnotationNote = options.requestAnnotationNote;
     this.reportError = options.reportError;
     this.resolveLinkTargetQuery = options.resolveLinkTarget;
-    this.openExternalUrl = options.openExternalUrl;
+    this.requestLinkTargetActivation = options.activateLinkTarget;
     this.initializeCanvas();
     this.handleScrollBound = this.handleScroll.bind(this);
     this.handleDocumentPointerDownBound = this.handleDocumentPointerDown.bind(this);
@@ -703,23 +702,12 @@ export class PDFViewer implements DocumentRendering {
 
   private async activateLinkTarget(target: PdfLinkTarget): Promise<void> {
     this.hideContextMenu();
-    const resolved = await this.resolveLinkTarget(target);
-    if (resolved?.kind === 'external') {
-      try {
-        if (this.openExternalUrl) {
-          await this.openExternalUrl(resolved.url);
-        } else {
-          await invoke('open_external_url', { url: resolved.url });
-        }
-      } catch (error) {
-        console.error('Failed to open external link:', error);
-        this.reportError?.(error instanceof Error ? error.message : String(error));
-      }
-      return;
-    }
-
-    if (resolved?.kind === 'page') {
-      await this.goToPage(resolved.pageNumber);
+    if (!this.requestLinkTargetActivation) return;
+    try {
+      await this.requestLinkTargetActivation(target);
+    } catch (error) {
+      console.error('Failed to activate PDF link:', error);
+      this.reportError?.(error instanceof Error ? error.message : String(error));
     }
   }
 
@@ -2085,66 +2073,6 @@ export class PDFViewer implements DocumentRendering {
       if (this.scrollContainer) {
         this.scrollContainer.style.display = 'none';
       }
-    }
-  }
-
-  async print(): Promise<void> {
-    if (this.content.pageCount === 0) {
-      throw new Error('No PDF document loaded');
-    }
-
-    try {
-      // Get the raw PDF data
-      const pdfData = await this.content.getData();
-
-      // Create a Blob from the PDF data (convert to regular Uint8Array)
-      const blob = new Blob([new Uint8Array(pdfData)], { type: 'application/pdf' });
-
-      // Create a blob URL
-      const blobUrl = URL.createObjectURL(blob);
-
-      // Create a hidden iframe to load the PDF
-      const iframe = document.createElement('iframe');
-      iframe.style.position = 'fixed';
-      iframe.style.top = '0';
-      iframe.style.left = '0';
-      iframe.style.width = '100%';
-      iframe.style.height = '100%';
-      iframe.style.border = 'none';
-      iframe.style.visibility = 'hidden';
-      iframe.src = blobUrl;
-
-      document.body.appendChild(iframe);
-
-      // Wait for iframe to load, then print
-      iframe.onload = () => {
-        try {
-          // Focus the iframe and trigger print
-          iframe.contentWindow?.focus();
-          iframe.contentWindow?.print();
-
-          // Clean up after a delay
-          setTimeout(() => {
-            document.body.removeChild(iframe);
-            URL.revokeObjectURL(blobUrl);
-          }, 1000);
-        } catch (error) {
-          console.error('Error triggering print:', error);
-          document.body.removeChild(iframe);
-          URL.revokeObjectURL(blobUrl);
-          throw error;
-        }
-      };
-
-      // Handle iframe load errors
-      iframe.onerror = () => {
-        document.body.removeChild(iframe);
-        URL.revokeObjectURL(blobUrl);
-        throw new Error('Failed to load PDF for printing');
-      };
-    } catch (error) {
-      console.error('Error printing PDF:', error);
-      throw error;
     }
   }
 

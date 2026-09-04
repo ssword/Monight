@@ -49,6 +49,182 @@ function createDocumentRuntime(): DocumentRuntime {
 }
 
 describe('Reader Actions', () => {
+  it('activates an internal PDF target against its originating Document after activation changes', async () => {
+    let finishResolution: ((target: { kind: 'page'; pageNumber: number }) => void) | undefined;
+    const firstRuntime = createDocumentRuntime();
+    vi.mocked(firstRuntime.content.resolveLinkTarget).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finishResolution = resolve;
+        }),
+    );
+    const projection: ReaderProjection = {
+      activateDocument: vi.fn(async () => undefined),
+      goToReadingPosition: vi.fn(async () => undefined),
+    };
+    const reader = createReaderActions({
+      initialSession: INITIAL_SESSION,
+      projection,
+      persist: vi.fn(async () => undefined),
+    });
+    await reader.dispatch({
+      type: 'registerDocument',
+      document: INITIAL_SESSION.documents[0],
+      runtime: firstRuntime,
+    });
+
+    const activation = reader.dispatch({
+      type: 'activateDocumentTarget',
+      filePath: '/docs/first.pdf',
+      target: { dest: 'chapter-9' },
+    });
+    await vi.waitFor(() => expect(finishResolution).toBeTypeOf('function'));
+    await reader.dispatch({ type: 'activateDocument', filePath: '/docs/second.pdf' });
+    finishResolution?.({ kind: 'page', pageNumber: 9 });
+
+    await expect(activation).resolves.toMatchObject({ status: 'committed' });
+    expect(firstRuntime.content.resolveLinkTarget).toHaveBeenCalledWith(
+      { dest: 'chapter-9' },
+      expect.objectContaining({ isCancelled: expect.any(Function) }),
+    );
+    expect(projection.goToReadingPosition).toHaveBeenCalledWith(
+      '/docs/first.pdf',
+      { page: 9, location: 0 },
+      expect.objectContaining({ isCancelled: expect.any(Function) }),
+    );
+    expect(reader.snapshot()).toMatchObject({
+      activeDocumentPath: '/docs/second.pdf',
+      documents: [
+        { filePath: '/docs/first.pdf', readingPosition: { page: 9, location: 0 } },
+        { filePath: '/docs/second.pdf', readingPosition: { page: 7, location: 0.5 } },
+      ],
+    });
+  });
+
+  it('delegates an external PDF target without changing settled Reading Session state', async () => {
+    const runtime = createDocumentRuntime();
+    vi.mocked(runtime.content.resolveLinkTarget).mockResolvedValue({
+      kind: 'external',
+      url: 'https://example.com/report',
+    });
+    const open = vi.fn(async () => undefined);
+    const reader = createReaderActions({
+      initialSession: INITIAL_SESSION,
+      projection: { activateDocument: vi.fn(), goToReadingPosition: vi.fn() },
+      externalLinkAdapter: { open },
+      persist: vi.fn(async () => undefined),
+    });
+    await reader.dispatch({
+      type: 'registerDocument',
+      document: INITIAL_SESSION.documents[0],
+      runtime,
+    });
+    const before = reader.snapshot();
+
+    const outcome = await reader.dispatch({
+      type: 'activateDocumentTarget',
+      filePath: '/docs/first.pdf',
+      target: { url: 'https://example.com/report' },
+    });
+
+    expect(outcome).toEqual({ status: 'performed', revision: 0 });
+    expect(open).toHaveBeenCalledWith('https://example.com/report');
+    expect(reader.snapshot()).toEqual(before);
+  });
+
+  it('returns a typed failure when the external-link adapter rejects a scheme', async () => {
+    const runtime = createDocumentRuntime();
+    vi.mocked(runtime.content.resolveLinkTarget).mockResolvedValue({
+      kind: 'external',
+      url: 'javascript:alert(1)',
+    });
+    const error = new Error('Blocked unsupported PDF link scheme');
+    const reader = createReaderActions({
+      initialSession: INITIAL_SESSION,
+      projection: { activateDocument: vi.fn(), goToReadingPosition: vi.fn() },
+      externalLinkAdapter: { open: vi.fn(async () => Promise.reject(error)) },
+      persist: vi.fn(async () => undefined),
+    });
+    await reader.dispatch({
+      type: 'registerDocument',
+      document: INITIAL_SESSION.documents[0],
+      runtime,
+    });
+    const before = reader.snapshot();
+
+    const outcome = await reader.dispatch({
+      type: 'activateDocumentTarget',
+      filePath: '/docs/first.pdf',
+      target: { url: 'javascript:alert(1)' },
+    });
+
+    expect(outcome).toEqual({ status: 'failure', error, revision: 0 });
+    expect(reader.snapshot()).toEqual(before);
+  });
+
+  it('prints bytes from the captured Document after the active Document changes', async () => {
+    let finishData: ((bytes: Uint8Array) => void) | undefined;
+    const runtime = createDocumentRuntime();
+    vi.mocked(runtime.content.getData).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finishData = resolve;
+        }),
+    );
+    const print = vi.fn(async () => undefined);
+    const reader = createReaderActions({
+      initialSession: INITIAL_SESSION,
+      projection: { activateDocument: vi.fn(), goToReadingPosition: vi.fn() },
+      printAdapter: { print },
+      persist: vi.fn(async () => undefined),
+    });
+    await reader.dispatch({
+      type: 'registerDocument',
+      document: INITIAL_SESSION.documents[0],
+      runtime,
+    });
+
+    const printing = reader.dispatch({ type: 'printDocument' });
+    await vi.waitFor(() => expect(finishData).toBeTypeOf('function'));
+    await reader.dispatch({ type: 'activateDocument', filePath: '/docs/second.pdf' });
+    finishData?.(new Uint8Array([4, 5, 6]));
+
+    await expect(printing).resolves.toMatchObject({ status: 'performed' });
+    expect(runtime.content.getData).toHaveBeenCalledOnce();
+    expect(print).toHaveBeenCalledWith({
+      filePath: '/docs/first.pdf',
+      title: 'first.pdf',
+      bytes: new Uint8Array([4, 5, 6]),
+    });
+    expect(reader.snapshot().activeDocumentPath).toBe('/docs/second.pdf');
+  });
+
+  it('returns a typed failure when the print adapter fails without changing settled state', async () => {
+    const runtime = createDocumentRuntime();
+    vi.mocked(runtime.content.getData).mockResolvedValue(new Uint8Array([7, 8, 9]));
+    const error = new Error('print dialog unavailable');
+    const reader = createReaderActions({
+      initialSession: INITIAL_SESSION,
+      projection: { activateDocument: vi.fn(), goToReadingPosition: vi.fn() },
+      printAdapter: { print: vi.fn(async () => Promise.reject(error)) },
+      persist: vi.fn(async () => undefined),
+    });
+    await reader.dispatch({
+      type: 'registerDocument',
+      document: INITIAL_SESSION.documents[0],
+      runtime,
+    });
+    const before = reader.snapshot();
+
+    const outcome = await reader.dispatch({
+      type: 'printDocument',
+      filePath: '/docs/first.pdf',
+    });
+
+    expect(outcome).toEqual({ status: 'failure', error, revision: 0 });
+    expect(reader.snapshot()).toEqual(before);
+  });
+
   it('initializes missing Visual State from configured reader defaults', () => {
     const reader = createReaderActions({
       initialSession: INITIAL_SESSION,

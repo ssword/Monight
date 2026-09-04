@@ -9,7 +9,6 @@ interface KeybindContext {
   keybindManager: KeybindManager | null;
   tabManager: TabManager | null;
   openPdfAndRefresh: () => Promise<void>;
-  printCurrentPDF: () => Promise<void>;
   openSettings: () => Promise<void>;
   updateTabBarVisibility: () => void;
   updateUI: () => void;
@@ -25,7 +24,6 @@ export function registerKeybindActions({
   keybindManager,
   tabManager,
   openPdfAndRefresh,
-  printCurrentPDF,
   openSettings,
   updateTabBarVisibility,
   updateUI,
@@ -46,7 +44,7 @@ export function registerKeybindActions({
   });
 
   keybindManager.registerAction('print', async () => {
-    await printCurrentPDF();
+    await dispatchReaderAction({ type: 'printDocument' });
   });
 
   keybindManager.registerAction('openSettings', async () => {

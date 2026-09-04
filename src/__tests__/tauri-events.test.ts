@@ -95,7 +95,6 @@ describe('Tauri drag and drop events', () => {
     applyWindowAfterOpen: vi.fn(async () => undefined),
     updateTabBarVisibility: vi.fn(),
     updatePrintMenuState: vi.fn(async () => undefined),
-    printCurrentPDF: vi.fn(async () => undefined),
     dispatchReaderAction: vi.fn(async () => undefined),
     ...overrides,
   });
@@ -258,6 +257,15 @@ describe('Tauri drag and drop events', () => {
     await mocks.getListener('menu-zoom-in')?.();
 
     expect(dispatchReaderAction).toHaveBeenCalledWith({ type: 'zoomIn' });
+  });
+
+  it('dispatches native menu printing as a semantic Reader Action', async () => {
+    const dispatchReaderAction = vi.fn(async () => undefined);
+    await setupTauriListeners(context({ dispatchReaderAction }));
+
+    await mocks.getListener('menu-print')?.();
+
+    expect(dispatchReaderAction).toHaveBeenCalledWith({ type: 'printDocument' });
   });
 
   it('dispatches native menu close as a semantic Reader Action', async () => {

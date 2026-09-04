@@ -33,7 +33,7 @@ The reader's choice of a manual scale, fit width, or fit page. Fit choices are r
 _Avoid_: Zoom level, scale
 
 **Reader Action**:
-A reader's intent to change the active Document or its settled state, independent of whether it came from the toolbar, a keybind, a menu, search, or another input.
+A reader's semantic intent to change the active Document or its settled state, or to perform a Document-scoped effect such as link activation or printing. It is independent of whether it came from the toolbar, a keybind, a menu, search, or another input.
 _Avoid_: UI event, shortcut handler, menu command
 
 **Document Intake**:
