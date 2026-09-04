@@ -49,12 +49,12 @@ type Viewer = {
   handleWheel: (event: unknown) => void;
   handleGestureStart: (event: unknown) => void;
   handleGestureChange: (event: unknown) => void;
-  renderPage: (pageNum: number, expectedGestureEpoch?: number | null) => Promise<void>;
-  calculateAllPageDimensions: (expectedGestureEpoch?: number | null) => Promise<void>;
+  renderPage: (pageNum: number, expectedRenderGeneration?: number | null) => Promise<void>;
+  calculateAllPageDimensions: (expectedRenderGeneration?: number | null) => Promise<void>;
   renderVisiblePages: (
     forceRender?: boolean,
     isInitialRender?: boolean,
-    expectedGestureEpoch?: number | null,
+    expectedRenderGeneration?: number | null,
   ) => Promise<void>;
   container: ReturnType<typeof makeContainer>;
   scrollContainer: PreviewTarget | null;
@@ -123,7 +123,7 @@ async function makeViewer(
     gesturePendingZoom: 1,
     gestureSettleTimer: null,
     gesturePreviewBaseMinHeight: null,
-    gestureRenderEpoch: 0,
+    renderGeneration: 0,
     pinchStartZoom: 1,
     wheelZoomRafId: null,
     pendingWheelDelta: 0,
@@ -442,13 +442,13 @@ describe('gesture zoom preview', () => {
       renderPageToContinuousCanvas: (
         pageNum: number,
         forceRender?: boolean,
-        expectedGestureEpoch?: number | null,
+        expectedRenderGeneration?: number | null,
       ) => Promise<void>;
       startSurfaceRender: (
         pageNum: number,
         surface: unknown,
         renderCanvas?: unknown,
-        expectedGestureEpoch?: number | null,
+        expectedRenderGeneration?: number | null,
       ) => Promise<unknown>;
     };
     Object.assign(viewer, {
@@ -469,7 +469,7 @@ describe('gesture zoom preview', () => {
       insertSurfaceAtPosition: vi.fn(),
       state: { ...viewer.state, zoom: 1.5 },
       gestureCommit: { epoch: 1, targetZoom: 1.5, previousZoom: 1 },
-      gestureRenderEpoch: 1,
+      renderGeneration: 1,
     });
     const renderPromise = prototype.renderPageToContinuousCanvas.call(viewer, 1, true, 1);
 
@@ -521,7 +521,7 @@ describe('gesture zoom preview', () => {
             releaseLayers = resolve;
           }),
       ),
-      gestureRenderEpoch: 1,
+      renderGeneration: 1,
     });
     const renderPromise = prototype.renderPage.call(viewer, 1, 1);
 

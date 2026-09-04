@@ -1,6 +1,6 @@
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 import type { ViewMode } from '../lib/document-features';
-import type { ZoomIntent } from '../reader/reader-actions';
+import type { PresentationExitOptions, ZoomIntent } from '../reader/reader-actions';
 import type { PDFViewer } from '../scripts/pdf-viewer';
 
 interface PresentationControllerOptions {
@@ -66,7 +66,7 @@ export class PresentationController {
     this.onStateChanged(true);
   }
 
-  async exit(): Promise<void> {
+  async exit(options: PresentationExitOptions = {}): Promise<void> {
     if (!this.active) return;
     const viewer = this.getActiveViewer();
     this.active = false;
@@ -74,7 +74,7 @@ export class PresentationController {
     const currentWindow = getCurrentWebviewWindow();
     if (!this.wasFullscreen) await currentWindow.setFullscreen(false);
 
-    if (viewer) {
+    if (viewer && options.restoreVisualState !== false) {
       await viewer.setViewMode(this.previousViewMode);
       await viewer.setZoomIntent(this.previousZoomIntent);
     }

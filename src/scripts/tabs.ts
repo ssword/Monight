@@ -34,6 +34,7 @@ interface TabManagerOptions {
   onDocumentPrepared?: (tab: TabData) => void | Promise<void>;
   onDocumentOpened?: (tab: TabData) => void | Promise<void>;
   onDocumentClosed?: (filePath: string) => void | Promise<void>;
+  onDocumentCloseRequested?: (filePath: string) => void | Promise<void>;
   onReadingPositionObserved?: (filePath: string, position: ReadingPosition) => void;
   onReadingPositionSettled?: (filePath: string, position: ReadingPosition) => void;
   onPageNavigationRequested?: (page: number, options?: ReaderActionOptions) => Promise<void>;
@@ -42,7 +43,6 @@ interface TabManagerOptions {
   requestPassword?: PdfPasswordRequester;
   requestAnnotationNote?: AnnotationNoteRequester;
   reportError?: (message: string) => void;
-  beforeDocumentTransition?: () => Promise<void>;
 }
 
 interface CreateTabOptions {
@@ -67,7 +67,6 @@ export class TabManager {
   private tabs: Map<string, TabData> = new Map();
   private activeTabId: string | null = null;
   private pdfViewers: Map<string, PDFViewer> = new Map();
-  private closedHistory: string[] = [];
   private onTabChange: (tab: TabData | null) => void | Promise<void>;
   private onActiveViewerStateChange?: () => void;
   private onTabsChanged?: () => void;
@@ -239,38 +238,43 @@ export class TabManager {
   async closeTab(id: string): Promise<void> {
     const tab = this.tabs.get(id);
     if (!tab) return;
-    const orderedIds = Array.from(this.tabs.keys());
-    const closedIndex = orderedIds.indexOf(id);
-    await this.options.beforeDocumentTransition?.();
+    if (!this.options.onDocumentCloseRequested) {
+      throw new Error('Cannot close a Document without Reader Actions');
+    }
+    await this.options.onDocumentCloseRequested(tab.filePath);
+  }
 
-    // Add to closed history
-    this.closedHistory.push(tab.filePath);
+  async projectDocumentClose(
+    filePath: string,
+    nextActiveDocumentPath: string | null,
+  ): Promise<void> {
+    const entry = Array.from(this.tabs.entries()).find(([, tab]) => tab.filePath === filePath);
+    if (!entry) return;
+    const [id, tab] = entry;
+    const wasActive = this.activeTabId === id;
 
-    // Destroy PDF viewer
     const viewer = this.pdfViewers.get(id);
     if (viewer) {
       viewer.destroy();
       this.pdfViewers.delete(id);
     }
 
-    // Remove tab
     this.tabs.delete(id);
-    await this.options.onDocumentClosed?.(tab.filePath);
 
-    // If closing active tab, activate adjacent tab
-    if (this.activeTabId === id) {
-      const remaining = Array.from(this.tabs.keys());
-      if (remaining.length > 0) {
-        const adjacentId = remaining[Math.min(closedIndex, remaining.length - 1)];
-        await this.activateTab(adjacentId);
+    if (wasActive) {
+      const nextEntry = nextActiveDocumentPath
+        ? Array.from(this.tabs.entries()).find(
+            ([, item]) => item.filePath === nextActiveDocumentPath,
+          )
+        : undefined;
+      if (nextEntry) {
+        await this.activateTabDirect(nextEntry[0]);
       } else {
-        // No tabs left
         this.activeTabId = null;
         await this.onTabChange(null);
       }
     }
 
-    // Render tabs UI
     this.renderTabs();
     this.onTabsChanged?.();
 
@@ -522,14 +526,6 @@ export class TabManager {
     } else if (position >= 1 && position <= ids.length) {
       await this.activateTab(ids[position - 1]);
     }
-  }
-
-  /**
-   * Reopen last closed tab
-   */
-  async reopenLastClosed(): Promise<string | null> {
-    const filePath = this.closedHistory.pop();
-    return filePath || null;
   }
 
   /**

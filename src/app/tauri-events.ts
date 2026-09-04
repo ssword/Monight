@@ -171,7 +171,7 @@ export async function setupTauriListeners({
     debugLog('Menu close tab event received');
     const activeTab = tabManager?.getActiveTab();
     if (activeTab) {
-      await tabManager?.closeTab(activeTab.id);
+      await dispatchReaderAction({ type: 'closeDocument', filePath: activeTab.filePath });
       updateTabBarVisibility();
     }
   });

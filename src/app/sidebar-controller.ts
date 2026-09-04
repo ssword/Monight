@@ -256,11 +256,12 @@ export class SidebarController {
       void viewer
         .renderThumbnail(pageNumber, { rotation })
         .then((canvas) => {
-          rotationCache.set(pageNumber, canvas);
           if (epoch !== this.renderEpoch || viewer !== this.getActiveViewer()) return;
+          rotationCache.set(pageNumber, canvas);
           preview.replaceChildren(canvas);
         })
         .catch(() => {
+          if (epoch !== this.renderEpoch || viewer !== this.getActiveViewer()) return;
           preview.textContent = 'Preview unavailable';
         });
     };

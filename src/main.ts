@@ -422,6 +422,11 @@ async function initializeApp(): Promise<void> {
         onDocumentClosed: async (filePath) => {
           await readerActions?.dispatch({ type: 'removeDocument', filePath });
         },
+        onDocumentCloseRequested: async (filePath) => {
+          if (!readerActions) throw new Error('Reader Actions are unavailable');
+          const outcome = await readerActions.dispatch({ type: 'closeDocument', filePath });
+          if (outcome.status === 'failure') throw outcome.error;
+        },
         onReadingPositionObserved: (filePath, readingPosition) => {
           void readerActions?.dispatch({
             type: 'settleReadingPosition',
@@ -447,9 +452,6 @@ async function initializeApp(): Promise<void> {
         requestPassword: requestPdfPassword,
         requestAnnotationNote,
         reportError: (message) => showToast(message, 'error'),
-        beforeDocumentTransition: async () => {
-          await presentationController?.exit();
-        },
       },
     );
 
@@ -462,11 +464,14 @@ async function initializeApp(): Promise<void> {
         viewMode: getInitialViewMode(),
       },
       projection: {
-        exitPresentation: async () => {
-          await presentationController?.exit();
+        exitPresentation: async (options) => {
+          await presentationController?.exit(options);
         },
         activateDocument: async (filePath, position, visualState) => {
           await tabManager?.projectActiveDocument(filePath, position, visualState);
+        },
+        closeDocument: async (filePath, nextActiveDocumentPath) => {
+          await tabManager?.projectDocumentClose(filePath, nextActiveDocumentPath);
         },
         goToReadingPosition: async (filePath, position, options) => {
           await getDocumentViewer(filePath).goToReadingPosition(position, options);
@@ -475,25 +480,35 @@ async function initializeApp(): Promise<void> {
           const tab = tabManager?.getTabs().find((item) => item.filePath === filePath);
           return tab ? (tabManager?.getViewerForTab(tab.id)?.getState().totalPages ?? 0) : 0;
         },
-        applyZoomIntent: async (filePath, zoomIntent) => {
+        applyZoomIntent: async (filePath, zoomIntent, options) => {
           const viewer = getDocumentViewer(filePath);
-          await viewer.setZoomIntent(zoomIntent);
+          await viewer.setZoomIntent(zoomIntent, options);
           return viewer.getState().zoomIntent;
         },
-        applyRelativeZoom: async (filePath, direction) => {
+        applyRelativeZoom: async (filePath, direction, options) => {
           const viewer = getDocumentViewer(filePath);
-          await (direction === 'in' ? viewer.zoomIn() : viewer.zoomOut());
+          await (direction === 'in' ? viewer.zoomIn(options) : viewer.zoomOut(options));
           return viewer.getState().zoomIntent;
         },
-        applyRotation: async (filePath, rotation) => {
-          await getDocumentViewer(filePath).setRotation(rotation);
+        applyRotation: async (filePath, rotation, options) => {
+          await getDocumentViewer(filePath).setRotation(rotation, options);
         },
-        applyViewMode: async (filePath, viewMode) => {
-          await getDocumentViewer(filePath).setViewMode(viewMode);
+        applyViewMode: async (filePath, viewMode, options) => {
+          await getDocumentViewer(filePath).setViewMode(viewMode, options);
         },
-        applyFilterSettings: async (filePath, filterSettings) => {
-          getDocumentViewer(filePath).applyFilter(buildFilterCSS(filterSettings));
+        applyFilterSettings: async (filePath, filterSettings, options) => {
+          getDocumentViewer(filePath).applyFilter(buildFilterCSS(filterSettings), options);
         },
+      },
+      reopenDocument: async (filePath) => {
+        if (!tabManager) throw new Error('Document Intake is unavailable');
+        await openFiles([filePath], {
+          tabManager,
+          initialFilterSettings: getInitialFilterSettings(),
+          initialViewMode: getInitialViewMode(),
+        });
+        showViewer();
+        await refreshAfterOpen();
       },
       persist: async (snapshot) => {
         if (currentSettings?.general.restorePreviousSession) {
@@ -551,9 +566,6 @@ async function initializeApp(): Promise<void> {
       openPdfAndRefresh,
       printCurrentPDF: () => printCurrentPDF(tabManager),
       openSettings,
-      getInitialFilterSettings,
-      getInitialViewMode,
-      applyWindowAfterOpen,
       updateTabBarVisibility: updateTabBar,
       updateUI: updateUIForTab,
       openSearch: () => searchController?.open(),

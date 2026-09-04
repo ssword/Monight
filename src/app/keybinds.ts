@@ -1,11 +1,8 @@
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 import { debugLog } from '../lib/debug-log';
-import type { ViewMode } from '../lib/document-features';
 import { type DispatchReaderAction, readerAction } from '../reader/reader-actions';
-import type { FilterSettings } from '../scripts/filters';
 import type { KeybindManager } from '../scripts/keybind-manager';
 import type { TabManager } from '../scripts/tabs';
-import { openFiles } from './file-actions';
 import { withActiveViewer } from './viewer-helpers';
 
 interface KeybindContext {
@@ -14,9 +11,6 @@ interface KeybindContext {
   openPdfAndRefresh: () => Promise<void>;
   printCurrentPDF: () => Promise<void>;
   openSettings: () => Promise<void>;
-  getInitialFilterSettings: () => FilterSettings;
-  getInitialViewMode: () => ViewMode;
-  applyWindowAfterOpen: () => Promise<void>;
   updateTabBarVisibility: () => void;
   updateUI: () => void;
   openSearch: () => void;
@@ -33,9 +27,6 @@ export function registerKeybindActions({
   openPdfAndRefresh,
   printCurrentPDF,
   openSettings,
-  getInitialFilterSettings,
-  getInitialViewMode,
-  applyWindowAfterOpen,
   updateTabBarVisibility,
   updateUI,
   openSearch,
@@ -70,27 +61,14 @@ export function registerKeybindActions({
   keybindManager.registerAction('closeTab', async () => {
     const activeTab = tabManager?.getActiveTab();
     if (activeTab) {
-      await tabManager?.closeTab(activeTab.id);
+      await dispatchReaderAction({ type: 'closeDocument', filePath: activeTab.filePath });
       updateTabBarVisibility();
     }
   });
 
   keybindManager.registerAction('reopenTab', async () => {
-    if (!tabManager) return;
-    const filePath = await tabManager.reopenLastClosed();
-    if (filePath) {
-      try {
-        await openFiles([filePath], {
-          tabManager,
-          initialFilterSettings: getInitialFilterSettings(),
-          initialViewMode: getInitialViewMode(),
-        });
-        updateTabBarVisibility();
-        await applyWindowAfterOpen();
-      } catch (error) {
-        console.error('Error reopening tab:', error);
-      }
-    }
+    await dispatchReaderAction({ type: 'reopenLastClosedDocument' });
+    updateTabBarVisibility();
   });
 
   keybindManager.registerAction('nextTab', async () => {

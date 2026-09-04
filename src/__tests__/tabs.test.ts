@@ -306,11 +306,34 @@ describe('Document navigation', () => {
     const third = await manager.createTab('/tmp/three.pdf', 'three.pdf', new Uint8Array([3]));
 
     await manager.activateTab(second.id);
-    await manager.closeTab(second.id);
+    await manager.projectDocumentClose(second.filePath, third.filePath);
     expect(manager.getActiveTab()?.filePath).toBe('/tmp/three.pdf');
 
-    await manager.closeTab(third.id);
+    await manager.projectDocumentClose(third.filePath, first.filePath);
     expect(manager.getActiveTab()?.filePath).toBe(first.filePath);
+  });
+
+  it('routes close requests through Reader Actions before projecting the selected neighbor', async () => {
+    const onDocumentCloseRequested = vi.fn(async () => undefined);
+    const manager = new TabManager(vi.fn(), undefined, undefined, {
+      onDocumentCloseRequested,
+    });
+    const first = await manager.createTab('/tmp/one.pdf', 'one.pdf', new Uint8Array([1]));
+    const second = await manager.createTab('/tmp/two.pdf', 'two.pdf', new Uint8Array([2]));
+
+    await manager.activateTab(first.id);
+    const destroy = vi.spyOn(manager.getViewerForTab(first.id) as PDFViewer, 'destroy');
+    await manager.closeTab(first.id);
+
+    expect(onDocumentCloseRequested).toHaveBeenCalledWith('/tmp/one.pdf');
+    expect(manager.size).toBe(2);
+    expect(destroy).not.toHaveBeenCalled();
+
+    await manager.projectDocumentClose('/tmp/one.pdf', '/tmp/two.pdf');
+
+    expect(destroy).toHaveBeenCalledOnce();
+    expect(manager.getTabs().map((tab) => tab.filePath)).toEqual(['/tmp/two.pdf']);
+    expect(manager.getActiveTab()?.filePath).toBe(second.filePath);
   });
 
   it('projects the authoritative Reading Session order into the tab strip', async () => {

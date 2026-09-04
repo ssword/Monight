@@ -259,4 +259,23 @@ describe('Tauri drag and drop events', () => {
 
     expect(dispatchReaderAction).toHaveBeenCalledWith({ type: 'zoomIn' });
   });
+
+  it('dispatches native menu close as a semantic Reader Action', async () => {
+    const dispatchReaderAction = vi.fn(async () => undefined);
+    await setupTauriListeners(
+      context({
+        tabManager: {
+          getActiveTab: () => ({ filePath: '/docs/report.pdf' }),
+        } as never,
+        dispatchReaderAction,
+      }),
+    );
+
+    await mocks.getListener('menu-close-tab')?.();
+
+    expect(dispatchReaderAction).toHaveBeenCalledWith({
+      type: 'closeDocument',
+      filePath: '/docs/report.pdf',
+    });
+  });
 });
