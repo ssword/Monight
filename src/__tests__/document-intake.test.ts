@@ -165,6 +165,58 @@ describe('Document Intake', () => {
     expect(events).toEqual(['describe', 'read', 'open', 'observe', 'observer-error']);
   });
 
+  it('notifies history for successful explicit opens and duplicate reactivation only', async () => {
+    let open = false;
+    const onSucceeded = vi.fn();
+    const intake = createDocumentIntake({
+      source: {
+        describe: async () => ({ canonicalPath: '/docs/report.pdf', title: 'report.pdf' }),
+        read: async () => new Uint8Array([1]),
+      },
+      runtime: {
+        isOpen: () => open,
+        activate: vi.fn(async () => undefined),
+        open: vi.fn(async () => {
+          open = true;
+        }),
+        goToPage: vi.fn(),
+      },
+      onSucceeded,
+    });
+
+    await intake.open(['/docs/report.pdf']);
+    await intake.open(['/docs/report.pdf']);
+
+    expect(onSucceeded.mock.calls.map(([outcome]) => outcome.status)).toEqual([
+      'opened',
+      'activated',
+    ]);
+  });
+
+  it('does not notify history for failed or cancelled intake', async () => {
+    const onSucceeded = vi.fn();
+    const intake = createDocumentIntake({
+      source: {
+        describe: async (path) => ({ canonicalPath: path, title: 'report.pdf' }),
+        read: async (path) => {
+          throw new Error(path.includes('cancelled') ? 'Password entry cancelled' : 'read failed');
+        },
+      },
+      runtime: {
+        isOpen: () => false,
+        activate: vi.fn(),
+        open: vi.fn(),
+        goToPage: vi.fn(),
+      },
+      onSucceeded,
+    });
+
+    const result = await intake.open(['/docs/failed.pdf', '/docs/cancelled.pdf']);
+
+    expect(result).toMatchObject({ opened: 0, activated: 0, failed: 2 });
+    expect(onSucceeded).not.toHaveBeenCalled();
+  });
+
   it('reports foreground readiness before remaining intake completes', async () => {
     let releaseSecond: (() => void) | undefined;
     const intake = createDocumentIntake({

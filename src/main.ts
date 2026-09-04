@@ -22,6 +22,7 @@ import {
 import { registerKeybindActions } from './app/keybinds';
 import { PresentationController } from './app/presentation-controller';
 import { createReadingSessionStorage } from './app/reading-session-storage';
+import { createRecentDocumentStorage } from './app/recent-document-storage';
 import { SearchController } from './app/search-controller';
 import { SidebarController } from './app/sidebar-controller';
 import { restoreReadingSessionAtStartup } from './app/startup-restoration';
@@ -37,7 +38,7 @@ import {
 } from './app/ui';
 import { registerReadingSessionCloseGuard } from './app/window-lifecycle';
 import { debugLog } from './lib/debug-log';
-import { type RecentFile, updateRecentFiles, type ViewMode } from './lib/document-features';
+import type { ViewMode } from './lib/document-features';
 import type { PdfLinkTarget } from './lib/pdf-links';
 import { type AnnotationAuthority, loadAnnotations } from './reader/annotations';
 import {
@@ -53,6 +54,7 @@ import {
   loadReadingSession,
   type ReadingSessionStorage,
 } from './reader/reading-session-store';
+import { loadRecentDocuments, type RecentDocumentAuthority } from './reader/recent-documents';
 import { buildFilterCSS, type FilterSettings, PRESETS } from './scripts/filters';
 import { KeybindManager } from './scripts/keybind-manager';
 import { type MoonightSettings, SettingsManager } from './scripts/settings';
@@ -86,6 +88,7 @@ let readerActions: ReaderActions | null = null;
 let readingSessionStorage: ReadingSessionStorage | null = null;
 let restoredReadingSession: PersistedReadingSession | null = null;
 let annotationAuthority: AnnotationAuthority | null = null;
+let recentDocumentAuthority: RecentDocumentAuthority | null = null;
 
 // Global keybind manager instance
 let keybindManager: KeybindManager | null = null;
@@ -214,23 +217,13 @@ const resolveDocumentLinkTarget = async (filePath: string, target: PdfLinkTarget
   return (await readerActions?.query(filePath)?.resolveLinkTarget(target)) ?? null;
 };
 
-const rememberRecentFile = (filePath: string, title: string): void => {
-  const manager = settingsManager;
-  if (!manager || !currentSettings) return;
-  const opened: RecentFile = { filePath, title, openedAt: Date.now() };
-  const recentFiles = updateRecentFiles(currentSettings.recentFiles, opened);
-  currentSettings = { ...currentSettings, recentFiles };
-  renderRecentFiles(recentFiles);
-  void manager.set('recentFiles', recentFiles).catch((error) => {
-    console.error('Failed to save recent files:', error);
-  });
+const rememberRecentDocument = (filePath: string, title: string): void => {
+  recentDocumentAuthority?.record({ filePath, title, openedAt: Date.now() });
 };
 
 const clearRecentFiles = async (): Promise<void> => {
-  if (!settingsManager || !currentSettings) return;
-  currentSettings = { ...currentSettings, recentFiles: [] };
-  renderRecentFiles([]);
-  await settingsManager.set('recentFiles', []);
+  recentDocumentAuthority?.clear();
+  await recentDocumentAuthority?.flush();
 };
 
 const openRecentFile = async (filePath: string): Promise<void> => {
@@ -293,6 +286,7 @@ const flushReaderState = async (): Promise<void> => {
   }
 
   await annotationAuthority?.flush();
+  await recentDocumentAuthority?.flush();
 };
 
 const restoreStartupReadingSession = async (
@@ -357,6 +351,17 @@ async function initializeApp(): Promise<void> {
     settingsManager = new SettingsManager();
     const settings = await settingsManager.load();
     currentSettings = settings;
+    recentDocumentAuthority = await loadRecentDocuments(
+      createRecentDocumentStorage(settingsManager),
+      {
+        onPersistenceError: (error) => {
+          console.error('Recent Documents persistence failed:', error);
+          showToast('Recent Documents could not be saved. Monight will retry.', 'error');
+        },
+        onChanged: renderRecentFiles,
+      },
+    );
+    renderRecentFiles(recentDocumentAuthority.snapshot());
     annotationAuthority = await loadAnnotations(createAnnotationStorage(settingsManager), {
       onPersistenceError: (error) => {
         console.error('Annotation persistence failed:', error);
@@ -386,7 +391,6 @@ async function initializeApp(): Promise<void> {
     if (!settings.general.restorePreviousSession) {
       restoredReadingSession = EMPTY_READING_SESSION;
     }
-    renderRecentFiles(settings.recentFiles);
     debugLog('Settings loaded:', settings);
 
     // Initialize tab manager
@@ -432,7 +436,7 @@ async function initializeApp(): Promise<void> {
           });
           if (outcome?.status === 'failure') throw outcome.error;
         },
-        onDocumentOpened: (tab) => rememberRecentFile(tab.filePath, tab.title),
+        onDocumentOpened: (tab) => rememberRecentDocument(tab.filePath, tab.title),
         onDocumentClosed: async (filePath) => {
           await readerActions?.dispatch({ type: 'removeDocument', filePath });
         },
@@ -665,7 +669,6 @@ async function initializeApp(): Promise<void> {
           updated.keybinds.Settings.binds = ['Cmd+,'];
         }
         currentSettings = updated;
-        renderRecentFiles(updated.recentFiles);
         sidebarController?.setThumbnailsEnabled(updated.general.displayThumbs);
         if (!updated.general.rememberLastFilter && lastFilterSaveTimer !== null) {
           clearTimeout(lastFilterSaveTimer);
@@ -681,15 +684,15 @@ async function initializeApp(): Promise<void> {
         }
       },
       clearReadingHistory: async () => {
-        if (!settingsManager || !currentSettings) return;
-        await settingsManager.clearReadingHistory();
-        currentSettings = { ...currentSettings, recentFiles: [] };
+        if (!settingsManager) return;
+        await settingsManager.clearPersistedReadingSession();
         restoredReadingSession = {
           schemaVersion: 2,
           activeDocumentPath: null,
           documents: [],
         };
-        renderRecentFiles([]);
+        recentDocumentAuthority?.clear();
+        await recentDocumentAuthority?.flush();
         annotationAuthority?.clear();
         await annotationAuthority?.flush();
       },
@@ -717,7 +720,8 @@ async function initializeApp(): Promise<void> {
       async () =>
         (await requestConfirmation({
           title: 'Reader state not saved',
-          message: 'Monight could not save the latest Reading Session or Annotations.',
+          message:
+            'Monight could not save the latest Reading Session, Recent Documents, or Annotations.',
           confirmLabel: 'Retry save',
           cancelLabel: 'Quit without saving',
         }))

@@ -1,10 +1,11 @@
 import { Store } from '@tauri-apps/plugin-store';
-import type { PdfAnnotation, RecentFile, ViewMode } from '../lib/document-features';
+import type { PdfAnnotation, ViewMode } from '../lib/document-features';
 import type {
   PersistedReadingSession,
   RestorableReadingPosition,
   ZoomIntent,
 } from '../reader/reader-actions';
+import type { RecentDocument } from '../reader/recent-documents';
 import type { FilterSettings } from './filters';
 
 export interface SavedTabSession {
@@ -50,14 +51,13 @@ export interface MoonightSettings {
   };
   keybinds: Record<string, KeybindConfig>;
   lastFilter?: FilterSettings;
-  recentFiles: RecentFile[];
 }
 
 export const SETTINGS_SCHEMA_VERSION = 1;
 
 export type SettingsOwner = 'main' | 'settings';
 type SettingsWindowKey = 'general' | 'keybinds';
-type MainWindowKey = 'recentFiles' | 'lastFilter';
+type MainWindowKey = 'lastFilter';
 type OwnedKey<Owner extends SettingsOwner> = Owner extends 'settings'
   ? SettingsWindowKey
   : MainWindowKey;
@@ -65,6 +65,7 @@ type OwnedKey<Owner extends SettingsOwner> = Owner extends 'settings'
 interface LegacyMoonightSettings extends Partial<MoonightSettings> {
   version?: string;
   lastSession?: ReadingSession;
+  recentFiles?: RecentDocument[];
   annotations?: Record<string, PdfAnnotation[]>;
 }
 
@@ -241,7 +242,6 @@ export const DEFAULT_SETTINGS: MoonightSettings = {
       action: 'presentationMode',
     },
   },
-  recentFiles: [],
 };
 
 const EMPTY_READING_SESSION: PersistedReadingSession = {
@@ -316,7 +316,7 @@ export class SettingsManager<Owner extends SettingsOwner = 'main'> {
       readingSession:
         (await store.get<PersistedReadingSession>('readingSession')) ??
         migrateLegacyReadingSession(legacy?.lastSession),
-      recentFiles: (await store.get<RecentFile[]>('recentFiles')) ?? legacy?.recentFiles ?? [],
+      recentFiles: (await store.get<RecentDocument[]>('recentFiles')) ?? legacy?.recentFiles ?? [],
       annotations:
         (await store.get<Record<string, PdfAnnotation[]>>('annotations')) ??
         legacy?.annotations ??
@@ -340,16 +340,14 @@ export class SettingsManager<Owner extends SettingsOwner = 'main'> {
     try {
       const store = await this.initStore();
       await this.ensureMigrated(store);
-      const [general, keybinds, recentFiles, lastFilter] = await Promise.all([
+      const [general, keybinds, lastFilter] = await Promise.all([
         store.get<MoonightSettings['general']>('general'),
         store.get<MoonightSettings['keybinds']>('keybinds'),
-        store.get<RecentFile[]>('recentFiles'),
         store.get<FilterSettings | null>('lastFilter'),
       ]);
       this.settings = {
         general: { ...DEFAULT_SETTINGS.general, ...general },
         keybinds: { ...DEFAULT_SETTINGS.keybinds, ...keybinds },
-        recentFiles: recentFiles ?? [],
         ...(lastFilter ? { lastFilter } : {}),
       };
       return structuredClone(this.settings);
@@ -414,19 +412,25 @@ export class SettingsManager<Owner extends SettingsOwner = 'main'> {
     await store.save();
   }
 
+  async readLegacyRecentDocuments(): Promise<unknown> {
+    const store = await this.initStore();
+    await this.ensureMigrated(store);
+    return await store.get('recentFiles');
+  }
+
+  async removeLegacyRecentDocuments(): Promise<void> {
+    this.assertMainOwnership('Recent Documents');
+    const store = await this.initStore();
+    await store.delete('recentFiles');
+    await store.save();
+  }
+
   async reset(): Promise<void> {
     if (this.owner !== 'settings') throw new Error('Only the Settings window can reset settings');
     const defaults = cloneDefaults();
     await this.writeConcern('general', defaults.general);
     await this.writeConcern('keybinds', defaults.keybinds);
     this.settings = defaults;
-  }
-
-  async clearReadingHistory(): Promise<void> {
-    this.assertMainOwnership('reading history');
-    await this.writeConcern('recentFiles', []);
-    await this.writeConcern('readingSession', EMPTY_READING_SESSION);
-    this.settings = { ...this.settings, recentFiles: [] };
   }
 
   private async writeConcern(key: string, value: unknown): Promise<void> {
@@ -439,7 +443,7 @@ export class SettingsManager<Owner extends SettingsOwner = 'main'> {
     const allowed =
       this.owner === 'settings'
         ? new Set<string>(['general', 'keybinds'])
-        : new Set<string>(['recentFiles', 'lastFilter']);
+        : new Set<string>(['lastFilter']);
     if (!allowed.has(key)) {
       const label = this.owner === 'settings' ? 'Settings' : 'Main';
       throw new Error(`${label} window cannot write ${key}`);

@@ -499,7 +499,7 @@ mod tests {
     }
 
     #[test]
-    fn startup_snapshot_authorizes_recent_and_reading_session_documents_once() {
+    fn startup_snapshots_authorize_dedicated_recent_and_reading_session_documents_once() {
         let fixture =
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/sample.pdf");
         let test_directory =
@@ -511,18 +511,22 @@ mod tests {
         for target in [&recent_document, &session_document, &added_after_startup] {
             std::fs::copy(&fixture, target).expect("fixture copy should be created");
         }
-        let mut persisted_store = serde_json::json!({
-            "settings": {
-                "recentFiles": [{ "filePath": recent_document }]
-            },
+        let persisted_store = serde_json::json!({
             "readingSession": {
                 "documents": [{ "filePath": session_document }]
             },
         });
+        let mut persisted_recent_documents = serde_json::json!({
+            "recentDocuments": {
+                "schemaVersion": 1,
+                "documents": [{ "filePath": recent_document }]
+            }
+        });
         let document_intake = DocumentIntake::default();
 
         document_intake.authorize_persisted_snapshot(&persisted_store);
-        persisted_store["settings"]["recentFiles"] =
+        document_intake.authorize_persisted_snapshot(&persisted_recent_documents);
+        persisted_recent_documents["recentDocuments"]["documents"] =
             serde_json::json!([{ "filePath": added_after_startup }]);
 
         assert!(read_pdf_bytes(

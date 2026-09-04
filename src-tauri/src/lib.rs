@@ -234,10 +234,13 @@ pub fn run() {
             }
         })
         .setup(|app| {
-            let store = app.store("settings.json")?;
-            let persisted_store = serde_json::Value::Object(store.entries().into_iter().collect());
             let document_intake = app.state::<document_intake::DocumentIntake>();
-            document_intake.authorize_persisted_snapshot(&persisted_store);
+            for store_name in ["settings.json", "recent-documents.json"] {
+                let store = app.store(store_name)?;
+                let persisted_store =
+                    serde_json::Value::Object(store.entries().into_iter().collect());
+                document_intake.authorize_persisted_snapshot(&persisted_store);
+            }
 
             let window = app.get_webview_window("main").unwrap();
             let app_handle = app.handle();

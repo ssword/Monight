@@ -99,7 +99,8 @@ describe('settings storage', () => {
 
     expect(settings.general.displayThumbs).toBe(false);
     expect(settings.keybinds.OpenFile.binds).toEqual(['Ctrl+Shift+O']);
-    expect(settings.recentFiles).toEqual(legacy.recentFiles);
+    expect(settings).not.toHaveProperty('recentFiles');
+    expect(store.values.get('recentFiles')).toEqual(legacy.recentFiles);
     expect(settings).not.toHaveProperty('annotations');
     expect(store.values.get('annotations')).toEqual(legacy.annotations);
     expect(settings.lastFilter).toEqual(legacy.lastFilter);
@@ -141,6 +142,10 @@ describe('settings storage', () => {
     const mainWindow = new SettingsManager('main');
     await mainWindow.load();
     await expect(
+      // @ts-expect-error Recent Documents belong to their dedicated authority
+      mainWindow.set('recentFiles', []),
+    ).rejects.toThrow('Main window cannot write recentFiles');
+    await expect(
       // @ts-expect-error Annotations belong to their dedicated authority
       mainWindow.set('annotations', {}),
     ).rejects.toThrow('Main window cannot write annotations');
@@ -176,10 +181,10 @@ describe('settings storage', () => {
     );
   });
 
-  it('clears only Recent Documents and Reading Session concerns from the main window', async () => {
+  it('clears only the Reading Session concern from the settings store', async () => {
     const mainWindow = new SettingsManager('main');
     await mainWindow.load();
-    await mainWindow.set('recentFiles', [
+    store.values.set('recentFiles', [
       { filePath: '/books/one.pdf', title: 'one.pdf', openedAt: 42 },
     ]);
     await mainWindow.writePersistedReadingSession({
@@ -197,9 +202,11 @@ describe('settings storage', () => {
     const general = structuredClone(store.values.get('general'));
 
     store.writes.length = 0;
-    await mainWindow.clearReadingHistory();
+    await mainWindow.clearPersistedReadingSession();
 
-    expect(store.values.get('recentFiles')).toEqual([]);
+    expect(store.values.get('recentFiles')).toEqual([
+      { filePath: '/books/one.pdf', title: 'one.pdf', openedAt: 42 },
+    ]);
     expect(store.values.get('annotations')).toEqual({});
     expect(store.values.get('readingSession')).toEqual({
       schemaVersion: 2,
@@ -208,7 +215,24 @@ describe('settings storage', () => {
     });
     expect(store.values.get('keybinds')).toEqual(keybinds);
     expect(store.values.get('general')).toEqual(general);
-    expect(store.writes).toEqual(['recentFiles', 'readingSession']);
+    expect(store.writes).toEqual(['readingSession']);
+  });
+
+  it('exposes legacy Recent Documents only for verified dedicated-store migration', async () => {
+    const legacy = [{ filePath: '/books/one.pdf', title: 'one.pdf', openedAt: 42 }];
+    store.reset({
+      storageSchemaVersion: SETTINGS_SCHEMA_VERSION,
+      recentFiles: legacy,
+    });
+    const mainWindow = new SettingsManager('main');
+
+    await expect(mainWindow.readLegacyRecentDocuments()).resolves.toEqual(legacy);
+    expect(store.values.get('recentFiles')).toEqual(legacy);
+
+    await mainWindow.removeLegacyRecentDocuments();
+
+    expect(store.values.has('recentFiles')).toBe(false);
+    expect(store.writes).toContain('delete:recentFiles');
   });
 
   it('exposes legacy Annotations only for verified dedicated-store migration', async () => {

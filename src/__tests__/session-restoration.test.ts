@@ -84,6 +84,34 @@ function createForegroundSignal() {
 }
 
 describe('Reading Session restoration', () => {
+  it('does not emit explicit Recent Document observer semantics', async () => {
+    const onSucceeded = vi.fn();
+    const runtime: DocumentRuntimeIntake = {
+      isOpen: vi.fn(() => false),
+      activate: vi.fn(async () => undefined),
+      open: vi.fn(async () => undefined),
+      goToPage: vi.fn(async () => undefined),
+      canonicalizeDocumentPaths: vi.fn(async () => undefined),
+      setDocumentOrder: vi.fn(),
+    };
+    const intake = createDocumentIntake({
+      source: {
+        describe: async (path) => ({ canonicalPath: path, title: 'restored.pdf' }),
+        read: async () => new Uint8Array([1]),
+      },
+      runtime,
+      onSucceeded,
+    });
+
+    await intake.restore({
+      schemaVersion: 2,
+      activeDocumentPath: '/docs/restored.pdf',
+      documents: [savedDocument('/docs/restored.pdf', 3)],
+    });
+
+    expect(onSucceeded).not.toHaveBeenCalled();
+  });
+
   it('intakes the explicit startup Document first with saved Visual State and page precedence', async () => {
     const events: string[] = [];
     const { intake, runtime } = createRestoringIntake(

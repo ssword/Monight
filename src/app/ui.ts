@@ -1,8 +1,5 @@
-import {
-  viewModeIcon as getViewModeIcon,
-  type RecentFile,
-  viewModeLabel,
-} from '../lib/document-features';
+import { viewModeIcon as getViewModeIcon, viewModeLabel } from '../lib/document-features';
+import type { RecentDocument } from '../reader/recent-documents';
 import { type FilterSettings, PRESETS } from '../scripts/filters';
 import type { TabManager } from '../scripts/tabs';
 
@@ -22,7 +19,7 @@ export function showViewer(): void {
   if (viewer) viewer.classList.remove('hidden');
 }
 
-export function renderRecentFiles(recentFiles: readonly RecentFile[]): void {
+export function renderRecentFiles(recentFiles: readonly RecentDocument[]): void {
   const section = document.getElementById('recent-files-section');
   const list = document.getElementById('recent-files-list');
   if (!section || !list) return;
