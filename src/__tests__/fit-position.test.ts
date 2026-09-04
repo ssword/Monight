@@ -67,4 +67,29 @@ describe('fit operations in continuous mode', () => {
 
     expect(order).toEqual(['recalculate', 'render', 'scroll:5']);
   });
+
+  it.each([
+    ['fit-width' as const, 2, 1],
+    ['fit-page' as const, 1.075, 0.575],
+  ])('recalculates %s Zoom Intent for the current viewport', async (kind, wideZoom, narrowZoom) => {
+    const viewer = await makeContinuousViewer(5);
+    vi.spyOn(internals(viewer), 'calculateAllPageDimensions').mockResolvedValue();
+    vi.spyOn(internals(viewer), 'renderVisiblePages').mockResolvedValue();
+    vi.spyOn(viewer, 'scrollToPage').mockResolvedValue();
+
+    await viewer.setZoomIntent({ kind });
+    expect(viewer.getState().zoom).toBeCloseTo(wideZoom);
+
+    Object.assign(
+      (viewer as unknown as { container: { clientWidth: number; clientHeight: number } }).container,
+      {
+        clientWidth: 640,
+        clientHeight: 500,
+      },
+    );
+    await viewer.setZoomIntent({ kind });
+
+    expect(viewer.getState().zoom).toBeCloseTo(narrowZoom);
+    expect(viewer.getState().zoomIntent).toEqual({ kind });
+  });
 });

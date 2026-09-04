@@ -1,6 +1,7 @@
 import { viewModeIcon, viewModeLabel } from '../lib/document-features';
-import { buildFilterCSS } from '../scripts/filters';
+import type { RestorableReadingPosition } from '../reader/reader-actions';
 import type { SliderManager } from '../scripts/sliders';
+import { projectTabStateToViewer } from '../scripts/tab-reading-session';
 import type { TabData, TabManager } from '../scripts/tabs';
 import { updateActivePresetButton } from './ui';
 
@@ -9,19 +10,15 @@ export async function restoreTabState(
   tabManager: TabManager | null,
   sliderManager: SliderManager | null,
   tab: TabData,
+  readingPosition: RestorableReadingPosition = {
+    page: tab.currentPage,
+    legacyOffset: tab.scrollPosition,
+  },
 ): Promise<void> {
   const viewer = tabManager?.getViewerForTab(tab.id);
   if (!viewer) return;
 
-  // Apply saved filter
-  viewer.applyFilter(buildFilterCSS(tab.filterSettings));
-
-  // Apply geometry while still in single-page mode, then initialize the saved layout once.
-  await viewer.setRotation(tab.rotation);
-  await viewer.setZoom(tab.zoom);
-  await viewer.setViewMode(tab.viewMode);
-  await viewer.goToReadingPosition({ page: tab.currentPage, location: 0 });
-  await viewer.setScrollPosition(tab.scrollPosition);
+  await projectTabStateToViewer(viewer, tab, readingPosition);
 
   // Update slider if initialized
   if (sliderManager?.isInitialized()) {
@@ -58,6 +55,7 @@ export function saveCurrentTabState(
   // Save state to tab
   activeTab.currentPage = state.currentPage;
   activeTab.zoom = state.zoom;
+  activeTab.zoomIntent = state.zoomIntent;
   activeTab.rotation = state.rotation;
   activeTab.scrollPosition = viewer.getScrollPosition();
   activeTab.viewMode = state.viewMode;

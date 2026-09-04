@@ -39,10 +39,14 @@ describe('PresentationController', () => {
   it('enters fullscreen single-page mode and restores the previous view', async () => {
     const { PresentationController } = await import('../app/presentation-controller');
     const viewer = {
-      getState: () => ({ viewMode: 'spread' as const, zoom: 1.75 }),
+      getState: () => ({
+        viewMode: 'spread' as const,
+        zoom: 1.75,
+        zoomIntent: { kind: 'fit-width' as const },
+      }),
       setViewMode: vi.fn(async () => {}),
       fitToPage: vi.fn(async () => {}),
-      setZoom: vi.fn(async () => {}),
+      setZoomIntent: vi.fn(async () => {}),
     };
     const onStateChanged = vi.fn();
     const controller = new PresentationController({
@@ -64,7 +68,7 @@ describe('PresentationController', () => {
     expect(document.body.classList.contains('presentation-mode')).toBe(false);
     expect(currentWindow.setFullscreen).toHaveBeenLastCalledWith(false);
     expect(viewer.setViewMode).toHaveBeenLastCalledWith('spread');
-    expect(viewer.setZoom).toHaveBeenCalledWith(1.75);
-    expect(onStateChanged).toHaveBeenCalledTimes(2);
+    expect(viewer.setZoomIntent).toHaveBeenCalledWith({ kind: 'fit-width' });
+    expect(onStateChanged.mock.calls).toEqual([[true], [false]]);
   });
 });

@@ -231,6 +231,19 @@ describe('gesture zoom preview', () => {
     expect(setZoom).toHaveBeenCalledTimes(1);
   });
 
+  it('dispatches settled gesture zoom through the Reader Action callback', async () => {
+    const { viewer, setZoom } = await makeViewer('continuous');
+    const onZoomIntentRequest = vi.fn(async () => undefined);
+    Object.assign(viewer, { onZoomIntentRequest });
+
+    viewer.handleGestureStart({ preventDefault: vi.fn() });
+    viewer.handleGestureChange({ scale: 1.5, preventDefault: vi.fn() });
+    await vi.advanceTimersByTimeAsync(500);
+
+    expect(onZoomIntentRequest).toHaveBeenCalledWith({ kind: 'manual', scale: 1.5 });
+    expect(setZoom).not.toHaveBeenCalled();
+  });
+
   it('anchors continuous-mode zoom at the pointer position', async () => {
     const { viewer, setZoom } = await makeViewer('continuous');
     viewer.container.scrollTop = 1000;

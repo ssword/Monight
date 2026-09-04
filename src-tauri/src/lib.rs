@@ -3,6 +3,7 @@
 
 use clap::Parser;
 use serde::Serialize;
+use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::Mutex;
 use tauri::{Emitter, Manager};
@@ -26,14 +27,24 @@ struct Cli {
     page: Option<u32>,
 }
 
-/// Payload sent to frontend with CLI arguments
-#[derive(Clone, Serialize, Debug, PartialEq)]
-pub struct CliPayload {
-    files: Vec<String>,
-    page: Option<u32>,
+#[derive(Clone, Copy, Serialize, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub enum ExternalOpenSource {
+    CommandLine,
+    OperatingSystem,
 }
 
-pub struct PendingCliPayload(pub Mutex<Option<CliPayload>>);
+/// Ordered external Document request sent to the frontend intake adapter.
+#[derive(Clone, Serialize, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ExternalOpenPayload {
+    files: Vec<String>,
+    page: Option<u32>,
+    source: ExternalOpenSource,
+}
+
+#[derive(Default)]
+pub struct PendingExternalOpenPayloads(Mutex<VecDeque<ExternalOpenPayload>>);
 
 pub(crate) fn is_supported_extension(path: &std::path::Path) -> bool {
     path.extension()
@@ -42,34 +53,28 @@ pub(crate) fn is_supported_extension(path: &std::path::Path) -> bool {
         .unwrap_or(false)
 }
 
-pub(crate) fn store_pending_payload_inner(state: &PendingCliPayload, payload: CliPayload) {
+pub(crate) fn queue_external_open_payload_inner(
+    state: &PendingExternalOpenPayloads,
+    payload: ExternalOpenPayload,
+) {
     let mut guard = state.0.lock().unwrap();
-    if let Some(existing) = guard.as_mut() {
-        existing.files.extend(payload.files);
-        if existing.page.is_none() {
-            existing.page = payload.page;
-        }
-    } else {
-        *guard = Some(payload);
-    }
+    guard.push_back(payload);
 }
 
-pub(crate) fn take_cli_payload_inner(state: &PendingCliPayload) -> Option<CliPayload> {
+pub(crate) fn take_external_open_payloads_inner(
+    state: &PendingExternalOpenPayloads,
+) -> Vec<ExternalOpenPayload> {
     let mut guard = state.0.lock().unwrap();
-    guard.take()
+    guard.drain(..).collect()
 }
 
-fn store_pending_payload(app: &tauri::AppHandle, payload: CliPayload) {
-    let state = app.state::<PendingCliPayload>();
-    store_pending_payload_inner(state.inner(), payload);
-}
-
-fn dispatch_open_payload(app: &tauri::AppHandle, payload: CliPayload) {
+fn dispatch_external_open_payload(app: &tauri::AppHandle, payload: ExternalOpenPayload) {
     let _ = commands::fit_main_window_for_pdf(app.clone(), true);
-    store_pending_payload(app, payload.clone());
+    let state = app.state::<PendingExternalOpenPayloads>();
+    queue_external_open_payload_inner(state.inner(), payload);
 
     if let Some(window) = app.get_webview_window("main") {
-        let _ = window.emit("cli-open-files", payload);
+        let _ = window.emit("external-open-files-available", ());
         let _ = window.show();
         #[cfg(any(target_os = "windows", target_os = "linux"))]
         let _ = window.unminimize();
@@ -77,24 +82,47 @@ fn dispatch_open_payload(app: &tauri::AppHandle, payload: CliPayload) {
     }
 }
 
-fn payload_from_authorized_paths(files: Vec<String>, page: Option<u32>) -> Option<CliPayload> {
+fn payload_from_requested_paths(
+    files: Vec<String>,
+    page: Option<u32>,
+    source: ExternalOpenSource,
+) -> Option<ExternalOpenPayload> {
     if files.is_empty() {
         None
     } else {
-        Some(CliPayload { files, page })
+        Some(ExternalOpenPayload {
+            files,
+            page,
+            source,
+        })
     }
+}
+
+fn authorize_requested_paths<I>(
+    document_intake: &document_intake::DocumentIntake,
+    files: I,
+) -> Vec<String>
+where
+    I: IntoIterator<Item = PathBuf>,
+{
+    let files = files.into_iter().collect::<Vec<_>>();
+    document_intake.authorize(files.iter().cloned());
+    files
+        .into_iter()
+        .map(|path| path.to_string_lossy().to_string())
+        .collect()
 }
 
 pub(crate) fn payload_from_cli_paths<I>(
     document_intake: &document_intake::DocumentIntake,
     files: I,
     page: Option<u32>,
-) -> Option<CliPayload>
+) -> Option<ExternalOpenPayload>
 where
     I: IntoIterator<Item = PathBuf>,
 {
-    let files = document_intake.authorize(files);
-    payload_from_authorized_paths(files, page)
+    let files = authorize_requested_paths(document_intake, files);
+    payload_from_requested_paths(files, page, ExternalOpenSource::CommandLine)
 }
 
 fn authorize_dropped_paths<I>(document_intake: &document_intake::DocumentIntake, paths: I)
@@ -107,15 +135,18 @@ where
 pub(crate) fn payload_from_opened_urls(
     document_intake: &document_intake::DocumentIntake,
     urls: &[url::Url],
-) -> Option<CliPayload> {
-    let files = document_intake.authorize(urls.iter().filter_map(|url| {
-        if url.scheme() == "file" {
-            url.to_file_path().ok()
-        } else {
-            None
-        }
-    }));
-    payload_from_authorized_paths(files, None)
+) -> Option<ExternalOpenPayload> {
+    let files = authorize_requested_paths(
+        document_intake,
+        urls.iter().filter_map(|url| {
+            if url.scheme() == "file" {
+                url.to_file_path().ok()
+            } else {
+                None
+            }
+        }),
+    );
+    payload_from_requested_paths(files, None, ExternalOpenSource::OperatingSystem)
 }
 
 pub(crate) fn parse_cli_or_default<I, T>(args: I) -> Cli
@@ -138,7 +169,7 @@ pub(crate) fn payload_from_cli_args<I, T>(
     document_intake: &document_intake::DocumentIntake,
     args: I,
     working_directory: Option<&std::path::Path>,
-) -> Option<CliPayload>
+) -> Option<ExternalOpenPayload>
 where
     I: IntoIterator<Item = T>,
     T: Into<std::ffi::OsString> + Clone,
@@ -169,7 +200,7 @@ pub fn run() {
             args,
             Some(working_directory.as_path()),
         ) {
-            dispatch_open_payload(app, payload);
+            dispatch_external_open_payload(app, payload);
         } else if let Some(window) = app.get_webview_window("main") {
             let _ = window.show();
             let _ = window.unminimize();
@@ -181,17 +212,18 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_store::Builder::default().build())
-        .manage(PendingCliPayload(Mutex::new(None)))
+        .manage(PendingExternalOpenPayloads::default())
         .manage(document_intake::DocumentIntake::default())
         .invoke_handler(tauri::generate_handler![
             commands::read_pdf_file,
             commands::open_pdf_dialog,
+            commands::describe_pdf_file,
             commands::get_file_name,
             commands::get_file_directory,
             commands::open_settings,
             commands::set_print_enabled,
             commands::fit_main_window_for_pdf,
-            commands::take_cli_payload,
+            commands::take_external_open_payloads,
             commands::validate_open_path,
             commands::open_external_url,
         ])
@@ -223,7 +255,7 @@ pub fn run() {
                 println!("Opening files from CLI: {:?}", payload.files);
 
                 // Store and emit event (frontend will also pull pending on ready)
-                dispatch_open_payload(app_handle, payload);
+                dispatch_external_open_payload(app_handle, payload);
             }
 
             // Show window after setup complete
@@ -246,7 +278,7 @@ pub fn run() {
         if let tauri::RunEvent::Opened { urls } = event {
             let document_intake = app.state::<document_intake::DocumentIntake>();
             if let Some(payload) = payload_from_opened_urls(document_intake.inner(), &urls) {
-                dispatch_open_payload(app, payload);
+                dispatch_external_open_payload(app, payload);
             }
         }
     });
@@ -360,30 +392,51 @@ mod tests {
 
     #[test]
     fn test_pending_cli_payload_flow() {
-        let state = PendingCliPayload(Mutex::new(None));
+        let state = PendingExternalOpenPayloads::default();
 
-        let payload = CliPayload {
-            files: vec!["/tmp/a.pdf".to_string()],
-            page: Some(2),
-        };
-        store_pending_payload_inner(&state, payload.clone());
-        let taken = take_cli_payload_inner(&state).expect("payload should be present");
-        assert_eq!(taken, payload);
-        assert!(take_cli_payload_inner(&state).is_none());
-
-        let payload_a = CliPayload {
+        let payload_a = ExternalOpenPayload {
             files: vec!["/tmp/one.pdf".to_string()],
             page: None,
+            source: ExternalOpenSource::CommandLine,
         };
-        let payload_b = CliPayload {
+        let payload_b = ExternalOpenPayload {
             files: vec!["/tmp/two.pdf".to_string()],
             page: Some(7),
+            source: ExternalOpenSource::CommandLine,
         };
-        store_pending_payload_inner(&state, payload_a);
-        store_pending_payload_inner(&state, payload_b);
-        let merged = take_cli_payload_inner(&state).expect("merged payload should be present");
-        assert_eq!(merged.files, vec!["/tmp/one.pdf", "/tmp/two.pdf"]);
-        assert_eq!(merged.page, Some(7));
+        queue_external_open_payload_inner(&state, payload_a.clone());
+        queue_external_open_payload_inner(&state, payload_b.clone());
+        let taken = take_external_open_payloads_inner(&state);
+        assert_eq!(taken, vec![payload_a, payload_b]);
+
+        let live_payload = ExternalOpenPayload {
+            files: vec!["/tmp/live.pdf".to_string()],
+            page: Some(3),
+            source: ExternalOpenSource::CommandLine,
+        };
+        queue_external_open_payload_inner(&state, live_payload.clone());
+        assert_eq!(
+            take_external_open_payloads_inner(&state),
+            vec![live_payload]
+        );
+    }
+
+    #[test]
+    fn external_open_payload_serializes_for_the_frontend_adapter() {
+        let payload = ExternalOpenPayload {
+            files: vec!["/tmp/report.pdf".to_string()],
+            page: Some(6),
+            source: ExternalOpenSource::CommandLine,
+        };
+
+        assert_eq!(
+            serde_json::to_value(payload).expect("payload should serialize"),
+            serde_json::json!({
+                "files": ["/tmp/report.pdf"],
+                "page": 6,
+                "source": "commandLine",
+            })
+        );
     }
 
     #[test]
@@ -419,12 +472,40 @@ mod tests {
 
         assert_eq!(payload.files, vec![fixture.to_string_lossy().to_string()]);
         assert_eq!(payload.page, None);
+        assert_eq!(payload.source, ExternalOpenSource::OperatingSystem);
         assert!(commands::read_pdf_bytes(payload.files[0].clone(), &document_intake).is_ok());
         assert!(
             commands::read_pdf_bytes(denied.to_string_lossy().to_string(), &document_intake)
                 .is_err()
         );
         std::fs::remove_file(denied).expect("test copy should be removed");
+    }
+
+    #[test]
+    fn os_opened_event_preserves_missing_paths_for_independent_frontend_outcomes() {
+        let fixture =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/sample.pdf");
+        let missing = fixture.with_file_name("missing-associated.pdf");
+        let urls = [
+            url::Url::from_file_path(&missing).expect("missing path should become a file URL"),
+            url::Url::from_file_path(&fixture).expect("fixture should become a file URL"),
+        ];
+        let document_intake = document_intake::DocumentIntake::default();
+
+        let payload = payload_from_opened_urls(&document_intake, &urls)
+            .expect("file association paths should be forwarded in order");
+
+        assert_eq!(
+            payload.files,
+            vec![
+                missing.to_string_lossy().to_string(),
+                fixture.to_string_lossy().to_string(),
+            ]
+        );
+        assert!(
+            commands::read_pdf_bytes(fixture.to_string_lossy().to_string(), &document_intake)
+                .is_ok()
+        );
     }
 
     #[test]
@@ -438,6 +519,7 @@ mod tests {
             .expect("CLI Document should be accepted");
 
         assert_eq!(payload.page, Some(4));
+        assert_eq!(payload.source, ExternalOpenSource::CommandLine);
         assert!(commands::read_pdf_bytes(payload.files[0].clone(), &document_intake).is_ok());
         assert!(
             commands::read_pdf_bytes(denied.to_string_lossy().to_string(), &document_intake)
@@ -472,6 +554,34 @@ mod tests {
         assert_eq!(payload.files, vec![expected.to_string_lossy().to_string()]);
         assert_eq!(payload.page, Some(5));
         assert!(commands::read_pdf_bytes(payload.files[0].clone(), &document_intake).is_ok());
+    }
+
+    #[test]
+    fn cli_preserves_requested_order_and_does_not_transfer_page_past_an_invalid_first_path() {
+        let fixture =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/sample.pdf");
+        let missing = fixture.with_file_name("missing-first.pdf");
+        let document_intake = document_intake::DocumentIntake::default();
+
+        let payload = payload_from_cli_paths(
+            &document_intake,
+            [missing.clone(), fixture.clone()],
+            Some(9),
+        )
+        .expect("requested CLI paths should be forwarded for independent intake outcomes");
+
+        assert_eq!(
+            payload.files,
+            vec![
+                missing.to_string_lossy().to_string(),
+                fixture.to_string_lossy().to_string(),
+            ]
+        );
+        assert_eq!(payload.page, Some(9));
+        assert!(
+            commands::read_pdf_bytes(fixture.to_string_lossy().to_string(), &document_intake)
+                .is_ok()
+        );
     }
 
     #[test]

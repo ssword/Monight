@@ -1,22 +1,5 @@
-import type { ViewMode } from '../lib/document-features';
-import type { FilterSettings } from '../scripts/filters';
 import type { ReadingSession, SavedTabSession } from '../scripts/settings';
-import type { SliderManager } from '../scripts/sliders';
 import type { TabData, TabManager } from '../scripts/tabs';
-import { openFiles } from './file-actions';
-import { restoreTabState } from './tab-state';
-
-export interface RestoreSessionResult {
-  opened: number;
-  failed: number;
-}
-
-interface RestoreSessionOptions {
-  tabManager: TabManager;
-  sliderManager: SliderManager | null;
-  getInitialFilterSettings: () => FilterSettings;
-  getInitialViewMode: () => ViewMode;
-}
 
 function toSavedTabSession(tab: TabData): SavedTabSession {
   return {
@@ -25,8 +8,10 @@ function toSavedTabSession(tab: TabData): SavedTabSession {
     filterSettings: { ...tab.filterSettings },
     currentPage: tab.currentPage,
     zoom: tab.zoom,
+    zoomIntent: tab.zoomIntent,
     rotation: tab.rotation,
     scrollPosition: tab.scrollPosition,
+    readingPosition: { page: tab.currentPage, legacyOffset: tab.scrollPosition },
     viewMode: tab.viewMode,
   };
 }
@@ -39,68 +24,4 @@ export function captureReadingSession(tabManager: TabManager | null): ReadingSes
     activeFilePath: activeTab?.filePath ?? null,
     tabs: tabManager?.getTabs().map(toSavedTabSession) ?? [],
   };
-}
-
-async function restoreSavedTab(
-  savedTab: SavedTabSession,
-  {
-    tabManager,
-    sliderManager,
-    getInitialFilterSettings,
-    getInitialViewMode,
-  }: RestoreSessionOptions,
-): Promise<boolean> {
-  const opened = await openFiles([savedTab.filePath], {
-    tabManager,
-    continueOnError: true,
-    onError: (message) => console.warn(message),
-    initialFilterSettings: savedTab.filterSettings ?? getInitialFilterSettings(),
-    initialViewMode: savedTab.viewMode ?? getInitialViewMode(),
-  });
-
-  const restoredTab = tabManager.getTabs().find((tab) => tab.filePath === savedTab.filePath);
-
-  if (opened === 0 || !restoredTab) {
-    return false;
-  }
-
-  restoredTab.title = savedTab.title;
-  restoredTab.filterSettings = { ...savedTab.filterSettings };
-  restoredTab.currentPage = savedTab.currentPage;
-  restoredTab.zoom = savedTab.zoom;
-  restoredTab.rotation = savedTab.rotation ?? 0;
-  restoredTab.scrollPosition = savedTab.scrollPosition ?? 0;
-  restoredTab.viewMode = savedTab.viewMode;
-
-  await restoreTabState(tabManager, sliderManager, restoredTab);
-  return true;
-}
-
-export async function restoreReadingSession(
-  session: ReadingSession,
-  options: RestoreSessionOptions,
-): Promise<RestoreSessionResult> {
-  let opened = 0;
-  let failed = 0;
-
-  for (const savedTab of session.tabs) {
-    const restored = await restoreSavedTab(savedTab, options);
-    if (restored) {
-      opened += 1;
-    } else {
-      failed += 1;
-    }
-  }
-
-  if (session.activeFilePath) {
-    const activeTab = options.tabManager
-      .getTabs()
-      .find((tab) => tab.filePath === session.activeFilePath);
-
-    if (activeTab) {
-      await options.tabManager.activateTab(activeTab.id);
-    }
-  }
-
-  return { opened, failed };
 }

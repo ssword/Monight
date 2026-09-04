@@ -1,73 +1,84 @@
 import { invoke } from '@tauri-apps/api/core';
 import { debugLog } from '../lib/debug-log';
 import type { ViewMode } from '../lib/document-features';
+import type { DocumentIntakeOutcome, DocumentIntakeResult } from '../reader/document-intake';
 import type { FilterSettings } from '../scripts/filters';
 import type { TabManager } from '../scripts/tabs';
 import { showToast } from './dialogs';
+import { createDocumentIntakeRuntime } from './document-intake-runtime';
 import { withActiveViewer } from './viewer-helpers';
 
-interface OpenFilesOptions {
+interface IntakeFilesOptions {
   tabManager: TabManager;
-  continueOnError?: boolean;
-  onError?: (message: string) => void;
   initialFilterSettings?: FilterSettings;
   initialViewMode?: ViewMode;
+  page?: number;
+  activate?: boolean;
+}
+
+interface OpenFilesOptions extends IntakeFilesOptions {
+  continueOnError?: boolean;
+  onError?: (message: string) => void;
 }
 
 interface EnsureViewingSizeOptions {
   fillAvailableHeight?: boolean;
 }
 
-export async function openFiles(
+export async function intakeFiles(
   filePaths: string[],
-  {
+  { tabManager, initialFilterSettings, initialViewMode, page, activate = true }: IntakeFilesOptions,
+): Promise<DocumentIntakeResult> {
+  const intake = createDocumentIntakeRuntime({
     tabManager,
-    continueOnError = false,
-    onError,
     initialFilterSettings,
     initialViewMode,
-  }: OpenFilesOptions,
-): Promise<number> {
-  let opened = 0;
+  });
+  return intake.open(filePaths, {
+    ...(page !== undefined ? { page } : {}),
+    activate,
+  });
+}
 
-  for (const filePath of filePaths) {
-    try {
-      const canonicalPath: string = await invoke('validate_open_path', { path: filePath });
+function formatDocumentIntakeFailure(
+  outcome: Extract<DocumentIntakeOutcome, { status: 'failed' }>,
+): string {
+  return `Failed to open ${outcome.requestedPath}: ${outcome.error instanceof Error ? outcome.error.message : 'Unknown error'}`;
+}
 
-      // Check if already open
-      if (tabManager.isFileOpen(canonicalPath)) {
-        debugLog(`File already open: ${canonicalPath}`);
-        continue;
-      }
-
-      // Load PDF data (received as binary ArrayBuffer via Tauri's IPC)
-      const pdfData: ArrayBuffer = await invoke('read_pdf_file', { path: canonicalPath });
-      const fileName: string = await invoke('get_file_name', { path: canonicalPath });
-
-      // Create tab (TabManager handles viewer creation)
-      await tabManager.createTab(
-        canonicalPath,
-        fileName,
-        new Uint8Array(pdfData),
-        initialFilterSettings,
-        initialViewMode ?? 'single',
-      );
-      opened += 1;
-
-      debugLog(`Opened PDF: ${fileName}`);
-    } catch (error) {
-      const message = `Failed to open ${filePath}: ${error instanceof Error ? error.message : 'Unknown error'}`;
-      console.error(message, error);
-      if (onError) {
-        onError(message);
-      }
-      if (!continueOnError) {
-        throw error;
-      }
+export function reportDocumentIntakeOutcomes(
+  result: DocumentIntakeResult,
+  onError?: (message: string) => void,
+): void {
+  for (const outcome of result.outcomes) {
+    if (outcome.status === 'opened') {
+      debugLog(`Opened PDF: ${outcome.filePath}`);
+      continue;
     }
+    if (outcome.status === 'activated') {
+      debugLog(`Document already open: ${outcome.filePath}`);
+      continue;
+    }
+    const message = formatDocumentIntakeFailure(outcome);
+    console.error(message, outcome.error);
+    onError?.(message);
   }
+}
 
-  return opened;
+export async function openFiles(
+  filePaths: string[],
+  { continueOnError = false, onError, ...intakeOptions }: OpenFilesOptions,
+): Promise<number> {
+  const result = await intakeFiles(filePaths, intakeOptions);
+  reportDocumentIntakeOutcomes(result, onError);
+
+  const firstFailure = result.outcomes.find(
+    (outcome): outcome is Extract<DocumentIntakeOutcome, { status: 'failed' }> =>
+      outcome.status === 'failed',
+  );
+  if (firstFailure && !continueOnError) throw firstFailure.error;
+
+  return result.opened;
 }
 
 // Open PDF file dialog
@@ -89,7 +100,13 @@ export async function openPDFFile(
       return 0;
     }
 
-    return await openFiles(selected, { tabManager, initialFilterSettings, initialViewMode });
+    return await openFiles(selected, {
+      tabManager,
+      continueOnError: true,
+      onError: (message) => showToast(message, 'error'),
+      initialFilterSettings,
+      initialViewMode,
+    });
   } catch (error) {
     console.error('Error opening file:', error);
     const message = error instanceof Error ? error.message : 'Unknown error';

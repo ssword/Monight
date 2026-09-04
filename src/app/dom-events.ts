@@ -1,6 +1,5 @@
 import { debugLog } from '../lib/debug-log';
-import { nextViewMode, viewModeIcon, viewModeLabel } from '../lib/document-features';
-import type { FilterSettings } from '../scripts/filters';
+import { type DispatchReaderAction, readerAction } from '../reader/reader-actions';
 import type { KeybindManager } from '../scripts/keybind-manager';
 import type { SliderManager } from '../scripts/sliders';
 import type { TabManager } from '../scripts/tabs';
@@ -13,13 +12,13 @@ interface DomEventContext {
   keybindManager: KeybindManager | null;
   openPdfAndRefresh: () => Promise<void>;
   printCurrentPDF: () => Promise<void>;
-  onPresetApplied: (settings: FilterSettings) => void;
-  saveCurrentTabState: () => void;
   updateUI: () => void;
   activateDocument: (filePath: string) => Promise<void>;
   openRecentFile: (filePath: string) => Promise<void>;
   clearRecentFiles: () => Promise<void>;
   goToPage: (page: number) => Promise<void>;
+  goToRelativePage: (direction: 'next' | 'previous') => Promise<void>;
+  dispatchReaderAction: DispatchReaderAction;
 }
 
 // Setup event listeners
@@ -29,13 +28,13 @@ export function setupEventListeners({
   keybindManager,
   openPdfAndRefresh,
   printCurrentPDF,
-  onPresetApplied,
-  saveCurrentTabState,
   updateUI,
   activateDocument,
   openRecentFile,
   clearRecentFiles,
   goToPage,
+  goToRelativePage,
+  dispatchReaderAction,
 }: DomEventContext): void {
   debugLog('Setting up event listeners...');
 
@@ -80,18 +79,12 @@ export function setupEventListeners({
   const prevBtn = document.getElementById('prev-page');
   const nextBtn = document.getElementById('next-page');
   prevBtn?.addEventListener('click', () => {
-    withActiveViewer(tabManager, async (viewer) => {
-      const state = viewer.getState();
-      const step = state.viewMode === 'spread' ? 2 : 1;
-      await goToPage(Math.max(state.currentPage - step, 1));
+    void goToRelativePage('previous').then(() => {
       updateUI();
     });
   });
   nextBtn?.addEventListener('click', () => {
-    withActiveViewer(tabManager, async (viewer) => {
-      const state = viewer.getState();
-      const step = state.viewMode === 'spread' ? 2 : 1;
-      await goToPage(Math.min(state.currentPage + step, state.totalPages));
+    void goToRelativePage('next').then(() => {
       updateUI();
     });
   });
@@ -119,64 +112,28 @@ export function setupEventListeners({
   const fitPageBtn = document.getElementById('fit-page');
 
   zoomInBtn?.addEventListener('click', () => {
-    withActiveViewer(tabManager, async (viewer) => {
-      await viewer.zoomIn();
-      saveCurrentTabState();
-      updateUI();
-    });
+    void dispatchReaderAction(readerAction.zoomIn());
   });
   zoomOutBtn?.addEventListener('click', () => {
-    withActiveViewer(tabManager, async (viewer) => {
-      await viewer.zoomOut();
-      saveCurrentTabState();
-      updateUI();
-    });
+    void dispatchReaderAction(readerAction.zoomOut());
   });
   fitWidthBtn?.addEventListener('click', () => {
-    withActiveViewer(tabManager, async (viewer) => {
-      await viewer.fitToWidth();
-      saveCurrentTabState();
-      updateUI();
-    });
+    void dispatchReaderAction(readerAction.setZoomIntent({ kind: 'fit-width' }));
   });
   fitPageBtn?.addEventListener('click', () => {
-    withActiveViewer(tabManager, async (viewer) => {
-      await viewer.fitToPage();
-      saveCurrentTabState();
-      updateUI();
-    });
+    void dispatchReaderAction(readerAction.setZoomIntent({ kind: 'fit-page' }));
   });
 
   // View mode toggle button
   const toggleViewModeBtn = document.getElementById('toggle-view-mode');
   toggleViewModeBtn?.addEventListener('click', () => {
-    withActiveViewer(tabManager, async (viewer, tab) => {
-      const currentMode = viewer.getState().viewMode;
-      const newMode = nextViewMode(currentMode);
-      await viewer.setViewMode(newMode);
-
-      // Update tab data
-      if (tab) {
-        tab.viewMode = newMode;
-      }
-
-      // Update button icon
-      const icon = document.getElementById('view-mode-icon');
-      if (icon) {
-        icon.textContent = viewModeIcon(newMode);
-        icon.parentElement?.setAttribute(
-          'title',
-          `${viewModeLabel(newMode)} (click to change view)`,
-        );
-      }
-
-      saveCurrentTabState();
-      updateUI();
-    });
+    void dispatchReaderAction(readerAction.cycleViewMode());
   });
 
   // Setup preset buttons
-  setupPresetButtons(tabManager, sliderManager, onPresetApplied);
+  setupPresetButtons(sliderManager, (settings) => {
+    void dispatchReaderAction(readerAction.setFilterSettings(settings));
+  });
 
   // New tab button
   const newTabBtn = document.getElementById('new-tab-btn');

@@ -35,6 +35,7 @@ import type {
   ReaderActionOptions,
   ReadingPosition,
   RestorableReadingPosition,
+  ZoomIntent,
 } from '../reader/reader-actions';
 import { captureReadingPosition, restoreReadingPosition } from '../reader/reading-position';
 
@@ -42,6 +43,7 @@ interface ViewState {
   currentPage: number;
   totalPages: number;
   zoom: number;
+  zoomIntent: ZoomIntent;
   rotation: number;
   fileName: string;
   filePath: string;
@@ -215,6 +217,14 @@ const isAbortLikeError = (error: unknown): boolean =>
       (error as { name?: string }).name === 'AbortException',
   );
 
+function releasePdfData(pdfData: Uint8Array): void {
+  try {
+    globalThis.structuredClone(pdfData, { transfer: [pdfData.buffer] });
+  } catch {
+    pdfData.fill(0);
+  }
+}
+
 export class PDFViewer {
   private container: HTMLElement;
   private canvas: HTMLCanvasElement | null = null;
@@ -225,6 +235,7 @@ export class PDFViewer {
     currentPage: 1,
     totalPages: 0,
     zoom: 1.0,
+    zoomIntent: { kind: 'manual', scale: 1 },
     rotation: 0,
     fileName: '',
     filePath: '',
@@ -240,6 +251,7 @@ export class PDFViewer {
   private onPageNavigationRequest:
     | ((page: number, options?: ReaderActionOptions) => Promise<void>)
     | null = null;
+  private onZoomIntentRequest: ((zoomIntent: ZoomIntent) => Promise<void>) | null = null;
   private onAnnotationsChange: ((annotations: PdfAnnotation[]) => void) | null = null;
   private annotations: PdfAnnotation[] = [];
   private searchQuery = '';
@@ -349,6 +361,10 @@ export class PDFViewer {
     handler: ((page: number, options?: ReaderActionOptions) => Promise<void>) | null,
   ): void {
     this.onPageNavigationRequest = handler;
+  }
+
+  setOnZoomIntentRequest(handler: ((zoomIntent: ZoomIntent) => Promise<void>) | null): void {
+    this.onZoomIntentRequest = handler;
   }
 
   setOnAnnotationsChange(handler: ((annotations: PdfAnnotation[]) => void) | null): void {
@@ -527,7 +543,8 @@ export class PDFViewer {
       const pdfjsLib = await getPdfEngine();
 
       // Load PDF document
-      const loadingTask = pdfjsLib.getDocument({ data: pdfData });
+      const loadingTask = pdfjsLib.getDocument({ data: pdfData.slice() });
+      releasePdfData(pdfData);
       const passwordRequester = this.requestPassword;
       if (passwordRequester) {
         loadingTask.onPassword = (updatePassword: (password: string) => void, reason: number) => {
@@ -1643,6 +1660,7 @@ export class PDFViewer {
     const currentPage = this.state.currentPage;
     this.cancelGestureZoom();
     this.state.zoom = Math.min(this.state.zoom + 0.25, MAX_ZOOM);
+    this.state.zoomIntent = { kind: 'manual', scale: this.state.zoom };
 
     if (this.state.viewMode === 'continuous') {
       await this.calculateAllPageDimensions();
@@ -1657,6 +1675,7 @@ export class PDFViewer {
     const currentPage = this.state.currentPage;
     this.cancelGestureZoom();
     this.state.zoom = Math.max(this.state.zoom - 0.25, MIN_ZOOM);
+    this.state.zoomIntent = { kind: 'manual', scale: this.state.zoom };
 
     if (this.state.viewMode === 'continuous') {
       await this.calculateAllPageDimensions();
@@ -1910,7 +1929,11 @@ export class PDFViewer {
     // The scroll offsets were kept anchored while previewing, so they already describe the
     // target layout; restore them after the re-render reflows the real geometry.
     try {
-      await this.setZoom(targetZoom);
+      if (this.onZoomIntentRequest) {
+        await this.onZoomIntentRequest({ kind: 'manual', scale: targetZoom });
+      } else {
+        await this.setZoom(targetZoom);
+      }
     } finally {
       if (this.gestureCommit?.epoch === epoch) {
         this.gestureCommit = null;
@@ -1948,6 +1971,7 @@ export class PDFViewer {
     const gestureEpoch = this.gestureCommit?.epoch ?? null;
     if (!this.isCurrentGestureCommit(gestureEpoch)) return;
     const clamped = clampZoom(zoom);
+    this.state.zoomIntent = { kind: 'manual', scale: clamped };
     if (!hasValueChanged(this.state.zoom, clamped)) return;
 
     const currentPage = this.state.currentPage;
@@ -1993,6 +2017,7 @@ export class PDFViewer {
         : this.container.clientWidth - 40;
 
     this.state.zoom = containerWidth / baseWidth;
+    this.state.zoomIntent = { kind: 'fit-width' };
 
     if (this.state.viewMode === 'continuous') {
       await this.calculateAllPageDimensions();
@@ -2036,6 +2061,7 @@ export class PDFViewer {
     const heightScale = containerHeight / baseHeight;
 
     this.state.zoom = Math.min(widthScale, heightScale);
+    this.state.zoomIntent = { kind: 'fit-page' };
 
     if (this.state.viewMode === 'continuous') {
       await this.calculateAllPageDimensions();
@@ -2066,6 +2092,20 @@ export class PDFViewer {
 
   getState(): Readonly<ViewState> {
     return { ...this.state };
+  }
+
+  async setZoomIntent(intent: ZoomIntent): Promise<void> {
+    switch (intent.kind) {
+      case 'manual':
+        await this.setZoom(intent.scale);
+        break;
+      case 'fit-width':
+        await this.fitToWidth();
+        break;
+      case 'fit-page':
+        await this.fitToPage();
+        break;
+    }
   }
 
   getScrollPosition(): number {

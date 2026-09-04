@@ -41,7 +41,7 @@ describe('Reading Session store', () => {
     const session = await loadReadingSession(storage);
 
     expect(session).toEqual({
-      schemaVersion: 1,
+      schemaVersion: 2,
       activeDocumentPath: '/docs/report.pdf',
       documents: [
         {
@@ -56,7 +56,7 @@ describe('Reading Session store', () => {
 
   it('normalizes a schema-one position with only an absolute offset', async () => {
     const stored = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       activeDocumentPath: '/docs/report.pdf',
       documents: [
         {
@@ -80,7 +80,7 @@ describe('Reading Session store', () => {
 
   it('prefers a fractional location over a stale absolute offset', async () => {
     const stored = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       activeDocumentPath: '/docs/report.pdf',
       documents: [
         {
@@ -100,6 +100,125 @@ describe('Reading Session store', () => {
     const session = await loadReadingSession(storage);
 
     expect(session.documents[0].readingPosition).toEqual({ page: 6, location: 0.5 });
+  });
+
+  it('migrates schema-one numeric zoom to schema-two manual Zoom Intent', async () => {
+    let stored: unknown = {
+      schemaVersion: 1,
+      activeDocumentPath: '/docs/report.pdf',
+      documents: [
+        {
+          filePath: '/docs/report.pdf',
+          title: 'report.pdf',
+          readingPosition: { page: 2, location: 0.25 },
+          visualState: {
+            filterSettings: {
+              brightness: 100,
+              grayscale: 0,
+              invert: 0,
+              sepia: 0,
+              hue: 0,
+              extraBrightness: 100,
+            },
+            zoom: 1.75,
+            rotation: 90,
+            viewMode: 'continuous',
+          },
+        },
+      ],
+    };
+    const storage: ReadingSessionStorage = {
+      read: vi.fn(async () => stored),
+      write: vi.fn(async (value) => {
+        stored = value;
+      }),
+      readLegacy: vi.fn(async () => undefined),
+      removeLegacy: vi.fn(),
+    };
+
+    const session = await loadReadingSession(storage);
+
+    expect(session.schemaVersion).toBe(2);
+    expect(session.documents[0].visualState?.zoomIntent).toEqual({
+      kind: 'manual',
+      scale: 1.75,
+    });
+    expect(storage.write).toHaveBeenCalledOnce();
+  });
+
+  it('preserves fit Zoom Intent in schema two', async () => {
+    const stored = {
+      schemaVersion: 2,
+      activeDocumentPath: '/docs/report.pdf',
+      documents: [
+        {
+          filePath: '/docs/report.pdf',
+          title: 'report.pdf',
+          readingPosition: { page: 2, location: 0.25 },
+          visualState: {
+            filterSettings: {
+              brightness: 100,
+              grayscale: 0,
+              invert: 0,
+              sepia: 0,
+              hue: 0,
+              extraBrightness: 100,
+            },
+            zoomIntent: { kind: 'fit-width' },
+            rotation: 0,
+            viewMode: 'single',
+          },
+        },
+      ],
+    };
+    const storage: ReadingSessionStorage = {
+      read: vi.fn(async () => stored),
+      write: vi.fn(),
+      readLegacy: vi.fn(async () => undefined),
+      removeLegacy: vi.fn(),
+    };
+
+    const session = await loadReadingSession(storage);
+
+    expect(session.documents[0].visualState?.zoomIntent).toEqual({ kind: 'fit-width' });
+    expect(storage.write).not.toHaveBeenCalled();
+  });
+
+  it('rejects non-finite manual Zoom Intent scales', async () => {
+    const stored = {
+      schemaVersion: 2,
+      activeDocumentPath: '/docs/report.pdf',
+      documents: [
+        {
+          filePath: '/docs/report.pdf',
+          title: 'report.pdf',
+          readingPosition: { page: 2, location: 0.25 },
+          visualState: {
+            filterSettings: {
+              brightness: 100,
+              grayscale: 0,
+              invert: 0,
+              sepia: 0,
+              hue: 0,
+              extraBrightness: 100,
+            },
+            zoomIntent: { kind: 'manual', scale: Number.POSITIVE_INFINITY },
+            rotation: 0,
+            viewMode: 'single',
+          },
+        },
+      ],
+    };
+    const storage: ReadingSessionStorage = {
+      read: vi.fn(async () => stored),
+      write: vi.fn(),
+      readLegacy: vi.fn(async () => undefined),
+      removeLegacy: vi.fn(),
+    };
+
+    const session = await loadReadingSession(storage);
+
+    expect(session).toEqual({ schemaVersion: 2, activeDocumentPath: null, documents: [] });
   });
 
   it('retains the legacy value when migration persistence fails', async () => {

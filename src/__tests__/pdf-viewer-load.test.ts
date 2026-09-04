@@ -12,6 +12,8 @@ describe('PDFViewer initial load', () => {
     });
 
     const events: string[] = [];
+    let acceptedBytes: Uint8Array | undefined;
+    let callerByteLengthDuringAcceptance = -1;
     const pdfDocument = {
       numPages: 3,
       getPage: vi.fn(async (pageNumber: number) => {
@@ -21,9 +23,14 @@ describe('PDFViewer initial load', () => {
         };
       }),
     };
-    getPdfEngine.mockResolvedValue({
-      getDocument: () => ({ promise: Promise.resolve(pdfDocument) }),
+    const intakeBytes = new Uint8Array([1]);
+    const originalBuffer = intakeBytes.buffer;
+    const getDocument = vi.fn(({ data }: { data: Uint8Array }) => {
+      acceptedBytes = data;
+      callerByteLengthDuringAcceptance = intakeBytes.byteLength;
+      return { promise: Promise.resolve(pdfDocument) };
     });
+    getPdfEngine.mockResolvedValue({ getDocument });
 
     const { PDFViewer } = await import('../scripts/pdf-viewer');
     const viewer = Object.create(PDFViewer.prototype) as InstanceType<typeof PDFViewer>;
@@ -50,9 +57,13 @@ describe('PDFViewer initial load', () => {
       events.push(`render:${pageNumber}`);
     });
 
-    await viewer.loadPDF(new Uint8Array([1]), 'report.pdf', '/tmp/report.pdf');
+    await viewer.loadPDF(intakeBytes, 'report.pdf', '/tmp/report.pdf');
 
     expect(events[0]).toBe('render:1');
+    expect(acceptedBytes).toEqual(new Uint8Array([1]));
+    expect(callerByteLengthDuringAcceptance).toBe(1);
+    expect(acceptedBytes?.buffer).not.toBe(originalBuffer);
+    expect(intakeBytes.byteLength).toBe(0);
   });
 
   it('makes the continuous view of a large Document scrollable before measuring all pages', async () => {

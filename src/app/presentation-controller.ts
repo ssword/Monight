@@ -1,18 +1,19 @@
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 import type { ViewMode } from '../lib/document-features';
+import type { ZoomIntent } from '../reader/reader-actions';
 import type { PDFViewer } from '../scripts/pdf-viewer';
 
 interface PresentationControllerOptions {
   getActiveViewer: () => PDFViewer | null;
-  onStateChanged: () => void;
+  onStateChanged: (active: boolean) => void;
 }
 
 export class PresentationController {
   private readonly getActiveViewer: () => PDFViewer | null;
-  private readonly onStateChanged: () => void;
+  private readonly onStateChanged: (active: boolean) => void;
   private active = false;
   private previousViewMode: ViewMode = 'single';
-  private previousZoom = 1;
+  private previousZoomIntent: ZoomIntent = { kind: 'manual', scale: 1 };
   private wasFullscreen = false;
 
   constructor(options: PresentationControllerOptions) {
@@ -52,7 +53,7 @@ export class PresentationController {
 
     const state = viewer.getState();
     this.previousViewMode = state.viewMode;
-    this.previousZoom = state.zoom;
+    this.previousZoomIntent = state.zoomIntent;
     const currentWindow = getCurrentWebviewWindow();
     this.wasFullscreen = await currentWindow.isFullscreen();
     this.active = true;
@@ -62,7 +63,7 @@ export class PresentationController {
     await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
     await viewer.setViewMode('single');
     await viewer.fitToPage();
-    this.onStateChanged();
+    this.onStateChanged(true);
   }
 
   async exit(): Promise<void> {
@@ -75,8 +76,8 @@ export class PresentationController {
 
     if (viewer) {
       await viewer.setViewMode(this.previousViewMode);
-      await viewer.setZoom(this.previousZoom);
+      await viewer.setZoomIntent(this.previousZoomIntent);
     }
-    this.onStateChanged();
+    this.onStateChanged(false);
   }
 }

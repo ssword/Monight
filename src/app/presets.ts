@@ -1,7 +1,6 @@
 import { debugLog } from '../lib/debug-log';
-import { buildFilterCSS, type FilterSettings, PRESETS } from '../scripts/filters';
+import { type FilterSettings, PRESETS } from '../scripts/filters';
 import type { SliderManager } from '../scripts/sliders';
-import type { TabManager } from '../scripts/tabs';
 
 // Toggle dark mode configurator panel
 export function toggleDarkConfigurator(sliderManager: SliderManager | null): void {
@@ -23,9 +22,8 @@ export function toggleDarkConfigurator(sliderManager: SliderManager | null): voi
 
 // Setup preset button handlers
 export function setupPresetButtons(
-  tabManager: TabManager | null,
   sliderManager: SliderManager | null,
-  onPresetApplied?: (settings: FilterSettings) => void,
+  onPresetApplied: (settings: FilterSettings) => void,
 ): void {
   const buttons = document.querySelectorAll('.preset-btn');
 
@@ -52,26 +50,12 @@ export function setupPresetButtons(
         return;
       }
 
-      // Build CSS filter string
-      const filterCSS = buildFilterCSS(settings);
-
-      // Apply to active tab's PDF viewer
-      const activeTab = tabManager?.getActiveTab();
-      if (activeTab) {
-        const viewer = tabManager?.getViewerForTab(activeTab.id);
-        if (viewer) {
-          viewer.applyFilter(filterCSS);
-          // Save filter to tab state
-          activeTab.filterSettings = settings;
-        }
-      }
-
       // Update slider positions if initialized
       if (sliderManager?.isInitialized()) {
         sliderManager.setPreset(settings);
       }
 
-      onPresetApplied?.(settings);
+      onPresetApplied(settings);
 
       // Update active button state
       buttons.forEach((b) => {

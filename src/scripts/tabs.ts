@@ -3,10 +3,13 @@ import type { PdfAnnotation, ViewMode } from '../lib/document-features';
 import type {
   ReaderActionOptions,
   ReadingPosition,
+  ReadingSessionDocument,
   RestorableReadingPosition,
+  ZoomIntent,
 } from '../reader/reader-actions';
 import { type FilterSettings, PRESETS } from './filters';
 import { type AnnotationNoteRequester, PDFViewer, type PdfPasswordRequester } from './pdf-viewer';
+import { applyProjectedDocumentStateToTab, projectTabStateToViewer } from './tab-reading-session';
 
 /**
  * Data structure for a single tab
@@ -15,10 +18,10 @@ export interface TabData {
   id: string; // Unique UUID
   title: string; // Filename for display
   filePath: string; // Full file path
-  pdfData: Uint8Array; // PDF binary data
   filterSettings: FilterSettings; // Current filter preset
   currentPage: number; // Current page number
   zoom: number; // Current zoom level
+  zoomIntent: ZoomIntent; // Settled reader choice, independent of viewport
   rotation: number; // Clockwise page rotation in degrees
   scrollPosition: number; // Scroll position
   viewMode: ViewMode; // View mode
@@ -28,13 +31,33 @@ export interface TabData {
 interface TabManagerOptions {
   getAnnotations?: (filePath: string) => readonly PdfAnnotation[];
   onAnnotationsChanged?: (filePath: string, annotations: PdfAnnotation[]) => void;
+  onDocumentPrepared?: (tab: TabData) => void | Promise<void>;
   onDocumentOpened?: (tab: TabData) => void | Promise<void>;
   onDocumentClosed?: (filePath: string) => void | Promise<void>;
+  onReadingPositionObserved?: (filePath: string, position: ReadingPosition) => void;
   onReadingPositionSettled?: (filePath: string, position: ReadingPosition) => void;
   onPageNavigationRequested?: (page: number, options?: ReaderActionOptions) => Promise<void>;
+  onDocumentPageRequested?: (filePath: string, page: number) => Promise<void>;
+  onZoomIntentRequested?: (filePath: string, zoomIntent: ZoomIntent) => Promise<void>;
   requestPassword?: PdfPasswordRequester;
   requestAnnotationNote?: AnnotationNoteRequester;
   reportError?: (message: string) => void;
+  beforeDocumentTransition?: () => Promise<void>;
+}
+
+interface CreateTabOptions {
+  activate?: boolean;
+  initialPage?: number;
+  notifyOpened?: boolean;
+  restoredDocument?: ReadingSessionDocument;
+}
+
+interface ReactivateOpenDocumentOptions {
+  notifyOpened?: boolean;
+}
+
+interface ActivateTabOptions {
+  readingPosition?: RestorableReadingPosition;
 }
 
 /**
@@ -49,7 +72,9 @@ export class TabManager {
   private onActiveViewerStateChange?: () => void;
   private onTabsChanged?: () => void;
   private options: TabManagerOptions;
-  private requestActivation: ((filePath: string) => Promise<void>) | null = null;
+  private requestActivation:
+    | ((filePath: string, readingPosition?: RestorableReadingPosition) => Promise<void>)
+    | null = null;
 
   constructor(
     onTabChange: (tab: TabData | null) => void | Promise<void>,
@@ -72,8 +97,10 @@ export class TabManager {
     pdfData: Uint8Array,
     filterSettings?: FilterSettings,
     viewMode: ViewMode = 'single',
+    { activate = true, initialPage, notifyOpened = true, restoredDocument }: CreateTabOptions = {},
   ): Promise<TabData> {
     const id = crypto.randomUUID();
+    const previousActiveTabId = this.activeTabId;
     const initialFilterSettings = filterSettings ?? PRESETS.default;
 
     // Create tab data
@@ -81,10 +108,10 @@ export class TabManager {
       id,
       title,
       filePath,
-      pdfData,
       filterSettings: { ...initialFilterSettings },
       currentPage: 1,
       zoom: 1.0,
+      zoomIntent: { kind: 'manual', scale: 1 },
       rotation: 0,
       scrollPosition: 0,
       viewMode,
@@ -94,6 +121,9 @@ export class TabManager {
           rects: annotation.rects.map((rect) => ({ ...rect })),
         })) ?? [],
     };
+    if (restoredDocument) {
+      applyProjectedDocumentStateToTab(tab, restoredDocument);
+    }
 
     // Store tab
     this.tabs.set(id, tab);
@@ -112,6 +142,7 @@ export class TabManager {
     viewer.setOnScrollChange(() => {
       if (this.activeTabId !== id) return;
       tab.scrollPosition = viewer.getScrollPosition();
+      this.options.onReadingPositionObserved?.(filePath, viewer.getReadingPosition());
       this.onActiveViewerStateChange?.();
     });
     viewer.setOnScrollSettled(() => {
@@ -119,6 +150,10 @@ export class TabManager {
       this.options.onReadingPositionSettled?.(filePath, viewer.getReadingPosition());
     });
     viewer.setOnPageNavigationRequest(this.options.onPageNavigationRequested ?? null);
+    const onZoomIntentRequested = this.options.onZoomIntentRequested;
+    viewer.setOnZoomIntentRequest(
+      onZoomIntentRequested ? (zoomIntent) => onZoomIntentRequested(filePath, zoomIntent) : null,
+    );
     viewer.setAnnotations(tab.annotations);
     viewer.setOnAnnotationsChange((annotations) => {
       tab.annotations = annotations;
@@ -132,6 +167,12 @@ export class TabManager {
     // do not leave a dead tab/surface behind.
     try {
       await viewer.loadPDF(pdfData, title, filePath);
+      if (restoredDocument) {
+        await projectTabStateToViewer(viewer, tab, restoredDocument.readingPosition);
+      } else if (initialPage !== undefined) {
+        await viewer.goToPage(initialPage);
+        tab.currentPage = viewer.getState().currentPage;
+      }
     } catch (error) {
       viewer.destroy();
       this.tabs.delete(id);
@@ -149,9 +190,44 @@ export class TabManager {
     this.renderTabs();
     this.onTabsChanged?.();
 
-    // Activate the new tab (this will show its canvas)
-    await this.options.onDocumentOpened?.(tab);
-    await this.activateTab(id);
+    // Registration and activation are transactional; observers run only after success.
+    let prepared = false;
+    try {
+      await this.options.onDocumentPrepared?.(tab);
+      prepared = true;
+      if (activate) {
+        await this.activateTab(id, {
+          ...(initialPage !== undefined ? { readingPosition: viewer.getReadingPosition() } : {}),
+        });
+      }
+    } catch (error) {
+      viewer.destroy();
+      this.pdfViewers.delete(id);
+      this.tabs.delete(id);
+      let restoredTab: TabData | null = null;
+      if (this.activeTabId === id) {
+        this.activeTabId =
+          previousActiveTabId && this.tabs.has(previousActiveTabId) ? previousActiveTabId : null;
+        this.pdfViewers.forEach((existingViewer, viewerId) => {
+          existingViewer.setVisible(viewerId === this.activeTabId);
+        });
+        restoredTab = this.activeTabId ? (this.tabs.get(this.activeTabId) ?? null) : null;
+      }
+      if (prepared) await this.options.onDocumentClosed?.(filePath);
+      this.renderTabs();
+      this.onTabsChanged?.();
+      if (restoredTab) {
+        try {
+          await this.onTabChange(restoredTab);
+        } catch (rollbackError) {
+          console.error('Failed to restore active Document after intake rollback:', rollbackError);
+        }
+      }
+      throw error;
+    }
+    if (notifyOpened) {
+      await this.notifyDocumentOpened(filePath);
+    }
 
     debugLog(`Created Document: ${title} (${id})`);
     return tab;
@@ -163,6 +239,9 @@ export class TabManager {
   async closeTab(id: string): Promise<void> {
     const tab = this.tabs.get(id);
     if (!tab) return;
+    const orderedIds = Array.from(this.tabs.keys());
+    const closedIndex = orderedIds.indexOf(id);
+    await this.options.beforeDocumentTransition?.();
 
     // Add to closed history
     this.closedHistory.push(tab.filePath);
@@ -182,8 +261,8 @@ export class TabManager {
     if (this.activeTabId === id) {
       const remaining = Array.from(this.tabs.keys());
       if (remaining.length > 0) {
-        // Activate adjacent tab
-        await this.activateTab(remaining[0]);
+        const adjacentId = remaining[Math.min(closedIndex, remaining.length - 1)];
+        await this.activateTab(adjacentId);
       } else {
         // No tabs left
         this.activeTabId = null;
@@ -201,27 +280,128 @@ export class TabManager {
   /**
    * Activate a tab
    */
-  async activateTab(id: string): Promise<void> {
+  async activateTab(id: string, options: ActivateTabOptions = {}): Promise<void> {
     const tab = this.tabs.get(id);
     if (!tab) return;
     if (this.requestActivation) {
-      await this.requestActivation(tab.filePath);
+      await this.requestActivation(tab.filePath, options.readingPosition);
       return;
     }
     await this.activateTabDirect(id);
   }
 
-  setActivationRequester(requestActivation: (filePath: string) => Promise<void>): void {
+  async reactivateOpenDocument(
+    id: string,
+    { notifyOpened = true }: ReactivateOpenDocumentOptions = {},
+  ): Promise<void> {
+    const tab = this.tabs.get(id);
+    if (!tab) return;
+    await this.activateTab(id);
+    if (notifyOpened) {
+      await this.notifyDocumentOpened(tab.filePath);
+    }
+  }
+
+  async notifyDocumentOpened(filePath: string): Promise<void> {
+    const tab = this.getTabs().find((item) => item.filePath === filePath);
+    if (!tab) throw new Error(`Cannot notify for unopened Document: ${filePath}`);
+    try {
+      await this.options.onDocumentOpened?.(tab);
+    } catch (error) {
+      console.error('Document Intake observer failed:', error);
+    }
+  }
+
+  async restoreExistingDocument(
+    filePath: string,
+    document: ReadingSessionDocument,
+    { preserveReadingPosition }: { preserveReadingPosition: boolean },
+  ): Promise<ReadingSessionDocument> {
+    const tab = this.getTabs().find((item) => item.filePath === filePath);
+    if (!tab) throw new Error(`Cannot restore unopened Document: ${filePath}`);
+    const viewer = this.pdfViewers.get(tab.id);
+    if (!viewer) throw new Error(`Cannot render unopened Document: ${filePath}`);
+
+    const previousDocument: ReadingSessionDocument = {
+      filePath: tab.filePath,
+      title: tab.title,
+      readingPosition: viewer.getReadingPosition(),
+      visualState: {
+        filterSettings: { ...tab.filterSettings },
+        zoomIntent:
+          tab.zoomIntent.kind === 'manual'
+            ? { kind: 'manual', scale: tab.zoomIntent.scale }
+            : { kind: tab.zoomIntent.kind },
+        rotation: tab.rotation,
+        viewMode: tab.viewMode,
+      },
+    };
+    const restoredDocument: ReadingSessionDocument = {
+      ...document,
+      filePath,
+      readingPosition: preserveReadingPosition
+        ? previousDocument.readingPosition
+        : document.readingPosition,
+    };
+
+    applyProjectedDocumentStateToTab(tab, restoredDocument);
+    try {
+      await projectTabStateToViewer(viewer, tab, restoredDocument.readingPosition);
+    } catch (error) {
+      applyProjectedDocumentStateToTab(tab, previousDocument);
+      try {
+        await projectTabStateToViewer(viewer, tab, previousDocument.readingPosition);
+      } catch (rollbackError) {
+        console.error('Failed to roll back restored Document state:', rollbackError);
+      }
+      this.renderTabs();
+      if (this.activeTabId === tab.id) this.onActiveViewerStateChange?.();
+      throw error;
+    }
+
+    this.renderTabs();
+    if (this.activeTabId === tab.id) this.onActiveViewerStateChange?.();
+    return restoredDocument;
+  }
+
+  async requestDocumentPage(filePath: string, page: number): Promise<void> {
+    const tab = this.getTabs().find((item) => item.filePath === filePath);
+    if (!tab) throw new Error(`Cannot navigate unopened Document: ${filePath}`);
+    if (this.options.onDocumentPageRequested) {
+      await this.options.onDocumentPageRequested(filePath, page);
+      return;
+    }
+    const viewer = this.pdfViewers.get(tab.id);
+    if (!viewer) throw new Error(`Cannot render unopened Document: ${filePath}`);
+    await viewer.goToPage(page);
+  }
+
+  setActivationRequester(
+    requestActivation: (
+      filePath: string,
+      readingPosition?: RestorableReadingPosition,
+    ) => Promise<void>,
+  ): void {
     this.requestActivation = requestActivation;
   }
 
   async projectActiveDocument(
     filePath: string,
     position: RestorableReadingPosition,
+    visualState?: {
+      filterSettings: Readonly<FilterSettings>;
+      zoomIntent: ZoomIntent;
+      rotation: number;
+      viewMode: ViewMode;
+    },
   ): Promise<void> {
     const tab = this.getTabs().find((item) => item.filePath === filePath);
     if (!tab) throw new Error(`Cannot activate unopened Document: ${filePath}`);
-    tab.currentPage = position.page;
+    applyProjectedDocumentStateToTab(tab, {
+      title: tab.title,
+      readingPosition: position,
+      visualState,
+    });
     await this.activateTabDirect(tab.id);
     const viewer = this.pdfViewers.get(tab.id);
     if (!viewer) throw new Error(`Cannot render unopened Document: ${filePath}`);
@@ -267,6 +447,22 @@ export class TabManager {
 
   getTabs(): TabData[] {
     return Array.from(this.tabs.values());
+  }
+
+  setDocumentOrder(filePaths: readonly string[]): void {
+    const byPath = new Map(
+      Array.from(this.tabs.entries()).map(([id, tab]) => [tab.filePath, [id, tab] as const]),
+    );
+    const ordered = new Map<string, TabData>();
+    for (const filePath of filePaths) {
+      const entry = byPath.get(filePath);
+      if (!entry) continue;
+      ordered.set(entry[0], entry[1]);
+      byPath.delete(filePath);
+    }
+    for (const [id, tab] of byPath.values()) ordered.set(id, tab);
+    this.tabs = ordered;
+    this.renderTabs();
   }
 
   /**
