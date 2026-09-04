@@ -1,7 +1,15 @@
 import { describe, expect, it, vi } from 'vitest';
 import { restoreReadingSessionAtStartup } from '../app/startup-restoration';
-import type { DocumentIntake } from '../reader/document-intake';
-import type { PersistedReadingSession } from '../reader/reader-actions';
+import {
+  createDocumentIntake,
+  type DocumentIntake,
+  type DocumentRuntimeIntake,
+} from '../reader/document-intake';
+import type {
+  PersistedReadingSession,
+  ReadingSessionDocument,
+  ReadingSessionVisualState,
+} from '../reader/reader-actions';
 
 const emptySession: PersistedReadingSession = {
   schemaVersion: 2,
@@ -9,9 +17,72 @@ const emptySession: PersistedReadingSession = {
   documents: [],
 };
 
+function visualState(): ReadingSessionVisualState {
+  return {
+    filterSettings: {
+      brightness: 0,
+      grayscale: 0,
+      invert: 100,
+      sepia: 0,
+      hue: 0,
+      extraBrightness: 0,
+    },
+    zoomIntent: { kind: 'fit-width' },
+    rotation: 0,
+    viewMode: 'continuous',
+  };
+}
+
+function savedDocument(filePath: string, page: number): ReadingSessionDocument {
+  return {
+    filePath,
+    title: filePath.split('/').pop() ?? filePath,
+    readingPosition: { page, location: 0.25 },
+    visualState: visualState(),
+  };
+}
+
+function createRestoringIntake(
+  runtimeOverrides: Partial<DocumentRuntimeIntake> = {},
+  sourceOverrides: {
+    describe?: (path: string) => Promise<{ canonicalPath: string; title: string }>;
+    read?: (path: string) => Promise<Uint8Array>;
+  } = {},
+) {
+  const runtime: DocumentRuntimeIntake = {
+    isOpen: vi.fn(() => false),
+    activate: vi.fn(async () => undefined),
+    open: vi.fn(async () => undefined),
+    goToPage: vi.fn(async () => undefined),
+    notifyOpened: vi.fn(async () => undefined),
+    canonicalizeDocumentPaths: vi.fn(async () => undefined),
+    setDocumentOrder: vi.fn(),
+    ...runtimeOverrides,
+  };
+  const intake = createDocumentIntake({
+    source: {
+      describe:
+        sourceOverrides.describe ??
+        (async (path: string) => ({
+          canonicalPath: path,
+          title: path.split('/').pop() ?? path,
+        })),
+      read: sourceOverrides.read ?? (async () => new Uint8Array([1])),
+    },
+    runtime,
+  });
+
+  return { intake, runtime };
+}
+
 describe('startup Reading Session workflow', () => {
   it('prunes every failed restored Document before reporting one summary', async () => {
     const events: string[] = [];
+    const foregroundOutcome = {
+      status: 'opened' as const,
+      requestedPath: '/docs/kept.pdf',
+      filePath: '/docs/kept.pdf',
+    };
     let finishCompletion: (() => void) | undefined;
     const completion = new Promise<{
       outcomes: [];
@@ -52,13 +123,12 @@ describe('startup Reading Session workflow', () => {
       };
     });
     const intake = {
-      beginRestore: vi.fn(() => ({
-        foreground: Promise.resolve({
-          status: 'opened' as const,
-          requestedPath: '/docs/kept.pdf',
-          filePath: '/docs/kept.pdf',
-        }),
-        completion,
+      beginRestore: vi.fn((_session, options) => ({
+        foreground: Promise.resolve(foregroundOutcome),
+        completion: (async () => {
+          await options?.onForegroundReady?.(foregroundOutcome);
+          return completion;
+        })(),
       })),
     } as unknown as DocumentIntake;
     const pruneDocument = vi.fn(async (filePath: string) => {
@@ -120,5 +190,70 @@ describe('startup Reading Session workflow', () => {
     });
 
     expect(reportFailure).not.toHaveBeenCalled();
+  });
+
+  it('waits for foreground startup work before continuing background restoration', async () => {
+    const events: string[] = [];
+    let releaseForegroundReady: (() => void) | undefined;
+    let releaseBackgroundDescribe: (() => void) | undefined;
+    const { intake, runtime } = createRestoringIntake(
+      {
+        open: vi.fn(async ({ document }) => {
+          events.push(`open:${document.canonicalPath}`);
+        }),
+      },
+      {
+        describe: async (path) => {
+          if (path === '/docs/background.pdf') {
+            await new Promise<void>((resolve) => {
+              releaseBackgroundDescribe = resolve;
+            });
+          }
+          events.push(`describe:${path}`);
+          return { canonicalPath: path, title: path.split('/').pop() ?? path };
+        },
+        read: async (path) => {
+          events.push(`read:${path}`);
+          return new Uint8Array([1]);
+        },
+      },
+    );
+    const session: PersistedReadingSession = {
+      schemaVersion: 2,
+      activeDocumentPath: '/docs/active.pdf',
+      documents: [
+        savedDocument('/docs/active.pdf', 2),
+        savedDocument('/docs/background.pdf', 3),
+      ],
+    };
+
+    const restoration = restoreReadingSessionAtStartup({
+      intake,
+      session,
+      onForegroundReady: async () => {
+        events.push('foreground');
+        await new Promise<void>((resolve) => {
+          releaseForegroundReady = resolve;
+        });
+      },
+      pruneDocument: vi.fn(async () => undefined),
+      reportFailure: vi.fn(),
+    });
+
+    await vi.waitFor(() =>
+      expect(events).toEqual([
+        'describe:/docs/active.pdf',
+        'read:/docs/active.pdf',
+        'open:/docs/active.pdf',
+        'foreground',
+      ]),
+    );
+    expect(runtime.open).toHaveBeenCalledTimes(1);
+    expect(events).not.toContain('describe:/docs/background.pdf');
+
+    releaseForegroundReady?.();
+    await vi.waitFor(() => expect(releaseBackgroundDescribe).toBeTypeOf('function'));
+    releaseBackgroundDescribe?.();
+    await expect(restoration).resolves.toMatchObject({ opened: 2, failed: 0 });
   });
 });

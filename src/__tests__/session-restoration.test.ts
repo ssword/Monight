@@ -197,6 +197,49 @@ describe('Reading Session restoration', () => {
     await operation.completion;
   });
 
+  it('restores the saved active Document before a background saved describe can block it', async () => {
+    let releaseBackgroundDescribe: (() => void) | undefined;
+    const { intake, runtime } = createRestoringIntake(
+      {},
+      {
+        describe: async (path) => {
+          if (path === '/docs/background.pdf') {
+            await new Promise<void>((resolve) => {
+              releaseBackgroundDescribe = resolve;
+            });
+          }
+          return { canonicalPath: path, title: path.split('/').pop() ?? path };
+        },
+      },
+    );
+    const session: PersistedReadingSession = {
+      schemaVersion: 2,
+      activeDocumentPath: '/docs/active.pdf',
+      documents: [
+        savedDocument('/docs/background.pdf', 1),
+        savedDocument('/docs/active.pdf', 2),
+      ],
+    };
+
+    const operation = intake.beginRestore(session);
+
+    await expect(operation.foreground).resolves.toMatchObject({
+      status: 'opened',
+      filePath: '/docs/active.pdf',
+    });
+    expect(runtime.open).toHaveBeenCalledTimes(1);
+    expect(runtime.open).toHaveBeenCalledWith(
+      expect.objectContaining({
+        document: expect.objectContaining({ canonicalPath: '/docs/active.pdf' }),
+        activate: true,
+      }),
+    );
+
+    await vi.waitFor(() => expect(releaseBackgroundDescribe).toBeTypeOf('function'));
+    releaseBackgroundDescribe?.();
+    await expect(operation.completion).resolves.toMatchObject({ opened: 2, failed: 0 });
+  });
+
   it('preserves explicit request order before restoring the saved active Document', async () => {
     const opened = new Set<string>();
     const { intake, runtime } = createRestoringIntake({

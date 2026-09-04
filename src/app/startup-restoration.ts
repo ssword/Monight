@@ -40,9 +40,10 @@ export async function restoreReadingSessionAtStartup({
   pruneDocument,
   reportFailure,
 }: RestoreReadingSessionAtStartupOptions): Promise<RestoreSessionResult> {
-  const operation = intake.beginRestore(session, { explicitRequests });
-  const foreground = await operation.foreground;
-  if (foreground) await onForegroundReady?.(foreground);
+  const operation = intake.beginRestore(session, {
+    explicitRequests,
+    ...(onForegroundReady ? { onForegroundReady } : {}),
+  });
   const result = await operation.completion;
   for (const filePath of result.failedPaths) {
     await pruneDocument(filePath);

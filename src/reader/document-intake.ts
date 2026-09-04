@@ -98,6 +98,7 @@ export interface OpenDocumentsOptions {
 
 export interface RestoreReadingSessionOptions {
   readonly explicitRequests?: readonly StartupDocumentRequest[];
+  readonly onForegroundReady?: (outcome: DocumentIntakeOutcome) => void | Promise<void>;
 }
 
 export interface StartupDocumentRequest {
@@ -268,7 +269,7 @@ export function createDocumentIntake({
 
   const beginRestore = (
     session: PersistedReadingSession,
-    { explicitRequests = [] }: RestoreReadingSessionOptions = {},
+    { explicitRequests = [], onForegroundReady }: RestoreReadingSessionOptions = {},
   ): RestoreSessionOperation => {
     if (!runtime.canonicalizeDocumentPaths || !runtime.setDocumentOrder) {
       throw new Error('Document Intake runtime cannot restore the Reading Session');
@@ -285,6 +286,15 @@ export function createDocumentIntake({
       const restoredOutcomes = new Map<string, DocumentIntakeOutcome>();
       const explicitOutcomes: DocumentIntakeOutcome[] = [];
       let hasForegroundDocument = false;
+      const savedActive = session.documents.find(
+        (document) => document.filePath === session.activeDocumentPath,
+      );
+      const remainingSavedDocuments = session.documents.filter(
+        (document) => document.filePath !== savedActive?.filePath,
+      );
+      const savedDocumentsInRestoreOrder = savedActive
+        ? [savedActive, ...remainingSavedDocuments]
+        : [...session.documents];
       const explicitEntries = explicitRequests.flatMap((request) =>
         request.paths.map((requestedPath, index) => ({
           requestedPath,
@@ -303,26 +313,62 @@ export function createDocumentIntake({
       type SavedDescription =
         | { readonly status: 'described'; readonly metadata: DocumentMetadata }
         | { readonly status: 'failed'; readonly error: unknown };
-      const savedDescriptions = new Map<string, SavedDescription>();
+      const savedDescriptionPromises = new Map<string, Promise<SavedDescription>>();
       const savedDocumentsByCanonicalPath = new Map<string, ReadingSessionDocument>();
-      for (const document of session.documents) {
-        try {
-          const metadata = await source.describe(document.filePath);
-          savedDescriptions.set(document.filePath, { status: 'described', metadata });
-          if (!savedDocumentsByCanonicalPath.has(metadata.canonicalPath)) {
-            savedDocumentsByCanonicalPath.set(metadata.canonicalPath, document);
-          }
-        } catch (error) {
-          savedDescriptions.set(document.filePath, { status: 'failed', error });
-        }
-      }
+      const describeSavedDocument = (
+        document: ReadingSessionDocument,
+      ): Promise<SavedDescription> => {
+        const existingDescription = savedDescriptionPromises.get(document.filePath);
+        if (existingDescription) return existingDescription;
 
-      const findSavedDocument = (
+        const description = (async (): Promise<SavedDescription> => {
+          try {
+            const metadata = await source.describe(document.filePath);
+            if (!savedDocumentsByCanonicalPath.has(metadata.canonicalPath)) {
+              savedDocumentsByCanonicalPath.set(metadata.canonicalPath, document);
+            }
+            return { status: 'described', metadata };
+          } catch (error) {
+            return { status: 'failed', error };
+          }
+        })();
+
+        savedDescriptionPromises.set(document.filePath, description);
+        return description;
+      };
+
+      const requireSavedMetadata = async (
+        document: ReadingSessionDocument,
+      ): Promise<DocumentMetadata> => {
+        const description = await describeSavedDocument(document);
+        if (description.status === 'failed') throw description.error;
+        return description.metadata;
+      };
+
+      const findSavedDocument = async (
         requestedPath: string,
         described: DocumentMetadata,
-      ): ReadingSessionDocument | undefined =>
-        session.documents.find((document) => document.filePath === requestedPath) ??
-        savedDocumentsByCanonicalPath.get(described.canonicalPath);
+      ): Promise<ReadingSessionDocument | undefined> => {
+        const directMatch = session.documents.find(
+          (document) => document.filePath === requestedPath,
+        );
+        if (directMatch) return directMatch;
+
+        const knownCanonicalMatch = savedDocumentsByCanonicalPath.get(described.canonicalPath);
+        if (knownCanonicalMatch) return knownCanonicalMatch;
+
+        for (const document of savedDocumentsInRestoreOrder) {
+          const savedDescription = await describeSavedDocument(document);
+          if (
+            savedDescription.status === 'described' &&
+            savedDescription.metadata.canonicalPath === described.canonicalPath
+          ) {
+            return document;
+          }
+        }
+
+        return undefined;
+      };
 
       const processExplicitEntry = async (
         entry: (typeof explicitEntries)[number],
@@ -332,15 +378,11 @@ export function createDocumentIntake({
           (document) => document.filePath === entry.requestedPath,
         );
         try {
-          const savedDescription = savedDocument
-            ? savedDescriptions.get(savedDocument.filePath)
-            : undefined;
-          if (savedDescription?.status === 'failed') throw savedDescription.error;
           const described =
-            savedDescription?.status === 'described'
-              ? savedDescription.metadata
+            savedDocument
+              ? await requireSavedMetadata(savedDocument)
               : await source.describe(entry.requestedPath);
-          savedDocument = findSavedDocument(entry.requestedPath, described);
+          savedDocument ??= await findSavedDocument(entry.requestedPath, described);
           const restoredDocument = savedDocument
             ? {
                 ...savedDocument,
@@ -383,11 +425,7 @@ export function createDocumentIntake({
         activate: boolean,
       ): Promise<DocumentIntakeOutcome | null> => {
         try {
-          const savedDescription = savedDescriptions.get(document.filePath);
-          if (!savedDescription || savedDescription.status === 'failed') {
-            throw savedDescription?.error ?? new Error('Saved Document metadata is unavailable');
-          }
-          const described = savedDescription.metadata;
+          const described = await requireSavedMetadata(document);
           const restoredDocument = { ...document, filePath: described.canonicalPath };
           const { outcome, preparation } = await intakeDescribedDocument(
             document.filePath,
@@ -414,35 +452,33 @@ export function createDocumentIntake({
         }
       };
 
+      const handOffForegroundDocument = async (
+        outcome: DocumentIntakeOutcome | null,
+      ): Promise<void> => {
+        if (!outcome || hasForegroundDocument) return;
+        hasForegroundDocument = true;
+        foreground.resolve(outcome);
+        if (onForegroundReady) {
+          await onForegroundReady(outcome);
+          return;
+        }
+        await allowForegroundConsumerToRun();
+      };
+
       for (const entry of explicitEntries) {
         const outcome = await processExplicitEntry(entry, !hasForegroundDocument);
-        if (outcome && !hasForegroundDocument) {
-          hasForegroundDocument = true;
-          foreground.resolve(outcome);
-          await allowForegroundConsumerToRun();
-        }
+        await handOffForegroundDocument(outcome);
       }
 
-      const savedActive = session.documents.find(
-        (document) => document.filePath === session.activeDocumentPath,
-      );
       if (savedActive && !handledSavedPaths.has(savedActive.filePath)) {
         const outcome = await processSavedDocument(savedActive, !hasForegroundDocument);
-        if (outcome && !hasForegroundDocument) {
-          hasForegroundDocument = true;
-          foreground.resolve(outcome);
-          await allowForegroundConsumerToRun();
-        }
+        await handOffForegroundDocument(outcome);
       }
 
-      for (const document of session.documents) {
+      for (const document of remainingSavedDocuments) {
         if (handledSavedPaths.has(document.filePath)) continue;
         const outcome = await processSavedDocument(document, !hasForegroundDocument);
-        if (outcome && !hasForegroundDocument) {
-          hasForegroundDocument = true;
-          foreground.resolve(outcome);
-          await allowForegroundConsumerToRun();
-        }
+        await handOffForegroundDocument(outcome);
       }
 
       const pathMappings = Array.from(canonicalPaths, ([requestedPath, canonicalPath]) => ({
