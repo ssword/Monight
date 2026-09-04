@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { SearchController } from '../app/search-controller';
 import type { PdfSearchMatch, SearchProgress } from '../lib/document-features';
-import type { PDFViewer } from '../scripts/pdf-viewer';
+import type { DocumentQuery } from '../reader/document-queries';
+import type { DocumentRendering } from '../reader/document-rendering';
 
 class SearchElement {
   value = '';
@@ -68,6 +69,30 @@ function progress(
   };
 }
 
+function activeDocument(viewer: {
+  searchText: unknown;
+  revealSearchMatch: (match: PdfSearchMatch) => Promise<void>;
+  clearSearch: () => void;
+}) {
+  const searchText = viewer.searchText as (
+    query: string,
+    onProgress?: (event: SearchProgress) => void,
+  ) => Promise<PdfSearchMatch[]>;
+  const query = {
+    filePath: '/docs/test.pdf',
+    generation: 1,
+    isCurrent: () => true,
+    search: (value: string, options?: { onProgress?: (event: SearchProgress) => void }) =>
+      searchText(value, options?.onProgress),
+  } as unknown as DocumentQuery;
+  const rendering = {
+    revealSearchMatch: viewer.revealSearchMatch,
+    clearSearch: viewer.clearSearch,
+    setSearchQuery: vi.fn(),
+  } as unknown as DocumentRendering;
+  return { query, rendering };
+}
+
 afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
@@ -89,8 +114,9 @@ describe('SearchController', () => {
       }),
       revealSearchMatch: vi.fn(async () => {}),
       clearSearch: vi.fn(),
-    } as unknown as PDFViewer;
-    const controller = new SearchController(() => viewer);
+    };
+    const current = activeDocument(viewer);
+    const controller = new SearchController(() => current);
     const input = controls.get('search-input');
     const nextButton = controls.get('search-next');
     if (!input || !nextButton) throw new Error('Search controls not created');
@@ -125,8 +151,9 @@ describe('SearchController', () => {
       }),
       revealSearchMatch: vi.fn(async () => {}),
       clearSearch: vi.fn(),
-    } as unknown as PDFViewer;
-    const controller = new SearchController(() => viewer);
+    };
+    const current = activeDocument(viewer);
+    const controller = new SearchController(() => current);
     const input = controls.get('search-input');
     const nextButton = controls.get('search-next');
     const status = controls.get('search-status');
@@ -179,8 +206,9 @@ describe('SearchController', () => {
           }),
       ),
       clearSearch: vi.fn(),
-    } as unknown as PDFViewer;
-    const controller = new SearchController(() => viewer);
+    };
+    const current = activeDocument(viewer);
+    const controller = new SearchController(() => current);
     const input = controls.get('search-input');
     const nextButton = controls.get('search-next');
     const status = controls.get('search-status');
@@ -223,8 +251,9 @@ describe('SearchController', () => {
       }),
       revealSearchMatch: vi.fn(async () => {}),
       clearSearch: vi.fn(),
-    } as unknown as PDFViewer;
-    const controller = new SearchController(() => viewer);
+    };
+    const current = activeDocument(viewer);
+    const controller = new SearchController(() => current);
     const input = controls.get('search-input');
     const closeButton = controls.get('search-close');
     const status = controls.get('search-status');
@@ -263,8 +292,9 @@ describe('SearchController', () => {
       }),
       revealSearchMatch: vi.fn(async () => {}),
       clearSearch: vi.fn(),
-    } as unknown as PDFViewer;
-    const controller = new SearchController(() => viewer);
+    };
+    const current = activeDocument(viewer);
+    const controller = new SearchController(() => current);
     const input = controls.get('search-input');
     const nextButton = controls.get('search-next');
     const status = controls.get('search-status');

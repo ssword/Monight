@@ -1,8 +1,10 @@
 import type { PdfSearchMatch, SearchProgress } from '../lib/document-features';
-import type { PDFViewer } from '../scripts/pdf-viewer';
+import type { DocumentAccess } from '../reader/document-access';
+
+export type ActiveSearchDocument = DocumentAccess;
 
 export class SearchController {
-  private readonly getActiveViewer: () => PDFViewer | null;
+  private readonly getActiveDocument: () => ActiveSearchDocument | null;
   private readonly bar: HTMLElement;
   private readonly input: HTMLInputElement;
   private readonly status: HTMLElement;
@@ -12,14 +14,14 @@ export class SearchController {
   private activeIndex = -1;
   private searchTimer: number | null = null;
   private searchEpoch = 0;
-  private searchedViewer: PDFViewer | null = null;
+  private searchedDocument: ActiveSearchDocument | null = null;
   private isScanning = false;
   private scanProgress: { pageNumber: number; totalPages: number } | null = null;
   private revealQueue: Promise<void> = Promise.resolve();
   private revealRequest = 0;
 
-  constructor(getActiveViewer: () => PDFViewer | null) {
-    this.getActiveViewer = getActiveViewer;
+  constructor(getActiveDocument: () => ActiveSearchDocument | null) {
+    this.getActiveDocument = getActiveDocument;
     this.bar = this.requireElement<HTMLElement>('search-bar');
     this.input = this.requireElement<HTMLInputElement>('search-input');
     this.status = this.requireElement<HTMLElement>('search-status');
@@ -59,11 +61,14 @@ export class SearchController {
   }
 
   open(): void {
-    if (!this.getActiveViewer()) return;
+    if (!this.getActiveDocument()) return;
     this.bar.classList.remove('hidden');
     this.input.focus();
     this.input.select();
-    if (this.input.value.trim() && this.searchedViewer !== this.getActiveViewer()) {
+    if (
+      this.input.value.trim() &&
+      !this.isSameDocument(this.searchedDocument, this.getActiveDocument())
+    ) {
       void this.runSearch();
     }
   }
@@ -113,12 +118,12 @@ export class SearchController {
 
   private async runSearch(): Promise<void> {
     this.clearSearchTimer();
-    const viewer = this.getActiveViewer();
+    const activeDocument = this.getActiveDocument();
     const query = this.input.value.trim();
     const epoch = this.invalidateSearch();
-    this.searchedViewer = viewer;
+    this.searchedDocument = activeDocument;
 
-    if (!viewer || !query) {
+    if (!activeDocument || !query) {
       this.status.textContent = 'Type to search';
       return;
     }
@@ -129,11 +134,14 @@ export class SearchController {
     this.scanProgress = null;
     let matches: PdfSearchMatch[];
     try {
-      matches = await viewer.searchText(query, (progress) =>
-        this.handleSearchProgress(epoch, viewer, progress),
-      );
+      matches = [
+        ...(await activeDocument.query.search(query, {
+          onProgress: (progress) =>
+            this.handleSearchProgress(epoch, activeDocument, query, progress),
+        })),
+      ];
     } catch (error) {
-      if (!this.isCurrentSearch(epoch, viewer)) return;
+      if (!this.isCurrentSearch(epoch, activeDocument)) return;
       this.isScanning = false;
       this.scanProgress = null;
       console.error('Document search failed:', error);
@@ -141,11 +149,12 @@ export class SearchController {
       this.setNavigationEnabled(false);
       return;
     }
-    if (!this.isCurrentSearch(epoch, viewer)) return;
+    if (!this.isCurrentSearch(epoch, activeDocument)) return;
 
     this.isScanning = false;
     this.scanProgress = null;
     this.matches = matches;
+    activeDocument.rendering.setSearchQuery(query);
     this.setNavigationEnabled(matches.length > 0);
     if (matches.length === 0) {
       this.status.textContent = 'No matches';
@@ -154,20 +163,37 @@ export class SearchController {
 
     if (this.activeIndex < 0) {
       this.activeIndex = 0;
-      await this.queueReveal(epoch, viewer, matches[0]);
+      await this.queueReveal(epoch, activeDocument, matches[0]);
     }
-    if (!this.isCurrentSearch(epoch, viewer)) return;
+    if (!this.isCurrentSearch(epoch, activeDocument)) return;
     this.updateStatus();
   }
 
-  private isCurrentSearch(epoch: number, viewer: PDFViewer): boolean {
-    return epoch === this.searchEpoch && viewer === this.getActiveViewer();
+  private isSameDocument(
+    left: ActiveSearchDocument | null,
+    right: ActiveSearchDocument | null,
+  ): boolean {
+    return Boolean(
+      left &&
+        right &&
+        left.rendering === right.rendering &&
+        left.query.filePath === right.query.filePath &&
+        left.query.generation === right.query.generation,
+    );
+  }
+
+  private isCurrentSearch(epoch: number, activeDocument: ActiveSearchDocument): boolean {
+    return (
+      epoch === this.searchEpoch &&
+      activeDocument.query.isCurrent() &&
+      this.isSameDocument(activeDocument, this.getActiveDocument())
+    );
   }
 
   private invalidateSearch(): number {
     this.searchEpoch += 1;
-    this.searchedViewer?.clearSearch();
-    this.searchedViewer = null;
+    this.searchedDocument?.rendering.clearSearch();
+    this.searchedDocument = null;
     this.matches = [];
     this.activeIndex = -1;
     this.isScanning = false;
@@ -177,11 +203,17 @@ export class SearchController {
   }
 
   /** Applies partial results emitted while pages are still being scanned. */
-  private handleSearchProgress(epoch: number, viewer: PDFViewer, progress: SearchProgress): void {
-    if (!this.isCurrentSearch(epoch, viewer)) return;
+  private handleSearchProgress(
+    epoch: number,
+    activeDocument: ActiveSearchDocument,
+    query: string,
+    progress: SearchProgress,
+  ): void {
+    if (!this.isCurrentSearch(epoch, activeDocument)) return;
 
     this.scanProgress = { pageNumber: progress.pageNumber, totalPages: progress.totalPages };
     this.matches = progress.matches;
+    activeDocument.rendering.setSearchQuery(query);
     if (this.matches.length > 0) {
       this.setNavigationEnabled(true);
     }
@@ -201,24 +233,24 @@ export class SearchController {
           ? 0
           : this.matches.length - 1
         : (this.activeIndex + direction + this.matches.length) % this.matches.length;
-    const viewer = this.getActiveViewer();
-    if (!viewer) return;
+    const activeDocument = this.getActiveDocument();
+    if (!activeDocument) return;
     const epoch = this.searchEpoch;
-    await this.queueReveal(epoch, viewer, this.matches[this.activeIndex]);
+    await this.queueReveal(epoch, activeDocument, this.matches[this.activeIndex]);
   }
 
   private async queueReveal(
     epoch: number,
-    viewer: PDFViewer,
+    activeDocument: ActiveSearchDocument,
     match: PdfSearchMatch,
   ): Promise<void> {
     const request = ++this.revealRequest;
     const pendingReveal = this.revealQueue
       .catch(() => undefined)
       .then(async () => {
-        if (!this.isCurrentSearch(epoch, viewer)) return;
-        await viewer.revealSearchMatch(match);
-        if (!this.isCurrentSearch(epoch, viewer) || request !== this.revealRequest) return;
+        if (!this.isCurrentSearch(epoch, activeDocument)) return;
+        await activeDocument.rendering.revealSearchMatch(match);
+        if (!this.isCurrentSearch(epoch, activeDocument) || request !== this.revealRequest) return;
         this.updateStatus();
       });
     this.revealQueue = pendingReveal;

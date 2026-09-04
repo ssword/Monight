@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
+import type { DocumentContent } from '../reader/document-content';
 import { createDocumentIntake } from '../reader/document-intake';
+import type { DocumentRuntime } from '../reader/document-queries';
 import {
   createReaderActions,
   type ReaderProjection,
@@ -22,6 +24,29 @@ const INITIAL_SESSION = {
     },
   ],
 };
+
+function createDocumentRuntime(): DocumentRuntime {
+  const content: DocumentContent = {
+    pageCount: 0,
+    getPage: vi.fn(async () => {
+      throw new Error('Page unavailable in Reader Actions test');
+    }),
+    getData: vi.fn(async () => new Uint8Array()),
+    search: vi.fn(async () => []),
+    getOutline: vi.fn(async () => []),
+    getMetadata: vi.fn(async () => null),
+    resolveLinkTarget: vi.fn(async () => null),
+    destroy: vi.fn(async () => undefined),
+  };
+  return {
+    content,
+    destroy: vi.fn(async () => content.destroy()),
+    renderThumbnail: vi.fn(async () => {
+      throw new Error('Thumbnail unavailable in Reader Actions test');
+    }),
+    getAnnotations: vi.fn(() => []),
+  };
+}
 
 describe('Reader Actions', () => {
   it('initializes missing Visual State from configured reader defaults', () => {
@@ -501,6 +526,7 @@ describe('Reader Actions', () => {
 
     await reader.dispatch({
       type: 'registerDocument',
+      runtime: createDocumentRuntime(),
       document: {
         filePath: '/docs/third.pdf',
         title: 'third.pdf',
@@ -509,6 +535,7 @@ describe('Reader Actions', () => {
     });
     const duplicate = await reader.dispatch({
       type: 'registerDocument',
+      runtime: createDocumentRuntime(),
       document: {
         filePath: '/docs/first.pdf',
         title: 'renamed.pdf',
@@ -537,6 +564,7 @@ describe('Reader Actions', () => {
 
     const registration = reader.dispatch({
       type: 'registerDocument',
+      runtime: createDocumentRuntime(),
       document: {
         filePath: '/docs/third.pdf',
         title: 'third.pdf',
@@ -582,6 +610,7 @@ describe('Reader Actions', () => {
     await vi.waitFor(() => expect(releaseClose).toBeTypeOf('function'));
     const registration = reader.dispatch({
       type: 'registerDocument',
+      runtime: createDocumentRuntime(),
       document: {
         filePath: '/docs/third.pdf',
         title: 'third.pdf',
@@ -856,6 +885,7 @@ describe('Reader Actions', () => {
     await reader.dispatch({ type: 'closeDocument', filePath: '/docs/first.pdf' });
     await reader.dispatch({
       type: 'registerDocument',
+      runtime: createDocumentRuntime(),
       document: INITIAL_SESSION.documents[0],
     });
 
@@ -895,6 +925,7 @@ describe('Reader Actions', () => {
     await vi.waitFor(() => expect(releaseActivation).toBeTypeOf('function'));
     const registration = reader.dispatch({
       type: 'registerDocument',
+      runtime: createDocumentRuntime(),
       document: {
         filePath: '/docs/third.pdf',
         title: 'third.pdf',
@@ -929,6 +960,7 @@ describe('Reader Actions', () => {
 
     const outcome = await reader.dispatch({
       type: 'registerDocument',
+      runtime: createDocumentRuntime(),
       document: {
         filePath: '/docs/third.pdf',
         title: 'third.pdf',
@@ -1217,6 +1249,7 @@ describe('Reader Actions', () => {
     await reader.dispatch({ type: 'removeDocument', filePath: '/docs/first.pdf' });
     await reader.dispatch({
       type: 'registerDocument',
+      runtime: createDocumentRuntime(),
       document: INITIAL_SESSION.documents[0],
     });
     releasePageCount?.();

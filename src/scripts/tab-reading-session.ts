@@ -1,10 +1,10 @@
+import type { DocumentRendering } from '../reader/document-rendering';
 import type {
   ReadingSessionVisualState,
   RestorableReadingPosition,
   ZoomIntent,
 } from '../reader/reader-actions';
 import { buildFilterCSS } from './filters';
-import type { PDFViewer } from './pdf-viewer';
 import type { TabData } from './tabs';
 
 export interface ProjectedDocumentState {
@@ -37,7 +37,7 @@ export function applyProjectedDocumentStateToTab(
 }
 
 export async function projectTabStateToViewer(
-  viewer: PDFViewer,
+  viewer: DocumentRendering,
   tab: TabData,
   readingPosition: RestorableReadingPosition,
 ): Promise<void> {

@@ -92,7 +92,7 @@ export function updateUI(tabManager: TabManager | null): void {
   const activeTab = tabManager?.getActiveTab();
   if (!activeTab) return;
 
-  const viewer = tabManager?.getViewerForTab(activeTab.id);
+  const viewer = tabManager?.getRenderingForTab(activeTab.id);
   if (!viewer) return;
 
   const state = viewer.getState();

@@ -64,7 +64,7 @@ describe('reading session visual state', () => {
     };
     const tabManager = {
       getActiveTab: () => tab,
-      getViewerForTab: () => viewer,
+      getRenderingForTab: () => viewer,
     } as unknown as TabManager;
 
     saveCurrentTabState(tabManager, null);
@@ -102,7 +102,7 @@ describe('reading session visual state', () => {
     };
     const tab = savedTab();
     const tabManager = {
-      getViewerForTab: () => viewer,
+      getRenderingForTab: () => viewer,
     } as unknown as TabManager;
 
     await restoreTabState(tabManager, null, tab);

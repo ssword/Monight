@@ -1,4 +1,5 @@
 import { getName, getTauriVersion, getVersion } from '@tauri-apps/api/app';
+import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 import {
   requestAnnotationNote,
@@ -41,6 +42,7 @@ import {
   updateRecentFiles,
   type ViewMode,
 } from './lib/document-features';
+import type { PdfLinkTarget } from './lib/pdf-links';
 import {
   createReaderActions,
   type PersistedReadingSession,
@@ -160,12 +162,20 @@ let isRestoringSession = false;
 
 const getActiveViewer = () => {
   const activeTab = tabManager?.getActiveTab();
-  return activeTab ? (tabManager?.getViewerForTab(activeTab.id) ?? null) : null;
+  return activeTab ? (tabManager?.getRenderingForTab(activeTab.id) ?? null) : null;
+};
+
+const getActiveDocumentAccess = () => {
+  const rendering = getActiveViewer();
+  const query = readerActions?.query();
+  return rendering && query
+    ? { query, rendering, navigateToPage: (pageNumber: number) => goToPage(pageNumber) }
+    : null;
 };
 
 const getDocumentViewer = (filePath: string) => {
   const tab = tabManager?.getTabs().find((item) => item.filePath === filePath);
-  const viewer = tab ? tabManager?.getViewerForTab(tab.id) : null;
+  const viewer = tab ? tabManager?.getRenderingForTab(tab.id) : null;
   if (!viewer) throw new Error(`Cannot project unopened Document: ${filePath}`);
   return viewer;
 };
@@ -188,6 +198,10 @@ const dispatchReaderAction = async (action: ReaderAction): Promise<void> => {
   if (action.type === 'setFilterSettings' && outcome?.status === 'committed') {
     scheduleLastFilterSave(action.filterSettings);
   }
+};
+
+const resolveDocumentLinkTarget = async (filePath: string, target: PdfLinkTarget) => {
+  return (await readerActions?.query(filePath)?.resolveLinkTarget(target)) ?? null;
 };
 
 const persistAnnotations = (filePath: string, annotations: PdfAnnotation[]): void => {
@@ -281,7 +295,7 @@ const saveReadingSessionNow = async (): Promise<void> => {
   }
 
   const activeTab = tabManager?.getActiveTab();
-  const activeViewer = activeTab ? tabManager?.getViewerForTab(activeTab.id) : null;
+  const activeViewer = activeTab ? tabManager?.getRenderingForTab(activeTab.id) : null;
   if (activeTab && activeViewer) {
     await readerActions.dispatch({
       type: 'settleReadingPosition',
@@ -401,7 +415,7 @@ async function initializeApp(): Promise<void> {
           persistAnnotations(filePath, annotations);
           sidebarController?.annotationsChanged();
         },
-        onDocumentPrepared: async (tab) => {
+        onDocumentPrepared: async (tab, runtime) => {
           const outcome = await readerActions?.dispatch({
             type: 'registerDocument',
             document: {
@@ -415,6 +429,7 @@ async function initializeApp(): Promise<void> {
                 viewMode: tab.viewMode,
               },
             },
+            runtime,
           });
           if (outcome?.status === 'failure') throw outcome.error;
         },
@@ -452,6 +467,10 @@ async function initializeApp(): Promise<void> {
         requestPassword: requestPdfPassword,
         requestAnnotationNote,
         reportError: (message) => showToast(message, 'error'),
+        resolveLinkTarget: resolveDocumentLinkTarget,
+        openExternalUrl: async (url) => {
+          await invoke('open_external_url', { url });
+        },
       },
     );
 
@@ -478,7 +497,7 @@ async function initializeApp(): Promise<void> {
         },
         getPageCount: (filePath) => {
           const tab = tabManager?.getTabs().find((item) => item.filePath === filePath);
-          return tab ? (tabManager?.getViewerForTab(tab.id)?.getState().totalPages ?? 0) : 0;
+          return tab ? (tabManager?.getRenderingForTab(tab.id)?.getState().totalPages ?? 0) : 0;
         },
         applyZoomIntent: async (filePath, zoomIntent, options) => {
           const viewer = getDocumentViewer(filePath);
@@ -534,10 +553,13 @@ async function initializeApp(): Promise<void> {
       if (outcome?.status === 'failure') throw outcome.error;
     });
 
-    searchController = new SearchController(getActiveViewer);
+    searchController = new SearchController(getActiveDocumentAccess);
     sidebarController = new SidebarController({
-      getActiveViewer,
+      getActiveDocument: getActiveDocumentAccess,
       requestAnnotationNote,
+      openExternalUrl: async (url) => {
+        await invoke('open_external_url', { url });
+      },
     });
     sidebarController.setThumbnailsEnabled(settings.general.displayThumbs);
     presentationController = new PresentationController({
@@ -660,7 +682,7 @@ async function initializeApp(): Promise<void> {
         renderRecentFiles([]);
         for (const tab of tabManager?.getTabs() ?? []) {
           tab.annotations = [];
-          tabManager?.getViewerForTab(tab.id)?.setAnnotations([]);
+          tabManager?.getRenderingForTab(tab.id)?.setAnnotations([]);
         }
         sidebarController?.annotationsChanged();
       },

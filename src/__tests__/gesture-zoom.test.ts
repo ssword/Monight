@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { createInternalDocumentPage } from '../reader/internal-document-page';
+
 const getPdfEngine = vi.hoisted(() => vi.fn());
 vi.mock('../lib/pdf-engine', () => ({ getPdfEngine }));
 
@@ -391,7 +393,7 @@ describe('gesture zoom preview', () => {
       calculateAllPageDimensions: Viewer['calculateAllPageDimensions'];
     };
     Object.assign(viewer, {
-      pdfDoc: {},
+      content: { pageCount: 10 },
       setZoom: prototype.setZoom.bind(viewer),
       calculateAllPageDimensions: prototype.calculateAllPageDimensions.bind(viewer),
       scheduleDimensionRefinement: vi.fn(),
@@ -452,7 +454,8 @@ describe('gesture zoom preview', () => {
       ) => Promise<unknown>;
     };
     Object.assign(viewer, {
-      pdfDoc: {
+      content: {
+        pageCount: 10,
         getPage: vi.fn(
           () =>
             new Promise((resolve) => {
@@ -475,7 +478,7 @@ describe('gesture zoom preview', () => {
 
     await Promise.resolve();
     viewer.handleGestureStart({ preventDefault: vi.fn() });
-    releasePage?.(page);
+    releasePage?.(createInternalDocumentPage(1, page));
     await renderPromise;
 
     expect(pageRender).not.toHaveBeenCalled();
@@ -509,7 +512,10 @@ describe('gesture zoom preview', () => {
     };
     vi.stubGlobal('document', { createElement: () => renderCanvas });
     Object.assign(viewer, {
-      pdfDoc: { getPage: vi.fn(async () => page) },
+      content: {
+        pageCount: 10,
+        getPage: vi.fn(async () => createInternalDocumentPage(1, page)),
+      },
       canvas: visibleCanvas,
       canvasId: 'test',
       createPageSurface: vi.fn(() => stagedSurface),

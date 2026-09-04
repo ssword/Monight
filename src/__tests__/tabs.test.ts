@@ -322,7 +322,7 @@ describe('Document navigation', () => {
     const second = await manager.createTab('/tmp/two.pdf', 'two.pdf', new Uint8Array([2]));
 
     await manager.activateTab(first.id);
-    const destroy = vi.spyOn(manager.getViewerForTab(first.id) as PDFViewer, 'destroy');
+    const destroy = vi.spyOn(manager.getRenderingForTab(first.id) as PDFViewer, 'destroy');
     await manager.closeTab(first.id);
 
     expect(onDocumentCloseRequested).toHaveBeenCalledWith('/tmp/one.pdf');
@@ -353,8 +353,10 @@ describe('Document navigation', () => {
 
   it('rolls back an unregistered runtime without closing an authoritative Document', async () => {
     const onDocumentClosed = vi.fn(async () => undefined);
+    let destroyRuntime: ReturnType<typeof vi.spyOn> | undefined;
     const manager = new TabManager(vi.fn(), undefined, undefined, {
-      onDocumentPrepared: async () => {
+      onDocumentPrepared: async (_tab, runtime) => {
+        destroyRuntime = vi.spyOn(runtime, 'destroy');
         throw new Error('session commit failed');
       },
       onDocumentClosed,
@@ -366,6 +368,7 @@ describe('Document navigation', () => {
 
     expect(manager.size).toBe(0);
     expect(onDocumentClosed).not.toHaveBeenCalled();
+    expect(destroyRuntime).toHaveBeenCalledOnce();
   });
 
   it('removes a registered Document when activation fails', async () => {

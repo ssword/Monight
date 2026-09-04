@@ -1,15 +1,15 @@
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 import type { ViewMode } from '../lib/document-features';
+import type { DocumentRendering } from '../reader/document-rendering';
 import type { PresentationExitOptions, ZoomIntent } from '../reader/reader-actions';
-import type { PDFViewer } from '../scripts/pdf-viewer';
 
 interface PresentationControllerOptions {
-  getActiveViewer: () => PDFViewer | null;
+  getActiveViewer: () => DocumentRendering | null;
   onStateChanged: (active: boolean) => void;
 }
 
 export class PresentationController {
-  private readonly getActiveViewer: () => PDFViewer | null;
+  private readonly getActiveViewer: () => DocumentRendering | null;
   private readonly onStateChanged: (active: boolean) => void;
   private active = false;
   private previousViewMode: ViewMode = 'single';

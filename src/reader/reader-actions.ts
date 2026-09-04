@@ -1,5 +1,6 @@
 import type { ViewMode } from '../lib/document-features';
 import { type FilterSettings, PRESETS } from '../scripts/filters';
+import { createDocumentQuery, type DocumentQuery, type DocumentRuntime } from './document-queries';
 import {
   createReadingSession,
   type DocumentPathReconciliation,
@@ -110,7 +111,7 @@ export type ReaderAction =
   | { type: 'setViewMode'; viewMode: ViewMode; filePath?: string }
   | { type: 'cycleViewMode'; filePath?: string }
   | { type: 'setFilterSettings'; filterSettings: FilterSettings; filePath?: string }
-  | { type: 'registerDocument'; document: ReadingSessionDocument }
+  | { type: 'registerDocument'; document: ReadingSessionDocument; runtime: DocumentRuntime }
   | { type: 'closeDocument'; filePath: string }
   | { type: 'reopenLastClosedDocument' }
   | { type: 'removeDocument'; filePath: string };
@@ -160,6 +161,7 @@ export interface ReaderActions {
   canonicalizeDocumentPaths(
     paths: readonly DocumentPathReconciliation[],
   ): Promise<ReaderActionOutcome>;
+  query(filePath?: string): DocumentQuery | null;
   snapshot(): ReadingSessionSnapshot;
   observe(observer: (snapshot: ReadingSessionSnapshot) => void): () => void;
   flush(): Promise<void>;
@@ -183,6 +185,11 @@ interface DocumentLane {
 interface GlobalLaneReservation {
   readonly filePath: string;
   tail: Promise<void>;
+}
+
+interface RegisteredDocumentRuntime {
+  generation: number;
+  readonly runtime: DocumentRuntime;
 }
 
 function visualStatesEqual(
@@ -315,6 +322,8 @@ export function createReaderActions({
     onObserverError,
   });
   const lanes = new Map<string, DocumentLane>();
+  const runtimes = new Map<string, RegisteredDocumentRuntime>();
+  const runtimeGenerations = new Map<string, number>();
   const recentlyClosedDocumentPaths: string[] = [];
   let globalTail = Promise.resolve();
   let activeReopenReservation: GlobalLaneReservation | null = null;
@@ -325,6 +334,29 @@ export function createReaderActions({
     (lanes.get(filePath)?.pendingRemovals ?? 0) > 0;
   const isDocumentOpen = (filePath: string): boolean =>
     session.snapshot().documents.some((document) => document.filePath === filePath);
+  const invalidateRuntime = (filePath: string): RegisteredDocumentRuntime | undefined => {
+    const registered = runtimes.get(filePath);
+    if (!registered) return undefined;
+    runtimeGenerations.set(filePath, registered.generation + 1);
+    return registered;
+  };
+  const removeRuntime = async (filePath: string): Promise<void> => {
+    const registered = runtimes.get(filePath);
+    if (!registered) return;
+    runtimes.delete(filePath);
+    try {
+      await registered.runtime.destroy();
+    } catch (error) {
+      onObserverError?.(error);
+    }
+  };
+  const restoreRuntimeAfterFailedRemoval = (
+    filePath: string,
+    registered: RegisteredDocumentRuntime | undefined,
+  ): void => {
+    if (!registered || runtimes.get(filePath) !== registered) return;
+    registered.generation = runtimeGenerations.get(filePath) ?? registered.generation;
+  };
   const cancelled = (
     filePath: string,
     expectedGeneration: number,
@@ -642,6 +674,7 @@ export function createReaderActions({
         const lane = laneFor(action.filePath);
         lane.pendingRemovals += 1;
         lane.generation += 1;
+        const invalidatedRuntime = invalidateRuntime(action.filePath);
         for (const pending of lane.pendingAbsolute.values()) {
           pending.superseded = true;
           pending.resolve({ status: 'no-op', revision: revision() });
@@ -653,8 +686,12 @@ export function createReaderActions({
             try {
               const current = session.snapshot();
               const transition = closeDocumentTransition(current, action.filePath);
-              if (!transition) return { status: 'no-op', revision: current.revision };
+              if (!transition) {
+                restoreRuntimeAfterFailedRemoval(action.filePath, invalidatedRuntime);
+                return { status: 'no-op', revision: current.revision };
+              }
               if (action.type === 'closeDocument' && !projection.closeDocument) {
+                restoreRuntimeAfterFailedRemoval(action.filePath, invalidatedRuntime);
                 return {
                   status: 'failure',
                   error: new Error('Reader projection cannot close a Document'),
@@ -667,12 +704,14 @@ export function createReaderActions({
                 }
                 await projection.closeDocument?.(action.filePath, transition.activeDocumentPath);
               } catch (error) {
+                restoreRuntimeAfterFailedRemoval(action.filePath, invalidatedRuntime);
                 return { status: 'failure', error, revision: revision() };
               }
               const latest = session.snapshot();
               const latestTransition = closeDocumentTransition(latest, action.filePath);
               if (!latestTransition) return { status: 'no-op', revision: latest.revision };
               const outcome = await commit({ schemaVersion: 2, ...latestTransition }, 'immediate');
+              await removeRuntime(action.filePath);
               if (action.type === 'closeDocument') {
                 recentlyClosedDocumentPaths.push(action.filePath);
               }
@@ -688,6 +727,27 @@ export function createReaderActions({
       if (action.type === 'registerDocument') {
         return enqueueGlobal(async () => {
           const current = session.snapshot();
+          const existingRuntime = runtimes.get(action.document.filePath);
+          if (existingRuntime && existingRuntime.runtime !== action.runtime) {
+            try {
+              await action.runtime.destroy();
+            } catch (error) {
+              onObserverError?.(error);
+            }
+            return {
+              status: 'failure',
+              error: new Error(`Document Content already registered: ${action.document.filePath}`),
+              revision: current.revision,
+            };
+          }
+          if (!existingRuntime) {
+            const nextGeneration = (runtimeGenerations.get(action.document.filePath) ?? 0) + 1;
+            runtimeGenerations.set(action.document.filePath, nextGeneration);
+            runtimes.set(action.document.filePath, {
+              generation: nextGeneration,
+              runtime: action.runtime,
+            });
+          }
           if (current.documents.some((item) => item.filePath === action.document.filePath)) {
             return { status: 'no-op', revision: current.revision };
           }
@@ -1009,6 +1069,28 @@ export function createReaderActions({
       );
     },
     canonicalizeDocumentPaths,
+    query(filePath) {
+      const targetPath = filePath ?? session.snapshot().activeDocumentPath;
+      if (!targetPath) return null;
+      const registered = runtimes.get(targetPath);
+      if (!registered) return null;
+      const queryGeneration = registered.generation;
+      return createDocumentQuery({
+        filePath: targetPath,
+        generation: queryGeneration,
+        runtime: registered.runtime,
+        isCurrent: () => {
+          const current = runtimes.get(targetPath);
+          return (
+            current === registered &&
+            registered.generation === queryGeneration &&
+            runtimeGenerations.get(targetPath) === queryGeneration &&
+            isDocumentOpen(targetPath) &&
+            !isRemovalPending(targetPath)
+          );
+        },
+      });
+    },
     snapshot: session.snapshot,
     observe: session.observe,
     flush: session.flush,

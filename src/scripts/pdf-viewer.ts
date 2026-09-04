@@ -1,16 +1,13 @@
 import { invoke } from '@tauri-apps/api/core';
-import type { PDFDocumentProxy, PDFPageProxy, RenderTask, TextLayer } from 'pdfjs-dist';
+import type { PDFPageProxy, RenderTask, TextLayer } from 'pdfjs-dist';
 import { debugLog } from '../lib/debug-log';
 import { deriveScaledDimensions } from '../lib/dimensions';
-import {
-  type PdfAnnotation,
-  type PdfAnnotationColor,
-  type PdfAnnotationRect,
-  type PdfOutlineItem,
-  type PdfSearchMatch,
-  type SearchProgress,
-  searchDocumentIncrementally,
-  type ViewMode,
+import type {
+  PdfAnnotation,
+  PdfAnnotationColor,
+  PdfAnnotationRect,
+  PdfSearchMatch,
+  ViewMode,
 } from '../lib/document-features';
 import { hasValueChanged } from '../lib/guards';
 import {
@@ -32,23 +29,20 @@ import {
   visiblePageRange,
 } from '../lib/scroll-geometry';
 import type {
+  LoadableDocumentContent,
+  PdfPasswordRequester,
+  ResolvedDocumentLinkTarget,
+} from '../reader/document-content';
+import type { DocumentRendering, DocumentRenderingState } from '../reader/document-rendering';
+import { getInternalDocumentPageRenderingHandle } from '../reader/internal-document-page';
+import { createPdfDocumentContent } from '../reader/pdf-document-content';
+import type {
   ReaderActionOptions,
   ReadingPosition,
   RestorableReadingPosition,
   ZoomIntent,
 } from '../reader/reader-actions';
 import { captureReadingPosition, restoreReadingPosition } from '../reader/reading-position';
-
-interface ViewState {
-  currentPage: number;
-  totalPages: number;
-  zoom: number;
-  zoomIntent: ZoomIntent;
-  rotation: number;
-  fileName: string;
-  filePath: string;
-  viewMode: ViewMode;
-}
 
 interface VisibleRenderRequest {
   forceRender: boolean;
@@ -65,6 +59,9 @@ interface GestureCommit {
 
 type PageViewport = ReturnType<PDFPageProxy['getViewport']>;
 type TextLayerTask = TextLayer;
+type MutableDocumentRenderingState = {
+  -readonly [Key in keyof DocumentRenderingState]: DocumentRenderingState[Key];
+};
 
 interface LinkAnnotationData {
   annotationType?: number;
@@ -101,16 +98,6 @@ interface BasePageDimensions {
   height: number;
 }
 
-interface RawOutlineItem {
-  title: string;
-  bold: boolean;
-  italic: boolean;
-  dest: PdfDestination | null;
-  url: string | null;
-  unsafeUrl?: string;
-  items: RawOutlineItem[];
-}
-
 interface GestureLikeEvent extends Event {
   scale?: number;
   clientX?: number;
@@ -131,17 +118,17 @@ interface SelectionHighlightData {
   text: string;
 }
 
-export type PdfPasswordRequester = (
-  fileName: string,
-  reason: 'required' | 'incorrect',
-) => Promise<string | null>;
+export type { PdfPasswordRequester } from '../reader/document-content';
 
 export type AnnotationNoteRequester = (initialValue?: string) => Promise<string | null>;
 
 export interface PDFViewerOptions {
+  content?: LoadableDocumentContent;
   requestPassword?: PdfPasswordRequester;
   requestAnnotationNote?: AnnotationNoteRequester;
   reportError?: (message: string) => void;
+  resolveLinkTarget?: (target: PdfLinkTarget) => Promise<ResolvedDocumentLinkTarget | null>;
+  openExternalUrl?: (url: string) => Promise<void>;
 }
 
 // Align canvas size to PDF.js viewer rounding to avoid subpixel blur.
@@ -218,21 +205,15 @@ const isAbortLikeError = (error: unknown): boolean =>
       (error as { name?: string }).name === 'AbortException',
   );
 
-function releasePdfData(pdfData: Uint8Array): void {
-  try {
-    globalThis.structuredClone(pdfData, { transfer: [pdfData.buffer] });
-  } catch {
-    pdfData.fill(0);
-  }
-}
-
-export class PDFViewer {
+export class PDFViewer implements DocumentRendering {
   private container: HTMLElement;
   private canvas: HTMLCanvasElement | null = null;
   private singlePageSurface: PageSurface | null = null;
   private spreadPageSurface: PageSurface | null = null;
-  private pdfDoc: PDFDocumentProxy | null = null;
-  private state: ViewState = {
+  private readonly content: LoadableDocumentContent;
+  private readonly ownsContent: boolean;
+  private destroyed = false;
+  private state: MutableDocumentRenderingState = {
     currentPage: 1,
     totalPages: 0,
     zoom: 1.0,
@@ -257,13 +238,12 @@ export class PDFViewer {
   private annotations: PdfAnnotation[] = [];
   private searchQuery = '';
   private searchToken = 0;
-  private searchMatches: PdfSearchMatch[] = [];
   private activeSearchMatch: PdfSearchMatch | null = null;
   private pendingSelectionHighlights: SelectionHighlightData[] = [];
-  private readonly pageTextCache = new Map<number, string>();
-  private requestPassword?: PdfPasswordRequester;
   private requestAnnotationNote?: AnnotationNoteRequester;
   private reportError?: (message: string) => void;
+  private readonly resolveLinkTargetQuery?: PDFViewerOptions['resolveLinkTarget'];
+  private readonly openExternalUrl?: PDFViewerOptions['openExternalUrl'];
   private readonly linkTargets = new WeakMap<HTMLElement, PdfLinkTarget>();
   private contextMenu: HTMLDivElement | null = null;
   private handleDocumentPointerDownBound: (event: PointerEvent) => void;
@@ -330,9 +310,13 @@ export class PDFViewer {
     }
     this.container = container;
     this.canvasId = canvasId;
-    this.requestPassword = options.requestPassword;
+    this.ownsContent = !options.content;
+    this.content =
+      options.content ?? createPdfDocumentContent({ requestPassword: options.requestPassword });
     this.requestAnnotationNote = options.requestAnnotationNote;
     this.reportError = options.reportError;
+    this.resolveLinkTargetQuery = options.resolveLinkTarget;
+    this.openExternalUrl = options.openExternalUrl;
     this.initializeCanvas();
     this.handleScrollBound = this.handleScroll.bind(this);
     this.handleDocumentPointerDownBound = this.handleDocumentPointerDown.bind(this);
@@ -464,6 +448,13 @@ export class PDFViewer {
     }
   }
 
+  private async getRenderingPage(pageNumber: number): Promise<PDFPageProxy> {
+    if (this.destroyed) throw new Error('Document closed');
+    const page = await this.content.getPage(pageNumber);
+    if (this.destroyed) throw new Error('Document closed');
+    return getInternalDocumentPageRenderingHandle(page) as PDFPageProxy;
+  }
+
   private async startSurfaceRender(
     pageNumber: number,
     surface: PageSurface,
@@ -471,9 +462,13 @@ export class PDFViewer {
     expectedRenderGeneration: number | null = null,
     options?: ReaderActionOptions,
   ): Promise<SurfaceRender | null> {
-    if (!this.pdfDoc || !this.isCurrentRenderCommit(expectedRenderGeneration, options)) return null;
+    if (
+      this.content.pageCount === 0 ||
+      !this.isCurrentRenderCommit(expectedRenderGeneration, options)
+    )
+      return null;
 
-    const page = await this.pdfDoc.getPage(pageNumber);
+    const page = await this.getRenderingPage(pageNumber);
     if (!this.isCurrentRenderCommit(expectedRenderGeneration, options)) return null;
     this.cacheBaseDimensions(pageNumber, page);
     const viewport = page.getViewport({
@@ -533,8 +528,6 @@ export class PDFViewer {
   }
 
   async loadPDF(pdfData: Uint8Array, fileName: string, filePath: string): Promise<void> {
-    let passwordCancelled = false;
-    let passwordRequestError: unknown = null;
     try {
       this.cancelDimensionRefinement();
       // Cancel any pending render
@@ -542,68 +535,23 @@ export class PDFViewer {
         this.renderTask.cancel();
       }
 
-      // Lazy-load the PDF engine on first document open
-      const pdfjsLib = await getPdfEngine();
-
-      // Load PDF document
-      const loadingTask = pdfjsLib.getDocument({ data: pdfData.slice() });
-      releasePdfData(pdfData);
-      const passwordRequester = this.requestPassword;
-      if (passwordRequester) {
-        loadingTask.onPassword = (updatePassword: (password: string) => void, reason: number) => {
-          const requestReason =
-            reason === pdfjsLib.PasswordResponses.INCORRECT_PASSWORD ? 'incorrect' : 'required';
-          void passwordRequester(fileName, requestReason)
-            .then(async (password) => {
-              if (password === null) {
-                passwordCancelled = true;
-                await loadingTask.destroy();
-                return;
-              }
-              updatePassword(password);
-            })
-            .catch(async (error) => {
-              passwordRequestError = error;
-              try {
-                await loadingTask.destroy();
-              } catch {
-                // The original password UI error is the useful failure to report.
-              }
-            });
-        };
-      }
-      this.pdfDoc = await loadingTask.promise;
+      await this.content.load({ bytes: pdfData, fileName, filePath });
 
       // Update state
-      this.state.totalPages = this.pdfDoc.numPages;
+      this.state.totalPages = this.content.pageCount;
       this.state.currentPage = 1;
       this.state.fileName = fileName;
       this.state.filePath = filePath;
 
       // Render page one immediately. Other dimensions are cached lazily as pages are requested.
       this.baseDimensions.clear();
-      this.pageTextCache.clear();
       this.clearSearch();
       await this.renderPage(1);
 
       debugLog(`Loaded PDF: ${fileName} (${this.state.totalPages} pages)`);
     } catch (error) {
       console.error('Error loading PDF:', error);
-      if (passwordCancelled) {
-        throw new Error('Password entry cancelled');
-      }
-      if (passwordRequestError) {
-        throw new Error(
-          `Password prompt failed: ${
-            passwordRequestError instanceof Error
-              ? passwordRequestError.message
-              : String(passwordRequestError)
-          }`,
-        );
-      }
-      throw new Error(
-        `Failed to load PDF: ${error instanceof Error ? error.message : 'Unknown error'}`,
-      );
+      throw error;
     }
   }
 
@@ -755,10 +703,14 @@ export class PDFViewer {
 
   private async activateLinkTarget(target: PdfLinkTarget): Promise<void> {
     this.hideContextMenu();
-
-    if (target.url) {
+    const resolved = await this.resolveLinkTarget(target);
+    if (resolved?.kind === 'external') {
       try {
-        await invoke('open_external_url', { url: target.url });
+        if (this.openExternalUrl) {
+          await this.openExternalUrl(resolved.url);
+        } else {
+          await invoke('open_external_url', { url: resolved.url });
+        }
       } catch (error) {
         console.error('Failed to open external link:', error);
         this.reportError?.(error instanceof Error ? error.message : String(error));
@@ -766,40 +718,18 @@ export class PDFViewer {
       return;
     }
 
-    if (target.dest) {
-      const pageNum = await this.resolveDestinationPage(target.dest);
-      if (pageNum !== null) {
-        await this.goToPage(pageNum);
-      }
+    if (resolved?.kind === 'page') {
+      await this.goToPage(resolved.pageNumber);
     }
   }
 
-  private async resolveDestinationPage(dest: PdfDestination): Promise<number | null> {
-    if (!this.pdfDoc) return null;
-
-    const explicitDest = Array.isArray(dest) ? dest : await this.pdfDoc.getDestination(dest);
-    if (!explicitDest || explicitDest.length === 0) {
-      return null;
-    }
-
-    const pageRef = explicitDest[0];
-    if (typeof pageRef === 'number') {
-      return Math.max(1, Math.min(pageRef + 1, this.state.totalPages));
-    }
-
-    if (
-      pageRef &&
-      typeof pageRef === 'object' &&
-      'num' in pageRef &&
-      'gen' in pageRef &&
-      typeof (pageRef as { num?: unknown }).num === 'number' &&
-      typeof (pageRef as { gen?: unknown }).gen === 'number'
-    ) {
-      const pageIndex = await this.pdfDoc.getPageIndex(pageRef as { num: number; gen: number });
-      return Math.max(1, Math.min(pageIndex + 1, this.state.totalPages));
-    }
-
-    return null;
+  private async resolveLinkTarget(
+    target: PdfLinkTarget,
+  ): Promise<ResolvedDocumentLinkTarget | null> {
+    if (this.resolveLinkTargetQuery) return this.resolveLinkTargetQuery(target);
+    return this.content.resolveLinkTarget(target, {
+      isCancelled: () => this.content.pageCount === 0,
+    });
   }
 
   private handlePageContextMenu(event: MouseEvent): void {
@@ -1178,14 +1108,16 @@ export class PDFViewer {
   }
 
   private async copyLinkTarget(target: PdfLinkTarget): Promise<void> {
-    if (target.url) {
-      await this.copyText(target.url);
+    const resolved = await this.resolveLinkTarget(target);
+    if (resolved?.kind === 'external') {
+      await this.copyText(resolved.url);
       return;
     }
 
-    if (target.dest) {
-      const pageNum = await this.resolveDestinationPage(target.dest);
-      await this.copyText(pageNum ? `#page=${pageNum}` : this.describeDestination(target.dest));
+    if (resolved?.kind === 'page') {
+      await this.copyText(`#page=${resolved.pageNumber}`);
+    } else if (target.dest) {
+      await this.copyText(this.describeDestination(target.dest));
     }
   }
 
@@ -1209,54 +1141,6 @@ export class PDFViewer {
     }
   }
 
-  private async getPageText(pageNumber: number): Promise<string> {
-    const cached = this.pageTextCache.get(pageNumber);
-    if (cached !== undefined) return cached;
-    const pdfDocument = this.pdfDoc;
-    if (!pdfDocument) return '';
-
-    const page = await pdfDocument.getPage(pageNumber);
-    const content = await page.getTextContent();
-    if (this.pdfDoc !== pdfDocument) return '';
-    const text = content.items
-      .map((item) => ('str' in item && typeof item.str === 'string' ? item.str : ''))
-      .join(' ')
-      .replace(/\s+/g, ' ')
-      .trim();
-    this.pageTextCache.set(pageNumber, text);
-    return text;
-  }
-
-  async searchText(
-    query: string,
-    onProgress?: (progress: SearchProgress) => void,
-  ): Promise<PdfSearchMatch[]> {
-    const normalizedQuery = query.trim();
-    const searchToken = (this.searchToken ?? 0) + 1;
-    this.searchToken = searchToken;
-    this.searchQuery = normalizedQuery;
-    this.searchMatches = [];
-    this.activeSearchMatch = null;
-    this.refreshSearchHighlights();
-    if (!normalizedQuery || !this.pdfDoc) return [];
-
-    const matches = await searchDocumentIncrementally({
-      query: normalizedQuery,
-      totalPages: this.state.totalPages,
-      getPageText: (pageNumber) => this.getPageText(pageNumber),
-      isCancelled: () => this.searchToken !== searchToken || this.searchQuery !== normalizedQuery,
-      onProgress: (progress) => {
-        this.searchMatches = progress.matches.map((match) => ({ ...match }));
-        if (progress.pageMatches.length > 0) this.refreshSearchHighlights();
-        onProgress?.(progress);
-      },
-    });
-
-    if (this.searchToken !== searchToken || this.searchQuery !== normalizedQuery) return [];
-    this.searchMatches = matches;
-    return matches.map((match) => ({ ...match }));
-  }
-
   async revealSearchMatch(match: PdfSearchMatch): Promise<void> {
     const searchToken = this.searchToken ?? 0;
     const options: ReaderActionOptions = {
@@ -1276,15 +1160,17 @@ export class PDFViewer {
     });
   }
 
-  getSearchMatches(): PdfSearchMatch[] {
-    return this.searchMatches.map((match) => ({ ...match }));
-  }
-
   clearSearch(): void {
     this.searchToken = (this.searchToken ?? 0) + 1;
     this.searchQuery = '';
-    this.searchMatches = [];
     this.activeSearchMatch = null;
+    this.refreshSearchHighlights();
+  }
+
+  setSearchQuery(query: string): void {
+    const normalizedQuery = query.trim();
+    if (this.searchQuery !== normalizedQuery) this.activeSearchMatch = null;
+    this.searchQuery = normalizedQuery;
     this.refreshSearchHighlights();
   }
 
@@ -1341,51 +1227,13 @@ export class PDFViewer {
     }
   }
 
-  async getOutlineItems(): Promise<PdfOutlineItem[]> {
-    const pdfDocument = this.pdfDoc;
-    if (!pdfDocument) return [];
-    const outline = (await pdfDocument.getOutline()) as unknown as RawOutlineItem[];
-    if (this.pdfDoc !== pdfDocument) return [];
-
-    const resolveItems = async (items: RawOutlineItem[]): Promise<PdfOutlineItem[]> =>
-      Promise.all(
-        items.map(async (item) => {
-          const pageNumber = item.dest ? await this.resolveDestinationPage(item.dest) : null;
-          const children = await resolveItems(item.items ?? []);
-          return {
-            title: item.title || 'Untitled section',
-            pageNumber,
-            url: item.url ?? item.unsafeUrl,
-            bold: item.bold,
-            italic: item.italic,
-            items: children,
-          };
-        }),
-      );
-
-    const items = await resolveItems(outline ?? []);
-    return this.pdfDoc === pdfDocument ? items : [];
-  }
-
-  async activateOutlineItem(item: PdfOutlineItem): Promise<void> {
-    if (item.pageNumber !== null) {
-      await this.goToPage(item.pageNumber);
-      return;
-    }
-    if (item.url) {
-      await this.activateLinkTarget({ url: item.url });
-    }
-  }
-
   async renderThumbnail(
     pageNumber: number,
     options: { maxWidth?: number; rotation?: number } = {},
   ): Promise<HTMLCanvasElement> {
-    const pdfDocument = this.pdfDoc;
-    if (!pdfDocument) throw new Error('PDF not loaded');
+    if (this.content.pageCount === 0) throw new Error('PDF not loaded');
     const { maxWidth = 144, rotation = this.state.rotation } = options;
-    const page = await pdfDocument.getPage(pageNumber);
-    if (this.pdfDoc !== pdfDocument) throw new Error('Document closed');
+    const page = await this.getRenderingPage(pageNumber);
     const baseViewport = page.getViewport({ scale: 1, rotation });
     const scale = Math.min(maxWidth / baseViewport.width, 1);
     const viewport = page.getViewport({ scale, rotation });
@@ -1411,7 +1259,7 @@ export class PDFViewer {
     } finally {
       this.thumbnailRenderTasks.delete(task);
     }
-    if (this.pdfDoc !== pdfDocument) throw new Error('Document closed');
+    if (this.content.pageCount === 0) throw new Error('Document closed');
     return canvas;
   }
 
@@ -1420,7 +1268,7 @@ export class PDFViewer {
     expectedRenderGeneration: number | null = null,
     options?: ReaderActionOptions,
   ): Promise<void> {
-    if (!this.pdfDoc || !this.canvas || !this.singlePageSurface) {
+    if (this.content.pageCount === 0 || !this.canvas || !this.singlePageSurface) {
       throw new Error('PDF not loaded');
     }
 
@@ -1558,7 +1406,11 @@ export class PDFViewer {
     expectedRenderGeneration: number | null = null,
     options?: ReaderActionOptions,
   ): Promise<void> {
-    if (!this.pdfDoc || !this.isCurrentRenderCommit(expectedRenderGeneration, options)) return;
+    if (
+      this.content.pageCount === 0 ||
+      !this.isCurrentRenderCommit(expectedRenderGeneration, options)
+    )
+      return;
     const surface = this.ensureSpreadSurface();
     if (pageNumber > this.state.totalPages) {
       surface.pageNumber = null;
@@ -1649,7 +1501,7 @@ export class PDFViewer {
   }
 
   async lastPage(): Promise<void> {
-    if (this.pdfDoc) {
+    if (this.content.pageCount > 0) {
       await this.goToPage(this.state.totalPages);
     }
   }
@@ -1827,7 +1679,11 @@ export class PDFViewer {
     renderGeneration: number | null,
     options?: ReaderActionOptions,
   ): boolean {
-    return this.isCurrentRenderGeneration(renderGeneration) && !options?.isCancelled?.();
+    return (
+      !this.destroyed &&
+      this.isCurrentRenderGeneration(renderGeneration) &&
+      !options?.isCancelled?.()
+    );
   }
 
   private readGesturePreviewOrigin(): { x: number; y: number } {
@@ -2010,7 +1866,7 @@ export class PDFViewer {
   }
 
   async fitToWidth(options?: ReaderActionOptions): Promise<void> {
-    if (!this.pdfDoc || !this.canvas) return;
+    if (this.content.pageCount === 0 || !this.canvas) return;
 
     this.cancelGestureZoom();
     const renderEpoch = this.renderGeneration;
@@ -2028,7 +1884,7 @@ export class PDFViewer {
       });
       baseWidth = dims.width;
     } else {
-      const page = await this.pdfDoc.getPage(currentPage);
+      const page = await this.getRenderingPage(currentPage);
       if (!this.isCurrentRenderCommit(renderEpoch, options)) return;
       const viewport = page.getViewport({ scale: 1.0, rotation: this.state.rotation });
       baseWidth = viewport.width;
@@ -2044,7 +1900,7 @@ export class PDFViewer {
   }
 
   async fitToPage(options?: ReaderActionOptions): Promise<void> {
-    if (!this.pdfDoc || !this.canvas) return;
+    if (this.content.pageCount === 0 || !this.canvas) return;
 
     this.cancelGestureZoom();
     const renderEpoch = this.renderGeneration;
@@ -2063,7 +1919,7 @@ export class PDFViewer {
       baseWidth = dims.width;
       baseHeight = dims.height;
     } else {
-      const page = await this.pdfDoc.getPage(currentPage);
+      const page = await this.getRenderingPage(currentPage);
       if (!this.isCurrentRenderCommit(renderEpoch, options)) return;
       const viewport = page.getViewport({ scale: 1.0, rotation: this.state.rotation });
       baseWidth = viewport.width;
@@ -2102,7 +1958,7 @@ export class PDFViewer {
     }
   }
 
-  getState(): Readonly<ViewState> {
+  getState(): DocumentRenderingState {
     return { ...this.state };
   }
 
@@ -2173,10 +2029,6 @@ export class PDFViewer {
     return this.canvas;
   }
 
-  getPdfDocument(): PDFDocumentProxy | null {
-    return this.pdfDoc;
-  }
-
   /**
    * Show or hide the entire viewer (both single-page canvas and continuous scroll wrapper)
    */
@@ -2237,13 +2089,13 @@ export class PDFViewer {
   }
 
   async print(): Promise<void> {
-    if (!this.pdfDoc) {
+    if (this.content.pageCount === 0) {
       throw new Error('No PDF document loaded');
     }
 
     try {
       // Get the raw PDF data
-      const pdfData = await this.pdfDoc.getData();
+      const pdfData = await this.content.getData();
 
       // Create a Blob from the PDF data (convert to regular Uint8Array)
       const blob = new Blob([new Uint8Array(pdfData)], { type: 'application/pdf' });
@@ -2343,7 +2195,11 @@ export class PDFViewer {
     expectedRenderGeneration: number | null = null,
     options?: ReaderActionOptions,
   ): Promise<void> {
-    if (!this.pdfDoc || !this.isCurrentRenderCommit(expectedRenderGeneration, options)) return;
+    if (
+      this.content.pageCount === 0 ||
+      !this.isCurrentRenderCommit(expectedRenderGeneration, options)
+    )
+      return;
 
     // Create scroll container if it doesn't exist
     if (!this.scrollContainer) {
@@ -2419,11 +2275,15 @@ export class PDFViewer {
     expectedRenderGeneration: number | null = null,
     options?: ReaderActionOptions,
   ): Promise<void> {
-    if (!this.pdfDoc || !this.isCurrentRenderCommit(expectedRenderGeneration, options)) return;
+    if (
+      this.content.pageCount === 0 ||
+      !this.isCurrentRenderCommit(expectedRenderGeneration, options)
+    )
+      return;
 
     let estimatedBaseDimensions = this.baseDimensions.get(1);
     if (!estimatedBaseDimensions) {
-      const firstPage = await this.pdfDoc.getPage(1);
+      const firstPage = await this.getRenderingPage(1);
       if (!this.isCurrentRenderCommit(expectedRenderGeneration, options)) return;
       estimatedBaseDimensions = this.cacheBaseDimensions(1, firstPage);
     }
@@ -2507,10 +2367,10 @@ export class PDFViewer {
     expectedRenderGeneration: number | null,
     options?: ReaderActionOptions,
   ): Promise<void> {
-    const pdfProxyToMeasure = this.pdfDoc;
+    const contentToMeasure = this.content;
     const fallbackBaseDimensions = this.baseDimensions.get(1);
     if (
-      !pdfProxyToMeasure ||
+      contentToMeasure.pageCount === 0 ||
       !fallbackBaseDimensions ||
       !this.isCurrentRenderCommit(expectedRenderGeneration, options)
     )
@@ -2528,7 +2388,7 @@ export class PDFViewer {
     ) {
       if (
         refinementEpoch !== this.dimensionRefinementEpoch ||
-        pdfProxyToMeasure !== this.pdfDoc ||
+        contentToMeasure.pageCount === 0 ||
         this.state.viewMode !== 'continuous' ||
         !this.isCurrentRenderCommit(expectedRenderGeneration, options)
       ) {
@@ -2542,13 +2402,15 @@ export class PDFViewer {
       const measuredPages = await Promise.all(
         batch.map(async (pageNumber) => ({
           pageNumber,
-          page: await pdfProxyToMeasure.getPage(pageNumber),
+          page: getInternalDocumentPageRenderingHandle(
+            await contentToMeasure.getPage(pageNumber),
+          ) as PDFPageProxy,
         })),
       );
 
       if (
         refinementEpoch !== this.dimensionRefinementEpoch ||
-        pdfProxyToMeasure !== this.pdfDoc ||
+        contentToMeasure.pageCount === 0 ||
         this.state.viewMode !== 'continuous' ||
         !this.isCurrentRenderCommit(expectedRenderGeneration, options)
       )
@@ -2655,7 +2517,7 @@ export class PDFViewer {
     options?: ReaderActionOptions,
   ): Promise<void> {
     if (
-      !this.pdfDoc ||
+      this.content.pageCount === 0 ||
       !this.scrollContainer ||
       !this.isCurrentRenderCommit(expectedRenderGeneration, options)
     )
@@ -2738,7 +2600,7 @@ export class PDFViewer {
     options?: ReaderActionOptions,
   ): Promise<void> {
     if (
-      !this.pdfDoc ||
+      this.content.pageCount === 0 ||
       !this.scrollContainer ||
       !this.isCurrentRenderCommit(expectedRenderGeneration, options)
     )
@@ -2939,11 +2801,11 @@ export class PDFViewer {
   }
 
   destroy(): void {
+    if (this.destroyed) return;
+    this.destroyed = true;
     this.searchToken += 1;
     this.searchQuery = '';
-    this.searchMatches = [];
     this.activeSearchMatch = null;
-    this.pageTextCache.clear();
     if (this.scrollSettleTimer !== null) {
       window.clearTimeout(this.scrollSettleTimer);
       this.scrollSettleTimer = null;
@@ -2982,10 +2844,7 @@ export class PDFViewer {
     this.thumbnailRenderTasks.clear();
     this.disposePageSurface(this.singlePageSurface);
     this.disposePageSurface(this.spreadPageSurface);
-    if (this.pdfDoc) {
-      this.pdfDoc.destroy();
-    }
-    this.pdfDoc = null;
+    if (this.ownsContent) void this.content.destroy();
     this.canvas = null;
     this.singlePageSurface = null;
     this.spreadPageSurface = null;

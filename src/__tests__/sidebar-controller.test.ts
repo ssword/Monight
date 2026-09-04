@@ -3,7 +3,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { SidebarController } from '../app/sidebar-controller';
 import type { PdfAnnotation } from '../lib/document-features';
-import type { PDFViewer } from '../scripts/pdf-viewer';
+import type { DocumentQuery } from '../reader/document-queries';
+import type { DocumentRendering } from '../reader/document-rendering';
 
 const annotation = (overrides: Partial<PdfAnnotation> = {}): PdfAnnotation => ({
   id: 'highlight-1',
@@ -33,6 +34,29 @@ const mountSidebar = (): void => {
   `;
 };
 
+function activeDocument(viewer: {
+  goToPage?: (pageNumber: number) => Promise<void>;
+  getAnnotations?: () => PdfAnnotation[];
+  renderThumbnail?: (
+    pageNumber: number,
+    options?: { rotation?: number },
+  ) => Promise<HTMLCanvasElement>;
+}) {
+  const query = {
+    filePath: '/docs/test.pdf',
+    generation: 1,
+    isCurrent: () => true,
+    annotations: () => viewer.getAnnotations?.() ?? [],
+    thumbnail: (pageNumber: number, options?: { rotation?: number }) =>
+      viewer.renderThumbnail?.(pageNumber, options) ?? Promise.reject(new Error('Unavailable')),
+  } as unknown as DocumentQuery;
+  return {
+    query,
+    rendering: viewer as unknown as DocumentRendering,
+    navigateToPage: (pageNumber: number) => viewer.goToPage?.(pageNumber) ?? Promise.resolve(),
+  };
+}
+
 describe('SidebarController', () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -50,9 +74,10 @@ describe('SidebarController', () => {
         annotations = annotations.map((item) => (item.id === id ? { ...item, ...updates } : item));
         controller.annotationsChanged();
       }),
-    } as unknown as PDFViewer;
+    };
+    const current = activeDocument(viewer);
     controller = new SidebarController({
-      getActiveViewer: () => viewer,
+      getActiveDocument: () => current,
       requestAnnotationNote: vi.fn(),
     });
     controller.open('annotations');
@@ -95,9 +120,10 @@ describe('SidebarController', () => {
         renderedCanvases.push(canvas);
         return canvas;
       }),
-    } as unknown as PDFViewer;
+    };
+    const current = activeDocument(viewer);
     const controller = new SidebarController({
-      getActiveViewer: () => viewer,
+      getActiveDocument: () => current,
       requestAnnotationNote: vi.fn(),
     });
 
@@ -142,9 +168,10 @@ describe('SidebarController', () => {
       getState: () => state,
       getAnnotations: () => annotations.map((item) => ({ ...item })),
       updateAnnotation: vi.fn(),
-    } as unknown as PDFViewer;
+    };
+    const current = activeDocument(viewer);
     const controller = new SidebarController({
-      getActiveViewer: () => viewer,
+      getActiveDocument: () => current,
       requestAnnotationNote: vi.fn(),
     });
     controller.open('annotations');

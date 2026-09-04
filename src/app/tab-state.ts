@@ -15,7 +15,7 @@ export async function restoreTabState(
     legacyOffset: tab.scrollPosition,
   },
 ): Promise<void> {
-  const viewer = tabManager?.getViewerForTab(tab.id);
+  const viewer = tabManager?.getRenderingForTab(tab.id);
   if (!viewer) return;
 
   await projectTabStateToViewer(viewer, tab, readingPosition);
@@ -47,7 +47,7 @@ export function saveCurrentTabState(
   const activeTab = tabManager?.getActiveTab();
   if (!activeTab) return;
 
-  const viewer = tabManager?.getViewerForTab(activeTab.id);
+  const viewer = tabManager?.getRenderingForTab(activeTab.id);
   if (!viewer) return;
 
   const state = viewer.getState();
