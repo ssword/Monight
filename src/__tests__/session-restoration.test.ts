@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createDocumentIntake, type DocumentRuntimeIntake } from '../reader/document-intake';
+import {
+  createDocumentIntake,
+  type DocumentIntakeOutcome,
+  type DocumentRuntimeIntake,
+} from '../reader/document-intake';
 import type {
   PersistedReadingSession,
   ReadingSessionDocument,
@@ -69,6 +73,14 @@ function createRestoringIntake(
   });
 
   return { intake, runtime };
+}
+
+function createForegroundSignal() {
+  let resolve!: (outcome: DocumentIntakeOutcome) => void;
+  const promise = new Promise<DocumentIntakeOutcome>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
 }
 
 describe('Reading Session restoration', () => {
@@ -162,6 +174,7 @@ describe('Reading Session restoration', () => {
 
   it('reports foreground readiness before background restoration completes', async () => {
     let releaseBackground: (() => void) | undefined;
+    let releaseForegroundReady: (() => void) | undefined;
     let backgroundStarted = false;
     const { intake } = createRestoringIntake({
       open: vi.fn(async ({ document }) => {
@@ -179,22 +192,31 @@ describe('Reading Session restoration', () => {
       documents: [savedDocument('/docs/active.pdf', 2), savedDocument('/docs/background.pdf', 3)],
     };
 
-    const operation = intake.beginRestore(session);
+    const foreground = createForegroundSignal();
+    const restoration = intake.restore(session, {
+      onForegroundReady: async (outcome) => {
+        foreground.resolve(outcome);
+        await new Promise<void>((resolve) => {
+          releaseForegroundReady = resolve;
+        });
+      },
+    });
 
-    await expect(operation.foreground).resolves.toMatchObject({
+    await expect(foreground.promise).resolves.toMatchObject({
       status: 'opened',
       filePath: '/docs/active.pdf',
     });
     expect(backgroundStarted).toBe(false);
+    releaseForegroundReady?.();
     await vi.waitFor(() => expect(releaseBackground).toBeTypeOf('function'));
     let completed = false;
-    void operation.completion.then(() => {
+    void restoration.then(() => {
       completed = true;
     });
     await Promise.resolve();
     expect(completed).toBe(false);
     releaseBackground?.();
-    await operation.completion;
+    await restoration;
   });
 
   it('restores the saved active Document before a background saved describe can block it', async () => {
@@ -215,15 +237,13 @@ describe('Reading Session restoration', () => {
     const session: PersistedReadingSession = {
       schemaVersion: 2,
       activeDocumentPath: '/docs/active.pdf',
-      documents: [
-        savedDocument('/docs/background.pdf', 1),
-        savedDocument('/docs/active.pdf', 2),
-      ],
+      documents: [savedDocument('/docs/background.pdf', 1), savedDocument('/docs/active.pdf', 2)],
     };
 
-    const operation = intake.beginRestore(session);
+    const foreground = createForegroundSignal();
+    const restoration = intake.restore(session, { onForegroundReady: foreground.resolve });
 
-    await expect(operation.foreground).resolves.toMatchObject({
+    await expect(foreground.promise).resolves.toMatchObject({
       status: 'opened',
       filePath: '/docs/active.pdf',
     });
@@ -237,7 +257,7 @@ describe('Reading Session restoration', () => {
 
     await vi.waitFor(() => expect(releaseBackgroundDescribe).toBeTypeOf('function'));
     releaseBackgroundDescribe?.();
-    await expect(operation.completion).resolves.toMatchObject({ opened: 2, failed: 0 });
+    await expect(restoration).resolves.toMatchObject({ opened: 2, failed: 0 });
   });
 
   it('preserves explicit request order before restoring the saved active Document', async () => {
@@ -388,15 +408,35 @@ describe('Reading Session restoration', () => {
     });
   });
 
-  it('intakes a canonical alias with saved Visual State before foreground readiness', async () => {
+  it('opens the explicit foreground before a saved alias resolves, then merges its Visual State', async () => {
+    let releaseSavedAlias: (() => void) | undefined;
+    const opened = new Set<string>();
     const saved = savedDocument('/alias/report.pdf', 3, { viewMode: 'spread' });
     const { intake, runtime } = createRestoringIntake(
-      {},
       {
-        describe: async (path) => ({
-          canonicalPath: '/docs/report.pdf',
-          title: path.split('/').pop() ?? path,
+        isOpen: vi.fn((filePath: string) => opened.has(filePath)),
+        open: vi.fn(async ({ document }) => {
+          opened.add(document.canonicalPath);
         }),
+        restoreExistingDocument: vi.fn(async (_filePath, document, options) => ({
+          ...document,
+          readingPosition: options.preserveReadingPosition
+            ? { page: 9, location: 0 }
+            : document.readingPosition,
+        })),
+      },
+      {
+        describe: async (path) => {
+          if (path === '/alias/report.pdf') {
+            await new Promise<void>((resolve) => {
+              releaseSavedAlias = resolve;
+            });
+          }
+          return {
+            canonicalPath: '/docs/report.pdf',
+            title: path.split('/').pop() ?? path,
+          };
+        },
       },
     );
     const session: PersistedReadingSession = {
@@ -405,39 +445,59 @@ describe('Reading Session restoration', () => {
       documents: [saved],
     };
 
-    const operation = intake.beginRestore(session, {
+    const foreground = createForegroundSignal();
+    const restoration = intake.restore(session, {
       explicitRequests: [{ paths: ['/docs/report.pdf'], page: 9 }],
+      onForegroundReady: foreground.resolve,
     });
 
-    await expect(operation.foreground).resolves.toMatchObject({
+    await expect(foreground.promise).resolves.toMatchObject({
       status: 'opened',
       filePath: '/docs/report.pdf',
     });
-    await operation.completion;
-
     expect(runtime.open).toHaveBeenCalledOnce();
     expect(runtime.open).toHaveBeenCalledWith(
+      expect.not.objectContaining({ restoredDocument: expect.anything() }),
+    );
+    await vi.waitFor(() => expect(releaseSavedAlias).toBeTypeOf('function'));
+    releaseSavedAlias?.();
+    await restoration;
+
+    expect(runtime.open).toHaveBeenCalledOnce();
+    expect(runtime.restoreExistingDocument).toHaveBeenCalledWith(
+      '/docs/report.pdf',
       expect.objectContaining({
-        initialPage: 9,
-        restoredDocument: expect.objectContaining({
-          filePath: '/docs/report.pdf',
+        filePath: '/docs/report.pdf',
+        visualState: saved.visualState,
+      }),
+      { preserveReadingPosition: true },
+    );
+    expect(runtime.canonicalizeDocumentPaths).toHaveBeenCalledWith([
+      expect.objectContaining({
+        requestedPath: '/alias/report.pdf',
+        canonicalPath: '/docs/report.pdf',
+        runtimeStateSource: 'canonical',
+        document: expect.objectContaining({
           readingPosition: { page: 9, location: 0 },
           visualState: saved.visualState,
         }),
       }),
-    );
-    expect(runtime.canonicalizeDocumentPaths).toHaveBeenCalledWith([
-      {
-        requestedPath: '/alias/report.pdf',
-        canonicalPath: '/docs/report.pdf',
-        runtimeStateSource: 'canonical',
-      },
     ]);
   });
 
   it('keeps explicit page state authoritative when a saved alias canonicalizes', async () => {
+    const opened = new Set<string>();
     const { intake, runtime } = createRestoringIntake(
-      {},
+      {
+        isOpen: vi.fn((filePath: string) => opened.has(filePath)),
+        open: vi.fn(async ({ document }) => {
+          opened.add(document.canonicalPath);
+        }),
+        restoreExistingDocument: vi.fn(async (_filePath, document) => ({
+          ...document,
+          readingPosition: { page: 9, location: 0 },
+        })),
+      },
       {
         describe: async (path) => ({
           canonicalPath: '/docs/report.pdf',
@@ -460,14 +520,71 @@ describe('Reading Session restoration', () => {
       expect.objectContaining({
         initialPage: 9,
         notifyOpened: true,
-        restoredDocument: expect.objectContaining({
-          readingPosition: { page: 9, location: 0 },
-        }),
       }),
+    );
+    expect(runtime.restoreExistingDocument).toHaveBeenCalledWith(
+      '/docs/report.pdf',
+      expect.objectContaining({ readingPosition: { page: 3, location: 0.25 } }),
+      { preserveReadingPosition: true },
     );
     expect(runtime.canonicalizeDocumentPaths).toHaveBeenCalledWith([
       {
         requestedPath: '/alias/report.pdf',
+        canonicalPath: '/docs/report.pdf',
+        runtimeStateSource: 'canonical',
+        document: expect.objectContaining({ readingPosition: { page: 9, location: 0 } }),
+      },
+    ]);
+  });
+
+  it('does not let another saved alias replace the state selected by an explicit saved path', async () => {
+    const opened = new Set<string>();
+    const explicit = savedDocument('/docs/report.pdf', 3, { viewMode: 'single' });
+    const alias = savedDocument('/alias/report.pdf', 8, { viewMode: 'spread' });
+    const { intake, runtime } = createRestoringIntake(
+      {
+        isOpen: vi.fn((filePath: string) => opened.has(filePath)),
+        open: vi.fn(async ({ document }) => {
+          opened.add(document.canonicalPath);
+        }),
+        restoreExistingDocument: vi.fn(async (_filePath, document) => document),
+      },
+      {
+        describe: async (path) => ({
+          canonicalPath: '/docs/report.pdf',
+          title: path.split('/').pop() ?? path,
+        }),
+      },
+    );
+    const session: PersistedReadingSession = {
+      schemaVersion: 2,
+      activeDocumentPath: alias.filePath,
+      documents: [alias, explicit],
+    };
+
+    await intake.restore(session, {
+      explicitRequests: [{ paths: [explicit.filePath], page: 12 }],
+    });
+
+    expect(runtime.open).toHaveBeenCalledOnce();
+    expect(runtime.open).toHaveBeenCalledWith(
+      expect.objectContaining({
+        initialPage: 12,
+        restoredDocument: expect.objectContaining({
+          readingPosition: { page: 12, location: 0 },
+          visualState: explicit.visualState,
+        }),
+      }),
+    );
+    expect(runtime.restoreExistingDocument).not.toHaveBeenCalled();
+    expect(runtime.canonicalizeDocumentPaths).toHaveBeenCalledWith([
+      {
+        requestedPath: explicit.filePath,
+        canonicalPath: '/docs/report.pdf',
+        runtimeStateSource: 'requested',
+      },
+      {
+        requestedPath: alias.filePath,
         canonicalPath: '/docs/report.pdf',
         runtimeStateSource: 'canonical',
       },

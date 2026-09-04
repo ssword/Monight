@@ -312,6 +312,58 @@ export class TabManager {
     }
   }
 
+  async restoreExistingDocument(
+    filePath: string,
+    document: ReadingSessionDocument,
+    { preserveReadingPosition }: { preserveReadingPosition: boolean },
+  ): Promise<ReadingSessionDocument> {
+    const tab = this.getTabs().find((item) => item.filePath === filePath);
+    if (!tab) throw new Error(`Cannot restore unopened Document: ${filePath}`);
+    const viewer = this.pdfViewers.get(tab.id);
+    if (!viewer) throw new Error(`Cannot render unopened Document: ${filePath}`);
+
+    const previousDocument: ReadingSessionDocument = {
+      filePath: tab.filePath,
+      title: tab.title,
+      readingPosition: viewer.getReadingPosition(),
+      visualState: {
+        filterSettings: { ...tab.filterSettings },
+        zoomIntent:
+          tab.zoomIntent.kind === 'manual'
+            ? { kind: 'manual', scale: tab.zoomIntent.scale }
+            : { kind: tab.zoomIntent.kind },
+        rotation: tab.rotation,
+        viewMode: tab.viewMode,
+      },
+    };
+    const restoredDocument: ReadingSessionDocument = {
+      ...document,
+      filePath,
+      readingPosition: preserveReadingPosition
+        ? previousDocument.readingPosition
+        : document.readingPosition,
+    };
+
+    applyProjectedDocumentStateToTab(tab, restoredDocument);
+    try {
+      await projectTabStateToViewer(viewer, tab, restoredDocument.readingPosition);
+    } catch (error) {
+      applyProjectedDocumentStateToTab(tab, previousDocument);
+      try {
+        await projectTabStateToViewer(viewer, tab, previousDocument.readingPosition);
+      } catch (rollbackError) {
+        console.error('Failed to roll back restored Document state:', rollbackError);
+      }
+      this.renderTabs();
+      if (this.activeTabId === tab.id) this.onActiveViewerStateChange?.();
+      throw error;
+    }
+
+    this.renderTabs();
+    if (this.activeTabId === tab.id) this.onActiveViewerStateChange?.();
+    return restoredDocument;
+  }
+
   async requestDocumentPage(filePath: string, page: number): Promise<void> {
     const tab = this.getTabs().find((item) => item.filePath === filePath);
     if (!tab) throw new Error(`Cannot navigate unopened Document: ${filePath}`);

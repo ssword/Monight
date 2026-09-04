@@ -224,6 +224,45 @@ describe('Reader Actions', () => {
     ]);
   });
 
+  it('uses a restored runtime Document supplied during canonical reconciliation', async () => {
+    const restoredRuntimeDocument = {
+      ...INITIAL_SESSION.documents[0],
+      filePath: '/docs/report.pdf',
+      readingPosition: { page: 9, location: 0 } as const,
+    };
+    const reader = createReaderActions({
+      initialSession: {
+        schemaVersion: 2,
+        activeDocumentPath: '/alias/report.pdf',
+        documents: [
+          {
+            ...INITIAL_SESSION.documents[0],
+            filePath: '/alias/report.pdf',
+            readingPosition: { page: 3, location: 0.3 },
+          },
+          {
+            ...INITIAL_SESSION.documents[1],
+            filePath: '/docs/report.pdf',
+            readingPosition: { page: 2, location: 0.2 },
+          },
+        ],
+      },
+      projection: { activateDocument: vi.fn(), goToReadingPosition: vi.fn() },
+      persist: vi.fn(async () => undefined),
+    });
+
+    await reader.canonicalizeDocumentPaths([
+      {
+        requestedPath: '/alias/report.pdf',
+        canonicalPath: '/docs/report.pdf',
+        runtimeStateSource: 'canonical',
+        document: restoredRuntimeDocument,
+      },
+    ]);
+
+    expect(reader.snapshot().documents).toEqual([restoredRuntimeDocument]);
+  });
+
   it('captures the active Document when explicit page navigation is dispatched', async () => {
     let finishNavigation: (() => void) | undefined;
     const projection: ReaderProjection = {

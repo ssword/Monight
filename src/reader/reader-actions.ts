@@ -493,6 +493,11 @@ export function createReaderActions({
       );
       const current = session.snapshot();
       const preferredDocumentByCanonicalPath = new Map<string, ReadingSessionDocument>();
+      for (const { canonicalPath, document } of paths) {
+        if (document && !preferredDocumentByCanonicalPath.has(canonicalPath)) {
+          preferredDocumentByCanonicalPath.set(canonicalPath, document);
+        }
+      }
       for (const { requestedPath, canonicalPath, runtimeStateSource } of paths) {
         if (
           runtimeStateSource !== 'requested' ||
@@ -530,6 +535,7 @@ export function createReaderActions({
         }
         seen.add(filePath);
         const preferredDocument = preferredDocumentByCanonicalPath.get(filePath) ?? document;
+        if (preferredDocument !== document) changed = true;
         documents.push(
           preferredDocument.filePath === filePath
             ? preferredDocument

@@ -218,6 +218,49 @@ describe('Document navigation', () => {
     );
   });
 
+  it('restores saved Visual State on an existing Document while preserving an explicit page', async () => {
+    const manager = new TabManager(vi.fn());
+    const tab = await manager.createTab('/tmp/report.pdf', 'report.pdf', new Uint8Array([1]));
+    vi.spyOn(PDFViewer.prototype, 'getReadingPosition').mockReturnValueOnce({
+      page: 9,
+      location: 0,
+    });
+
+    const restored = await manager.restoreExistingDocument(
+      '/tmp/report.pdf',
+      restoredDocument('/tmp/report.pdf'),
+      { preserveReadingPosition: true },
+    );
+
+    expect(restored.readingPosition).toEqual({ page: 9, location: 0 });
+    expect(tab.currentPage).toBe(9);
+    expect(tab.viewMode).toBe('continuous');
+    expect(tab.rotation).toBe(90);
+  });
+
+  it('rolls back an existing Document when saved-state projection fails', async () => {
+    const manager = new TabManager(vi.fn());
+    const tab = await manager.createTab('/tmp/report.pdf', 'report.pdf', new Uint8Array([1]));
+    const previous = {
+      currentPage: tab.currentPage,
+      viewMode: tab.viewMode,
+      rotation: tab.rotation,
+      zoomIntent: tab.zoomIntent,
+      filterSettings: tab.filterSettings,
+    };
+    vi.spyOn(PDFViewer.prototype, 'setRotation').mockRejectedValueOnce(
+      new Error('rotation projection failed'),
+    );
+
+    await expect(
+      manager.restoreExistingDocument('/tmp/report.pdf', restoredDocument('/tmp/report.pdf'), {
+        preserveReadingPosition: false,
+      }),
+    ).rejects.toThrow('rotation projection failed');
+
+    expect(tab).toMatchObject(previous);
+  });
+
   it('rolls back restored projection before Reading Session registration', async () => {
     vi.spyOn(PDFViewer.prototype, 'setRotation').mockRejectedValueOnce(
       new Error('rotation projection failed'),

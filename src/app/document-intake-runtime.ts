@@ -71,6 +71,8 @@ export function createDocumentIntakeRuntime({
       goToPage: async (filePath, page) => {
         await tabManager.requestDocumentPage(filePath, page);
       },
+      restoreExistingDocument: async (filePath, document, options) =>
+        tabManager.restoreExistingDocument(filePath, document, options),
       ...(canonicalizeDocumentPaths ? { canonicalizeDocumentPaths } : {}),
       setDocumentOrder: (filePaths) => {
         tabManager.setDocumentOrder(filePaths);

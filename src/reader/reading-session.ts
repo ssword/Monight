@@ -10,6 +10,7 @@ export interface DocumentPathReconciliation {
   readonly requestedPath: string;
   readonly canonicalPath: string;
   readonly runtimeStateSource: 'requested' | 'canonical';
+  readonly document?: ReadingSessionDocument;
 }
 
 interface ReadingSessionOptions {

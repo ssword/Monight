@@ -123,13 +123,10 @@ describe('startup Reading Session workflow', () => {
       };
     });
     const intake = {
-      beginRestore: vi.fn((_session, options) => ({
-        foreground: Promise.resolve(foregroundOutcome),
-        completion: (async () => {
-          await options?.onForegroundReady?.(foregroundOutcome);
-          return completion;
-        })(),
-      })),
+      restore: vi.fn(async (_session, options) => {
+        await options?.onForegroundReady?.(foregroundOutcome);
+        return completion;
+      }),
     } as unknown as DocumentIntake;
     const pruneDocument = vi.fn(async (filePath: string) => {
       events.push(`prune:${filePath}`);
@@ -169,16 +166,15 @@ describe('startup Reading Session workflow', () => {
 
   it('does not display a restoration report when every Document succeeds', async () => {
     const intake = {
-      beginRestore: vi.fn(() => ({
-        foreground: Promise.resolve(null),
-        completion: Promise.resolve({
+      restore: vi.fn(() =>
+        Promise.resolve({
           outcomes: [],
           opened: 2,
           failed: 0,
           failedPaths: [],
           explicitRequestResult: { outcomes: [], opened: 0, activated: 0, failed: 0 },
         }),
-      })),
+      ),
     } as unknown as DocumentIntake;
     const reportFailure = vi.fn();
 
@@ -221,10 +217,7 @@ describe('startup Reading Session workflow', () => {
     const session: PersistedReadingSession = {
       schemaVersion: 2,
       activeDocumentPath: '/docs/active.pdf',
-      documents: [
-        savedDocument('/docs/active.pdf', 2),
-        savedDocument('/docs/background.pdf', 3),
-      ],
+      documents: [savedDocument('/docs/active.pdf', 2), savedDocument('/docs/background.pdf', 3)],
     };
 
     const restoration = restoreReadingSessionAtStartup({
