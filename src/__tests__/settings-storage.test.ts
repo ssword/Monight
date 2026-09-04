@@ -31,6 +31,18 @@ vi.mock('@tauri-apps/plugin-store', () => ({ Store: { load: store.load } }));
 
 import { DEFAULT_SETTINGS, SETTINGS_SCHEMA_VERSION, SettingsManager } from '../scripts/settings';
 
+const legacyAnnotation = {
+  id: 'note-1',
+  kind: 'note',
+  pageNumber: 4,
+  rects: [{ x1: 10, y1: 20, x2: 30, y2: 40 }],
+  text: '',
+  note: 'Remember this',
+  color: 'yellow',
+  createdAt: 10,
+  updatedAt: 10,
+};
+
 const legacySession = {
   version: 1,
   activeFilePath: '/books/one.pdf',
@@ -71,7 +83,7 @@ describe('settings storage', () => {
       },
       lastSession: legacySession,
       recentFiles: [{ filePath: '/books/one.pdf', title: 'one.pdf', openedAt: 42 }],
-      annotations: { '/books/one.pdf': [{ id: 'note-1', pageNumber: 4 }] },
+      annotations: { '/books/one.pdf': [legacyAnnotation] },
       lastFilter: {
         brightness: 80,
         grayscale: 0,
@@ -88,7 +100,8 @@ describe('settings storage', () => {
     expect(settings.general.displayThumbs).toBe(false);
     expect(settings.keybinds.OpenFile.binds).toEqual(['Ctrl+Shift+O']);
     expect(settings.recentFiles).toEqual(legacy.recentFiles);
-    expect(settings.annotations).toEqual(legacy.annotations);
+    expect(settings).not.toHaveProperty('annotations');
+    expect(store.values.get('annotations')).toEqual(legacy.annotations);
     expect(settings.lastFilter).toEqual(legacy.lastFilter);
     expect(store.values.get('readingSession')).toEqual({
       schemaVersion: 2,
@@ -128,6 +141,10 @@ describe('settings storage', () => {
     const mainWindow = new SettingsManager('main');
     await mainWindow.load();
     await expect(
+      // @ts-expect-error Annotations belong to their dedicated authority
+      mainWindow.set('annotations', {}),
+    ).rejects.toThrow('Main window cannot write annotations');
+    await expect(
       // @ts-expect-error verifies runtime discipline for untyped callers too
       mainWindow.set('keybinds', DEFAULT_SETTINGS.keybinds),
     ).rejects.toThrow('Main window cannot write keybinds');
@@ -159,13 +176,12 @@ describe('settings storage', () => {
     );
   });
 
-  it('clears only reading history concerns from the main window', async () => {
+  it('clears only Recent Documents and Reading Session concerns from the main window', async () => {
     const mainWindow = new SettingsManager('main');
     await mainWindow.load();
     await mainWindow.set('recentFiles', [
       { filePath: '/books/one.pdf', title: 'one.pdf', openedAt: 42 },
     ]);
-    await mainWindow.set('annotations', { '/books/one.pdf': [] });
     await mainWindow.writePersistedReadingSession({
       schemaVersion: 2,
       activeDocumentPath: '/books/one.pdf',
@@ -192,6 +208,23 @@ describe('settings storage', () => {
     });
     expect(store.values.get('keybinds')).toEqual(keybinds);
     expect(store.values.get('general')).toEqual(general);
-    expect(store.writes).toEqual(['recentFiles', 'readingSession', 'annotations']);
+    expect(store.writes).toEqual(['recentFiles', 'readingSession']);
+  });
+
+  it('exposes legacy Annotations only for verified dedicated-store migration', async () => {
+    const legacy = { '/books/one.pdf': [legacyAnnotation] };
+    store.reset({
+      storageSchemaVersion: SETTINGS_SCHEMA_VERSION,
+      annotations: legacy,
+    });
+    const mainWindow = new SettingsManager('main');
+
+    await expect(mainWindow.readLegacyAnnotations()).resolves.toEqual(legacy);
+    expect(store.values.get('annotations')).toEqual(legacy);
+
+    await mainWindow.removeLegacyAnnotations();
+
+    expect(store.values.has('annotations')).toBe(false);
+    expect(store.writes).toContain('delete:annotations');
   });
 });

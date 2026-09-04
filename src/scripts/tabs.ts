@@ -1,6 +1,7 @@
 import { debugLog } from '../lib/debug-log';
-import type { PdfAnnotation, ViewMode } from '../lib/document-features';
+import type { ViewMode } from '../lib/document-features';
 import type { PdfLinkTarget } from '../lib/pdf-links';
+import { type AnnotationAccess, createTransientAnnotationAccess } from '../reader/annotations';
 import type {
   LoadableDocumentContent,
   ResolvedDocumentLinkTarget,
@@ -33,12 +34,10 @@ export interface TabData {
   rotation: number; // Clockwise page rotation in degrees
   scrollPosition: number; // Scroll position
   viewMode: ViewMode; // View mode
-  annotations: PdfAnnotation[];
 }
 
 interface TabManagerOptions {
-  getAnnotations?: (filePath: string) => readonly PdfAnnotation[];
-  onAnnotationsChanged?: (filePath: string, annotations: PdfAnnotation[]) => void;
+  annotationAuthority?: AnnotationAccess;
   onDocumentPrepared?: (tab: TabData, runtime: DocumentRuntime) => void | Promise<void>;
   onDocumentOpened?: (tab: TabData) => void | Promise<void>;
   onDocumentClosed?: (filePath: string) => void | Promise<void>;
@@ -85,6 +84,7 @@ export class TabManager {
   private onActiveViewerStateChange?: () => void;
   private onTabsChanged?: () => void;
   private options: TabManagerOptions;
+  private readonly annotationAuthority: AnnotationAccess;
   private requestActivation:
     | ((filePath: string, readingPosition?: RestorableReadingPosition) => Promise<void>)
     | null = null;
@@ -99,6 +99,7 @@ export class TabManager {
     this.onActiveViewerStateChange = onActiveViewerStateChange;
     this.onTabsChanged = onTabsChanged;
     this.options = options;
+    this.annotationAuthority = options.annotationAuthority ?? createTransientAnnotationAccess();
   }
 
   /**
@@ -128,11 +129,6 @@ export class TabManager {
       rotation: 0,
       scrollPosition: 0,
       viewMode,
-      annotations:
-        this.options.getAnnotations?.(filePath).map((annotation) => ({
-          ...annotation,
-          rects: annotation.rects.map((rect) => ({ ...rect })),
-        })) ?? [],
     };
     if (restoredDocument) {
       applyProjectedDocumentStateToTab(tab, restoredDocument);
@@ -173,7 +169,7 @@ export class TabManager {
         await content.destroy();
       },
       renderThumbnail: (pageNumber, options) => viewer.renderThumbnail(pageNumber, options),
-      getAnnotations: () => this.options.getAnnotations?.(filePath) ?? tab.annotations,
+      getAnnotations: () => this.annotationAuthority.snapshot(filePath),
     };
     viewer.setOnPageChange(() => {
       if (this.activeTabId !== id) return;
@@ -194,10 +190,9 @@ export class TabManager {
     viewer.setOnZoomIntentRequest(
       onZoomIntentRequested ? (zoomIntent) => onZoomIntentRequested(filePath, zoomIntent) : null,
     );
-    viewer.setAnnotations(tab.annotations);
+    viewer.setAnnotations(this.annotationAuthority.snapshot(filePath));
     viewer.setOnAnnotationsChange((annotations) => {
-      tab.annotations = annotations;
-      this.options.onAnnotationsChanged?.(filePath, annotations);
+      this.annotationAuthority.replace(filePath, annotations);
       if (this.activeTabId === id) {
         this.onActiveViewerStateChange?.();
       }

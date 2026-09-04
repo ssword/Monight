@@ -20,7 +20,6 @@ function savedTab(): TabData {
     rotation: 270,
     scrollPosition: 4321,
     viewMode: 'continuous',
-    annotations: [],
   };
 }
 

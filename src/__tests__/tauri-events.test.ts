@@ -2,7 +2,6 @@ import type { DragDropEvent } from '@tauri-apps/api/webview';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DocumentIntakeResult } from '../reader/document-intake';
 import { PRESETS } from '../scripts/filters';
-import type { SettingsManager } from '../scripts/settings';
 import type { TabManager } from '../scripts/tabs';
 
 const mocks = vi.hoisted(() => {
@@ -91,7 +90,7 @@ describe('Tauri drag and drop events', () => {
     getInitialViewMode: () => 'single' as const,
     handleStartupExternalOpenPayloads: vi.fn(async () => undefined),
     reloadSettings: vi.fn(async () => undefined),
-    readingHistoryCleared: vi.fn(),
+    clearReadingHistory: vi.fn(async () => undefined),
     applyWindowAfterOpen: vi.fn(async () => undefined),
     updateTabBarVisibility: vi.fn(),
     updatePrintMenuState: vi.fn(async () => undefined),
@@ -235,19 +234,28 @@ describe('Tauri drag and drop events', () => {
   });
 
   it('handles the Settings clear-history request in the main window', async () => {
-    const clearReadingHistory = vi.fn(async () => undefined);
-    const readingHistoryCleared = vi.fn();
-    await setupTauriListeners(
-      context({
-        settingsManager: { clearReadingHistory } as unknown as SettingsManager,
-        readingHistoryCleared,
-      }),
+    let finishClearing: (() => void) | undefined;
+    const clearReadingHistory = vi.fn(
+      async () =>
+        new Promise<void>((resolve) => {
+          finishClearing = resolve;
+        }),
     );
+    await setupTauriListeners(context({ clearReadingHistory }));
 
-    await mocks.getListener('clear-reading-history')?.();
+    const clearing = mocks.getListener('clear-reading-history')?.();
 
     expect(clearReadingHistory).toHaveBeenCalledOnce();
-    expect(readingHistoryCleared).toHaveBeenCalledOnce();
+    let completed = false;
+    void clearing?.then(() => {
+      completed = true;
+    });
+    await Promise.resolve();
+    expect(completed).toBe(false);
+
+    finishClearing?.();
+    await clearing;
+    expect(completed).toBe(true);
   });
 
   it('dispatches native menu zoom as the same typed Reader Action', async () => {

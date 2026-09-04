@@ -1,6 +1,7 @@
 import { getName, getTauriVersion, getVersion } from '@tauri-apps/api/app';
 import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
+import { createAnnotationStorage } from './app/annotation-storage';
 import { browserPrintAdapter } from './app/browser-print-adapter';
 import {
   requestAnnotationNote,
@@ -36,13 +37,9 @@ import {
 } from './app/ui';
 import { registerReadingSessionCloseGuard } from './app/window-lifecycle';
 import { debugLog } from './lib/debug-log';
-import {
-  type PdfAnnotation,
-  type RecentFile,
-  updateRecentFiles,
-  type ViewMode,
-} from './lib/document-features';
+import { type RecentFile, updateRecentFiles, type ViewMode } from './lib/document-features';
 import type { PdfLinkTarget } from './lib/pdf-links';
+import { type AnnotationAuthority, loadAnnotations } from './reader/annotations';
 import {
   createReaderActions,
   type PersistedReadingSession,
@@ -88,6 +85,7 @@ let currentSettings: MoonightSettings | null = null;
 let readerActions: ReaderActions | null = null;
 let readingSessionStorage: ReadingSessionStorage | null = null;
 let restoredReadingSession: PersistedReadingSession | null = null;
+let annotationAuthority: AnnotationAuthority | null = null;
 
 // Global keybind manager instance
 let keybindManager: KeybindManager | null = null;
@@ -157,7 +155,6 @@ const getInitialViewMode = (): ViewMode => {
 };
 
 let lastFilterSaveTimer: number | null = null;
-let annotationSaveTimer: number | null = null;
 let isRestoringSession = false;
 
 const getActiveViewer = () => {
@@ -215,28 +212,6 @@ const dispatchReaderAction = async (action: ReaderAction): Promise<void> => {
 
 const resolveDocumentLinkTarget = async (filePath: string, target: PdfLinkTarget) => {
   return (await readerActions?.query(filePath)?.resolveLinkTarget(target)) ?? null;
-};
-
-const persistAnnotations = (filePath: string, annotations: PdfAnnotation[]): void => {
-  const manager = settingsManager;
-  if (!manager || !currentSettings) return;
-
-  const annotationMap = {
-    ...currentSettings.annotations,
-    [filePath]: annotations,
-  };
-  currentSettings = { ...currentSettings, annotations: annotationMap };
-  if (annotationSaveTimer !== null) window.clearTimeout(annotationSaveTimer);
-  annotationSaveTimer = window.setTimeout(async () => {
-    try {
-      await manager.set('annotations', currentSettings?.annotations ?? {});
-    } catch (error) {
-      console.error('Failed to save annotations:', error);
-      showToast('Could not save annotations.', 'error');
-    } finally {
-      annotationSaveTimer = null;
-    }
-  }, 200);
 };
 
 const rememberRecentFile = (filePath: string, title: string): void => {
@@ -297,27 +272,27 @@ const scheduleLastFilterSave = (settings: FilterSettings): void => {
   }, 250);
 };
 
-const saveReadingSessionNow = async (): Promise<void> => {
+const flushReaderState = async (): Promise<void> => {
   if (
-    !readingSessionStorage ||
-    !readerActions ||
-    !currentSettings?.general.restorePreviousSession ||
-    isRestoringSession
+    readingSessionStorage &&
+    readerActions &&
+    currentSettings?.general.restorePreviousSession &&
+    !isRestoringSession
   ) {
-    return;
+    const activeTab = tabManager?.getActiveTab();
+    const activeViewer = activeTab ? tabManager?.getRenderingForTab(activeTab.id) : null;
+    if (activeTab && activeViewer) {
+      await readerActions.dispatch({
+        type: 'settleReadingPosition',
+        filePath: activeTab.filePath,
+        readingPosition: activeViewer.getReadingPosition(),
+      });
+    }
+
+    await readerActions.flush();
   }
 
-  const activeTab = tabManager?.getActiveTab();
-  const activeViewer = activeTab ? tabManager?.getRenderingForTab(activeTab.id) : null;
-  if (activeTab && activeViewer) {
-    await readerActions.dispatch({
-      type: 'settleReadingPosition',
-      filePath: activeTab.filePath,
-      readingPosition: activeViewer.getReadingPosition(),
-    });
-  }
-
-  await readerActions.flush();
+  await annotationAuthority?.flush();
 };
 
 const restoreStartupReadingSession = async (
@@ -382,6 +357,21 @@ async function initializeApp(): Promise<void> {
     settingsManager = new SettingsManager();
     const settings = await settingsManager.load();
     currentSettings = settings;
+    annotationAuthority = await loadAnnotations(createAnnotationStorage(settingsManager), {
+      onPersistenceError: (error) => {
+        console.error('Annotation persistence failed:', error);
+        showToast('Annotation changes could not be saved. Monight will retry.', 'error');
+      },
+      onChanged: (filePath) => {
+        for (const tab of tabManager?.getTabs() ?? []) {
+          if (filePath !== null && tab.filePath !== filePath) continue;
+          tabManager
+            ?.getRenderingForTab(tab.id)
+            ?.setAnnotations(annotationAuthority?.snapshot(tab.filePath) ?? []);
+        }
+        sidebarController?.annotationsChanged();
+      },
+    });
     readingSessionStorage = createReadingSessionStorage(settingsManager);
     try {
       restoredReadingSession = await loadReadingSession(readingSessionStorage);
@@ -423,11 +413,7 @@ async function initializeApp(): Promise<void> {
       },
       undefined,
       {
-        getAnnotations: (filePath) => currentSettings?.annotations[filePath] ?? [],
-        onAnnotationsChanged: (filePath, annotations) => {
-          persistAnnotations(filePath, annotations);
-          sidebarController?.annotationsChanged();
-        },
+        ...(annotationAuthority ? { annotationAuthority } : {}),
         onDocumentPrepared: async (tab, runtime) => {
           const outcome = await readerActions?.dispatch({
             type: 'registerDocument',
@@ -694,20 +680,18 @@ async function initializeApp(): Promise<void> {
           };
         }
       },
-      readingHistoryCleared: () => {
-        if (!currentSettings) return;
-        currentSettings = { ...currentSettings, recentFiles: [], annotations: {} };
+      clearReadingHistory: async () => {
+        if (!settingsManager || !currentSettings) return;
+        await settingsManager.clearReadingHistory();
+        currentSettings = { ...currentSettings, recentFiles: [] };
         restoredReadingSession = {
           schemaVersion: 2,
           activeDocumentPath: null,
           documents: [],
         };
         renderRecentFiles([]);
-        for (const tab of tabManager?.getTabs() ?? []) {
-          tab.annotations = [];
-          tabManager?.getRenderingForTab(tab.id)?.setAnnotations([]);
-        }
-        sidebarController?.annotationsChanged();
+        annotationAuthority?.clear();
+        await annotationAuthority?.flush();
       },
       applyWindowAfterOpen,
       updateTabBarVisibility: updateTabBar,
@@ -728,12 +712,12 @@ async function initializeApp(): Promise<void> {
     await registerReadingSessionCloseGuard(
       currentWindow,
       async () => {
-        await saveReadingSessionNow();
+        await flushReaderState();
       },
       async () =>
         (await requestConfirmation({
-          title: 'Reading Session not saved',
-          message: 'Monight could not save your latest reading state.',
+          title: 'Reader state not saved',
+          message: 'Monight could not save the latest Reading Session or Annotations.',
           confirmLabel: 'Retry save',
           cancelLabel: 'Quit without saving',
         }))

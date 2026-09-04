@@ -6,9 +6,22 @@ const getPdfEngine = vi.hoisted(() => vi.fn());
 
 vi.mock('../lib/pdf-engine', () => ({ getPdfEngine }));
 
+import { type AnnotationStorage, loadAnnotations } from '../reader/annotations';
 import type { ReadingSessionDocument } from '../reader/reader-actions';
 import { PDFViewer } from '../scripts/pdf-viewer';
 import { TabManager } from '../scripts/tabs';
+
+const SAVED_ANNOTATION = {
+  id: 'highlight-1',
+  kind: 'highlight' as const,
+  pageNumber: 1,
+  rects: [{ x1: 10, y1: 20, x2: 30, y2: 40 }],
+  text: 'Moonlight',
+  note: '',
+  color: 'yellow' as const,
+  createdAt: 10,
+  updatedAt: 10,
+};
 
 function restoredDocument(filePath: string): ReadingSessionDocument {
   return {
@@ -52,6 +65,8 @@ describe('Document navigation', () => {
         width: 600 * scale,
         height: 800 * scale,
         scale,
+        convertToViewportRectangle: (rect: number[]) => rect,
+        convertToPdfPoint: (x: number, y: number) => [x, y],
       }),
       render: () => ({ promise: Promise.resolve(), cancel: vi.fn() }),
       getTextContent: async () => ({ items: [] }),
@@ -120,6 +135,67 @@ describe('Document navigation', () => {
     await manager.createTab('/tmp/one.pdf', 'one.pdf', new Uint8Array([1]));
 
     expect(events).toEqual(['prepare', 'activate', 'opened']);
+  });
+
+  it('loads and replaces Annotations through the dedicated authority', async () => {
+    const annotationAuthority = {
+      snapshot: vi.fn(() => [SAVED_ANNOTATION]),
+      replace: vi.fn(),
+    };
+    const manager = new TabManager(vi.fn(), undefined, undefined, {
+      annotationAuthority,
+    });
+
+    const tab = await manager.createTab('/tmp/one.pdf', 'one.pdf', new Uint8Array([1]));
+    const rendering = manager.getRenderingForTab(tab.id) as PDFViewer;
+    expect(rendering.getAnnotations()).toEqual([SAVED_ANNOTATION]);
+
+    rendering.updateAnnotation('highlight-1', { note: 'Remember this' });
+
+    expect(annotationAuthority.replace).toHaveBeenCalledWith('/tmp/one.pdf', [
+      expect.objectContaining({ id: 'highlight-1', note: 'Remember this' }),
+    ]);
+  });
+
+  it('restores persisted Annotations after a Document closes and reopens', async () => {
+    let persisted: unknown;
+    const storage: AnnotationStorage = {
+      read: vi.fn(async () => structuredClone(persisted)),
+      write: vi.fn(async (value) => {
+        persisted = structuredClone(value);
+      }),
+      readLegacy: vi.fn(async () => undefined),
+      removeLegacy: vi.fn(async () => undefined),
+    };
+    const annotations = await loadAnnotations(storage, { debounceMs: 0 });
+    const manager = new TabManager(vi.fn(), undefined, undefined, {
+      annotationAuthority: annotations,
+    });
+    const tab = await manager.createTab('/tmp/one.pdf', 'one.pdf', new Uint8Array([1]));
+    const rendering = manager.getRenderingForTab(tab.id) as PDFViewer;
+    rendering.setAnnotations([SAVED_ANNOTATION]);
+    rendering.updateAnnotation('highlight-1', { note: 'Persisted note' });
+    await annotations.flush();
+
+    await manager.projectDocumentClose('/tmp/one.pdf', null);
+
+    expect(annotations.snapshot('/tmp/one.pdf')).toEqual([
+      expect.objectContaining({ id: 'highlight-1', note: 'Persisted note' }),
+    ]);
+
+    const reopenedAnnotations = await loadAnnotations(storage, { debounceMs: 0 });
+    const reopenedManager = new TabManager(vi.fn(), undefined, undefined, {
+      annotationAuthority: reopenedAnnotations,
+    });
+    const reopenedTab = await reopenedManager.createTab(
+      '/tmp/one.pdf',
+      'one.pdf',
+      new Uint8Array([1]),
+    );
+
+    expect(
+      (reopenedManager.getRenderingForTab(reopenedTab.id) as PDFViewer).getAnnotations(),
+    ).toEqual([expect.objectContaining({ id: 'highlight-1', note: 'Persisted note' })]);
   });
 
   it('routes a new Document explicit page through semantic activation', async () => {

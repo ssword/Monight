@@ -30,7 +30,7 @@ interface TauriListenerContext {
   getInitialViewMode: () => ViewMode;
   handleStartupExternalOpenPayloads: (payloads: readonly ExternalOpenPayload[]) => Promise<void>;
   reloadSettings: () => Promise<void>;
-  readingHistoryCleared: () => void;
+  clearReadingHistory: () => Promise<void>;
   applyWindowAfterOpen: () => Promise<void>;
   updateTabBarVisibility: () => void;
   updatePrintMenuState: () => Promise<void>;
@@ -47,7 +47,7 @@ export async function setupTauriListeners({
   getInitialViewMode,
   handleStartupExternalOpenPayloads,
   reloadSettings,
-  readingHistoryCleared,
+  clearReadingHistory,
   applyWindowAfterOpen,
   updateTabBarVisibility,
   updatePrintMenuState,
@@ -175,9 +175,7 @@ export async function setupTauriListeners({
   });
 
   await listen('clear-reading-history', async () => {
-    if (!settingsManager) return;
-    await settingsManager.clearReadingHistory();
-    readingHistoryCleared();
+    await clearReadingHistory();
   });
 
   // Listen for keybinds changed event from settings window

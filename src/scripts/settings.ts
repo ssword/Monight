@@ -51,14 +51,13 @@ export interface MoonightSettings {
   keybinds: Record<string, KeybindConfig>;
   lastFilter?: FilterSettings;
   recentFiles: RecentFile[];
-  annotations: Record<string, PdfAnnotation[]>;
 }
 
 export const SETTINGS_SCHEMA_VERSION = 1;
 
 export type SettingsOwner = 'main' | 'settings';
 type SettingsWindowKey = 'general' | 'keybinds';
-type MainWindowKey = 'recentFiles' | 'annotations' | 'lastFilter';
+type MainWindowKey = 'recentFiles' | 'lastFilter';
 type OwnedKey<Owner extends SettingsOwner> = Owner extends 'settings'
   ? SettingsWindowKey
   : MainWindowKey;
@@ -66,6 +65,7 @@ type OwnedKey<Owner extends SettingsOwner> = Owner extends 'settings'
 interface LegacyMoonightSettings extends Partial<MoonightSettings> {
   version?: string;
   lastSession?: ReadingSession;
+  annotations?: Record<string, PdfAnnotation[]>;
 }
 
 /**
@@ -242,7 +242,6 @@ export const DEFAULT_SETTINGS: MoonightSettings = {
     },
   },
   recentFiles: [],
-  annotations: {},
 };
 
 const EMPTY_READING_SESSION: PersistedReadingSession = {
@@ -341,18 +340,16 @@ export class SettingsManager<Owner extends SettingsOwner = 'main'> {
     try {
       const store = await this.initStore();
       await this.ensureMigrated(store);
-      const [general, keybinds, recentFiles, annotations, lastFilter] = await Promise.all([
+      const [general, keybinds, recentFiles, lastFilter] = await Promise.all([
         store.get<MoonightSettings['general']>('general'),
         store.get<MoonightSettings['keybinds']>('keybinds'),
         store.get<RecentFile[]>('recentFiles'),
-        store.get<Record<string, PdfAnnotation[]>>('annotations'),
         store.get<FilterSettings | null>('lastFilter'),
       ]);
       this.settings = {
         general: { ...DEFAULT_SETTINGS.general, ...general },
         keybinds: { ...DEFAULT_SETTINGS.keybinds, ...keybinds },
         recentFiles: recentFiles ?? [],
-        annotations: annotations ?? {},
         ...(lastFilter ? { lastFilter } : {}),
       };
       return structuredClone(this.settings);
@@ -404,6 +401,19 @@ export class SettingsManager<Owner extends SettingsOwner = 'main'> {
 
   async removeLegacyReadingSession(): Promise<void> {}
 
+  async readLegacyAnnotations(): Promise<unknown> {
+    const store = await this.initStore();
+    await this.ensureMigrated(store);
+    return await store.get('annotations');
+  }
+
+  async removeLegacyAnnotations(): Promise<void> {
+    this.assertMainOwnership('annotations');
+    const store = await this.initStore();
+    await store.delete('annotations');
+    await store.save();
+  }
+
   async reset(): Promise<void> {
     if (this.owner !== 'settings') throw new Error('Only the Settings window can reset settings');
     const defaults = cloneDefaults();
@@ -416,8 +426,7 @@ export class SettingsManager<Owner extends SettingsOwner = 'main'> {
     this.assertMainOwnership('reading history');
     await this.writeConcern('recentFiles', []);
     await this.writeConcern('readingSession', EMPTY_READING_SESSION);
-    await this.writeConcern('annotations', {});
-    this.settings = { ...this.settings, recentFiles: [], annotations: {} };
+    this.settings = { ...this.settings, recentFiles: [] };
   }
 
   private async writeConcern(key: string, value: unknown): Promise<void> {
@@ -430,7 +439,7 @@ export class SettingsManager<Owner extends SettingsOwner = 'main'> {
     const allowed =
       this.owner === 'settings'
         ? new Set<string>(['general', 'keybinds'])
-        : new Set<string>(['recentFiles', 'annotations', 'lastFilter']);
+        : new Set<string>(['recentFiles', 'lastFilter']);
     if (!allowed.has(key)) {
       const label = this.owner === 'settings' ? 'Settings' : 'Main';
       throw new Error(`${label} window cannot write ${key}`);

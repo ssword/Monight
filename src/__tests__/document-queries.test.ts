@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 
 import { describe, expect, it, vi } from 'vitest';
-import type { SearchProgress } from '../lib/document-features';
+import type { PdfAnnotation, SearchProgress } from '../lib/document-features';
 import type {
   DocumentContent,
   DocumentContentMetadata,
@@ -43,7 +43,10 @@ function createContent(overrides: Partial<DocumentContent> = {}): DocumentConten
   };
 }
 
-function createRuntime(content = createContent()): DocumentRuntime {
+function createRuntime(
+  content = createContent(),
+  getAnnotations: () => readonly PdfAnnotation[] = () => [],
+): DocumentRuntime {
   let destroyed = false;
   return {
     content,
@@ -53,7 +56,7 @@ function createRuntime(content = createContent()): DocumentRuntime {
       await content.destroy();
     }),
     renderThumbnail: vi.fn(async () => document.createElement('canvas')),
-    getAnnotations: vi.fn(() => []),
+    getAnnotations: vi.fn(getAnnotations),
   };
 }
 
@@ -132,6 +135,48 @@ describe('Document Queries', () => {
     expect(onProgress).not.toHaveBeenCalled();
     await closing;
     expect(content.destroy).toHaveBeenCalledOnce();
+  });
+
+  it('keeps Annotation snapshots independent when a Document closes and reopens', async () => {
+    const saved: PdfAnnotation[] = [
+      {
+        id: 'highlight-1',
+        kind: 'highlight',
+        pageNumber: 2,
+        rects: [{ x1: 10, y1: 20, x2: 30, y2: 40 }],
+        text: 'Moonlight',
+        note: '',
+        color: 'yellow',
+        createdAt: 10,
+        updatedAt: 10,
+      },
+    ];
+    const reader = createReader();
+    await reader.dispatch({
+      type: 'registerDocument',
+      document: FIRST_DOCUMENT,
+      runtime: createRuntime(createContent(), () => saved),
+    });
+    const query = reader.query(FIRST_DOCUMENT.filePath);
+    const before = reader.snapshot();
+
+    const result = query?.annotations() as PdfAnnotation[];
+    result[0].note = 'changed by caller';
+    result[0].rects[0].x1 = 999;
+
+    expect(query?.annotations()).toEqual(saved);
+    expect(reader.snapshot()).toEqual(before);
+    await reader.dispatch({ type: 'closeDocument', filePath: FIRST_DOCUMENT.filePath });
+    expect(saved).toHaveLength(1);
+    expect(query?.annotations()).toEqual([]);
+
+    const reopened = createReader();
+    await reopened.dispatch({
+      type: 'registerDocument',
+      document: FIRST_DOCUMENT,
+      runtime: createRuntime(createContent(), () => saved),
+    });
+    expect(reopened.query(FIRST_DOCUMENT.filePath)?.annotations()).toEqual(saved);
   });
 
   it('cancels a query when its caller cancels without changing the runtime generation', async () => {
