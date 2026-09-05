@@ -9,6 +9,9 @@ const mocks = vi.hoisted(() => {
   const events: string[] = [];
   const listeners = new Map<string, () => void | Promise<void>>();
   let closeHandler: ((event: { preventDefault: () => void }) => void | Promise<void>) | null = null;
+  let auxiliaryCloseHandler:
+    | ((event: { preventDefault: () => void }) => void | Promise<void>)
+    | null = null;
   let pendingQuit = false;
   let restorePreviousSession = true;
   let confirmationChoices: boolean[] = [];
@@ -44,6 +47,10 @@ const mocks = vi.hoisted(() => {
       closeHandler = handler;
     },
     getCloseHandler: () => closeHandler,
+    setAuxiliaryCloseHandler(handler: typeof auxiliaryCloseHandler) {
+      auxiliaryCloseHandler = handler;
+    },
+    getAuxiliaryCloseHandler: () => auxiliaryCloseHandler,
     resetRestoration,
     waitForRestoration: () => restorationBarrier,
     finishRestoration: () => finishRestoration?.(),
@@ -51,6 +58,7 @@ const mocks = vi.hoisted(() => {
       events.length = 0;
       listeners.clear();
       closeHandler = null;
+      auxiliaryCloseHandler = null;
       pendingQuit = false;
       restorePreviousSession = true;
       confirmationChoices = [];
@@ -82,8 +90,8 @@ vi.mock('@tauri-apps/api/event', () => ({
 vi.mock('@tauri-apps/api/webview', () => ({
   getCurrentWebview: () => ({ onDragDropEvent: vi.fn(async () => vi.fn()) }),
 }));
-vi.mock('@tauri-apps/api/webviewWindow', () => ({
-  getCurrentWebviewWindow: () => ({
+vi.mock('@tauri-apps/api/webviewWindow', () => {
+  const mainWindow = {
     onCloseRequested: vi.fn(async (handler) => {
       mocks.events.push('listen:close');
       mocks.setCloseHandler(handler);
@@ -101,8 +109,25 @@ vi.mock('@tauri-apps/api/webviewWindow', () => ({
     unminimize: vi.fn(async () => undefined),
     isFullscreen: vi.fn(async () => false),
     setFullscreen: vi.fn(async () => undefined),
-  }),
-}));
+  };
+  const auxiliaryWindow = {
+    onCloseRequested: vi.fn(async (handler) => {
+      mocks.events.push('listen:auxiliary-close');
+      mocks.setAuxiliaryCloseHandler(handler);
+      return vi.fn();
+    }),
+    destroy: vi.fn(async () => {
+      mocks.events.push('auxiliary:destroy');
+    }),
+  };
+  return {
+    getCurrentWebviewWindow: () => mainWindow,
+    getAllWebviewWindows: vi.fn(async () => {
+      mocks.events.push('windows:all');
+      return [mainWindow, auxiliaryWindow];
+    }),
+  };
+});
 vi.mock('../app/dialogs', () => ({
   requestAnnotationNote: vi.fn(async () => null),
   requestConfirmation: vi.fn(async () => mocks.takeConfirmationChoice()),
@@ -459,12 +484,19 @@ describe('application lifecycle composition', () => {
 
   it('registers shutdown only on the composed main window', async () => {
     mocks.setRestorePreviousSession(false);
-    const auxiliaryOnCloseRequested = vi.fn();
     const { initializeApplication } = await import('../application');
     await initializeApplication(createModules());
 
     expect(mocks.getCloseHandler()).toBeTypeOf('function');
-    expect(auxiliaryOnCloseRequested).not.toHaveBeenCalled();
+    expect(mocks.getAuxiliaryCloseHandler()).toBeNull();
+    expect(mocks.events).not.toContain('windows:all');
     expect(mocks.events.filter((event) => event === 'listen:close')).toHaveLength(1);
+
+    await mocks.getAuxiliaryCloseHandler()?.({ preventDefault: vi.fn() });
+
+    expect(mocks.events).not.toContain('intake:stop');
+    expect(mocks.events).not.toContain('flush:intake-quiesce');
+    expect(mocks.events).not.toContain('window:destroy');
+    expect(mocks.events).not.toContain('auxiliary:destroy');
   });
 });
