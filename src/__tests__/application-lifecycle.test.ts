@@ -10,6 +10,8 @@ const mocks = vi.hoisted(() => {
   const listeners = new Map<string, () => void | Promise<void>>();
   let closeHandler: ((event: { preventDefault: () => void }) => void | Promise<void>) | null = null;
   let pendingQuit = false;
+  let restorePreviousSession = true;
+  let confirmationChoices: boolean[] = [];
   let finishRestoration: (() => void) | null = null;
   let restorationBarrier = Promise.resolve();
 
@@ -26,6 +28,18 @@ const mocks = vi.hoisted(() => {
       pendingQuit = value;
     },
     takePendingQuit: () => pendingQuit,
+    setRestorePreviousSession(value: boolean) {
+      restorePreviousSession = value;
+    },
+    restorePreviousSession: () => restorePreviousSession,
+    setConfirmationChoices(choices: boolean[]) {
+      confirmationChoices = [...choices];
+    },
+    takeConfirmationChoice() {
+      const choice = confirmationChoices.shift() ?? true;
+      events.push(`confirmation:${choice}`);
+      return choice;
+    },
     setCloseHandler(handler: typeof closeHandler) {
       closeHandler = handler;
     },
@@ -38,6 +52,8 @@ const mocks = vi.hoisted(() => {
       listeners.clear();
       closeHandler = null;
       pendingQuit = false;
+      restorePreviousSession = true;
+      confirmationChoices = [];
       resetRestoration();
     },
   };
@@ -89,7 +105,7 @@ vi.mock('@tauri-apps/api/webviewWindow', () => ({
 }));
 vi.mock('../app/dialogs', () => ({
   requestAnnotationNote: vi.fn(async () => null),
-  requestConfirmation: vi.fn(async () => true),
+  requestConfirmation: vi.fn(async () => mocks.takeConfirmationChoice()),
   requestPdfPassword: vi.fn(async () => null),
   showToast: vi.fn(),
 }));
@@ -204,7 +220,7 @@ vi.mock('../scripts/settings', () => ({
           displayThumbs: false,
           defaultDarkMode: 'default',
           rememberLastFilter: false,
-          restorePreviousSession: true,
+          restorePreviousSession: mocks.restorePreviousSession(),
           defaultViewMode: 'continuous',
         },
         keybinds: {},
@@ -220,7 +236,10 @@ vi.mock('../scripts/sliders', () => ({
   },
 }));
 
-function createModules(): ApplicationModules {
+function createModules(
+  options: { intakeQuiescence?: Promise<void>; sessionFlushFailures?: number } = {},
+): ApplicationModules {
+  let remainingSessionFlushFailures = options.sessionFlushFailures ?? 0;
   const session: ReadingSessionSnapshot = {
     schemaVersion: 2,
     revision: 0,
@@ -248,6 +267,10 @@ function createModules(): ApplicationModules {
     }),
     flush: vi.fn(async () => {
       mocks.events.push('flush:session');
+      if (remainingSessionFlushFailures > 0) {
+        remainingSessionFlushFailures -= 1;
+        throw new Error('session store unavailable');
+      }
     }),
     hasDirtySession: vi.fn(() => false),
   } as ReaderActions;
@@ -260,6 +283,7 @@ function createModules(): ApplicationModules {
     }),
     quiesce: vi.fn(async () => {
       mocks.events.push('flush:intake-quiesce');
+      await options.intakeQuiescence;
     }),
   } as unknown as DocumentIntake;
 
@@ -352,5 +376,95 @@ describe('application lifecycle composition', () => {
     expect(mocks.events).toContain('flush:intake-quiesce');
     expect(mocks.events).toContain('invoke:complete_application_quit');
     expect(mocks.events).not.toContain('window:destroy');
+  });
+
+  it('coalesces repeated mixed requests through the production lifecycle', async () => {
+    let releaseFinalFlush!: () => void;
+    const finalFlushBarrier = new Promise<void>((resolve) => {
+      releaseFinalFlush = resolve;
+    });
+    const { initializeApplication } = await import('../application');
+    const initialization = initializeApplication(
+      createModules({ intakeQuiescence: finalFlushBarrier }),
+    );
+    await vi.waitFor(() => expect(mocks.events).toContain('restoration:foreground'));
+    mocks.finishRestoration();
+    await initialization;
+
+    let prevented = 0;
+    const closeEvent = {
+      preventDefault: () => {
+        prevented += 1;
+      },
+    };
+    const firstClose = mocks.getCloseHandler()?.(closeEvent);
+    await vi.waitFor(() => expect(mocks.events).toContain('flush:intake-quiesce'));
+    const repeatedClose = mocks.getCloseHandler()?.(closeEvent);
+    const quit = mocks.listeners.get('application-quit-requested')?.();
+    releaseFinalFlush();
+    await Promise.all([firstClose, repeatedClose, quit]);
+
+    expect(prevented).toBe(2);
+    expect(mocks.events.filter((event) => event === 'flush:session')).toHaveLength(1);
+    expect(
+      mocks.events.filter((event) => event === 'invoke:complete_application_quit'),
+    ).toHaveLength(1);
+    expect(mocks.events).not.toContain('window:destroy');
+  });
+
+  it('retries failed final persistence before destroying the main window', async () => {
+    mocks.setConfirmationChoices([true]);
+    const { initializeApplication } = await import('../application');
+    const initialization = initializeApplication(createModules({ sessionFlushFailures: 1 }));
+    await vi.waitFor(() => expect(mocks.events).toContain('restoration:foreground'));
+    mocks.finishRestoration();
+    await initialization;
+
+    await mocks.getCloseHandler()?.({ preventDefault: vi.fn() });
+
+    expect(mocks.events.filter((event) => event === 'flush:session')).toHaveLength(2);
+    expect(mocks.events).toContain('confirmation:true');
+    expect(mocks.events).toContain('window:destroy');
+  });
+
+  it('destroys only after explicit quit-without-saving choice', async () => {
+    mocks.setConfirmationChoices([false]);
+    const { initializeApplication } = await import('../application');
+    const initialization = initializeApplication(createModules({ sessionFlushFailures: 1 }));
+    await vi.waitFor(() => expect(mocks.events).toContain('restoration:foreground'));
+    mocks.finishRestoration();
+    await initialization;
+
+    await mocks.getCloseHandler()?.({ preventDefault: vi.fn() });
+
+    expect(mocks.events.filter((event) => event === 'flush:session')).toHaveLength(1);
+    expect(mocks.events).toContain('confirmation:false');
+    expect(mocks.events).toContain('window:destroy');
+  });
+
+  it('skips Reading Session persistence when restoration is disabled', async () => {
+    mocks.setRestorePreviousSession(false);
+    const { initializeApplication } = await import('../application');
+    await initializeApplication(createModules());
+
+    await mocks.getCloseHandler()?.({ preventDefault: vi.fn() });
+
+    expect(mocks.events).toContain('flush:actions-quiesce');
+    expect(mocks.events).not.toContain('flush:settle');
+    expect(mocks.events).not.toContain('flush:session');
+    expect(mocks.events).toContain('flush:annotations');
+    expect(mocks.events).toContain('flush:recent');
+    expect(mocks.events).toContain('window:destroy');
+  });
+
+  it('registers shutdown only on the composed main window', async () => {
+    mocks.setRestorePreviousSession(false);
+    const auxiliaryOnCloseRequested = vi.fn();
+    const { initializeApplication } = await import('../application');
+    await initializeApplication(createModules());
+
+    expect(mocks.getCloseHandler()).toBeTypeOf('function');
+    expect(auxiliaryOnCloseRequested).not.toHaveBeenCalled();
+    expect(mocks.events.filter((event) => event === 'listen:close')).toHaveLength(1);
   });
 });
