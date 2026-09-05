@@ -141,7 +141,7 @@
 
 /* PDF page surface: canvas, selectable text, and link overlays */
 #pdf-container > .pdf-page-surface {
-  display: none; /* Hidden by default, shown by TabManager */
+  display: none; /* Hidden by default, shown for the active Document */
   position: absolute;
   top: 20px;
   left: 50%;

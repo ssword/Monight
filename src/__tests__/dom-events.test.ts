@@ -14,7 +14,6 @@ describe('setupEventListeners', () => {
     } as unknown as KeybindManager;
 
     setupEventListeners({
-      tabManager: null,
       sliderManager: null,
       keybindManager,
       openPdfAndRefresh: vi.fn(async () => undefined),
@@ -46,7 +45,6 @@ describe('setupEventListeners', () => {
     const activateDocument = vi.fn(async () => undefined);
 
     setupEventListeners({
-      tabManager: {} as never,
       sliderManager: null,
       keybindManager: null,
       openPdfAndRefresh: vi.fn(async () => undefined),
@@ -80,7 +78,6 @@ describe('setupEventListeners', () => {
     const dispatchReaderAction = vi.fn(async (_action: unknown) => undefined);
 
     setupEventListeners({
-      tabManager: null,
       sliderManager: null,
       keybindManager: null,
       openPdfAndRefresh: vi.fn(async () => undefined),

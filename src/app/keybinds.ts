@@ -1,13 +1,16 @@
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 import { debugLog } from '../lib/debug-log';
-import { type DispatchReaderAction, readerAction } from '../reader/reader-actions';
+import {
+  type DispatchReaderAction,
+  type ReadingSessionSnapshot,
+  readerAction,
+} from '../reader/reader-actions';
 import type { KeybindManager } from '../scripts/keybind-manager';
-import type { TabManager } from '../scripts/tabs';
-import { withActiveViewer } from './viewer-helpers';
 
 interface KeybindContext {
   keybindManager: KeybindManager | null;
-  tabManager: TabManager | null;
+  getReadingSessionSnapshot: () => ReadingSessionSnapshot;
+  getActivePageCount: () => Promise<number>;
   openPdfAndRefresh: () => Promise<void>;
   openSettings: () => Promise<void>;
   updateTabBarVisibility: () => void;
@@ -22,7 +25,8 @@ interface KeybindContext {
 // Register all keybind actions with the KeybindManager
 export function registerKeybindActions({
   keybindManager,
-  tabManager,
+  getReadingSessionSnapshot,
+  getActivePageCount,
   openPdfAndRefresh,
   openSettings,
   updateTabBarVisibility,
@@ -57,9 +61,9 @@ export function registerKeybindActions({
 
   // Tab management
   keybindManager.registerAction('closeTab', async () => {
-    const activeTab = tabManager?.getActiveTab();
-    if (activeTab) {
-      await dispatchReaderAction({ type: 'closeDocument', filePath: activeTab.filePath });
+    const activeDocumentPath = getReadingSessionSnapshot().activeDocumentPath;
+    if (activeDocumentPath) {
+      await dispatchReaderAction({ type: 'closeDocument', filePath: activeDocumentPath });
       updateTabBarVisibility();
     }
   });
@@ -70,16 +74,36 @@ export function registerKeybindActions({
   });
 
   keybindManager.registerAction('nextTab', async () => {
-    await tabManager?.switchToNext();
+    const snapshot = getReadingSessionSnapshot();
+    const currentIndex = snapshot.documents.findIndex(
+      ({ filePath }) => filePath === snapshot.activeDocumentPath,
+    );
+    if (snapshot.documents.length > 1) {
+      const document = snapshot.documents[(currentIndex + 1) % snapshot.documents.length];
+      if (document)
+        await dispatchReaderAction({ type: 'activateDocument', filePath: document.filePath });
+    }
   });
 
   keybindManager.registerAction('previousTab', async () => {
-    await tabManager?.switchToPrevious();
+    const snapshot = getReadingSessionSnapshot();
+    const currentIndex = snapshot.documents.findIndex(
+      ({ filePath }) => filePath === snapshot.activeDocumentPath,
+    );
+    if (snapshot.documents.length > 1) {
+      const index = (currentIndex - 1 + snapshot.documents.length) % snapshot.documents.length;
+      const document = snapshot.documents[index];
+      if (document)
+        await dispatchReaderAction({ type: 'activateDocument', filePath: document.filePath });
+    }
   });
 
   keybindManager.registerAction('switchToTab', async (_e, data) => {
     const position = data ? parseInt(data, 10) : 1;
-    await tabManager?.switchToPosition(position);
+    const documents = getReadingSessionSnapshot().documents;
+    const document = position === 9 ? documents[documents.length - 1] : documents[position - 1];
+    if (document)
+      await dispatchReaderAction({ type: 'activateDocument', filePath: document.filePath });
   });
 
   // PDF navigation (requires active tab)
@@ -94,17 +118,15 @@ export function registerKeybindActions({
   });
 
   keybindManager.registerAction('firstPage', async () => {
-    await withActiveViewer(tabManager, async () => {
-      await goToPage(1);
-      updateUI();
-    });
+    await goToPage(1);
+    updateUI();
   });
 
   keybindManager.registerAction('lastPage', async () => {
-    await withActiveViewer(tabManager, async (viewer) => {
-      await goToPage(viewer.getState().totalPages);
-      updateUI();
-    });
+    const pageCount = await getActivePageCount();
+    if (pageCount < 1) return;
+    await goToPage(pageCount);
+    updateUI();
   });
 
   // Zoom

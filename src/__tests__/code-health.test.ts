@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 const readProjectFile = (path: string): string =>
@@ -21,5 +21,33 @@ describe('shipped code-health invariants', () => {
     for (const source of duplicatedRuntimeSources) {
       expect(source).not.toContain(npmManifest.version);
     }
+  });
+
+  it('ships no legacy tab authority or direct concrete-viewer lookup surface', () => {
+    const removedModules = [
+      'src/scripts/tabs.ts',
+      'src/scripts/tab-reading-session.ts',
+      'src/app/tab-state.ts',
+      'src/app/session-state.ts',
+      'src/app/viewer-helpers.ts',
+    ];
+    for (const path of removedModules) {
+      expect(existsSync(new URL(`../../${path}`, import.meta.url))).toBe(false);
+    }
+
+    const shippedAdapters = [
+      'src/main.ts',
+      'src/application.ts',
+      'src/app/dom-events.ts',
+      'src/app/file-actions.ts',
+      'src/app/keybinds.ts',
+      'src/app/tauri-events.ts',
+      'src/app/ui.ts',
+    ].map(readProjectFile);
+    for (const source of shippedAdapters) {
+      expect(source).not.toMatch(/TabManager|TabData|getRenderingForTab/);
+    }
+
+    expect(readProjectFile('src/main.ts').trim()).toBe("import './application';");
   });
 });

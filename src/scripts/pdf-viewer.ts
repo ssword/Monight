@@ -526,7 +526,7 @@ export class PDFViewer implements DocumentRendering {
     };
   }
 
-  async loadPDF(pdfData: Uint8Array, fileName: string, filePath: string): Promise<void> {
+  async loadPDF(bytes: Uint8Array, fileName: string, filePath: string): Promise<void> {
     try {
       this.cancelDimensionRefinement();
       // Cancel any pending render
@@ -534,7 +534,7 @@ export class PDFViewer implements DocumentRendering {
         this.renderTask.cancel();
       }
 
-      await this.content.load({ bytes: pdfData, fileName, filePath });
+      await this.content.load({ bytes, fileName, filePath });
 
       // Update state
       this.state.totalPages = this.content.pageCount;

@@ -1,8 +1,6 @@
 import type { DragDropEvent } from '@tauri-apps/api/webview';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { DocumentIntakeResult } from '../reader/document-intake';
-import { PRESETS } from '../scripts/filters';
-import type { TabManager } from '../scripts/tabs';
+import type { DocumentIntake, DocumentIntakeResult } from '../reader/document-intake';
 
 const mocks = vi.hoisted(() => {
   let dragDropHandler: ((event: { payload: DragDropEvent }) => void | Promise<void>) | undefined;
@@ -81,13 +79,12 @@ describe('Tauri drag and drop events', () => {
   });
 
   const context = (overrides: Record<string, unknown> = {}) => ({
-    tabManager: {} as TabManager,
+    intake: {} as DocumentIntake,
+    getActiveDocumentPath: () => null,
     settingsManager: null,
     keybindManager: null,
     isMac: true,
     openPdfAndRefresh: vi.fn(async () => undefined),
-    getInitialFilterSettings: () => ({ ...PRESETS.default }),
-    getInitialViewMode: () => 'single' as const,
     handleStartupExternalOpenPayloads: vi.fn(async () => undefined),
     reloadSettings: vi.fn(async () => undefined),
     clearReadingHistory: vi.fn(async () => undefined),
@@ -100,9 +97,9 @@ describe('Tauri drag and drop events', () => {
   });
 
   it('uses the Tauri 2 drag/drop API and reads paths from the v2 payload', async () => {
-    const tabManager = {} as TabManager;
+    const intake = {} as DocumentIntake;
 
-    await setupTauriListeners(context({ tabManager }));
+    await setupTauriListeners(context({ intake }));
 
     expect(mocks.onDragDropEvent).toHaveBeenCalledOnce();
     expect(mocks.listen).not.toHaveBeenCalledWith('tauri://file-drop', expect.any(Function));
@@ -130,7 +127,7 @@ describe('Tauri drag and drop events', () => {
     expect(removeClass).toHaveBeenCalledWith('drag-over');
     expect(mocks.intakeFiles).toHaveBeenCalledWith(
       ['/tmp/report.pdf', '/tmp/form.xfdf'],
-      expect.objectContaining({ tabManager }),
+      expect.objectContaining({ intake }),
     );
   });
 
@@ -212,7 +209,7 @@ describe('Tauri drag and drop events', () => {
 
     expect(mocks.intakeFiles).toHaveBeenCalledWith(
       ['/tmp/live.pdf'],
-      expect.objectContaining({ tabManager: expect.anything() }),
+      expect.objectContaining({ intake: expect.anything() }),
     );
   });
 
@@ -230,7 +227,7 @@ describe('Tauri drag and drop events', () => {
 
     expect(mocks.intakeFiles).toHaveBeenCalledWith(
       ['/tmp/associated.pdf', '/tmp/missing.pdf'],
-      expect.objectContaining({ tabManager: expect.anything() }),
+      expect.objectContaining({ intake: expect.anything() }),
     );
   });
 
@@ -281,9 +278,7 @@ describe('Tauri drag and drop events', () => {
     const dispatchReaderAction = vi.fn(async () => undefined);
     await setupTauriListeners(
       context({
-        tabManager: {
-          getActiveTab: () => ({ filePath: '/docs/report.pdf' }),
-        } as never,
+        getActiveDocumentPath: () => '/docs/report.pdf',
         dispatchReaderAction,
       }),
     );

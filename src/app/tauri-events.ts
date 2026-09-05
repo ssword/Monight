@@ -3,12 +3,10 @@ import { listen } from '@tauri-apps/api/event';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 import { debugLog } from '../lib/debug-log';
-import type { ViewMode } from '../lib/document-features';
+import type { DocumentIntake } from '../reader/document-intake';
 import { type DispatchReaderAction, readerAction } from '../reader/reader-actions';
-import type { FilterSettings } from '../scripts/filters';
 import type { KeybindManager } from '../scripts/keybind-manager';
 import type { SettingsManager } from '../scripts/settings';
-import type { TabManager } from '../scripts/tabs';
 import { showToast } from './dialogs';
 import { intakeFiles, reportDocumentIntakeOutcomes } from './file-actions';
 
@@ -21,13 +19,12 @@ export interface ExternalOpenPayload {
 }
 
 interface TauriListenerContext {
-  tabManager: TabManager | null;
+  intake: DocumentIntake | null;
+  getActiveDocumentPath: () => string | null;
   settingsManager: SettingsManager | null;
   keybindManager: KeybindManager | null;
   isMac: boolean;
   openPdfAndRefresh: () => Promise<void>;
-  getInitialFilterSettings: () => FilterSettings;
-  getInitialViewMode: () => ViewMode;
   handleStartupExternalOpenPayloads: (payloads: readonly ExternalOpenPayload[]) => Promise<void>;
   reloadSettings: () => Promise<void>;
   clearReadingHistory: () => Promise<void>;
@@ -39,13 +36,12 @@ interface TauriListenerContext {
 }
 
 export async function setupTauriListeners({
-  tabManager,
+  intake,
+  getActiveDocumentPath,
   settingsManager,
   keybindManager,
   isMac,
   openPdfAndRefresh,
-  getInitialFilterSettings,
-  getInitialViewMode,
   handleStartupExternalOpenPayloads,
   reloadSettings,
   clearReadingHistory,
@@ -57,17 +53,13 @@ export async function setupTauriListeners({
 }: TauriListenerContext): Promise<void> {
   const handleExternalOpenPayload = async (payload: ExternalOpenPayload) => {
     debugLog('External Document request:', payload);
-    if (!tabManager) return;
+    if (!intake) return;
 
     const { files, page } = payload;
 
     try {
-      const initialFilterSettings = getInitialFilterSettings();
-      const initialViewMode = getInitialViewMode();
       const result = await intakeFiles(files, {
-        tabManager,
-        initialFilterSettings,
-        initialViewMode,
+        intake,
         ...(page && page > 0 ? { page } : {}),
       });
       reportDocumentIntakeOutcomes(result, (message) => showToast(message, 'error'));
@@ -169,9 +161,9 @@ export async function setupTauriListeners({
 
   await listen('menu-close-tab', async () => {
     debugLog('Menu close tab event received');
-    const activeTab = tabManager?.getActiveTab();
-    if (activeTab) {
-      await dispatchReaderAction({ type: 'closeDocument', filePath: activeTab.filePath });
+    const activeDocumentPath = getActiveDocumentPath();
+    if (activeDocumentPath) {
+      await dispatchReaderAction({ type: 'closeDocument', filePath: activeDocumentPath });
       updateTabBarVisibility();
     }
   });

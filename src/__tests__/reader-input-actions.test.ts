@@ -2,6 +2,21 @@ import { describe, expect, it, vi } from 'vitest';
 import { registerKeybindActions } from '../app/keybinds';
 import type { KeybindManager } from '../scripts/keybind-manager';
 
+const readingSession = (activeDocumentPath: string | null = null) => ({
+  schemaVersion: 2 as const,
+  revision: 0,
+  activeDocumentPath,
+  documents: activeDocumentPath
+    ? [
+        {
+          filePath: activeDocumentPath,
+          title: 'first.pdf',
+          readingPosition: { page: 1, location: 0 },
+        },
+      ]
+    : [],
+});
+
 describe('reader visual input adapters', () => {
   it('dispatches keybind zoom as the same typed Reader Action', async () => {
     const handlers = new Map<string, () => void | Promise<void>>();
@@ -14,7 +29,8 @@ describe('reader visual input adapters', () => {
 
     registerKeybindActions({
       keybindManager,
-      tabManager: null,
+      getReadingSessionSnapshot: () => readingSession(),
+      getActivePageCount: async () => 0,
       openPdfAndRefresh: vi.fn(async () => undefined),
       openSettings: vi.fn(async () => undefined),
       updateTabBarVisibility: vi.fn(),
@@ -42,9 +58,8 @@ describe('reader visual input adapters', () => {
 
     registerKeybindActions({
       keybindManager,
-      tabManager: {
-        getActiveTab: () => ({ id: 'first', filePath: '/docs/first.pdf' }),
-      } as never,
+      getReadingSessionSnapshot: () => readingSession('/docs/first.pdf'),
+      getActivePageCount: async () => 1,
       openPdfAndRefresh: vi.fn(async () => undefined),
       openSettings: vi.fn(async () => undefined),
       updateTabBarVisibility: vi.fn(),
@@ -76,7 +91,8 @@ describe('reader visual input adapters', () => {
 
     registerKeybindActions({
       keybindManager,
-      tabManager: null,
+      getReadingSessionSnapshot: () => readingSession(),
+      getActivePageCount: async () => 0,
       openPdfAndRefresh: vi.fn(async () => undefined),
       openSettings: vi.fn(async () => undefined),
       updateTabBarVisibility: vi.fn(),

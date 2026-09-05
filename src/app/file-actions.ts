@@ -1,16 +1,14 @@
 import { invoke } from '@tauri-apps/api/core';
 import { debugLog } from '../lib/debug-log';
-import type { ViewMode } from '../lib/document-features';
-import type { DocumentIntakeOutcome, DocumentIntakeResult } from '../reader/document-intake';
-import type { FilterSettings } from '../scripts/filters';
-import type { TabManager } from '../scripts/tabs';
+import type {
+  DocumentIntake,
+  DocumentIntakeOutcome,
+  DocumentIntakeResult,
+} from '../reader/document-intake';
 import { showToast } from './dialogs';
-import { createDocumentIntakeRuntime } from './document-intake-runtime';
 
 interface IntakeFilesOptions {
-  tabManager: TabManager;
-  initialFilterSettings?: FilterSettings;
-  initialViewMode?: ViewMode;
+  intake: DocumentIntake;
   page?: number;
   activate?: boolean;
 }
@@ -26,13 +24,8 @@ interface EnsureViewingSizeOptions {
 
 export async function intakeFiles(
   filePaths: string[],
-  { tabManager, initialFilterSettings, initialViewMode, page, activate = true }: IntakeFilesOptions,
+  { intake, page, activate = true }: IntakeFilesOptions,
 ): Promise<DocumentIntakeResult> {
-  const intake = createDocumentIntakeRuntime({
-    tabManager,
-    initialFilterSettings,
-    initialViewMode,
-  });
   return intake.open(filePaths, {
     ...(page !== undefined ? { page } : {}),
     activate,
@@ -81,12 +74,8 @@ export async function openFiles(
 }
 
 // Open PDF file dialog
-export async function openPDFFile(
-  tabManager: TabManager | null,
-  initialFilterSettings?: FilterSettings,
-  initialViewMode?: ViewMode,
-): Promise<number> {
-  if (!tabManager) return 0;
+export async function openPDFFile(intake: DocumentIntake | null): Promise<number> {
+  if (!intake) return 0;
   debugLog('openPDFFile() called');
   try {
     debugLog('Opening file dialog...');
@@ -100,11 +89,9 @@ export async function openPDFFile(
     }
 
     return await openFiles(selected, {
-      tabManager,
+      intake,
       continueOnError: true,
       onError: (message) => showToast(message, 'error'),
-      initialFilterSettings,
-      initialViewMode,
     });
   } catch (error) {
     console.error('Error opening file:', error);
@@ -117,11 +104,10 @@ export async function openPDFFile(
 }
 
 // Update print menu state based on whether a PDF is loaded
-export async function updatePrintMenuState(tabManager: TabManager | null): Promise<void> {
-  const hasPDF = (tabManager?.size ?? 0) > 0;
+export async function updatePrintMenuState(hasDocument: boolean): Promise<void> {
   try {
-    await invoke('set_print_enabled', { enabled: hasPDF });
-    debugLog(`Print menu ${hasPDF ? 'enabled' : 'disabled'}`);
+    await invoke('set_print_enabled', { enabled: hasDocument });
+    debugLog(`Print menu ${hasDocument ? 'enabled' : 'disabled'}`);
   } catch (error) {
     console.error('Failed to update print menu state:', error);
   }
