@@ -38,7 +38,7 @@ import {
 } from './app/ui';
 import {
   type FinalSaveFailureChoice,
-  finishPendingReaderState,
+  finishPendingPersistence,
   registerReadingSessionCloseGuard,
 } from './app/window-lifecycle';
 import { debugLog } from './lib/debug-log';
@@ -269,7 +269,7 @@ const scheduleLastFilterSave = (settings: FilterSettings): void => {
   }, 250);
 };
 
-const flushReaderState = async (): Promise<void> => {
+const flushPersistentAuthorities = async (): Promise<void> => {
   if (
     readingSessionStorage &&
     readerActions &&
@@ -295,7 +295,7 @@ const flushReaderState = async (): Promise<void> => {
 
 const chooseAfterFinalSaveFailure = async (): Promise<FinalSaveFailureChoice> =>
   (await requestConfirmation({
-    title: 'Reader state not saved',
+    title: 'Changes not saved',
     message: 'Monight could not save the latest Reading Session, Recent Documents, or Annotations.',
     confirmLabel: 'Retry save',
     cancelLabel: 'Quit without saving',
@@ -715,7 +715,7 @@ async function initializeApp(): Promise<void> {
       updatePrintMenuState: () => updatePrintMenuState(tabManager),
       dispatchReaderAction,
       completeApplicationQuit: async () => {
-        await finishPendingReaderState(flushReaderState, chooseAfterFinalSaveFailure);
+        await finishPendingPersistence(flushPersistentAuthorities, chooseAfterFinalSaveFailure);
         await invoke('complete_application_quit');
       },
     });
@@ -733,7 +733,7 @@ async function initializeApp(): Promise<void> {
     await registerReadingSessionCloseGuard(
       currentWindow,
       async () => {
-        await flushReaderState();
+        await flushPersistentAuthorities();
       },
       chooseAfterFinalSaveFailure,
     );

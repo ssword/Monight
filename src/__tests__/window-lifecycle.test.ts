@@ -95,6 +95,8 @@ describe('Reading Session close lifecycle', () => {
     await registerReadingSessionCloseGuard(mainWindow, save);
     await settingsWindow.requestClose();
 
+    expect(mainWindow.onCloseRequested).toHaveBeenCalledOnce();
+    expect(settingsWindow.onCloseRequested).not.toHaveBeenCalled();
     expect(save).not.toHaveBeenCalled();
     expect(mainWindow.destroy).not.toHaveBeenCalled();
   });

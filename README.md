@@ -64,7 +64,7 @@ filter, and keybind customization.
 
 Reading Position and Visual State changes are saved after a short debounce, while opening,
 closing, reordering, or activating a Document requests an immediate save. Normal window close and
-whole-app Quit wait for pending reader-state writes; if the final write fails, Monight offers retry
+whole-app Quit wait for pending persistence writes; if the final write fails, Monight offers retry
 or an explicit quit-without-saving choice. Forced process termination, operating-system failure,
 or power loss cannot be guaranteed, so ordinary debounced persistence remains the primary loss
 protection.

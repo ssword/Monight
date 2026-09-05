@@ -115,6 +115,7 @@ export type ReaderAction =
   | { type: 'registerDocument'; document: ReadingSessionDocument; runtime: DocumentRuntime }
   | { type: 'activateDocumentTarget'; filePath: string; target: PdfLinkTarget }
   | { type: 'printDocument'; filePath?: string }
+  | { type: 'reorderDocuments'; filePaths: readonly string[] }
   | { type: 'closeDocument'; filePath: string }
   | { type: 'reopenLastClosedDocument' }
   | { type: 'removeDocument'; filePath: string };
@@ -682,6 +683,44 @@ export function createReaderActions({
 
   return {
     async dispatch(action, options) {
+      if (action.type === 'reorderDocuments') {
+        return enqueueGlobal(async () => {
+          const current = session.snapshot();
+          const requestedPaths = action.filePaths;
+          const requestedPathSet = new Set(requestedPaths);
+          const currentPaths = current.documents.map((document) => document.filePath);
+          const includesEveryDocument = currentPaths.every((filePath) =>
+            requestedPathSet.has(filePath),
+          );
+          if (
+            requestedPaths.length !== current.documents.length ||
+            requestedPathSet.size !== requestedPaths.length ||
+            !includesEveryDocument
+          ) {
+            return {
+              status: 'failure',
+              error: new Error('Document order must include every open Document exactly once'),
+              revision: current.revision,
+            };
+          }
+          if (requestedPaths.every((filePath, index) => filePath === currentPaths[index])) {
+            return { status: 'no-op', revision: current.revision };
+          }
+          const documentsByPath = new Map(
+            current.documents.map((document) => [document.filePath, document]),
+          );
+          const documents = requestedPaths.map((filePath) => {
+            const document = documentsByPath.get(filePath);
+            if (!document) throw new Error(`Document is not open: ${filePath}`);
+            return document;
+          });
+          return commit(
+            { schemaVersion: 2, activeDocumentPath: current.activeDocumentPath, documents },
+            'immediate',
+          );
+        });
+      }
+
       if (action.type === 'reopenLastClosedDocument') {
         const precedingGlobal = globalTail;
         let releaseReservation!: () => void;

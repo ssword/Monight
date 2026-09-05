@@ -176,19 +176,15 @@ export async function setupTauriListeners({
     }
   });
 
-  let applicationQuit: Promise<void> | null = null;
+  let pendingApplicationQuit: Promise<void> | null = null;
   await listen('application-quit-requested', () => {
-    if (applicationQuit) return applicationQuit;
+    if (pendingApplicationQuit) return pendingApplicationQuit;
     const pending = completeApplicationQuit();
-    applicationQuit = pending;
-    void pending.then(
-      () => {
-        if (applicationQuit === pending) applicationQuit = null;
-      },
-      () => {
-        if (applicationQuit === pending) applicationQuit = null;
-      },
-    );
+    pendingApplicationQuit = pending;
+    const clearPendingApplicationQuit = () => {
+      if (pendingApplicationQuit === pending) pendingApplicationQuit = null;
+    };
+    void pending.then(clearPendingApplicationQuit, clearPendingApplicationQuit);
     return pending;
   });
 

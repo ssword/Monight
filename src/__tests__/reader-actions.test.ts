@@ -49,6 +49,27 @@ function createDocumentRuntime(): DocumentRuntime {
 }
 
 describe('Reader Actions', () => {
+  it('persists a changed Document order immediately', async () => {
+    const persist = vi.fn(async () => undefined);
+    const reader = createReaderActions({
+      initialSession: INITIAL_SESSION,
+      projection: { activateDocument: vi.fn(), goToReadingPosition: vi.fn() },
+      persist,
+    });
+
+    const outcome = await reader.dispatch({
+      type: 'reorderDocuments',
+      filePaths: ['/docs/second.pdf', '/docs/first.pdf'],
+    });
+
+    expect(outcome).toMatchObject({ status: 'committed', revision: 1 });
+    expect(reader.snapshot().documents.map((document) => document.filePath)).toEqual([
+      '/docs/second.pdf',
+      '/docs/first.pdf',
+    ]);
+    expect(persist).toHaveBeenCalledOnce();
+  });
+
   it('activates an internal PDF target against its originating Document after activation changes', async () => {
     let finishResolution: ((target: { kind: 'page'; pageNumber: number }) => void) | undefined;
     const firstRuntime = createDocumentRuntime();

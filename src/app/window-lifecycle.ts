@@ -11,7 +11,7 @@ export interface ClosableWindow {
 
 export type FinalSaveFailureChoice = 'retry' | 'discard';
 
-export async function finishPendingReaderState(
+export async function finishPendingPersistence(
   saveReadingSession: () => Promise<void>,
   chooseAfterFailure: (error: unknown) => Promise<FinalSaveFailureChoice>,
 ): Promise<void> {
@@ -39,7 +39,7 @@ export async function registerReadingSessionCloseGuard(
     if (closing) return;
     closing = true;
 
-    await finishPendingReaderState(saveReadingSession, chooseAfterFailure);
+    await finishPendingPersistence(saveReadingSession, chooseAfterFailure);
     await appWindow.destroy();
   });
 }

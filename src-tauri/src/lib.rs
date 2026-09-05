@@ -165,8 +165,18 @@ where
     })
 }
 
-fn should_await_frontend_quit(exit_code: Option<i32>, main_window_available: bool) -> bool {
-    exit_code.is_none() && main_window_available
+fn intercept_application_quit(
+    exit_code: Option<i32>,
+    main_window_available: bool,
+    prevent_exit: impl FnOnce(),
+    request_frontend: impl FnOnce(),
+) -> bool {
+    if exit_code.is_some() || !main_window_available {
+        return false;
+    }
+    prevent_exit();
+    request_frontend();
+    true
 }
 
 #[tauri::command]
@@ -289,11 +299,16 @@ pub fn run() {
     app.run(|app, event| match event {
         tauri::RunEvent::ExitRequested { code, api, .. } => {
             let main_window = app.get_webview_window("main");
-            if should_await_frontend_quit(code, main_window.is_some()) {
-                api.prevent_exit();
-                let window = main_window.expect("main window availability was checked");
-                let _ = window.emit("application-quit-requested", ());
-            }
+            intercept_application_quit(
+                code,
+                main_window.is_some(),
+                || api.prevent_exit(),
+                || {
+                    if let Some(window) = main_window {
+                        let _ = window.emit("application-quit-requested", ());
+                    }
+                },
+            );
         }
         #[cfg(any(target_os = "macos", target_os = "ios", target_os = "android"))]
         tauri::RunEvent::Opened { urls } => {
@@ -312,9 +327,20 @@ mod tests {
 
     #[test]
     fn user_quit_waits_for_frontend_but_frontend_acknowledgement_can_exit() {
-        assert!(should_await_frontend_quit(None, true));
-        assert!(!should_await_frontend_quit(Some(0), true));
-        assert!(!should_await_frontend_quit(None, false));
+        let mut prevented = false;
+        let mut requested_frontend = false;
+        let intercepted = intercept_application_quit(
+            None,
+            true,
+            || prevented = true,
+            || requested_frontend = true,
+        );
+
+        assert!(intercepted);
+        assert!(prevented);
+        assert!(requested_frontend);
+        assert!(!intercept_application_quit(Some(0), true, || {}, || {}));
+        assert!(!intercept_application_quit(None, false, || {}, || {}));
     }
 
     fn copied_pdf_fixture(name: &str) -> PathBuf {
