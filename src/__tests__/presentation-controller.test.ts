@@ -67,7 +67,7 @@ describe('PresentationController', () => {
     expect(viewer.setViewMode).toHaveBeenCalledWith('single');
     expect(viewer.fitToPage).toHaveBeenCalled();
 
-    await controller.exit();
+    const restore = await controller.exit();
 
     expect(controller.isActive()).toBe(false);
     expect(document.body.classList.contains('presentation-mode')).toBe(false);
@@ -75,6 +75,13 @@ describe('PresentationController', () => {
     expect(viewer.setViewMode).toHaveBeenLastCalledWith('spread');
     expect(viewer.setZoomIntent).toHaveBeenCalledWith({ kind: 'fit-width' });
     expect(onStateChanged.mock.calls).toEqual([[true], [false]]);
+
+    await restore?.();
+
+    expect(controller.isActive()).toBe(true);
+    expect(document.body.classList.contains('presentation-mode')).toBe(true);
+    expect(currentWindow.setFullscreen).toHaveBeenLastCalledWith(true);
+    expect(onStateChanged.mock.calls).toEqual([[true], [false], [true]]);
   });
 
   it('exits presentation without restoring Visual State before close', async () => {

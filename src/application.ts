@@ -382,6 +382,7 @@ export async function initializeApplication(modules: ApplicationModules): Promis
         return readerActions.dispatch(action);
       },
       snapshot: () => readerActions?.snapshot() ?? { ...initialReadingSession, revision: 0 },
+      isDocumentOpen: (filePath) => readerActions?.isDocumentOpen(filePath) ?? false,
       defaultVisualState,
       ...(annotationAuthority ? { annotationAuthority } : {}),
       requestPassword: requestPdfPassword,
@@ -407,9 +408,8 @@ export async function initializeApplication(modules: ApplicationModules): Promis
       defaultVisualState: defaultVisualState(),
       projection: {
         ...documentWorkspace.projection,
-        exitPresentation: async (options) => {
-          await presentationController?.exit(options);
-        },
+        exitPresentation: async (options) =>
+          (await presentationController?.exit(options)) ?? undefined,
       },
       externalLinkAdapter: modules.externalLinkAdapter,
       printAdapter: modules.browserPrintAdapter,

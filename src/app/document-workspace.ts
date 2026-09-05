@@ -57,6 +57,7 @@ export type DocumentSurfaceFactory = (
 interface DocumentWorkspaceOptions {
   dispatch(action: ReaderAction): Promise<ReaderActionOutcome>;
   snapshot(): ReadingSessionSnapshot;
+  isDocumentOpen(filePath: string): boolean;
   defaultVisualState(): ReadingSessionVisualState;
   createSurface?: DocumentSurfaceFactory;
   annotationAuthority?: AnnotationAccess;
@@ -112,7 +113,6 @@ async function projectDocumentState(
 export function createDocumentWorkspace(options: DocumentWorkspaceOptions): DocumentWorkspace {
   const annotationAuthority = options.annotationAuthority ?? createTransientAnnotationAccess();
   const presented = new Map<string, PresentedDocument>();
-  const settledDocumentPaths = new Set<string>();
   let visibleDocumentPath: string | null = null;
 
   const requireRendering = (filePath: string): DocumentRendering => {
@@ -281,7 +281,6 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
       if (!documentState) return;
       documentState.rendering.destroy();
       presented.delete(filePath);
-      settledDocumentPaths.delete(filePath);
       if (visibleDocumentPath === filePath) {
         visibleDocumentPath = null;
         if (nextActiveDocumentPath && presented.has(nextActiveDocumentPath)) {
@@ -317,7 +316,7 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
   };
 
   const intakeRuntime: DocumentRuntimeIntake = {
-    isOpen: (filePath) => settledDocumentPaths.has(filePath),
+    isOpen: options.isDocumentOpen,
     async activate(filePath, activateOptions) {
       await dispatchOrThrow({ type: 'activateDocument', filePath });
       if (activateOptions?.notifyOpened !== false) {
@@ -401,10 +400,8 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
             ? { readingPosition: surface.rendering.getReadingPosition() }
             : {}),
         });
-        settledDocumentPaths.add(document.canonicalPath);
       } catch (error) {
         presented.delete(document.canonicalPath);
-        settledDocumentPaths.delete(document.canonicalPath);
         const cleanupErrors: unknown[] = [];
         try {
           surface.rendering.destroy();

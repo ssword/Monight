@@ -79,6 +79,7 @@ describe('Document workspace adapter', () => {
     const workspace = createDocumentWorkspace({
       dispatch,
       snapshot: () => snapshot([], null),
+      isDocumentOpen: () => false,
       defaultVisualState: () => ({
         filterSettings: PRESETS.default,
         zoomIntent: { kind: 'manual', scale: 1 },
@@ -161,6 +162,7 @@ describe('Document workspace adapter', () => {
     const workspace = createDocumentWorkspace({
       dispatch,
       snapshot: () => current,
+      isDocumentOpen: () => false,
       defaultVisualState: () => ({
         filterSettings: PRESETS.default,
         zoomIntent: { kind: 'manual', scale: 1 },
@@ -202,6 +204,7 @@ describe('Document workspace adapter', () => {
     const workspace = createDocumentWorkspace({
       dispatch: vi.fn(async () => ({ status: 'no-op' as const, revision: 0 })),
       snapshot: () => snapshot([savedDocument], '/docs/saved.pdf'),
+      isDocumentOpen: () => false,
       defaultVisualState: () => ({
         filterSettings: PRESETS.default,
         zoomIntent: { kind: 'manual', scale: 1 },
@@ -222,6 +225,7 @@ describe('Document workspace adapter', () => {
     const reopenDocument = vi.fn(async () => undefined);
     const createdSurfaces = new Map<string, ControllableSurface[]>();
     let candidateAttempts = 0;
+    let presentationActive = false;
     let reader: ReaderActions;
     const initialSession = {
       schemaVersion: 2 as const,
@@ -231,6 +235,7 @@ describe('Document workspace adapter', () => {
     const workspace = createDocumentWorkspace({
       dispatch: (action) => reader.dispatch(action),
       snapshot: () => reader?.snapshot() ?? { ...initialSession, revision: 0 },
+      isDocumentOpen: (filePath) => reader?.isDocumentOpen(filePath) ?? false,
       defaultVisualState: () => ({
         filterSettings: PRESETS.default,
         zoomIntent: { kind: 'manual', scale: 1 },
@@ -256,7 +261,18 @@ describe('Document workspace adapter', () => {
     });
     reader = createReaderActions({
       initialSession,
-      projection: workspace.projection,
+      projection: {
+        ...workspace.projection,
+        exitPresentation: async () => {
+          const wasActive = presentationActive;
+          presentationActive = false;
+          return wasActive
+            ? async () => {
+                presentationActive = true;
+              }
+            : undefined;
+        },
+      },
       persist,
       reopenDocument,
     });
@@ -274,6 +290,7 @@ describe('Document workspace adapter', () => {
     });
     const settledBeforeFailure = reader.snapshot();
     const durableWritesBeforeFailure = persist.mock.calls.length;
+    presentationActive = true;
 
     await expect(intake.open(['/docs/candidate.pdf'])).resolves.toMatchObject({
       opened: 0,
@@ -286,6 +303,7 @@ describe('Document workspace adapter', () => {
     expect(workspace.intakeRuntime.isOpen('/docs/candidate.pdf')).toBe(false);
     expect(reader.query('/docs/candidate.pdf')).toBeNull();
     expect(workspace.activeRenderingState()?.filePath).toBe('/docs/prior.pdf');
+    expect(presentationActive).toBe(true);
     expect(createdSurfaces.get('/docs/prior.pdf')?.[0]?.visible()).toBe(true);
     expect(failedSurface?.visible()).toBe(false);
     expect(failedSurface?.rendering.destroy).toHaveBeenCalledOnce();
@@ -307,6 +325,7 @@ describe('Document workspace adapter', () => {
     });
     expect(workspace.intakeRuntime.isOpen('/docs/candidate.pdf')).toBe(true);
     expect(workspace.activeRenderingState()?.filePath).toBe('/docs/candidate.pdf');
+    expect(presentationActive).toBe(false);
     expect(createdSurfaces.get('/docs/prior.pdf')?.[0]?.visible()).toBe(false);
     expect(createdSurfaces.get('/docs/candidate.pdf')?.[1]?.visible()).toBe(true);
     expect(documentOpened).toHaveBeenCalledTimes(2);
@@ -385,6 +404,7 @@ describe('Document workspace adapter', () => {
     const workspace = createDocumentWorkspace({
       dispatch: (action) => reader.dispatch(action),
       snapshot: () => reader?.snapshot() ?? { ...initialSession, revision: 0 },
+      isDocumentOpen: (filePath) => reader?.isDocumentOpen(filePath) ?? false,
       defaultVisualState: () => ({
         filterSettings: PRESETS.default,
         zoomIntent: { kind: 'manual', scale: 1 },

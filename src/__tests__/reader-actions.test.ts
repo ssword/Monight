@@ -829,6 +829,7 @@ describe('Reader Actions', () => {
     const events: string[] = [];
     const exitPresentation = vi.fn(async () => {
       events.push('presentation:exit');
+      return undefined;
     });
     const reader = createReaderActions({
       initialSession: INITIAL_SESSION,

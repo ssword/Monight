@@ -53,6 +53,8 @@ export interface PresentationExitOptions {
   readonly restoreVisualState?: boolean;
 }
 
+export type RestorePresentation = () => Promise<void>;
+
 export interface ReaderProjection {
   activateDocument(
     filePath: string,
@@ -66,7 +68,7 @@ export interface ReaderProjection {
   ): Promise<void>;
   getPageCount?(filePath: string): number | Promise<number>;
   closeDocument?(filePath: string, nextActiveDocumentPath: string | null): Promise<void>;
-  exitPresentation?(options?: PresentationExitOptions): Promise<void>;
+  exitPresentation?(options?: PresentationExitOptions): Promise<RestorePresentation | undefined>;
   applyZoomIntent?(
     filePath: string,
     zoomIntent: ZoomIntent,
@@ -189,6 +191,7 @@ export interface ReaderActions {
     paths: readonly DocumentPathReconciliation[],
   ): Promise<ReaderActionOutcome>;
   query(filePath?: string): DocumentQuery | null;
+  isDocumentOpen(filePath: string): boolean;
   snapshot(): ReadingSessionSnapshot;
   observe(observer: (snapshot: ReadingSessionSnapshot) => void): () => void;
   flush(): Promise<void>;
@@ -326,6 +329,25 @@ function closeDocumentTransition(
   return { activeDocumentPath, documents };
 }
 
+function activateDocumentTransition(
+  session: PersistedReadingSession,
+  document: ReadingSessionDocument,
+  readingPosition: RestorableReadingPosition,
+): PersistedReadingSession | null {
+  const readingPositionChanged = !readingPositionsEqual(document.readingPosition, readingPosition);
+  if (session.activeDocumentPath === document.filePath && !readingPositionChanged) return null;
+  const documents = readingPositionChanged
+    ? session.documents.map((item) =>
+        item.filePath === document.filePath ? { ...item, readingPosition } : item,
+      )
+    : session.documents;
+  return {
+    schemaVersion: 2,
+    activeDocumentPath: document.filePath,
+    documents,
+  };
+}
+
 export function createReaderActions({
   initialSession,
   defaultVisualState = createDefaultVisualState(),
@@ -365,7 +387,7 @@ export function createReaderActions({
   const generation = (filePath: string): number => lanes.get(filePath)?.generation ?? 0;
   const isRemovalPending = (filePath: string): boolean =>
     (lanes.get(filePath)?.pendingRemovals ?? 0) > 0;
-  const isDocumentOpen = (filePath: string): boolean =>
+  const hasSessionDocument = (filePath: string): boolean =>
     session.snapshot().documents.some((document) => document.filePath === filePath);
   const invalidateRuntime = (filePath: string): RegisteredDocumentRuntime | undefined => {
     const registered = runtimes.get(filePath);
@@ -397,7 +419,7 @@ export function createReaderActions({
   ): boolean =>
     generation(filePath) !== expectedGeneration ||
     isRemovalPending(filePath) ||
-    !isDocumentOpen(filePath) ||
+    !hasSessionDocument(filePath) ||
     Boolean(options?.isCancelled?.());
 
   const runDocumentContentOperation = async <T>(
@@ -434,6 +456,37 @@ export function createReaderActions({
       await session.flush().catch(() => undefined);
     }
     return { status: 'committed', revision: committed.revision };
+  };
+
+  const projectActivation = async (
+    document: ReadingSessionDocument,
+    readingPosition: RestorableReadingPosition,
+  ): Promise<Extract<ReaderActionOutcome, { status: 'failure' }> | null> => {
+    let restorePresentation: RestorePresentation | undefined;
+    try {
+      restorePresentation = await projection.exitPresentation?.();
+    } catch (error) {
+      return { status: 'failure', error, revision: revision() };
+    }
+    try {
+      await projection.activateDocument(document.filePath, readingPosition, document.visualState);
+      return null;
+    } catch (error) {
+      if (!restorePresentation) return { status: 'failure', error, revision: revision() };
+      try {
+        await restorePresentation();
+        return { status: 'failure', error, revision: revision() };
+      } catch (restoreError) {
+        return {
+          status: 'failure',
+          error: new AggregateError(
+            [error, restoreError],
+            'Document activation and presentation restoration failed',
+          ),
+          revision: revision(),
+        };
+      }
+    }
   };
 
   const laneFor = (filePath: string): DocumentLane => {
@@ -845,16 +898,8 @@ export function createReaderActions({
             return { status: 'no-op', revision: current.revision };
           }
           if (action.activate) {
-            try {
-              await projection.exitPresentation?.();
-              await projection.activateDocument(
-                document.filePath,
-                readingPosition,
-                document.visualState,
-              );
-            } catch (error) {
-              return { status: 'failure', error, revision: revision() };
-            }
+            const activationFailure = await projectActivation(document, readingPosition);
+            if (activationFailure) return activationFailure;
           }
           if (!existingRuntime) {
             const nextGeneration = (runtimeGenerations.get(action.document.filePath) ?? 0) + 1;
@@ -864,36 +909,20 @@ export function createReaderActions({
               runtime: action.runtime,
             });
           }
-          const readingPositionChanged =
-            Boolean(existingDocument) &&
-            !readingPositionsEqual(document.readingPosition, readingPosition);
-          const activeDocumentPath = action.activate
-            ? document.filePath
-            : current.activeDocumentPath;
-          if (
-            existingDocument &&
-            !readingPositionChanged &&
-            activeDocumentPath === current.activeDocumentPath
-          ) {
-            return { status: 'no-op', revision: current.revision };
+          let next: PersistedReadingSession = existingDocument
+            ? current
+            : {
+                schemaVersion: 2,
+                activeDocumentPath: current.activeDocumentPath,
+                documents: [...current.documents, document],
+              };
+          if (action.activate) {
+            const activated = activateDocumentTransition(next, document, readingPosition);
+            if (activated) next = activated;
           }
-          const publishedDocument = readingPositionChanged
-            ? { ...document, readingPosition }
-            : document;
-          const documents = existingDocument
-            ? current.documents.map((item) =>
-                item.filePath === publishedDocument.filePath ? publishedDocument : item,
-              )
-            : [...current.documents, publishedDocument];
+          if (next === current) return { status: 'no-op', revision: current.revision };
           laneFor(action.document.filePath);
-          return commit(
-            {
-              schemaVersion: 2,
-              activeDocumentPath,
-              documents,
-            },
-            'immediate',
-          );
+          return commit(next, 'immediate');
         }, action.document.filePath);
       }
 
@@ -906,16 +935,8 @@ export function createReaderActions({
           const document = current.documents.find((item) => item.filePath === action.filePath);
           if (!document) return { status: 'no-op', revision: current.revision };
           const readingPosition = action.readingPosition ?? document.readingPosition;
-          try {
-            await projection.exitPresentation?.();
-            await projection.activateDocument(
-              document.filePath,
-              readingPosition,
-              document.visualState,
-            );
-          } catch (error) {
-            return { status: 'failure', error, revision: revision() };
-          }
+          const activationFailure = await projectActivation(document, readingPosition);
+          if (activationFailure) return activationFailure;
           const latest = session.snapshot();
           const latestDocument = latest.documents.find(
             (item) => item.filePath === document.filePath,
@@ -923,26 +944,10 @@ export function createReaderActions({
           if (!latestDocument) {
             return { status: 'no-op', revision: latest.revision };
           }
-          const readingPositionChanged = !readingPositionsEqual(
-            latestDocument.readingPosition,
-            readingPosition,
-          );
-          if (latest.activeDocumentPath === document.filePath && !readingPositionChanged) {
-            return { status: 'no-op', revision: latest.revision };
-          }
-          const documents = readingPositionChanged
-            ? latest.documents.map((item) =>
-                item.filePath === document.filePath ? { ...item, readingPosition } : item,
-              )
-            : latest.documents;
-          return commit(
-            {
-              schemaVersion: 2,
-              activeDocumentPath: document.filePath,
-              documents,
-            },
-            'immediate',
-          );
+          const activated = activateDocumentTransition(latest, latestDocument, readingPosition);
+          return activated
+            ? commit(activated, 'immediate')
+            : { status: 'no-op', revision: latest.revision };
         }, action.filePath);
       }
 
@@ -1299,11 +1304,14 @@ export function createReaderActions({
             current === registered &&
             registered.generation === queryGeneration &&
             runtimeGenerations.get(targetPath) === queryGeneration &&
-            isDocumentOpen(targetPath) &&
+            hasSessionDocument(targetPath) &&
             !isRemovalPending(targetPath)
           );
         },
       });
+    },
+    isDocumentOpen(filePath) {
+      return hasSessionDocument(filePath) && runtimes.has(filePath) && !isRemovalPending(filePath);
     },
     snapshot: session.snapshot,
     observe: session.observe,

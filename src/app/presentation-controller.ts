@@ -73,8 +73,8 @@ export class PresentationController {
     this.onStateChanged(true);
   }
 
-  async exit(options: PresentationExitOptions = {}): Promise<void> {
-    if (!this.active) return;
+  async exit(options: PresentationExitOptions = {}): Promise<(() => Promise<void>) | undefined> {
+    if (!this.active) return undefined;
     const presentation = this.getActivePresentation();
     this.active = false;
     document.body.classList.remove('presentation-mode');
@@ -86,5 +86,8 @@ export class PresentationController {
       await presentation.setZoomIntent(this.previousZoomIntent);
     }
     this.onStateChanged(false);
+    return async () => {
+      if (!this.active) await this.enter();
+    };
   }
 }
