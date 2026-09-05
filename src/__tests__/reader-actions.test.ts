@@ -1972,4 +1972,37 @@ describe('Reader Actions', () => {
     await expect(newest).resolves.toMatchObject({ status: 'committed' });
     expect(applied).toEqual(['/docs/second.pdf:fit-page', '/docs/first.pdf:fit-width']);
   });
+
+  it('quiesces accepted Reader Actions before a final snapshot is taken', async () => {
+    let finishNavigation: (() => void) | undefined;
+    const reader = createReaderActions({
+      initialSession: INITIAL_SESSION,
+      projection: {
+        activateDocument: vi.fn(),
+        goToReadingPosition: vi.fn(
+          () =>
+            new Promise<void>((resolve) => {
+              finishNavigation = resolve;
+            }),
+        ),
+      },
+      persist: vi.fn(async () => undefined),
+    });
+
+    const navigation = reader.dispatch({ type: 'goToPage', page: 12 });
+    await vi.waitFor(() => expect(finishNavigation).toBeTypeOf('function'));
+    let quiesced = false;
+    const quiescence = reader.quiesce().then(() => {
+      quiesced = true;
+    });
+    await Promise.resolve();
+
+    expect(quiesced).toBe(false);
+    expect(reader.snapshot().documents[0]?.readingPosition).toEqual({ page: 2, location: 0.25 });
+
+    finishNavigation?.();
+    await Promise.all([navigation, quiescence]);
+
+    expect(reader.snapshot().documents[0]?.readingPosition).toEqual({ page: 12, location: 0 });
+  });
 });

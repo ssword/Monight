@@ -34,6 +34,9 @@ const mocks = vi.hoisted(() => {
         return vi.fn();
       },
     ),
+    show: vi.fn(async () => undefined),
+    unminimize: vi.fn(async () => undefined),
+    setFocus: vi.fn(async () => undefined),
     getDragDropHandler: () => dragDropHandler,
     resetDragDropHandler: () => {
       dragDropHandler = undefined;
@@ -52,6 +55,9 @@ vi.mock('@tauri-apps/api/webviewWindow', () => ({
   getCurrentWebviewWindow: () => ({
     isFullscreen: vi.fn(async () => false),
     setFullscreen: vi.fn(async () => undefined),
+    show: mocks.show,
+    unminimize: mocks.unminimize,
+    setFocus: mocks.setFocus,
   }),
 }));
 vi.mock('../app/file-actions', () => ({
@@ -92,7 +98,6 @@ describe('Tauri drag and drop events', () => {
     updateTabBarVisibility: vi.fn(),
     updatePrintMenuState: vi.fn(async () => undefined),
     dispatchReaderAction: vi.fn(async () => undefined),
-    completeApplicationQuit: vi.fn(async () => undefined),
     ...overrides,
   });
 
@@ -229,6 +234,9 @@ describe('Tauri drag and drop events', () => {
       ['/tmp/associated.pdf', '/tmp/missing.pdf'],
       expect.objectContaining({ intake: expect.anything() }),
     );
+    expect(mocks.show).toHaveBeenCalledOnce();
+    expect(mocks.unminimize).toHaveBeenCalledOnce();
+    expect(mocks.setFocus).toHaveBeenCalledOnce();
   });
 
   it('handles the Settings clear-history request in the main window', async () => {
@@ -289,49 +297,5 @@ describe('Tauri drag and drop events', () => {
       type: 'closeDocument',
       filePath: '/docs/report.pdf',
     });
-  });
-
-  it('acknowledges application Quit only after the final save completes', async () => {
-    let finishFinalSave: (() => void) | undefined;
-    const completeApplicationQuit = vi.fn(
-      () =>
-        new Promise<void>((resolve) => {
-          finishFinalSave = resolve;
-        }),
-    );
-    await setupTauriListeners(context({ completeApplicationQuit }));
-
-    const quitting = mocks.getListener('application-quit-requested')?.();
-
-    expect(completeApplicationQuit).toHaveBeenCalledOnce();
-    let acknowledged = false;
-    void quitting?.then(() => {
-      acknowledged = true;
-    });
-    await Promise.resolve();
-    expect(acknowledged).toBe(false);
-
-    finishFinalSave?.();
-    await quitting;
-    expect(acknowledged).toBe(true);
-  });
-
-  it('coalesces repeated application Quit requests while final save is pending', async () => {
-    let finishFinalSave: (() => void) | undefined;
-    const completeApplicationQuit = vi.fn(
-      () =>
-        new Promise<void>((resolve) => {
-          finishFinalSave = resolve;
-        }),
-    );
-    await setupTauriListeners(context({ completeApplicationQuit }));
-    const requestQuit = mocks.getListener('application-quit-requested');
-
-    const first = requestQuit?.();
-    const second = requestQuit?.();
-
-    expect(completeApplicationQuit).toHaveBeenCalledOnce();
-    finishFinalSave?.();
-    await Promise.all([first, second]);
   });
 });

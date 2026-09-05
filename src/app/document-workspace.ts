@@ -56,6 +56,8 @@ export type DocumentSurfaceFactory = (
 
 interface DocumentWorkspaceOptions {
   dispatch(action: ReaderAction): Promise<ReaderActionOutcome>;
+  dispatchIntakeAction?: (action: ReaderAction) => Promise<ReaderActionOutcome>;
+  canMutate?: () => boolean;
   snapshot(): ReadingSessionSnapshot;
   isDocumentOpen(filePath: string): boolean;
   defaultVisualState(): ReadingSessionVisualState;
@@ -156,6 +158,7 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
     rendering.setOnZoomIntentRequest(callbacks.zoomIntentRequested);
     rendering.setAnnotations(annotationAuthority.snapshot(filePath));
     rendering.setOnAnnotationsChange((annotations) => {
+      if (options.canMutate?.() === false) return;
       annotationAuthority.replace(filePath, annotations);
       callbacks.stateChanged();
     });
@@ -196,6 +199,10 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
     const outcome = await options.dispatch(action);
     if (outcome.status === 'failure') throw outcome.error;
   };
+  const dispatchIntakeOrThrow = async (action: ReaderAction): Promise<void> => {
+    const outcome = await (options.dispatchIntakeAction ?? options.dispatch)(action);
+    if (outcome.status === 'failure') throw outcome.error;
+  };
 
   const renderDocumentControls = (readingSession: ReadingSessionSnapshot): void => {
     const container = document.getElementById('tab-container');
@@ -226,6 +233,7 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
       title.title = documentState.title;
       control.append(title);
       control.addEventListener('click', () => {
+        if (options.canMutate?.() === false) return;
         void options.dispatch({ type: 'activateDocument', filePath: documentState.filePath });
       });
 
@@ -237,6 +245,7 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
       close.tabIndex = active ? 0 : -1;
       close.addEventListener('click', (event) => {
         event.stopPropagation();
+        if (options.canMutate?.() === false) return;
         void options.dispatch({ type: 'closeDocument', filePath: documentState.filePath });
       });
       item.append(control, close);
@@ -318,7 +327,7 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
   const intakeRuntime: DocumentRuntimeIntake = {
     isOpen: options.isDocumentOpen,
     async activate(filePath, activateOptions) {
-      await dispatchOrThrow({ type: 'activateDocument', filePath });
+      await dispatchIntakeOrThrow({ type: 'activateDocument', filePath });
       if (activateOptions?.notifyOpened !== false) {
         const documentState = options
           .snapshot()
@@ -391,7 +400,7 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
           };
       try {
         await projectDocumentState(surface.rendering, initialDocument);
-        await dispatchOrThrow({
+        await dispatchIntakeOrThrow({
           type: 'registerDocument',
           document: initialDocument,
           runtime: surface.runtime,
@@ -424,7 +433,7 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
       debugLog(`Prepared Document surface: ${document.title}`);
     },
     async goToPage(filePath, page) {
-      await dispatchOrThrow({ type: 'goToPage', filePath, page });
+      await dispatchIntakeOrThrow({ type: 'goToPage', filePath, page });
     },
     async restoreExistingDocument(filePath, documentState, { preserveReadingPosition }) {
       const rendering = requireRendering(filePath);

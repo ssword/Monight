@@ -46,6 +46,9 @@ pub struct ExternalOpenPayload {
 #[derive(Default)]
 pub struct PendingExternalOpenPayloads(Mutex<VecDeque<ExternalOpenPayload>>);
 
+#[derive(Default)]
+pub struct PendingApplicationQuit(Mutex<bool>);
+
 pub(crate) fn is_supported_extension(path: &std::path::Path) -> bool {
     path.extension()
         .and_then(|e| e.to_str())
@@ -68,17 +71,27 @@ pub(crate) fn take_external_open_payloads_inner(
     guard.drain(..).collect()
 }
 
+pub(crate) fn queue_application_quit_inner(state: &PendingApplicationQuit) {
+    *state.0.lock().unwrap() = true;
+}
+
+pub(crate) fn take_application_quit_request_inner(state: &PendingApplicationQuit) -> bool {
+    std::mem::take(&mut *state.0.lock().unwrap())
+}
+
 fn dispatch_external_open_payload(app: &tauri::AppHandle, payload: ExternalOpenPayload) {
-    let _ = commands::fit_main_window_for_pdf(app.clone(), true);
     let state = app.state::<PendingExternalOpenPayloads>();
     queue_external_open_payload_inner(state.inner(), payload);
 
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.emit("external-open-files-available", ());
-        let _ = window.show();
-        #[cfg(any(target_os = "windows", target_os = "linux"))]
-        let _ = window.unminimize();
-        let _ = window.set_focus();
+    }
+}
+
+pub(crate) fn request_application_quit(app: &tauri::AppHandle) {
+    queue_application_quit_inner(app.state::<PendingApplicationQuit>().inner());
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.emit("application-quit-requested", ());
     }
 }
 
@@ -184,6 +197,11 @@ fn complete_application_quit(app: tauri::AppHandle) {
     app.exit(0);
 }
 
+#[tauri::command]
+fn take_application_quit_request(state: tauri::State<'_, PendingApplicationQuit>) -> bool {
+    take_application_quit_request_inner(state.inner())
+}
+
 pub(crate) fn payload_from_cli_args<I, T>(
     document_intake: &document_intake::DocumentIntake,
     args: I,
@@ -232,6 +250,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_store::Builder::default().build())
         .manage(PendingExternalOpenPayloads::default())
+        .manage(PendingApplicationQuit::default())
         .manage(document_intake::DocumentIntake::default())
         .invoke_handler(tauri::generate_handler![
             commands::read_pdf_file,
@@ -246,6 +265,7 @@ pub fn run() {
             commands::validate_open_path,
             commands::open_external_url,
             complete_application_quit,
+            take_application_quit_request,
         ])
         .on_webview_event(|webview, event| {
             if let tauri::WebviewEvent::DragDrop(tauri::DragDropEvent::Drop { paths, .. }) = event {
@@ -262,7 +282,6 @@ pub fn run() {
                 document_intake.authorize_persisted_snapshot(&persisted_store);
             }
 
-            let window = app.get_webview_window("main").unwrap();
             let app_handle = app.handle();
 
             // Create and set application menu
@@ -280,9 +299,6 @@ pub fn run() {
                 // Store and emit event (frontend will also pull pending on ready)
                 dispatch_external_open_payload(app_handle, payload);
             }
-
-            // Show window after setup complete
-            window.show().unwrap();
 
             // Log startup
             #[cfg(debug_assertions)]
@@ -303,11 +319,7 @@ pub fn run() {
                 code,
                 main_window.is_some(),
                 || api.prevent_exit(),
-                || {
-                    if let Some(window) = main_window {
-                        let _ = window.emit("application-quit-requested", ());
-                    }
-                },
+                || request_application_quit(app),
             );
         }
         #[cfg(any(target_os = "macos", target_os = "ios", target_os = "android"))]
@@ -341,6 +353,16 @@ mod tests {
         assert!(requested_frontend);
         assert!(!intercept_application_quit(Some(0), true, || {}, || {}));
         assert!(!intercept_application_quit(None, false, || {}, || {}));
+    }
+
+    #[test]
+    fn application_quit_requests_are_retained_until_the_frontend_takes_them() {
+        let state = PendingApplicationQuit::default();
+
+        queue_application_quit_inner(&state);
+
+        assert!(take_application_quit_request_inner(&state));
+        assert!(!take_application_quit_request_inner(&state));
     }
 
     fn copied_pdf_fixture(name: &str) -> PathBuf {

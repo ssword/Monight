@@ -20,6 +20,7 @@ export function createPersistenceCoordinator(
   return {
     async flush() {
       const actions = options.readerActions();
+      await actions?.quiesce();
       if (actions && options.shouldPersistReadingSession()) {
         const observedPosition = options.activeReadingPosition();
         if (observedPosition) {

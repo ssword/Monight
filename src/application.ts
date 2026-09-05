@@ -1,5 +1,6 @@
 import { getName, getTauriVersion, getVersion } from '@tauri-apps/api/app';
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 import {
   requestAnnotationNote,
@@ -34,9 +35,12 @@ import {
   updateUI,
 } from './app/ui';
 import {
+  type ApplicationShutdownCoordinator,
+  createApplicationShutdownCoordinator,
+  createShutdownAwareDocumentIntake,
   type FinalSaveFailureChoice,
-  finishPendingPersistence,
-  registerReadingSessionCloseGuard,
+  registerApplicationShutdownHandlers,
+  type ShutdownAwareDocumentIntake,
 } from './app/window-lifecycle';
 import { debugLog } from './lib/debug-log';
 import type { ViewMode } from './lib/document-features';
@@ -79,7 +83,9 @@ export interface ApplicationModules {
 }
 
 let documentWorkspace: DocumentWorkspace | null = null;
-let documentIntake: DocumentIntake | null = null;
+let documentIntake: ShutdownAwareDocumentIntake | null = null;
+let startupDocumentIntake: DocumentIntake | null = null;
+let applicationShutdown: ApplicationShutdownCoordinator | null = null;
 
 // Global slider manager instance
 let sliderManager: SliderManager | null = null;
@@ -103,6 +109,23 @@ let presentationController: PresentationController | null = null;
 const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
 
 debugLog('Platform:', navigator.platform, 'isMac:', isMac);
+
+const acceptsReaderWork = (): boolean => !applicationShutdown?.isShutdownRequested();
+
+const dispatchReaderActionOutcome = async (action: ReaderAction, options?: ReaderActionOptions) => {
+  const actions = readerActions;
+  if (!actions) {
+    return {
+      status: 'failure' as const,
+      error: new Error('Reader Actions are unavailable'),
+      revision: 0,
+    };
+  }
+  if (!acceptsReaderWork()) {
+    return { status: 'no-op' as const, revision: actions.snapshot().revision };
+  }
+  return actions.dispatch(action, options);
+};
 
 async function getAppInfo(): Promise<AppInfo> {
   try {
@@ -174,19 +197,19 @@ const getActiveDocumentAccess = () => {
 };
 
 const goToPage = async (page: number, options?: ReaderActionOptions): Promise<void> => {
-  const outcome = await readerActions?.dispatch({ type: 'goToPage', page }, options);
+  const outcome = await dispatchReaderActionOutcome({ type: 'goToPage', page }, options);
   if (outcome?.status === 'failure') throw outcome.error;
 };
 
 const goToRelativePage = async (direction: 'next' | 'previous'): Promise<void> => {
-  const outcome = await readerActions?.dispatch({
+  const outcome = await dispatchReaderActionOutcome({
     type: direction === 'next' ? 'goToNextPage' : 'goToPreviousPage',
   });
   if (outcome?.status === 'failure') throw outcome.error;
 };
 
 const dispatchReaderAction = async (action: ReaderAction): Promise<void> => {
-  const outcome = await readerActions?.dispatch(action);
+  const outcome = await dispatchReaderActionOutcome(action);
   if (outcome?.status === 'failure') {
     if (action.type === 'printDocument') {
       console.error('Print error:', outcome.error);
@@ -215,6 +238,7 @@ const rememberRecentDocument = (filePath: string, title: string): void => {
 };
 
 const clearRecentFiles = async (): Promise<void> => {
+  if (!acceptsReaderWork()) return;
   recentDocumentAuthority?.clear();
   await recentDocumentAuthority?.flush();
 };
@@ -282,7 +306,7 @@ const chooseAfterFinalSaveFailure = async (): Promise<FinalSaveFailureChoice> =>
 const restoreStartupReadingSession = async (
   payloads: readonly ExternalOpenPayload[],
 ): Promise<number> => {
-  if (!documentIntake) return 0;
+  if (!startupDocumentIntake) return 0;
   const session = currentSettings?.general.restorePreviousSession
     ? (restoredReadingSession ?? EMPTY_READING_SESSION)
     : EMPTY_READING_SESSION;
@@ -291,13 +315,14 @@ const restoreStartupReadingSession = async (
   isRestoringSession = true;
   try {
     const result = await restoreReadingSessionAtStartup({
-      intake: documentIntake,
+      intake: startupDocumentIntake,
       session,
       explicitRequests: payloads.map(({ files, page }) => ({
         paths: files,
         ...(page !== null && page > 0 ? { page } : {}),
       })),
       onForegroundReady: async () => {
+        if (applicationShutdown?.isShutdownRequested()) return;
         showViewer();
         const hasDocument = (readerActions?.snapshot().documents.length ?? 0) > 0;
         updateTabBarVisibility(hasDocument);
@@ -325,7 +350,33 @@ const restoreStartupReadingSession = async (
 };
 
 export async function initializeApplication(modules: ApplicationModules): Promise<void> {
+  const currentWindow = getCurrentWebviewWindow();
+  const shutdown = createApplicationShutdownCoordinator({
+    flush: async () => {
+      await documentIntake?.quiesce();
+      await persistence.flush();
+    },
+    chooseAfterFailure: chooseAfterFinalSaveFailure,
+    closeMainWindow: () => currentWindow.destroy(),
+    quitApplication: async () => {
+      await invoke('complete_application_quit');
+    },
+    onShutdownStarted: () => {
+      if (lastFilterSaveTimer !== null) {
+        clearTimeout(lastFilterSaveTimer);
+        lastFilterSaveTimer = null;
+      }
+    },
+  });
+  applicationShutdown = shutdown;
+
   try {
+    await registerApplicationShutdownHandlers({
+      mainWindow: currentWindow,
+      listen,
+      takePendingApplicationQuit: () => invoke<boolean>('take_application_quit_request'),
+      coordinator: shutdown,
+    });
     debugLog('Initializing app...');
 
     // Initialize settings manager
@@ -377,10 +428,12 @@ export async function initializeApplication(modules: ApplicationModules): Promis
     });
     const initialReadingSession = restoredReadingSession ?? EMPTY_READING_SESSION;
     documentWorkspace = modules.createDocumentWorkspace({
-      dispatch: async (action) => {
+      dispatch: dispatchReaderActionOutcome,
+      dispatchIntakeAction: async (action) => {
         if (!readerActions) throw new Error('Reader Actions are unavailable');
         return readerActions.dispatch(action);
       },
+      canMutate: acceptsReaderWork,
       snapshot: () => readerActions?.snapshot() ?? { ...initialReadingSession, revision: 0 },
       isDocumentOpen: (filePath) => readerActions?.isDocumentOpen(filePath) ?? false,
       defaultVisualState,
@@ -427,7 +480,7 @@ export async function initializeApplication(modules: ApplicationModules): Promis
         }
       },
     });
-    documentIntake = modules.createDocumentIntakeRuntime({
+    startupDocumentIntake = modules.createDocumentIntakeRuntime({
       runtime: documentWorkspace.intakeRuntime,
       canonicalizeDocumentPaths: async (paths) => {
         if (!readerActions) throw new Error('Reader Actions are unavailable');
@@ -435,6 +488,7 @@ export async function initializeApplication(modules: ApplicationModules): Promis
         if (outcome.status === 'failure') throw outcome.error;
       },
     });
+    documentIntake = createShutdownAwareDocumentIntake(startupDocumentIntake, acceptsReaderWork);
     let observedActiveDocumentPath = readerActions.snapshot().activeDocumentPath;
     readerActions.observe((snapshot) => {
       documentWorkspace?.project(snapshot);
@@ -543,7 +597,7 @@ export async function initializeApplication(modules: ApplicationModules): Promis
       openPdfAndRefresh,
       updateUI: updateReaderUI,
       activateDocument: async (filePath) => {
-        await readerActions?.dispatch({ type: 'activateDocument', filePath });
+        await dispatchReaderActionOutcome({ type: 'activateDocument', filePath });
       },
       openRecentFile,
       clearRecentFiles,
@@ -588,7 +642,7 @@ export async function initializeApplication(modules: ApplicationModules): Promis
         }
       },
       clearReadingHistory: async () => {
-        if (!settingsManager) return;
+        if (!settingsManager || !acceptsReaderWork()) return;
         await settingsManager.clearPersistedReadingSession();
         restoredReadingSession = {
           schemaVersion: 2,
@@ -605,11 +659,13 @@ export async function initializeApplication(modules: ApplicationModules): Promis
       updatePrintMenuState: () =>
         updatePrintMenuState((readerActions?.snapshot().documents.length ?? 0) > 0),
       dispatchReaderAction,
-      completeApplicationQuit: async () => {
-        await finishPendingPersistence(() => persistence.flush(), chooseAfterFinalSaveFailure);
-        await invoke('complete_application_quit');
-      },
     });
+
+    shutdown.markReady();
+    if (shutdown.isShutdownRequested()) {
+      await shutdown.completion();
+      return;
+    }
 
     // Show the correct initial surface after session/CLI restore has run.
     if ((readerActions?.snapshot().documents.length ?? 0) > 0) {
@@ -618,23 +674,13 @@ export async function initializeApplication(modules: ApplicationModules): Promis
       showSplash();
     }
 
-    // Get current window
-    const currentWindow = getCurrentWebviewWindow();
-
-    await registerReadingSessionCloseGuard(
-      currentWindow,
-      async () => {
-        await persistence.flush();
-      },
-      chooseAfterFinalSaveFailure,
-    );
-
     // Show window after initialization
-    await currentWindow.show();
-    await currentWindow.setFocus();
+    if (!shutdown.isShutdownRequested()) await currentWindow.show();
+    if (!shutdown.isShutdownRequested()) await currentWindow.setFocus();
 
     debugLog(`${info.name} initialized successfully!`);
   } catch (error) {
+    shutdown.markReady();
     console.error('Initialization error:', error);
   }
 }

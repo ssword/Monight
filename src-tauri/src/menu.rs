@@ -206,7 +206,8 @@ pub fn create_menu(app: &AppHandle) -> Result<Menu<Wry>, tauri::Error> {
 /// Handle menu events
 pub fn handle_menu_event(app: &AppHandle, event_id: &str) {
     if let Some(event) = quit_lifecycle_event(event_id) {
-        emit_to_main(app, event);
+        debug_assert_eq!(event, "application-quit-requested");
+        crate::request_application_quit(app);
         return;
     }
 

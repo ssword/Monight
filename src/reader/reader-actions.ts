@@ -194,6 +194,7 @@ export interface ReaderActions {
   isDocumentOpen(filePath: string): boolean;
   snapshot(): ReadingSessionSnapshot;
   observe(observer: (snapshot: ReadingSessionSnapshot) => void): () => void;
+  quiesce(): Promise<void>;
   flush(): Promise<void>;
   hasDirtySession(): boolean;
 }
@@ -739,6 +740,25 @@ export function createReaderActions({
 
       return commit({ schemaVersion: 2, activeDocumentPath, documents }, 'immediate');
     });
+
+  const quiesce = async (): Promise<void> => {
+    while (true) {
+      const capturedGlobalTail = globalTail;
+      const capturedDocumentTails = Array.from(
+        lanes,
+        ([filePath, lane]) => [filePath, lane.tail] as const,
+      );
+      await Promise.allSettled([
+        capturedGlobalTail,
+        ...capturedDocumentTails.map(([, tail]) => tail),
+      ]);
+      const unchanged =
+        capturedGlobalTail === globalTail &&
+        capturedDocumentTails.length === lanes.size &&
+        capturedDocumentTails.every(([filePath, tail]) => lanes.get(filePath)?.tail === tail);
+      if (unchanged) return;
+    }
+  };
 
   return {
     async dispatch(action, options) {
@@ -1315,6 +1335,7 @@ export function createReaderActions({
     },
     snapshot: session.snapshot,
     observe: session.observe,
+    quiesce,
     flush: session.flush,
     hasDirtySession: session.isDirty,
   };

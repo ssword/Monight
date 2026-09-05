@@ -32,7 +32,6 @@ interface TauriListenerContext {
   updateTabBarVisibility: () => void;
   updatePrintMenuState: () => Promise<void>;
   dispatchReaderAction: DispatchReaderAction;
-  completeApplicationQuit: () => Promise<void>;
 }
 
 export async function setupTauriListeners({
@@ -49,7 +48,6 @@ export async function setupTauriListeners({
   updateTabBarVisibility,
   updatePrintMenuState,
   dispatchReaderAction,
-  completeApplicationQuit,
 }: TauriListenerContext): Promise<void> {
   const handleExternalOpenPayload = async (payload: ExternalOpenPayload) => {
     debugLog('External Document request:', payload);
@@ -68,6 +66,10 @@ export async function setupTauriListeners({
         updateTabBarVisibility();
         await updatePrintMenuState();
         await applyWindowAfterOpen();
+        const currentWindow = getCurrentWebviewWindow();
+        await currentWindow.show();
+        await currentWindow.unminimize();
+        await currentWindow.setFocus();
       }
     } catch (error) {
       console.error('External Document adapter failed:', error);
@@ -166,18 +168,6 @@ export async function setupTauriListeners({
       await dispatchReaderAction({ type: 'closeDocument', filePath: activeDocumentPath });
       updateTabBarVisibility();
     }
-  });
-
-  let pendingApplicationQuit: Promise<void> | null = null;
-  await listen('application-quit-requested', () => {
-    if (pendingApplicationQuit) return pendingApplicationQuit;
-    const pending = completeApplicationQuit();
-    pendingApplicationQuit = pending;
-    const clearPendingApplicationQuit = () => {
-      if (pendingApplicationQuit === pending) pendingApplicationQuit = null;
-    };
-    void pending.then(clearPendingApplicationQuit, clearPendingApplicationQuit);
-    return pending;
   });
 
   await listen('clear-reading-history', async () => {
