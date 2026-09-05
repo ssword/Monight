@@ -246,9 +246,8 @@ fn take_application_quit_request(state: tauri::State<'_, PendingApplicationQuit>
 
 #[tauri::command]
 fn complete_frontend_lifecycle_registration(app: tauri::AppHandle) {
-    if complete_frontend_lifecycle_registration_inner(
-        app.state::<FrontendLifecycleState>().inner(),
-    ) {
+    if complete_frontend_lifecycle_registration_inner(app.state::<FrontendLifecycleState>().inner())
+    {
         foreground_main_window(&app);
     }
 }
