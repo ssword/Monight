@@ -112,7 +112,13 @@ export type ReaderAction =
   | { type: 'setViewMode'; viewMode: ViewMode; filePath?: string }
   | { type: 'cycleViewMode'; filePath?: string }
   | { type: 'setFilterSettings'; filterSettings: FilterSettings; filePath?: string }
-  | { type: 'registerDocument'; document: ReadingSessionDocument; runtime: DocumentRuntime }
+  | {
+      type: 'registerDocument';
+      document: ReadingSessionDocument;
+      runtime: DocumentRuntime;
+      activate?: boolean;
+      readingPosition?: RestorableReadingPosition;
+    }
   | { type: 'activateDocumentTarget'; filePath: string; target: PdfLinkTarget }
   | { type: 'printDocument'; filePath?: string }
   | { type: 'reorderDocuments'; filePaths: readonly string[] }
@@ -830,6 +836,26 @@ export function createReaderActions({
               revision: current.revision,
             };
           }
+          const existingDocument = current.documents.find(
+            (item) => item.filePath === action.document.filePath,
+          );
+          const document = existingDocument ?? action.document;
+          const readingPosition = action.readingPosition ?? document.readingPosition;
+          if (action.activate && !validReadingPosition(readingPosition)) {
+            return { status: 'no-op', revision: current.revision };
+          }
+          if (action.activate) {
+            try {
+              await projection.exitPresentation?.();
+              await projection.activateDocument(
+                document.filePath,
+                readingPosition,
+                document.visualState,
+              );
+            } catch (error) {
+              return { status: 'failure', error, revision: revision() };
+            }
+          }
           if (!existingRuntime) {
             const nextGeneration = (runtimeGenerations.get(action.document.filePath) ?? 0) + 1;
             runtimeGenerations.set(action.document.filePath, nextGeneration);
@@ -838,15 +864,33 @@ export function createReaderActions({
               runtime: action.runtime,
             });
           }
-          if (current.documents.some((item) => item.filePath === action.document.filePath)) {
+          const readingPositionChanged =
+            Boolean(existingDocument) &&
+            !readingPositionsEqual(document.readingPosition, readingPosition);
+          const activeDocumentPath = action.activate
+            ? document.filePath
+            : current.activeDocumentPath;
+          if (
+            existingDocument &&
+            !readingPositionChanged &&
+            activeDocumentPath === current.activeDocumentPath
+          ) {
             return { status: 'no-op', revision: current.revision };
           }
+          const publishedDocument = readingPositionChanged
+            ? { ...document, readingPosition }
+            : document;
+          const documents = existingDocument
+            ? current.documents.map((item) =>
+                item.filePath === publishedDocument.filePath ? publishedDocument : item,
+              )
+            : [...current.documents, publishedDocument];
           laneFor(action.document.filePath);
           return commit(
             {
               schemaVersion: 2,
-              activeDocumentPath: current.activeDocumentPath,
-              documents: [...current.documents, action.document],
+              activeDocumentPath,
+              documents,
             },
             'immediate',
           );

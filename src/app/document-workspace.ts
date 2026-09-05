@@ -112,6 +112,7 @@ async function projectDocumentState(
 export function createDocumentWorkspace(options: DocumentWorkspaceOptions): DocumentWorkspace {
   const annotationAuthority = options.annotationAuthority ?? createTransientAnnotationAccess();
   const presented = new Map<string, PresentedDocument>();
+  const settledDocumentPaths = new Set<string>();
   let visibleDocumentPath: string | null = null;
 
   const requireRendering = (filePath: string): DocumentRendering => {
@@ -249,19 +250,28 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
     visualState?: ReadingSessionVisualState,
   ): Promise<void> => {
     const rendering = requireRendering(filePath);
-    for (const [path, documentState] of presented) {
-      documentState.rendering.setVisible(path === filePath);
+    const previousVisibleDocumentPath = visibleDocumentPath;
+    try {
+      if (visualState) {
+        await projectDocumentState(rendering, {
+          readingPosition: readingPosition ?? rendering.getReadingPosition(),
+          visualState,
+        });
+      } else if (readingPosition) {
+        await rendering.goToReadingPosition(readingPosition);
+      }
+      for (const [path, documentState] of presented) {
+        documentState.rendering.setVisible(path === filePath);
+      }
+      visibleDocumentPath = filePath;
+      await options.activeDocumentChanged?.();
+    } catch (error) {
+      for (const [path, documentState] of presented) {
+        documentState.rendering.setVisible(path === previousVisibleDocumentPath);
+      }
+      visibleDocumentPath = previousVisibleDocumentPath;
+      throw error;
     }
-    visibleDocumentPath = filePath;
-    if (visualState) {
-      await projectDocumentState(rendering, {
-        readingPosition: readingPosition ?? rendering.getReadingPosition(),
-        visualState,
-      });
-    } else if (readingPosition) {
-      await rendering.goToReadingPosition(readingPosition);
-    }
-    await options.activeDocumentChanged?.();
   };
 
   const projection: ReaderProjection = {
@@ -271,6 +281,7 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
       if (!documentState) return;
       documentState.rendering.destroy();
       presented.delete(filePath);
+      settledDocumentPaths.delete(filePath);
       if (visibleDocumentPath === filePath) {
         visibleDocumentPath = null;
         if (nextActiveDocumentPath && presented.has(nextActiveDocumentPath)) {
@@ -306,7 +317,7 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
   };
 
   const intakeRuntime: DocumentRuntimeIntake = {
-    isOpen: (filePath) => presented.has(filePath),
+    isOpen: (filePath) => settledDocumentPaths.has(filePath),
     async activate(filePath, activateOptions) {
       await dispatchOrThrow({ type: 'activateDocument', filePath });
       if (activateOptions?.notifyOpened !== false) {
@@ -385,20 +396,29 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
           type: 'registerDocument',
           document: initialDocument,
           runtime: surface.runtime,
+          activate: request.activate,
+          ...(initialPage !== undefined
+            ? { readingPosition: surface.rendering.getReadingPosition() }
+            : {}),
         });
-        if (request.activate) {
-          await dispatchOrThrow({
-            type: 'activateDocument',
-            filePath: document.canonicalPath,
-            ...(initialPage !== undefined
-              ? { readingPosition: surface.rendering.getReadingPosition() }
-              : {}),
-          });
-        }
+        settledDocumentPaths.add(document.canonicalPath);
       } catch (error) {
         presented.delete(document.canonicalPath);
-        surface.rendering.destroy();
-        await surface.runtime.destroy();
+        settledDocumentPaths.delete(document.canonicalPath);
+        const cleanupErrors: unknown[] = [];
+        try {
+          surface.rendering.destroy();
+        } catch (cleanupError) {
+          cleanupErrors.push(cleanupError);
+        }
+        try {
+          await surface.runtime.destroy();
+        } catch (cleanupError) {
+          cleanupErrors.push(cleanupError);
+        }
+        if (cleanupErrors.length > 0) {
+          throw new AggregateError([error, ...cleanupErrors], 'Document Intake cleanup failed');
+        }
         throw error;
       }
       if (request.notifyOpened !== false) {

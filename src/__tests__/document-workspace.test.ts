@@ -2,15 +2,66 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createDocumentWorkspace } from '../app/document-workspace';
-import type { DocumentRuntimeIntake } from '../reader/document-intake';
+import { createDocumentIntake, type DocumentRuntimeIntake } from '../reader/document-intake';
 import type { DocumentRendering } from '../reader/document-rendering';
-import type { ReaderAction, ReadingSessionSnapshot } from '../reader/reader-actions';
+import {
+  createReaderActions,
+  type ReaderAction,
+  type ReaderActions,
+  type ReadingSessionSnapshot,
+  type RestorableReadingPosition,
+} from '../reader/reader-actions';
 import { PRESETS } from '../scripts/filters';
 
 const snapshot = (
   documents: ReadingSessionSnapshot['documents'],
   activeDocumentPath: string | null,
 ): ReadingSessionSnapshot => ({ schemaVersion: 2, revision: 1, activeDocumentPath, documents });
+
+interface ControllableSurface {
+  readonly rendering: DocumentRendering;
+  readonly runtime: { destroy: ReturnType<typeof vi.fn> };
+  visible(): boolean;
+}
+
+function createControllableSurface(
+  filePath: string,
+  failReadingPositionCall?: number,
+): ControllableSurface {
+  let currentPage = 1;
+  let visible = false;
+  let readingPositionCalls = 0;
+  const runtime = { destroy: vi.fn(async () => undefined) };
+  const rendering = {
+    getState: () => ({
+      currentPage,
+      totalPages: 12,
+      zoom: 1,
+      zoomIntent: { kind: 'manual' as const, scale: 1 },
+      rotation: 0,
+      fileName: filePath.split('/').pop() ?? filePath,
+      filePath,
+      viewMode: 'single' as const,
+    }),
+    getReadingPosition: () => ({ page: currentPage, location: 0 }),
+    applyFilter: vi.fn(),
+    setRotation: vi.fn(async () => undefined),
+    setViewMode: vi.fn(async () => undefined),
+    setZoomIntent: vi.fn(async () => undefined),
+    goToReadingPosition: vi.fn(async (position: RestorableReadingPosition) => {
+      readingPositionCalls += 1;
+      if (readingPositionCalls === failReadingPositionCall) {
+        throw new Error('activation rendering failed');
+      }
+      currentPage = position.page;
+    }),
+    setVisible: vi.fn((nextVisible: boolean) => {
+      visible = nextVisible;
+    }),
+    destroy: vi.fn(),
+  } as unknown as DocumentRendering;
+  return { rendering, runtime, visible: () => visible };
+}
 
 describe('Document workspace adapter', () => {
   beforeEach(() => {
@@ -130,9 +181,10 @@ describe('Document workspace adapter', () => {
     expect(createSurface).toHaveBeenCalledWith(
       expect.objectContaining({ filePath: '/docs/report.pdf', title: 'report.pdf', bytes }),
     );
-    expect(dispatched.map(({ type }) => type)).toEqual(['registerDocument', 'activateDocument']);
+    expect(dispatched.map(({ type }) => type)).toEqual(['registerDocument']);
     expect(dispatched[0]).toMatchObject({
       type: 'registerDocument',
+      activate: true,
       document: {
         filePath: '/docs/report.pdf',
         title: 'report.pdf',
@@ -162,6 +214,238 @@ describe('Document workspace adapter', () => {
     });
 
     expect(workspace.intakeRuntime.isOpen('/docs/saved.pdf')).toBe(false);
+  });
+
+  it('publishes a new Document only after activation succeeds and permits a clean retry', async () => {
+    const persist = vi.fn(async () => undefined);
+    const documentOpened = vi.fn();
+    const reopenDocument = vi.fn(async () => undefined);
+    const createdSurfaces = new Map<string, ControllableSurface[]>();
+    let candidateAttempts = 0;
+    let reader: ReaderActions;
+    const initialSession = {
+      schemaVersion: 2 as const,
+      activeDocumentPath: null,
+      documents: [],
+    };
+    const workspace = createDocumentWorkspace({
+      dispatch: (action) => reader.dispatch(action),
+      snapshot: () => reader?.snapshot() ?? { ...initialSession, revision: 0 },
+      defaultVisualState: () => ({
+        filterSettings: PRESETS.default,
+        zoomIntent: { kind: 'manual', scale: 1 },
+        rotation: 0,
+        viewMode: 'single',
+      }),
+      createSurface: vi.fn(async ({ filePath }) => {
+        if (filePath === '/docs/candidate.pdf') candidateAttempts += 1;
+        const surface = createControllableSurface(
+          filePath,
+          filePath === '/docs/render-fails.pdf'
+            ? 1
+            : filePath === '/docs/candidate.pdf' && candidateAttempts === 1
+              ? 2
+              : undefined,
+        );
+        const attempts = createdSurfaces.get(filePath) ?? [];
+        attempts.push(surface);
+        createdSurfaces.set(filePath, attempts);
+        return { rendering: surface.rendering, runtime: surface.runtime as never };
+      }),
+      documentOpened,
+    });
+    reader = createReaderActions({
+      initialSession,
+      projection: workspace.projection,
+      persist,
+      reopenDocument,
+    });
+    const intake = createDocumentIntake({
+      source: {
+        describe: async (path) => ({ canonicalPath: path, title: path.split('/').pop() ?? path }),
+        read: async () => new Uint8Array([1, 2, 3]),
+      },
+      runtime: workspace.intakeRuntime,
+    });
+
+    await expect(intake.open(['/docs/prior.pdf'])).resolves.toMatchObject({
+      opened: 1,
+      failed: 0,
+    });
+    const settledBeforeFailure = reader.snapshot();
+    const durableWritesBeforeFailure = persist.mock.calls.length;
+
+    await expect(intake.open(['/docs/candidate.pdf'])).resolves.toMatchObject({
+      opened: 0,
+      failed: 1,
+    });
+
+    const failedSurface = createdSurfaces.get('/docs/candidate.pdf')?.[0];
+    expect(reader.snapshot()).toBe(settledBeforeFailure);
+    expect(persist).toHaveBeenCalledTimes(durableWritesBeforeFailure);
+    expect(workspace.intakeRuntime.isOpen('/docs/candidate.pdf')).toBe(false);
+    expect(reader.query('/docs/candidate.pdf')).toBeNull();
+    expect(workspace.activeRenderingState()?.filePath).toBe('/docs/prior.pdf');
+    expect(createdSurfaces.get('/docs/prior.pdf')?.[0]?.visible()).toBe(true);
+    expect(failedSurface?.visible()).toBe(false);
+    expect(failedSurface?.rendering.destroy).toHaveBeenCalledOnce();
+    expect(failedSurface?.runtime.destroy).toHaveBeenCalledOnce();
+    expect(documentOpened).toHaveBeenCalledTimes(1);
+    await expect(reader.dispatch({ type: 'reopenLastClosedDocument' })).resolves.toMatchObject({
+      status: 'no-op',
+    });
+    expect(reopenDocument).not.toHaveBeenCalled();
+
+    await expect(intake.open(['/docs/candidate.pdf'])).resolves.toMatchObject({
+      opened: 1,
+      failed: 0,
+    });
+
+    expect(reader.snapshot()).toMatchObject({
+      activeDocumentPath: '/docs/candidate.pdf',
+      documents: [{ filePath: '/docs/prior.pdf' }, { filePath: '/docs/candidate.pdf' }],
+    });
+    expect(workspace.intakeRuntime.isOpen('/docs/candidate.pdf')).toBe(true);
+    expect(workspace.activeRenderingState()?.filePath).toBe('/docs/candidate.pdf');
+    expect(createdSurfaces.get('/docs/prior.pdf')?.[0]?.visible()).toBe(false);
+    expect(createdSurfaces.get('/docs/candidate.pdf')?.[1]?.visible()).toBe(true);
+    expect(documentOpened).toHaveBeenCalledTimes(2);
+
+    await expect(intake.open(['/docs/background.pdf'], { activate: false })).resolves.toMatchObject(
+      { opened: 1, failed: 0 },
+    );
+
+    expect(reader.snapshot()).toMatchObject({
+      activeDocumentPath: '/docs/candidate.pdf',
+      documents: [
+        { filePath: '/docs/prior.pdf' },
+        { filePath: '/docs/candidate.pdf' },
+        { filePath: '/docs/background.pdf' },
+      ],
+    });
+    expect(workspace.intakeRuntime.isOpen('/docs/background.pdf')).toBe(true);
+    expect(reader.query('/docs/background.pdf')).not.toBeNull();
+    expect(createdSurfaces.get('/docs/background.pdf')?.[0]?.visible()).toBe(false);
+    expect(createdSurfaces.get('/docs/candidate.pdf')?.[1]?.visible()).toBe(true);
+    expect(documentOpened).toHaveBeenCalledTimes(3);
+
+    const settledBeforeMixedIntake = reader.snapshot();
+    const durableWritesBeforeMixedIntake = persist.mock.calls.length;
+    const mixedResult = await intake.open([
+      '/docs/render-fails.pdf',
+      '/docs/successful-sibling.pdf',
+    ]);
+
+    expect(mixedResult.outcomes.map(({ status }) => status)).toEqual(['failed', 'opened']);
+    expect(reader.snapshot()).toMatchObject({
+      activeDocumentPath: '/docs/successful-sibling.pdf',
+      documents: [
+        { filePath: '/docs/prior.pdf' },
+        { filePath: '/docs/candidate.pdf' },
+        { filePath: '/docs/background.pdf' },
+        { filePath: '/docs/successful-sibling.pdf' },
+      ],
+    });
+    expect(reader.snapshot().revision).toBe(settledBeforeMixedIntake.revision + 1);
+    expect(persist).toHaveBeenCalledTimes(durableWritesBeforeMixedIntake + 1);
+    expect(workspace.intakeRuntime.isOpen('/docs/render-fails.pdf')).toBe(false);
+    expect(reader.query('/docs/render-fails.pdf')).toBeNull();
+    expect(
+      createdSurfaces.get('/docs/render-fails.pdf')?.[0]?.rendering.destroy,
+    ).toHaveBeenCalledOnce();
+    expect(
+      createdSurfaces.get('/docs/render-fails.pdf')?.[0]?.runtime.destroy,
+    ).toHaveBeenCalledOnce();
+    expect(createdSurfaces.get('/docs/successful-sibling.pdf')?.[0]?.visible()).toBe(true);
+    expect(documentOpened).toHaveBeenCalledTimes(4);
+  });
+
+  it('keeps a failed saved Document provisional until restoration can retry it', async () => {
+    const persist = vi.fn(async () => undefined);
+    const documentOpened = vi.fn();
+    const savedDocument = {
+      filePath: '/docs/saved.pdf',
+      title: 'saved.pdf',
+      readingPosition: { page: 6, location: 0.25 },
+      visualState: {
+        filterSettings: PRESETS.default,
+        zoomIntent: { kind: 'fit-width' as const },
+        rotation: 90,
+        viewMode: 'continuous' as const,
+      },
+    };
+    const initialSession = {
+      schemaVersion: 2 as const,
+      activeDocumentPath: savedDocument.filePath,
+      documents: [savedDocument],
+    };
+    let reader: ReaderActions;
+    let attempts = 0;
+    const surfaces: ControllableSurface[] = [];
+    const workspace = createDocumentWorkspace({
+      dispatch: (action) => reader.dispatch(action),
+      snapshot: () => reader?.snapshot() ?? { ...initialSession, revision: 0 },
+      defaultVisualState: () => ({
+        filterSettings: PRESETS.default,
+        zoomIntent: { kind: 'manual', scale: 1 },
+        rotation: 0,
+        viewMode: 'single',
+      }),
+      createSurface: vi.fn(async ({ filePath }) => {
+        attempts += 1;
+        const surface = createControllableSurface(filePath, attempts === 1 ? 2 : undefined);
+        surfaces.push(surface);
+        return { rendering: surface.rendering, runtime: surface.runtime as never };
+      }),
+      documentOpened,
+    });
+    reader = createReaderActions({
+      initialSession,
+      projection: workspace.projection,
+      persist,
+    });
+    const intake = createDocumentIntake({
+      source: {
+        describe: async (path) => ({ canonicalPath: path, title: 'saved.pdf' }),
+        read: async () => new Uint8Array([1, 2, 3]),
+      },
+      runtime: {
+        ...workspace.intakeRuntime,
+        canonicalizeDocumentPaths: async (paths) => {
+          const outcome = await reader.canonicalizeDocumentPaths(paths);
+          if (outcome.status === 'failure') throw outcome.error;
+        },
+        setDocumentOrder: () => undefined,
+      },
+    });
+    const settledBeforeFailure = reader.snapshot();
+
+    await expect(intake.restore(initialSession)).resolves.toMatchObject({
+      opened: 0,
+      failed: 1,
+      failedPaths: ['/docs/saved.pdf'],
+    });
+
+    expect(reader.snapshot()).toBe(settledBeforeFailure);
+    expect(persist).not.toHaveBeenCalled();
+    expect(workspace.intakeRuntime.isOpen('/docs/saved.pdf')).toBe(false);
+    expect(reader.query('/docs/saved.pdf')).toBeNull();
+    expect(surfaces[0]?.rendering.destroy).toHaveBeenCalledOnce();
+    expect(surfaces[0]?.runtime.destroy).toHaveBeenCalledOnce();
+    expect(documentOpened).not.toHaveBeenCalled();
+
+    await expect(intake.restore(initialSession)).resolves.toMatchObject({
+      opened: 1,
+      failed: 0,
+      failedPaths: [],
+    });
+
+    expect(reader.snapshot()).toBe(settledBeforeFailure);
+    expect(persist).not.toHaveBeenCalled();
+    expect(workspace.intakeRuntime.isOpen('/docs/saved.pdf')).toBe(true);
+    expect(reader.query('/docs/saved.pdf')).not.toBeNull();
+    expect(surfaces[1]?.visible()).toBe(true);
+    expect(documentOpened).not.toHaveBeenCalled();
   });
 });
 
