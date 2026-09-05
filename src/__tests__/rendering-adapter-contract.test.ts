@@ -8,8 +8,19 @@ const getPdfEngine = vi.hoisted(() => vi.fn());
 vi.mock('../lib/pdf-engine', () => ({ getPdfEngine }));
 
 interface RenderingHarness {
-  readonly rendering: DocumentRendering;
+  readonly rendering: RenderingContract;
 }
+
+type RenderingContract = Pick<
+  DocumentRendering,
+  | 'getState'
+  | 'getReadingPosition'
+  | 'goToPage'
+  | 'setZoomIntent'
+  | 'setRotation'
+  | 'setViewMode'
+  | 'destroy'
+>;
 
 function expectRenderingContract(
   name: string,
@@ -26,15 +37,24 @@ function expectRenderingContract(
         filePath: '/docs/report.pdf',
       });
       await rendering.goToPage(2);
+      await rendering.setZoomIntent({ kind: 'manual', scale: 1.5 });
+      await rendering.setRotation(90);
+      await rendering.setViewMode('spread');
 
-      expect(rendering.getState().currentPage).toBe(2);
+      expect(rendering.getState()).toMatchObject({
+        currentPage: 2,
+        zoom: 1.5,
+        zoomIntent: { kind: 'manual', scale: 1.5 },
+        rotation: 90,
+        viewMode: 'spread',
+      });
       expect(rendering.getReadingPosition()).toEqual({ page: 2, location: 0 });
       rendering.destroy();
     });
   });
 }
 
-function createInMemoryRendering(): DocumentRendering {
+function createInMemoryRendering(): RenderingContract {
   let state: DocumentRenderingState = {
     currentPage: 1,
     totalPages: 2,
@@ -47,13 +67,9 @@ function createInMemoryRendering(): DocumentRendering {
   };
   return {
     getState: () => ({ ...state }),
-    getScrollPosition: () => 0,
     getReadingPosition: () => ({ page: state.currentPage, location: 0 }),
     async goToPage(pageNumber) {
       state = { ...state, currentPage: pageNumber };
-    },
-    async goToReadingPosition(position) {
-      state = { ...state, currentPage: position.page };
     },
     async setZoomIntent(zoomIntent) {
       state = {
@@ -62,29 +78,17 @@ function createInMemoryRendering(): DocumentRendering {
         ...(zoomIntent.kind === 'manual' ? { zoom: zoomIntent.scale } : {}),
       };
     },
-    async zoomIn() {},
-    async zoomOut() {},
     async setRotation(rotation) {
       state = { ...state, rotation };
     },
     async setViewMode(viewMode) {
       state = { ...state, viewMode };
     },
-    async fitToPage() {},
-    applyFilter() {},
-    setVisible() {},
-    async revealSearchMatch() {},
-    setSearchQuery() {},
-    clearSearch() {},
-    setAnnotations() {},
-    async addPageNote() {},
-    updateAnnotation() {},
-    removeAnnotation() {},
     destroy() {},
   };
 }
 
-async function createProductionRendering(): Promise<DocumentRendering> {
+async function createProductionRendering(): Promise<RenderingContract> {
   const browser = new Window();
   browser.document.body.innerHTML = '<div id="pdf-container"></div>';
   vi.stubGlobal('document', browser.document);

@@ -84,6 +84,16 @@ function createInMemoryStorage<T>(initial: T, legacy: unknown): StorageContract<
   };
 }
 
+function createLegacyValue(initial: unknown) {
+  let value = structuredClone(initial);
+  return {
+    read: async () => structuredClone(value),
+    remove: async () => {
+      value = undefined;
+    },
+  };
+}
+
 const initialReadingSession: PersistedReadingSession = {
   schemaVersion: 2,
   activeDocumentPath: null,
@@ -126,16 +136,14 @@ describe('Reading Session storage contract', () => {
 
   expectStorageContract('production adapter', () => {
     let stored: unknown = structuredClone(initialReadingSession);
-    let legacy: unknown = structuredClone(legacyReadingSession);
+    const legacy = createLegacyValue(legacyReadingSession);
     const storage: ReadingSessionStorage = createReadingSessionStorage({
       readPersistedReadingSession: async () => structuredClone(stored),
       writePersistedReadingSession: async (value: PersistedReadingSession) => {
         stored = structuredClone(value);
       },
-      readLegacyReadingSession: async () => structuredClone(legacy),
-      removeLegacyReadingSession: async () => {
-        legacy = undefined;
-      },
+      readLegacyReadingSession: legacy.read,
+      removeLegacyReadingSession: legacy.remove,
     });
     return {
       storage,
@@ -159,12 +167,10 @@ describe('Annotation storage contract', () => {
       'annotations.json',
       new Map([['annotations', structuredClone(initialAnnotations)]]),
     );
-    let legacy: unknown = structuredClone(legacyAnnotations);
+    const legacy = createLegacyValue(legacyAnnotations);
     const storage: AnnotationStorage = createAnnotationStorage({
-      readLegacyAnnotations: async () => structuredClone(legacy),
-      removeLegacyAnnotations: async () => {
-        legacy = undefined;
-      },
+      readLegacyAnnotations: legacy.read,
+      removeLegacyAnnotations: legacy.remove,
     });
     return {
       storage,
@@ -188,12 +194,10 @@ describe('Recent Document storage contract', () => {
       'recent-documents.json',
       new Map([['recentDocuments', structuredClone(initialRecentDocuments)]]),
     );
-    let legacy: unknown = structuredClone(legacyRecentDocuments);
+    const legacy = createLegacyValue(legacyRecentDocuments);
     const storage: RecentDocumentStorage = createRecentDocumentStorage({
-      readLegacyRecentDocuments: async () => structuredClone(legacy),
-      removeLegacyRecentDocuments: async () => {
-        legacy = undefined;
-      },
+      readLegacyRecentDocuments: legacy.read,
+      removeLegacyRecentDocuments: legacy.remove,
     });
     return {
       storage,

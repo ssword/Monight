@@ -239,6 +239,7 @@ export function createPdfDocumentContent({
       return options.isCancelled() || pdfDocument !== document ? [] : matches;
     },
     async getOutline(options) {
+      if (options.isCancelled()) return [];
       if (outlineCache) return cloneOutline(outlineCache);
       const document = currentDocument();
       const rawOutline = (await document.getOutline()) as readonly RawOutlineItem[] | null;
@@ -261,6 +262,7 @@ export function createPdfDocumentContent({
       return cloneOutline(outline);
     },
     async getMetadata(options) {
+      if (options.isCancelled()) return null;
       if (metadataCache) return { ...metadataCache, keywords: [...metadataCache.keywords] };
       const document = currentDocument();
       const raw = (await document.getMetadata()) as { info?: unknown };

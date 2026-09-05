@@ -33,9 +33,9 @@ invalid or missing PDF path, and one encrypted PDF. Link the CI run and release 
 | --- | --- | --- | --- |
 | CI run and artifact | Pending | Pending | Pending |
 | Multi-select file dialog opens valid PDFs and reports the invalid path once | Pending | Pending | Pending |
-| Drag-and-drop routes all paths through one Document Intake request | Pending | Pending | Pending |
-| OS file association opens the requested Document | Pending | Pending | Pending |
-| CLI opens multiple Documents; `--page` applies only to the first | Pending | Pending | Pending |
+| Drag-and-drop opens valid paths and reports a mixed invalid path independently | Pending | Pending | Pending |
+| OS file association opens valid paths and reports a mixed invalid path independently | Pending | Pending | Pending |
+| CLI opens valid paths after an invalid first path; `--page` is not transferred | Pending | Pending | Pending |
 | Main-window close waits for a final flush | Pending | Pending | Pending |
 | Application Quit waits for a final flush | Pending | Pending | Pending |
 | Closing Settings leaves the main window and Reading Session active | Pending | Pending | Pending |

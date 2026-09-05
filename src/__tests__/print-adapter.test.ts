@@ -14,7 +14,10 @@ const request: PrintDocumentRequest = {
   bytes: new Uint8Array([1, 2, 3]),
 };
 
-function expectPrintAdapterContract(name: string, createHarness: () => PrintAdapterHarness): void {
+function expectPrintAdapterContract(
+  name: string,
+  createHarness: (failure?: Error) => PrintAdapterHarness,
+): void {
   describe(name, () => {
     it('completes after handing the current Document to the platform printer', async () => {
       const harness = createHarness();
@@ -23,15 +26,23 @@ function expectPrintAdapterContract(name: string, createHarness: () => PrintAdap
 
       expect(harness.printCount()).toBe(1);
     });
+
+    it('reports platform failures to the Reader Action caller', async () => {
+      const failure = new Error('platform print failed');
+      const harness = createHarness(failure);
+
+      await expect(harness.adapter.print(request)).rejects.toBe(failure);
+    });
   });
 }
 
 describe('Print adapter contract', () => {
-  expectPrintAdapterContract('in-memory adapter', () => {
+  expectPrintAdapterContract('in-memory adapter', (failure) => {
     const printed: PrintDocumentRequest[] = [];
     return {
       adapter: {
         async print(nextRequest) {
+          if (failure) throw failure;
           printed.push(nextRequest);
         },
       },
@@ -39,7 +50,7 @@ describe('Print adapter contract', () => {
     };
   });
 
-  expectPrintAdapterContract('browser production adapter', () => {
+  expectPrintAdapterContract('browser production adapter', (failure) => {
     const browser = new Window();
     let printCount = 0;
     const appendChild = browser.document.body.appendChild.bind(browser.document.body);
@@ -62,6 +73,7 @@ describe('Print adapter contract', () => {
         Object.defineProperty(iframe.contentWindow, 'print', {
           configurable: true,
           value: () => {
+            if (failure) throw failure;
             printCount += 1;
           },
         });
