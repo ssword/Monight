@@ -48,6 +48,25 @@ describe('shipped code-health invariants', () => {
       expect(source).not.toMatch(/TabManager|TabData|getRenderingForTab/);
     }
 
-    expect(readProjectFile('src/main.ts').trim()).toBe("import './application';");
+    const readerFacingAdapters = [
+      'src/app/dom-events.ts',
+      'src/app/file-actions.ts',
+      'src/app/keybinds.ts',
+      'src/app/presentation-controller.ts',
+      'src/app/search-controller.ts',
+      'src/app/sidebar-controller.ts',
+      'src/app/tauri-events.ts',
+      'src/app/window-lifecycle.ts',
+      'src/reader/document-access.ts',
+    ].map(readProjectFile);
+    for (const source of readerFacingAdapters) {
+      expect(source).not.toMatch(/\.rendering\b|getActiveViewer|getRenderingForTab/);
+    }
+
+    const entryPoint = readProjectFile('src/main.ts');
+    expect(entryPoint).toContain('initializeApplication');
+    expect(entryPoint).not.toMatch(
+      /restoreStartupReadingSession|flushPersistentAuthorities|getActiveRendering|dispatchReaderAction/,
+    );
   });
 });

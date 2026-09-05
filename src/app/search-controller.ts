@@ -154,7 +154,7 @@ export class SearchController {
     this.isScanning = false;
     this.scanProgress = null;
     this.matches = matches;
-    activeDocument.rendering.setSearchQuery(query);
+    activeDocument.presentation.setSearchQuery(query);
     this.setNavigationEnabled(matches.length > 0);
     if (matches.length === 0) {
       this.status.textContent = 'No matches';
@@ -176,7 +176,7 @@ export class SearchController {
     return Boolean(
       left &&
         right &&
-        left.rendering === right.rendering &&
+        left.presentation === right.presentation &&
         left.query.filePath === right.query.filePath &&
         left.query.generation === right.query.generation,
     );
@@ -192,7 +192,7 @@ export class SearchController {
 
   private invalidateSearch(): number {
     this.searchEpoch += 1;
-    this.searchedDocument?.rendering.clearSearch();
+    this.searchedDocument?.presentation.clearSearch();
     this.searchedDocument = null;
     this.matches = [];
     this.activeIndex = -1;
@@ -213,7 +213,7 @@ export class SearchController {
 
     this.scanProgress = { pageNumber: progress.pageNumber, totalPages: progress.totalPages };
     this.matches = progress.matches;
-    activeDocument.rendering.setSearchQuery(query);
+    activeDocument.presentation.setSearchQuery(query);
     if (this.matches.length > 0) {
       this.setNavigationEnabled(true);
     }
@@ -249,7 +249,7 @@ export class SearchController {
       .catch(() => undefined)
       .then(async () => {
         if (!this.isCurrentSearch(epoch, activeDocument)) return;
-        await activeDocument.rendering.revealSearchMatch(match);
+        await activeDocument.presentation.revealSearchMatch(match);
         if (!this.isCurrentSearch(epoch, activeDocument) || request !== this.revealRequest) return;
         this.updateStatus();
       });

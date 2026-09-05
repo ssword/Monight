@@ -50,7 +50,12 @@ describe('PresentationController', () => {
     };
     const onStateChanged = vi.fn();
     const controller = new PresentationController({
-      getActiveViewer: () => viewer as never,
+      getActivePresentation: () => ({
+        snapshot: viewer.getState,
+        setViewMode: viewer.setViewMode,
+        fitToPage: viewer.fitToPage,
+        setZoomIntent: viewer.setZoomIntent,
+      }),
       onStateChanged,
     });
 
@@ -86,7 +91,12 @@ describe('PresentationController', () => {
     };
     const onStateChanged = vi.fn();
     const controller = new PresentationController({
-      getActiveViewer: () => viewer as never,
+      getActivePresentation: () => ({
+        snapshot: viewer.getState,
+        setViewMode: viewer.setViewMode,
+        fitToPage: viewer.fitToPage,
+        setZoomIntent: viewer.setZoomIntent,
+      }),
       onStateChanged,
     });
 

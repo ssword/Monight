@@ -1,7 +1,7 @@
 import { debugLog } from '../lib/debug-log';
 import type { PdfLinkTarget } from '../lib/pdf-links';
 import { type AnnotationAccess, createTransientAnnotationAccess } from '../reader/annotations';
-import type { DocumentAccess } from '../reader/document-access';
+import type { DocumentAccess, DocumentPresentation } from '../reader/document-access';
 import type {
   LoadableDocumentContent,
   ResolvedDocumentLinkTarget,
@@ -28,6 +28,7 @@ import {
   PDFViewer,
   type PdfPasswordRequester,
 } from '../scripts/pdf-viewer';
+import type { PresentationSurface } from './presentation-controller';
 
 export interface DocumentSurface {
   readonly rendering: DocumentRendering;
@@ -77,7 +78,7 @@ export interface DocumentWorkspace {
   readonly projection: ReaderProjection;
   project(snapshot: ReadingSessionSnapshot): void;
   access(query: DocumentQuery | null): DocumentAccess | null;
-  activeRendering(): DocumentRendering | null;
+  activePresentation(): PresentationSurface | null;
   activeRenderingState(): ReturnType<DocumentRendering['getState']> | null;
   activeReadingPosition(): { filePath: string; readingPosition: ReadingPosition } | null;
   replaceAnnotations(filePath: string | null): void;
@@ -87,6 +88,7 @@ interface PresentedDocument {
   readonly id: string;
   readonly title: string;
   readonly rendering: DocumentRendering;
+  readonly presentation: DocumentPresentation;
 }
 
 const cloneZoomIntent = (zoomIntent: ZoomIntent): ZoomIntent =>
@@ -180,6 +182,19 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
     };
   };
   const createSurface = options.createSurface ?? createPdfSurface;
+
+  const notifyDocumentOpened = async (filePath: string, title: string): Promise<void> => {
+    try {
+      await options.documentOpened?.(filePath, title);
+    } catch (error) {
+      console.error('Document Intake observer failed:', error);
+    }
+  };
+
+  const dispatchOrThrow = async (action: ReaderAction): Promise<void> => {
+    const outcome = await options.dispatch(action);
+    if (outcome.status === 'failure') throw outcome.error;
+  };
 
   const renderDocumentControls = (readingSession: ReadingSessionSnapshot): void => {
     const container = document.getElementById('tab-container');
@@ -293,46 +308,36 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
   const intakeRuntime: DocumentRuntimeIntake = {
     isOpen: (filePath) => presented.has(filePath),
     async activate(filePath, activateOptions) {
-      const outcome = await options.dispatch({ type: 'activateDocument', filePath });
-      if (outcome.status === 'failure') throw outcome.error;
+      await dispatchOrThrow({ type: 'activateDocument', filePath });
       if (activateOptions?.notifyOpened !== false) {
         const documentState = options
           .snapshot()
           .documents.find((item) => item.filePath === filePath);
-        if (documentState) await options.documentOpened?.(filePath, documentState.title);
+        if (documentState) await notifyDocumentOpened(filePath, documentState.title);
       }
     },
     async notifyOpened(filePath) {
       const documentState = options.snapshot().documents.find((item) => item.filePath === filePath);
       if (!documentState) throw new Error(`Cannot notify for unopened Document: ${filePath}`);
-      await options.documentOpened?.(filePath, documentState.title);
+      await notifyDocumentOpened(filePath, documentState.title);
     },
     async open(request: DocumentRuntimeOpenRequest) {
       const { document, bytes, initialPage, restoredDocument } = request;
-      const dispatchForDocument = async (action: ReaderAction): Promise<void> => {
-        const outcome = await options.dispatch(action);
-        if (outcome.status === 'failure') throw outcome.error;
+      const settleReadingPosition = (readingPosition: ReadingPosition): void => {
+        void options.dispatch({
+          type: 'settleReadingPosition',
+          filePath: document.canonicalPath,
+          readingPosition,
+        });
       };
       const callbacks: DocumentSurfaceCallbacks = {
         stateChanged: () => options.renderingStateChanged?.(),
-        readingPositionObserved: (readingPosition) => {
-          void options.dispatch({
-            type: 'settleReadingPosition',
-            filePath: document.canonicalPath,
-            readingPosition,
-          });
-        },
-        readingPositionSettled: (readingPosition) => {
-          void options.dispatch({
-            type: 'settleReadingPosition',
-            filePath: document.canonicalPath,
-            readingPosition,
-          });
-        },
+        readingPositionObserved: settleReadingPosition,
+        readingPositionSettled: settleReadingPosition,
         pageNavigationRequested: (page) =>
-          dispatchForDocument({ type: 'goToPage', filePath: document.canonicalPath, page }),
+          dispatchOrThrow({ type: 'goToPage', filePath: document.canonicalPath, page }),
         zoomIntentRequested: (zoomIntent) =>
-          dispatchForDocument({
+          dispatchOrThrow({
             type: 'setZoomIntent',
             filePath: document.canonicalPath,
             zoomIntent,
@@ -348,11 +353,26 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
         id: crypto.randomUUID(),
         title: document.title,
         rendering: surface.rendering,
+        presentation: {
+          snapshot: () => surface.rendering.getState(),
+          setSearchQuery: (query) => surface.rendering.setSearchQuery(query),
+          clearSearch: () => surface.rendering.clearSearch(),
+          revealSearchMatch: (match) => surface.rendering.revealSearchMatch(match),
+          addPageNote: (note) => surface.rendering.addPageNote(note),
+          updateAnnotation: (annotationId, updates) =>
+            surface.rendering.updateAnnotation(annotationId, updates),
+          removeAnnotation: (annotationId) => surface.rendering.removeAnnotation(annotationId),
+        },
       });
       surface.rendering.setVisible(false);
 
       const initialDocument: ReadingSessionDocument = restoredDocument
-        ? { ...restoredDocument, filePath: document.canonicalPath, title: document.title }
+        ? {
+            ...restoredDocument,
+            filePath: document.canonicalPath,
+            title: document.title,
+            visualState: restoredDocument.visualState ?? options.defaultVisualState(),
+          }
         : {
             filePath: document.canonicalPath,
             title: document.title,
@@ -361,13 +381,13 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
           };
       try {
         await projectDocumentState(surface.rendering, initialDocument);
-        await dispatchForDocument({
+        await dispatchOrThrow({
           type: 'registerDocument',
           document: initialDocument,
           runtime: surface.runtime,
         });
         if (request.activate) {
-          await dispatchForDocument({
+          await dispatchOrThrow({
             type: 'activateDocument',
             filePath: document.canonicalPath,
             ...(initialPage !== undefined
@@ -382,13 +402,12 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
         throw error;
       }
       if (request.notifyOpened !== false) {
-        await options.documentOpened?.(document.canonicalPath, document.title);
+        await notifyDocumentOpened(document.canonicalPath, document.title);
       }
       debugLog(`Prepared Document surface: ${document.title}`);
     },
     async goToPage(filePath, page) {
-      const outcome = await options.dispatch({ type: 'goToPage', filePath, page });
-      if (outcome.status === 'failure') throw outcome.error;
+      await dispatchOrThrow({ type: 'goToPage', filePath, page });
     },
     async restoreExistingDocument(filePath, documentState, { preserveReadingPosition }) {
       const rendering = requireRendering(filePath);
@@ -424,15 +443,24 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
     project: renderDocumentControls,
     access(query) {
       if (!query) return null;
-      const rendering = presented.get(query.filePath)?.rendering;
-      return rendering ? { query, rendering } : null;
+      const presentation = presented.get(query.filePath)?.presentation;
+      return presentation ? { query, presentation } : null;
     },
-    activeRendering() {
+    activePresentation() {
       const filePath = options.snapshot().activeDocumentPath;
-      return filePath ? (presented.get(filePath)?.rendering ?? null) : null;
+      const rendering = filePath ? presented.get(filePath)?.rendering : null;
+      return rendering
+        ? {
+            snapshot: () => rendering.getState(),
+            setViewMode: (viewMode) => rendering.setViewMode(viewMode),
+            fitToPage: () => rendering.fitToPage(),
+            setZoomIntent: (zoomIntent) => rendering.setZoomIntent(zoomIntent),
+          }
+        : null;
     },
     activeRenderingState() {
-      return this.activeRendering()?.getState() ?? null;
+      const filePath = options.snapshot().activeDocumentPath;
+      return filePath ? (presented.get(filePath)?.rendering.getState() ?? null) : null;
     },
     activeReadingPosition() {
       const filePath = options.snapshot().activeDocumentPath;

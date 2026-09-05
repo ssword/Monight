@@ -1,6 +1,5 @@
 import type { PdfAnnotation, PdfOutlineItem } from '../lib/document-features';
-import type { DocumentAccess } from '../reader/document-access';
-import type { DocumentRendering } from '../reader/document-rendering';
+import type { DocumentAccess, DocumentPresentation } from '../reader/document-access';
 
 type SidebarPanel = 'outline' | 'thumbnails' | 'annotations';
 type ThumbnailCanvasesByPage = Map<number, HTMLCanvasElement>;
@@ -27,10 +26,11 @@ export class SidebarController {
   private renderEpoch = 0;
   private thumbnailObserver: IntersectionObserver | null = null;
   private readonly thumbnailCanvases = new WeakMap<
-    DocumentRendering,
+    DocumentPresentation,
     ThumbnailCanvasesByRotation
   >();
-  private thumbnailPanelContext: { rendering: DocumentRendering; rotation: number } | null = null;
+  private thumbnailPanelContext: { presentation: DocumentPresentation; rotation: number } | null =
+    null;
   private readonly noteCommitTimers = new WeakMap<HTMLTextAreaElement, number>();
 
   constructor(options: SidebarControllerOptions) {
@@ -83,14 +83,14 @@ export class SidebarController {
     }
   }
 
-  viewerStateChanged(): void {
-    const viewer = this.getActiveDocument()?.rendering;
-    const state = viewer?.getState();
-    if (!viewer || !state) return;
+  presentationStateChanged(): void {
+    const presentation = this.getActiveDocument()?.presentation;
+    const state = presentation?.snapshot();
+    if (!presentation || !state) return;
     if (
       this.panel === 'thumbnails' &&
       !this.sidebar.classList.contains('hidden') &&
-      (this.thumbnailPanelContext?.rendering !== viewer ||
+      (this.thumbnailPanelContext?.presentation !== presentation ||
         this.thumbnailPanelContext.rotation !== state.rotation)
     ) {
       void this.render();
@@ -210,7 +210,7 @@ export class SidebarController {
         } else if (item.url) {
           await this.openExternalUrl?.(item.url);
         }
-        this.viewerStateChanged();
+        this.presentationStateChanged();
       });
       listItem.appendChild(button);
 
@@ -224,17 +224,17 @@ export class SidebarController {
   }
 
   private renderThumbnails(activeDocument: ActiveSidebarDocument, epoch: number): void {
-    const viewer = activeDocument.rendering;
+    const presentation = activeDocument.presentation;
     const list = document.createElement('div');
     list.className = 'thumbnail-list';
-    const { totalPages, currentPage, rotation } = viewer.getState();
-    this.thumbnailPanelContext = { rendering: viewer, rotation };
-    let rotationCache = this.thumbnailCanvases.get(viewer)?.get(rotation);
+    const { totalPages, currentPage, rotation } = presentation.snapshot();
+    this.thumbnailPanelContext = { presentation, rotation };
+    let rotationCache = this.thumbnailCanvases.get(presentation)?.get(rotation);
     if (!rotationCache) {
       rotationCache = new Map();
-      const canvasesByRotation = this.thumbnailCanvases.get(viewer) ?? new Map();
+      const canvasesByRotation = this.thumbnailCanvases.get(presentation) ?? new Map();
       canvasesByRotation.set(rotation, rotationCache);
-      this.thumbnailCanvases.set(viewer, canvasesByRotation);
+      this.thumbnailCanvases.set(presentation, canvasesByRotation);
     }
 
     for (let pageNumber = 1; pageNumber <= totalPages; pageNumber++) {
@@ -258,7 +258,7 @@ export class SidebarController {
       button.append(preview, label);
       button.addEventListener('click', async () => {
         await activeDocument.navigateToPage(pageNumber);
-        this.viewerStateChanged();
+        this.presentationStateChanged();
       });
       list.appendChild(button);
     }
@@ -321,7 +321,7 @@ export class SidebarController {
     addNote.addEventListener('click', async () => {
       const note = await this.requestAnnotationNote();
       if (note) {
-        await activeDocument.rendering.addPageNote(note);
+        await activeDocument.presentation.addPageNote(note);
       }
     });
     toolbar.appendChild(addNote);
@@ -380,7 +380,7 @@ export class SidebarController {
       }
       previousElement = nextCard;
     }
-    this.updateActivePageMarkers(activeDocument.rendering.getState().currentPage);
+    this.updateActivePageMarkers(activeDocument.presentation.snapshot().currentPage);
   }
 
   private updateAnnotationCard(card: HTMLElement, annotation: PdfAnnotation): void {
@@ -398,7 +398,7 @@ export class SidebarController {
     annotation: PdfAnnotation,
     activeDocument: ActiveSidebarDocument,
   ): HTMLElement {
-    const { rendering } = activeDocument;
+    const { presentation } = activeDocument;
     const card = document.createElement('article');
     card.className = 'annotation-card';
     card.dataset.color = annotation.color;
@@ -436,7 +436,7 @@ export class SidebarController {
         note,
         window.setTimeout(() => {
           this.noteCommitTimers.delete(note);
-          rendering.updateAnnotation(annotation.id, { note: note.value.trim() });
+          presentation.updateAnnotation(annotation.id, { note: note.value.trim() });
         }, 200),
       );
     });
@@ -454,7 +454,7 @@ export class SidebarController {
       color.appendChild(option);
     }
     color.addEventListener('change', () => {
-      rendering.updateAnnotation(annotation.id, {
+      presentation.updateAnnotation(annotation.id, {
         color: color.value as PdfAnnotation['color'],
       });
       card.dataset.color = color.value;
@@ -464,7 +464,7 @@ export class SidebarController {
     remove.type = 'button';
     remove.textContent = 'Delete';
     remove.addEventListener('click', () => {
-      rendering.removeAnnotation(annotation.id);
+      presentation.removeAnnotation(annotation.id);
     });
     actions.append(color, remove);
     card.appendChild(actions);
@@ -479,7 +479,7 @@ export class SidebarController {
     const current = this.getActiveDocument();
     return Boolean(
       current &&
-        current.rendering === activeDocument.rendering &&
+        current.presentation === activeDocument.presentation &&
         current.query.filePath === activeDocument.query.filePath &&
         current.query.generation === activeDocument.query.generation &&
         activeDocument.query.isCurrent(),

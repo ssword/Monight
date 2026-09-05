@@ -1,16 +1,13 @@
 import { getName, getTauriVersion, getVersion } from '@tauri-apps/api/app';
 import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
-import { createAnnotationStorage } from './app/annotation-storage';
-import { browserPrintAdapter } from './app/browser-print-adapter';
 import {
   requestAnnotationNote,
   requestConfirmation,
   requestPdfPassword,
   showToast,
 } from './app/dialogs';
-import { createDocumentIntakeRuntime } from './app/document-intake-runtime';
-import { createDocumentWorkspace, type DocumentWorkspace } from './app/document-workspace';
+import type { DocumentWorkspace } from './app/document-workspace';
 import { setupEventListeners } from './app/dom-events';
 import {
   ensureMinimumViewingSize,
@@ -21,9 +18,8 @@ import {
   updatePrintMenuState,
 } from './app/file-actions';
 import { registerKeybindActions } from './app/keybinds';
+import { createPersistenceCoordinator } from './app/persistence-coordinator';
 import { PresentationController } from './app/presentation-controller';
-import { createReadingSessionStorage } from './app/reading-session-storage';
-import { createRecentDocumentStorage } from './app/recent-document-storage';
 import { SearchController } from './app/search-controller';
 import { SidebarController } from './app/sidebar-controller';
 import { restoreReadingSessionAtStartup } from './app/startup-restoration';
@@ -48,7 +44,6 @@ import type { PdfLinkTarget } from './lib/pdf-links';
 import { type AnnotationAuthority, loadAnnotations } from './reader/annotations';
 import type { DocumentIntake } from './reader/document-intake';
 import {
-  createReaderActions,
   type PersistedReadingSession,
   type ReaderAction,
   type ReaderActionOptions,
@@ -65,18 +60,21 @@ import { type FilterSettings, PRESETS } from './scripts/filters';
 import { KeybindManager } from './scripts/keybind-manager';
 import { type MoonightSettings, SettingsManager } from './scripts/settings';
 import { SliderManager } from './scripts/sliders';
-import './styles/main.css';
-import './styles/dialogs.css';
-import './styles/pdf-viewer.css';
-import './styles/configurator.css';
-import './styles/document-features.css';
-import './styles/tabs.css';
-import 'nouislider/dist/nouislider.css';
 
 interface AppInfo {
   name: string;
   version: string;
   tauriVersion: string;
+}
+
+export interface ApplicationModules {
+  createAnnotationStorage: typeof import('./app/annotation-storage').createAnnotationStorage;
+  browserPrintAdapter: typeof import('./app/browser-print-adapter').browserPrintAdapter;
+  createDocumentIntakeRuntime: typeof import('./app/document-intake-runtime').createDocumentIntakeRuntime;
+  createDocumentWorkspace: typeof import('./app/document-workspace').createDocumentWorkspace;
+  createReadingSessionStorage: typeof import('./app/reading-session-storage').createReadingSessionStorage;
+  createRecentDocumentStorage: typeof import('./app/recent-document-storage').createRecentDocumentStorage;
+  createReaderActions: typeof import('./reader/reader-actions').createReaderActions;
 }
 
 let documentWorkspace: DocumentWorkspace | null = null;
@@ -164,7 +162,7 @@ const getInitialViewMode = (): ViewMode => {
 let lastFilterSaveTimer: number | null = null;
 let isRestoringSession = false;
 
-const getActiveRendering = () => documentWorkspace?.activeRendering() ?? null;
+const getActivePresentation = () => documentWorkspace?.activePresentation() ?? null;
 
 const getActiveDocumentAccess = () => {
   const query = readerActions?.query();
@@ -257,27 +255,18 @@ const scheduleLastFilterSave = (settings: FilterSettings): void => {
   }, 250);
 };
 
-const flushPersistentAuthorities = async (): Promise<void> => {
-  if (
-    readingSessionStorage &&
-    readerActions &&
-    currentSettings?.general.restorePreviousSession &&
-    !isRestoringSession
-  ) {
-    const observedPosition = documentWorkspace?.activeReadingPosition();
-    if (observedPosition) {
-      await readerActions.dispatch({
-        type: 'settleReadingPosition',
-        ...observedPosition,
-      });
-    }
-
-    await readerActions.flush();
-  }
-
-  await annotationAuthority?.flush();
-  await recentDocumentAuthority?.flush();
-};
+const persistence = createPersistenceCoordinator({
+  readerActions: () => readerActions,
+  annotations: () => annotationAuthority,
+  recentDocuments: () => recentDocumentAuthority,
+  activeReadingPosition: () => documentWorkspace?.activeReadingPosition() ?? null,
+  shouldPersistReadingSession: () =>
+    Boolean(
+      readingSessionStorage &&
+        currentSettings?.general.restorePreviousSession &&
+        !isRestoringSession,
+    ),
+});
 
 const chooseAfterFinalSaveFailure = async (): Promise<FinalSaveFailureChoice> =>
   (await requestConfirmation({
@@ -334,7 +323,7 @@ const restoreStartupReadingSession = async (
   }
 };
 
-export async function initializeApplication(): Promise<void> {
+export async function initializeApplication(modules: ApplicationModules): Promise<void> {
   try {
     debugLog('Initializing app...');
 
@@ -343,7 +332,7 @@ export async function initializeApplication(): Promise<void> {
     const settings = await settingsManager.load();
     currentSettings = settings;
     recentDocumentAuthority = await loadRecentDocuments(
-      createRecentDocumentStorage(settingsManager),
+      modules.createRecentDocumentStorage(settingsManager),
       {
         onPersistenceError: (error) => {
           console.error('Recent Documents persistence failed:', error);
@@ -353,7 +342,7 @@ export async function initializeApplication(): Promise<void> {
       },
     );
     renderRecentFiles(recentDocumentAuthority.snapshot());
-    annotationAuthority = await loadAnnotations(createAnnotationStorage(settingsManager), {
+    annotationAuthority = await loadAnnotations(modules.createAnnotationStorage(settingsManager), {
       onPersistenceError: (error) => {
         console.error('Annotation persistence failed:', error);
         showToast('Annotation changes could not be saved. Monight will retry.', 'error');
@@ -363,7 +352,7 @@ export async function initializeApplication(): Promise<void> {
         sidebarController?.annotationsChanged();
       },
     });
-    readingSessionStorage = createReadingSessionStorage(settingsManager);
+    readingSessionStorage = modules.createReadingSessionStorage(settingsManager);
     try {
       restoredReadingSession = await loadReadingSession(readingSessionStorage);
     } catch (error) {
@@ -386,7 +375,7 @@ export async function initializeApplication(): Promise<void> {
       viewMode: getInitialViewMode(),
     });
     const initialReadingSession = restoredReadingSession ?? EMPTY_READING_SESSION;
-    documentWorkspace = createDocumentWorkspace({
+    documentWorkspace = modules.createDocumentWorkspace({
       dispatch: async (action) => {
         if (!readerActions) throw new Error('Reader Actions are unavailable');
         return readerActions.dispatch(action);
@@ -408,11 +397,11 @@ export async function initializeApplication(): Promise<void> {
       renderingStateChanged: () => {
         if (!readerActions || !documentWorkspace) return;
         updateUI(readerActions.snapshot(), documentWorkspace.activeRenderingState());
-        sidebarController?.viewerStateChanged();
+        sidebarController?.presentationStateChanged();
       },
     });
 
-    readerActions = createReaderActions({
+    readerActions = modules.createReaderActions({
       initialSession: initialReadingSession,
       defaultVisualState: defaultVisualState(),
       projection: {
@@ -426,7 +415,7 @@ export async function initializeApplication(): Promise<void> {
           await invoke('open_external_url', { url });
         },
       },
-      printAdapter: browserPrintAdapter,
+      printAdapter: modules.browserPrintAdapter,
       reopenDocument: async (filePath) => {
         if (!documentIntake) throw new Error('Document Intake is unavailable');
         await openFiles([filePath], {
@@ -441,7 +430,7 @@ export async function initializeApplication(): Promise<void> {
         }
       },
     });
-    documentIntake = createDocumentIntakeRuntime({
+    documentIntake = modules.createDocumentIntakeRuntime({
       runtime: documentWorkspace.intakeRuntime,
       canonicalizeDocumentPaths: async (paths) => {
         if (!readerActions) throw new Error('Reader Actions are unavailable');
@@ -487,12 +476,12 @@ export async function initializeApplication(): Promise<void> {
     });
     sidebarController.setThumbnailsEnabled(settings.general.displayThumbs);
     presentationController = new PresentationController({
-      getActiveViewer: getActiveRendering,
+      getActivePresentation,
       onStateChanged: (active) => {
         if (readerActions && documentWorkspace) {
           updateUI(readerActions.snapshot(), documentWorkspace.activeRenderingState());
         }
-        if (!active) sidebarController?.viewerStateChanged();
+        if (!active) sidebarController?.presentationStateChanged();
       },
     });
 
@@ -620,7 +609,7 @@ export async function initializeApplication(): Promise<void> {
         updatePrintMenuState((readerActions?.snapshot().documents.length ?? 0) > 0),
       dispatchReaderAction,
       completeApplicationQuit: async () => {
-        await finishPendingPersistence(flushPersistentAuthorities, chooseAfterFinalSaveFailure);
+        await finishPendingPersistence(() => persistence.flush(), chooseAfterFinalSaveFailure);
         await invoke('complete_application_quit');
       },
     });
@@ -638,7 +627,7 @@ export async function initializeApplication(): Promise<void> {
     await registerReadingSessionCloseGuard(
       currentWindow,
       async () => {
-        await flushPersistentAuthorities();
+        await persistence.flush();
       },
       chooseAfterFinalSaveFailure,
     );
@@ -651,11 +640,4 @@ export async function initializeApplication(): Promise<void> {
   } catch (error) {
     console.error('Initialization error:', error);
   }
-}
-
-// Wait for DOM to be ready
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', initializeApplication);
-} else {
-  initializeApplication();
 }

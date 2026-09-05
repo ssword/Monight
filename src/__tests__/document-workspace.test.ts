@@ -168,6 +168,4 @@ describe('Document workspace adapter', () => {
 // Compile-time contract: the workspace provides the runtime consumed by Document Intake,
 // without exposing a mutable tab/session model.
 const acceptsIntakeRuntime = (_runtime: DocumentRuntimeIntake): void => undefined;
-const acceptsRendering = (_rendering: DocumentRendering | null): void => undefined;
 void acceptsIntakeRuntime;
-void acceptsRendering;

@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { SearchController } from '../app/search-controller';
 import type { PdfSearchMatch, SearchProgress } from '../lib/document-features';
+import type { DocumentPresentation } from '../reader/document-access';
 import type { DocumentQuery } from '../reader/document-queries';
-import type { DocumentRendering } from '../reader/document-rendering';
 
 class SearchElement {
   value = '';
@@ -85,12 +85,12 @@ function activeDocument(viewer: {
     search: (value: string, options?: { onProgress?: (event: SearchProgress) => void }) =>
       searchText(value, options?.onProgress),
   } as unknown as DocumentQuery;
-  const rendering = {
+  const presentation = {
     revealSearchMatch: viewer.revealSearchMatch,
     clearSearch: viewer.clearSearch,
     setSearchQuery: vi.fn(),
-  } as unknown as DocumentRendering;
-  return { query, rendering };
+  } as unknown as DocumentPresentation;
+  return { query, presentation };
 }
 
 afterEach(() => {
