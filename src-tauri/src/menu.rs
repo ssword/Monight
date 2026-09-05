@@ -141,7 +141,7 @@ fn emit_to_main(app: &AppHandle, event: &str) {
     }
 }
 
-fn application_lifecycle_event(event_id: &str) -> Option<&'static str> {
+fn quit_lifecycle_event(event_id: &str) -> Option<&'static str> {
     (event_id == "quit").then_some("application-quit-requested")
 }
 
@@ -205,7 +205,7 @@ pub fn create_menu(app: &AppHandle) -> Result<Menu<Wry>, tauri::Error> {
 
 /// Handle menu events
 pub fn handle_menu_event(app: &AppHandle, event_id: &str) {
-    if let Some(event) = application_lifecycle_event(event_id) {
+    if let Some(event) = quit_lifecycle_event(event_id) {
         emit_to_main(app, event);
         return;
     }
@@ -276,9 +276,9 @@ mod tests {
     #[test]
     fn quit_menu_requests_the_frontend_lifecycle_handshake() {
         assert_eq!(
-            application_lifecycle_event("quit"),
+            quit_lifecycle_event("quit"),
             Some("application-quit-requested")
         );
-        assert_eq!(application_lifecycle_event("close_tab"), None);
+        assert_eq!(quit_lifecycle_event("close_tab"), None);
     }
 }
