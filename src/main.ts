@@ -5,6 +5,7 @@ import { createDocumentIntakeRuntime } from './app/document-intake-runtime';
 import { createDocumentWorkspace } from './app/document-workspace';
 import { createReadingSessionStorage } from './app/reading-session-storage';
 import { createRecentDocumentStorage } from './app/recent-document-storage';
+import { createTauriExternalLinkAdapter } from './app/tauri-external-link-adapter';
 import { initializeApplication } from './application';
 import { createReaderActions } from './reader/reader-actions';
 import './styles/configurator.css';
@@ -22,6 +23,7 @@ const startApplication = () =>
     createDocumentWorkspace,
     createReadingSessionStorage,
     createRecentDocumentStorage,
+    externalLinkAdapter: createTauriExternalLinkAdapter(),
     createReaderActions,
   });
 

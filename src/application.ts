@@ -70,6 +70,7 @@ interface AppInfo {
 export interface ApplicationModules {
   createAnnotationStorage: typeof import('./app/annotation-storage').createAnnotationStorage;
   browserPrintAdapter: typeof import('./app/browser-print-adapter').browserPrintAdapter;
+  externalLinkAdapter: import('./reader/reader-actions').ExternalLinkAdapter;
   createDocumentIntakeRuntime: typeof import('./app/document-intake-runtime').createDocumentIntakeRuntime;
   createDocumentWorkspace: typeof import('./app/document-workspace').createDocumentWorkspace;
   createReadingSessionStorage: typeof import('./app/reading-session-storage').createReadingSessionStorage;
@@ -410,11 +411,7 @@ export async function initializeApplication(modules: ApplicationModules): Promis
           await presentationController?.exit(options);
         },
       },
-      externalLinkAdapter: {
-        open: async (url) => {
-          await invoke('open_external_url', { url });
-        },
-      },
+      externalLinkAdapter: modules.externalLinkAdapter,
       printAdapter: modules.browserPrintAdapter,
       reopenDocument: async (filePath) => {
         if (!documentIntake) throw new Error('Document Intake is unavailable');

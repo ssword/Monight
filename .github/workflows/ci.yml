@@ -15,8 +15,15 @@ permissions:
 
 jobs:
   frontend:
-    name: Frontend checks
-    runs-on: ubuntu-latest
+    name: TypeScript (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - macos-latest
+          - windows-latest
+          - ubuntu-latest
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -35,12 +42,20 @@ jobs:
         run: npm test
 
   rust:
-    name: Rust tests
-    runs-on: ubuntu-latest
+    name: Rust (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - macos-latest
+          - windows-latest
+          - ubuntu-latest
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
       - name: Install Tauri system dependencies
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install --no-install-recommends --yes \
