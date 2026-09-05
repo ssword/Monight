@@ -1,10 +1,3 @@
-import type {
-  DocumentIntake,
-  DocumentIntakeOperation,
-  DocumentIntakeOutcome,
-  DocumentIntakeResult,
-} from '../reader/document-intake';
-
 export interface CloseRequestedEventLike {
   preventDefault(): void;
 }
@@ -34,10 +27,6 @@ export interface ApplicationShutdownCoordinator {
   completion(): Promise<void> | null;
 }
 
-export interface ShutdownAwareDocumentIntake extends DocumentIntake {
-  quiesce(): Promise<void>;
-}
-
 interface RegisterApplicationShutdownHandlersOptions {
   mainWindow: ClosableWindow;
   listen(
@@ -48,22 +37,19 @@ interface RegisterApplicationShutdownHandlersOptions {
   coordinator: ApplicationShutdownCoordinator;
 }
 
-class ApplicationShuttingDownError extends Error {
-  constructor() {
-    super('Application shutdown is already in progress');
-  }
-}
-
-export async function finishPendingPersistence(
-  saveReadingSession: () => Promise<void>,
+async function completeFinalPersistence(
+  flushDurableAuthorities: () => Promise<void>,
   chooseAfterFailure: (error: unknown) => Promise<FinalSaveFailureChoice>,
 ): Promise<void> {
   while (true) {
     try {
-      await saveReadingSession();
+      await flushDurableAuthorities();
       return;
     } catch (error) {
-      console.error('Failed to save reader state before exit:', error);
+      console.error(
+        'Failed to flush Reading Session, Annotations, or Recent Documents before exit:',
+        error,
+      );
       if ((await chooseAfterFailure(error)) === 'discard') return;
     }
   }
@@ -77,6 +63,7 @@ export function createApplicationShutdownCoordinator({
   onShutdownStarted,
 }: ApplicationShutdownCoordinatorOptions): ApplicationShutdownCoordinator {
   let requestedEffect: ApplicationShutdownRequest | null = null;
+  let teardownEffect: ApplicationShutdownRequest | null = null;
   let operation: Promise<void> | null = null;
   let releaseReady!: () => void;
   let ready = false;
@@ -87,20 +74,20 @@ export function createApplicationShutdownCoordinator({
 
   const request = (next: ApplicationShutdownRequest): Promise<void> => {
     const firstRequest = requestedEffect === null;
-    if (requestedEffect !== 'quit-application') requestedEffect = next;
+    if (teardownEffect === null && requestedEffect !== 'quit-application') requestedEffect = next;
     if (firstRequest) onShutdownStarted?.();
 
     operation ??= (async () => {
       await readyPromise;
-      await finishPendingPersistence(flush, chooseAfterFailure);
+      await completeFinalPersistence(flush, chooseAfterFailure);
+      teardownEffect = quitWasRequested() ? 'quit-application' : 'close-main-window';
 
-      if (quitWasRequested()) {
+      if (teardownEffect === 'quit-application') {
         await quitApplication();
         return;
       }
 
       await closeMainWindow();
-      if (quitWasRequested()) await quitApplication();
     })();
     return operation;
   };
@@ -138,55 +125,5 @@ export async function registerApplicationShutdownHandlers({
   return () => {
     releaseClose();
     releaseQuit();
-  };
-}
-
-function rejectedIntakeResult(paths: readonly string[]): DocumentIntakeResult {
-  const outcomes: DocumentIntakeOutcome[] = paths.map((requestedPath) => ({
-    status: 'failed',
-    requestedPath,
-    error: new ApplicationShuttingDownError(),
-  }));
-  return { outcomes, opened: 0, activated: 0, failed: outcomes.length };
-}
-
-export function createShutdownAwareDocumentIntake(
-  intake: DocumentIntake,
-  isAccepting: () => boolean,
-): ShutdownAwareDocumentIntake {
-  const pending = new Set<Promise<unknown>>();
-  const track = <T>(work: Promise<T>): Promise<T> => {
-    pending.add(work);
-    void work.then(
-      () => pending.delete(work),
-      () => pending.delete(work),
-    );
-    return work;
-  };
-  const rejectedOperation = (paths: readonly string[]): DocumentIntakeOperation => {
-    const result = rejectedIntakeResult(paths);
-    return {
-      foreground: Promise.resolve(result.outcomes[0] ?? null),
-      completion: Promise.resolve(result),
-    };
-  };
-
-  return {
-    begin(paths, options) {
-      if (!isAccepting()) return rejectedOperation(paths);
-      const operation = intake.begin(paths, options);
-      return { ...operation, completion: track(operation.completion) };
-    },
-    open(paths, options) {
-      return isAccepting()
-        ? track(intake.open(paths, options))
-        : Promise.resolve(rejectedIntakeResult(paths));
-    },
-    restore: intake.restore.bind(intake),
-    async quiesce() {
-      while (pending.size > 0) {
-        await Promise.allSettled(Array.from(pending));
-      }
-    },
   };
 }

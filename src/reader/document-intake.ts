@@ -118,6 +118,8 @@ export interface DocumentIntake {
     session: PersistedReadingSession,
     options?: RestoreReadingSessionOptions,
   ): Promise<RestoreSessionResult>;
+  stopAccepting(): void;
+  quiesce(): Promise<void>;
 }
 
 export interface DocumentIntakeOperation {
@@ -155,12 +157,30 @@ export function createDocumentIntake({
   onSucceeded,
   onObserverError = (error) => console.error('Document Intake observer failed:', error),
 }: DocumentIntakeOptions): DocumentIntake {
+  let accepting = true;
+  const pending = new Set<Promise<unknown>>();
+  const track = <T>(work: Promise<T>): Promise<T> => {
+    pending.add(work);
+    void work.then(
+      () => pending.delete(work),
+      () => pending.delete(work),
+    );
+    return work;
+  };
   const summarizeOutcomes = (outcomes: readonly DocumentIntakeOutcome[]): DocumentIntakeResult => ({
     outcomes,
     opened: outcomes.filter(({ status }) => status === 'opened').length,
     activated: outcomes.filter(({ status }) => status === 'activated').length,
     failed: outcomes.filter(({ status }) => status === 'failed').length,
   });
+  const rejectedResult = (paths: readonly string[]): DocumentIntakeResult => {
+    const outcomes: DocumentIntakeOutcome[] = paths.map((requestedPath) => ({
+      status: 'failed',
+      requestedPath,
+      error: new Error('Application shutdown is already in progress'),
+    }));
+    return summarizeOutcomes(outcomes);
+  };
 
   const intakeDescribedDocument = async (
     requestedPath: string,
@@ -228,6 +248,13 @@ export function createDocumentIntake({
     paths: readonly string[],
     options: OpenDocumentsOptions = {},
   ): DocumentIntakeOperation => {
+    if (!accepting) {
+      const result = rejectedResult(paths);
+      return {
+        foreground: Promise.resolve(result.outcomes[0] ?? null),
+        completion: Promise.resolve(result),
+      };
+    }
     const foreground = createForegroundSignal();
     if (paths.length === 0) foreground.resolve(null);
 
@@ -256,7 +283,7 @@ export function createDocumentIntake({
       return summarizeOutcomes(outcomes);
     })();
 
-    return { foreground: foreground.promise, completion };
+    return { foreground: foreground.promise, completion: track(completion) };
   };
 
   const restore = (
@@ -479,7 +506,7 @@ export function createDocumentIntake({
       };
     })();
 
-    return completion;
+    return track(completion);
   };
 
   const open = (
@@ -491,5 +518,13 @@ export function createDocumentIntake({
     begin,
     open,
     restore,
+    stopAccepting() {
+      accepting = false;
+    },
+    async quiesce() {
+      while (pending.size > 0) {
+        await Promise.allSettled(Array.from(pending));
+      }
+    },
   };
 }

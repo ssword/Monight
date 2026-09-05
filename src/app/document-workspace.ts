@@ -55,9 +55,9 @@ export type DocumentSurfaceFactory = (
 ) => Promise<DocumentSurface>;
 
 interface DocumentWorkspaceOptions {
-  dispatch(action: ReaderAction): Promise<ReaderActionOutcome>;
-  dispatchIntakeAction?: (action: ReaderAction) => Promise<ReaderActionOutcome>;
-  canMutate?: () => boolean;
+  dispatchReaderAction(action: ReaderAction): Promise<ReaderActionOutcome>;
+  dispatchAcceptedIntakeAction?: (action: ReaderAction) => Promise<ReaderActionOutcome>;
+  acceptsReaderActions?: () => boolean;
   snapshot(): ReadingSessionSnapshot;
   isDocumentOpen(filePath: string): boolean;
   defaultVisualState(): ReadingSessionVisualState;
@@ -158,7 +158,7 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
     rendering.setOnZoomIntentRequest(callbacks.zoomIntentRequested);
     rendering.setAnnotations(annotationAuthority.snapshot(filePath));
     rendering.setOnAnnotationsChange((annotations) => {
-      if (options.canMutate?.() === false) return;
+      if (options.acceptsReaderActions?.() === false) return;
       annotationAuthority.replace(filePath, annotations);
       callbacks.stateChanged();
     });
@@ -195,14 +195,17 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
     }
   };
 
-  const dispatchOrThrow = async (action: ReaderAction): Promise<void> => {
-    const outcome = await options.dispatch(action);
+  const dispatchOrThrow = async (
+    dispatch: (action: ReaderAction) => Promise<ReaderActionOutcome>,
+    action: ReaderAction,
+  ): Promise<void> => {
+    const outcome = await dispatch(action);
     if (outcome.status === 'failure') throw outcome.error;
   };
-  const dispatchIntakeOrThrow = async (action: ReaderAction): Promise<void> => {
-    const outcome = await (options.dispatchIntakeAction ?? options.dispatch)(action);
-    if (outcome.status === 'failure') throw outcome.error;
-  };
+  const dispatchReaderActionOrThrow = (action: ReaderAction): Promise<void> =>
+    dispatchOrThrow(options.dispatchReaderAction, action);
+  const dispatchAcceptedIntakeActionOrThrow = (action: ReaderAction): Promise<void> =>
+    dispatchOrThrow(options.dispatchAcceptedIntakeAction ?? options.dispatchReaderAction, action);
 
   const renderDocumentControls = (readingSession: ReadingSessionSnapshot): void => {
     const container = document.getElementById('tab-container');
@@ -233,8 +236,11 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
       title.title = documentState.title;
       control.append(title);
       control.addEventListener('click', () => {
-        if (options.canMutate?.() === false) return;
-        void options.dispatch({ type: 'activateDocument', filePath: documentState.filePath });
+        if (options.acceptsReaderActions?.() === false) return;
+        void options.dispatchReaderAction({
+          type: 'activateDocument',
+          filePath: documentState.filePath,
+        });
       });
 
       const close = document.createElement('button');
@@ -245,8 +251,11 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
       close.tabIndex = active ? 0 : -1;
       close.addEventListener('click', (event) => {
         event.stopPropagation();
-        if (options.canMutate?.() === false) return;
-        void options.dispatch({ type: 'closeDocument', filePath: documentState.filePath });
+        if (options.acceptsReaderActions?.() === false) return;
+        void options.dispatchReaderAction({
+          type: 'closeDocument',
+          filePath: documentState.filePath,
+        });
       });
       item.append(control, close);
       container.append(item);
@@ -327,7 +336,7 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
   const intakeRuntime: DocumentRuntimeIntake = {
     isOpen: options.isDocumentOpen,
     async activate(filePath, activateOptions) {
-      await dispatchIntakeOrThrow({ type: 'activateDocument', filePath });
+      await dispatchAcceptedIntakeActionOrThrow({ type: 'activateDocument', filePath });
       if (activateOptions?.notifyOpened !== false) {
         const documentState = options
           .snapshot()
@@ -343,7 +352,7 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
     async open(request: DocumentRuntimeOpenRequest) {
       const { document, bytes, initialPage, restoredDocument } = request;
       const settleReadingPosition = (readingPosition: ReadingPosition): void => {
-        void options.dispatch({
+        void options.dispatchReaderAction({
           type: 'settleReadingPosition',
           filePath: document.canonicalPath,
           readingPosition,
@@ -354,9 +363,9 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
         readingPositionObserved: settleReadingPosition,
         readingPositionSettled: settleReadingPosition,
         pageNavigationRequested: (page) =>
-          dispatchOrThrow({ type: 'goToPage', filePath: document.canonicalPath, page }),
+          dispatchReaderActionOrThrow({ type: 'goToPage', filePath: document.canonicalPath, page }),
         zoomIntentRequested: (zoomIntent) =>
-          dispatchOrThrow({
+          dispatchReaderActionOrThrow({
             type: 'setZoomIntent',
             filePath: document.canonicalPath,
             zoomIntent,
@@ -400,7 +409,7 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
           };
       try {
         await projectDocumentState(surface.rendering, initialDocument);
-        await dispatchIntakeOrThrow({
+        await dispatchAcceptedIntakeActionOrThrow({
           type: 'registerDocument',
           document: initialDocument,
           runtime: surface.runtime,
@@ -433,7 +442,7 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
       debugLog(`Prepared Document surface: ${document.title}`);
     },
     async goToPage(filePath, page) {
-      await dispatchIntakeOrThrow({ type: 'goToPage', filePath, page });
+      await dispatchAcceptedIntakeActionOrThrow({ type: 'goToPage', filePath, page });
     },
     async restoreExistingDocument(filePath, documentState, { preserveReadingPosition }) {
       const rendering = requireRendering(filePath);

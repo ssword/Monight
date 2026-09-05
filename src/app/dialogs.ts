@@ -5,6 +5,7 @@ export interface ConfirmationRequest {
   message: string;
   confirmLabel?: string;
   cancelLabel?: string;
+  dismissible?: boolean;
 }
 
 function requireDialog(id: string): HTMLDialogElement {
@@ -22,6 +23,7 @@ function requestDialogValue<T>({
   form,
   cancelButton,
   cancelValue,
+  dismissValue = cancelValue,
   submitValue,
   focusTarget,
   afterFocus,
@@ -30,6 +32,7 @@ function requestDialogValue<T>({
   form: HTMLFormElement;
   cancelButton: HTMLButtonElement;
   cancelValue: T;
+  dismissValue?: T | typeof KEEP_DIALOG_OPEN;
   submitValue: () => T | typeof KEEP_DIALOG_OPEN;
   focusTarget: HTMLElement;
   afterFocus?: () => void;
@@ -53,7 +56,7 @@ function requestDialogValue<T>({
     const handleCancel = () => finish(cancelValue);
     const handleDialogCancel = (event: Event) => {
       event.preventDefault();
-      finish(cancelValue);
+      if (dismissValue !== KEEP_DIALOG_OPEN) finish(dismissValue);
     };
 
     form.addEventListener('submit', handleSubmit);
@@ -127,6 +130,7 @@ export function requestConfirmation({
   message,
   confirmLabel = 'Confirm',
   cancelLabel = 'Cancel',
+  dismissible = true,
 }: ConfirmationRequest): Promise<boolean> {
   const dialog = requireDialog('confirmation-dialog');
   const form = dialog.querySelector<HTMLFormElement>('form');
@@ -149,6 +153,7 @@ export function requestConfirmation({
     form,
     cancelButton,
     cancelValue: false,
+    dismissValue: dismissible ? false : KEEP_DIALOG_OPEN,
     submitValue: () => true,
     focusTarget: confirmButton,
   });

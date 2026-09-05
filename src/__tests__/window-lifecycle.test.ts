@@ -1,10 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   createApplicationShutdownCoordinator,
-  createShutdownAwareDocumentIntake,
   registerApplicationShutdownHandlers,
 } from '../app/window-lifecycle';
-import type { DocumentIntake, DocumentIntakeOperation } from '../reader/document-intake';
 
 type CloseHandler = (event: { preventDefault: () => void }) => void | Promise<void>;
 type QuitHandler = () => void | Promise<void>;
@@ -170,6 +168,33 @@ describe('application shutdown lifecycle', () => {
     expect(adapters.events.filter((event) => event === 'prevent')).toHaveLength(2);
   });
 
+  it('freezes the teardown effect once final persistence completes', async () => {
+    const adapters = lifecycleAdapters();
+    const finishDestroy = deferred();
+    adapters.mainWindow.destroy.mockImplementationOnce(async () => finishDestroy.promise);
+    const quit = vi.fn(async () => undefined);
+    const coordinator = createApplicationShutdownCoordinator({
+      flush: vi.fn(async () => undefined),
+      closeMainWindow: adapters.mainWindow.destroy,
+      quitApplication: quit,
+    });
+    await registerApplicationShutdownHandlers({
+      mainWindow: adapters.mainWindow,
+      listen: adapters.listen,
+      takePendingApplicationQuit: adapters.takePendingApplicationQuit,
+      coordinator,
+    });
+    coordinator.markReady();
+
+    const close = adapters.requestClose();
+    await vi.waitFor(() => expect(adapters.mainWindow.destroy).toHaveBeenCalledOnce());
+    const lateQuit = adapters.requestQuit();
+    finishDestroy.resolve();
+    await Promise.all([close, lateQuit]);
+
+    expect(quit).not.toHaveBeenCalled();
+  });
+
   it('retries one final persistence flow before closing the main window', async () => {
     const adapters = lifecycleAdapters();
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -250,80 +275,5 @@ describe('application shutdown lifecycle', () => {
     expect(settingsWindow.onCloseRequested).not.toHaveBeenCalled();
     expect(coordinator.isShutdownRequested()).toBe(false);
     expect(flush).not.toHaveBeenCalled();
-  });
-
-  it('stops accepting new Document Intake while allowing accepted intake to settle', async () => {
-    const acceptedCompletion = deferred<{
-      outcomes: [];
-      opened: number;
-      activated: number;
-      failed: number;
-    }>();
-    const operation: DocumentIntakeOperation = {
-      foreground: Promise.resolve(null),
-      completion: acceptedCompletion.promise,
-    };
-    const intake = {
-      begin: vi.fn(() => operation),
-      open: vi.fn(async () => operation.completion),
-      restore: vi.fn(),
-    } as unknown as DocumentIntake;
-    let accepting = true;
-    const guarded = createShutdownAwareDocumentIntake(intake, () => accepting);
-
-    const accepted = guarded.begin(['/docs/accepted.pdf']);
-    accepting = false;
-    const rejected = guarded.begin(['/docs/rejected.pdf']);
-    acceptedCompletion.resolve({ outcomes: [], opened: 1, activated: 0, failed: 0 });
-
-    await expect(accepted.completion).resolves.toMatchObject({ opened: 1 });
-    await expect(rejected.completion).resolves.toMatchObject({
-      opened: 0,
-      activated: 0,
-      failed: 1,
-    });
-    expect(intake.begin).toHaveBeenCalledOnce();
-  });
-
-  it('waits for accepted Document Intake before starting final persistence', async () => {
-    const acceptedCompletion = deferred<{
-      outcomes: [];
-      opened: number;
-      activated: number;
-      failed: number;
-    }>();
-    const intake = {
-      begin: vi.fn(() => ({
-        foreground: Promise.resolve(null),
-        completion: acceptedCompletion.promise,
-      })),
-      open: vi.fn(),
-      restore: vi.fn(),
-    } as unknown as DocumentIntake;
-    let accepting = true;
-    const guarded = createShutdownAwareDocumentIntake(intake, () => accepting);
-    const persist = vi.fn(async () => undefined);
-    const coordinator = createApplicationShutdownCoordinator({
-      flush: async () => {
-        await guarded.quiesce();
-        await persist();
-      },
-      closeMainWindow: vi.fn(async () => undefined),
-      quitApplication: vi.fn(async () => undefined),
-      onShutdownStarted: () => {
-        accepting = false;
-      },
-    });
-
-    const accepted = guarded.begin(['/docs/accepted.pdf']);
-    const shutdown = coordinator.request('close-main-window');
-    coordinator.markReady();
-    await Promise.resolve();
-
-    expect(persist).not.toHaveBeenCalled();
-    acceptedCompletion.resolve({ outcomes: [], opened: 1, activated: 0, failed: 0 });
-    await Promise.all([accepted.completion, shutdown]);
-
-    expect(persist).toHaveBeenCalledOnce();
   });
 });

@@ -49,6 +49,15 @@ pub struct PendingExternalOpenPayloads(Mutex<VecDeque<ExternalOpenPayload>>);
 #[derive(Default)]
 pub struct PendingApplicationQuit(Mutex<bool>);
 
+#[derive(Default)]
+struct FrontendLifecycleStatus {
+    registered: bool,
+    foreground_requested: bool,
+}
+
+#[derive(Default)]
+pub struct FrontendLifecycleState(Mutex<FrontendLifecycleStatus>);
+
 pub(crate) fn is_supported_extension(path: &std::path::Path) -> bool {
     path.extension()
         .and_then(|e| e.to_str())
@@ -77,6 +86,39 @@ pub(crate) fn queue_application_quit_inner(state: &PendingApplicationQuit) {
 
 pub(crate) fn take_application_quit_request_inner(state: &PendingApplicationQuit) -> bool {
     std::mem::take(&mut *state.0.lock().unwrap())
+}
+
+#[cfg(any(target_os = "windows", target_os = "linux", test))]
+fn request_frontend_foreground_inner(state: &FrontendLifecycleState) -> bool {
+    let mut status = state.0.lock().unwrap();
+    if status.registered {
+        true
+    } else {
+        status.foreground_requested = true;
+        false
+    }
+}
+
+fn complete_frontend_lifecycle_registration_inner(state: &FrontendLifecycleState) -> bool {
+    let mut status = state.0.lock().unwrap();
+    status.registered = true;
+    std::mem::take(&mut status.foreground_requested)
+}
+
+fn foreground_main_window(app: &tauri::AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        #[cfg(any(target_os = "windows", target_os = "linux"))]
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+    }
+}
+
+#[cfg(any(target_os = "windows", target_os = "linux"))]
+fn request_main_window_foreground(app: &tauri::AppHandle) {
+    if request_frontend_foreground_inner(app.state::<FrontendLifecycleState>().inner()) {
+        foreground_main_window(app);
+    }
 }
 
 fn dispatch_external_open_payload(app: &tauri::AppHandle, payload: ExternalOpenPayload) {
@@ -202,6 +244,15 @@ fn take_application_quit_request(state: tauri::State<'_, PendingApplicationQuit>
     take_application_quit_request_inner(state.inner())
 }
 
+#[tauri::command]
+fn complete_frontend_lifecycle_registration(app: tauri::AppHandle) {
+    if complete_frontend_lifecycle_registration_inner(
+        app.state::<FrontendLifecycleState>().inner(),
+    ) {
+        foreground_main_window(&app);
+    }
+}
+
 pub(crate) fn payload_from_cli_args<I, T>(
     document_intake: &document_intake::DocumentIntake,
     args: I,
@@ -238,10 +289,8 @@ pub fn run() {
             Some(working_directory.as_path()),
         ) {
             dispatch_external_open_payload(app, payload);
-        } else if let Some(window) = app.get_webview_window("main") {
-            let _ = window.show();
-            let _ = window.unminimize();
-            let _ = window.set_focus();
+        } else {
+            request_main_window_foreground(app);
         }
     }));
 
@@ -251,6 +300,7 @@ pub fn run() {
         .plugin(tauri_plugin_store::Builder::default().build())
         .manage(PendingExternalOpenPayloads::default())
         .manage(PendingApplicationQuit::default())
+        .manage(FrontendLifecycleState::default())
         .manage(document_intake::DocumentIntake::default())
         .invoke_handler(tauri::generate_handler![
             commands::read_pdf_file,
@@ -266,6 +316,7 @@ pub fn run() {
             commands::open_external_url,
             complete_application_quit,
             take_application_quit_request,
+            complete_frontend_lifecycle_registration,
         ])
         .on_webview_event(|webview, event| {
             if let tauri::WebviewEvent::DragDrop(tauri::DragDropEvent::Drop { paths, .. }) = event {
@@ -363,6 +414,16 @@ mod tests {
 
         assert!(take_application_quit_request_inner(&state));
         assert!(!take_application_quit_request_inner(&state));
+    }
+
+    #[test]
+    fn foreground_requests_wait_for_frontend_lifecycle_registration() {
+        let state = FrontendLifecycleState::default();
+
+        assert!(!request_frontend_foreground_inner(&state));
+        assert!(complete_frontend_lifecycle_registration_inner(&state));
+        assert!(request_frontend_foreground_inner(&state));
+        assert!(!complete_frontend_lifecycle_registration_inner(&state));
     }
 
     fn copied_pdf_fixture(name: &str) -> PathBuf {

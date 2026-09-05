@@ -37,10 +37,8 @@ import {
 import {
   type ApplicationShutdownCoordinator,
   createApplicationShutdownCoordinator,
-  createShutdownAwareDocumentIntake,
   type FinalSaveFailureChoice,
   registerApplicationShutdownHandlers,
-  type ShutdownAwareDocumentIntake,
 } from './app/window-lifecycle';
 import { debugLog } from './lib/debug-log';
 import type { ViewMode } from './lib/document-features';
@@ -83,7 +81,7 @@ export interface ApplicationModules {
 }
 
 let documentWorkspace: DocumentWorkspace | null = null;
-let documentIntake: ShutdownAwareDocumentIntake | null = null;
+let documentIntake: DocumentIntake | null = null;
 let startupDocumentIntake: DocumentIntake | null = null;
 let applicationShutdown: ApplicationShutdownCoordinator | null = null;
 
@@ -299,6 +297,7 @@ const chooseAfterFinalSaveFailure = async (): Promise<FinalSaveFailureChoice> =>
     message: 'Monight could not save the latest Reading Session, Recent Documents, or Annotations.',
     confirmLabel: 'Retry save',
     cancelLabel: 'Quit without saving',
+    dismissible: false,
   }))
     ? 'retry'
     : 'discard';
@@ -362,6 +361,7 @@ export async function initializeApplication(modules: ApplicationModules): Promis
       await invoke('complete_application_quit');
     },
     onShutdownStarted: () => {
+      documentIntake?.stopAccepting();
       if (lastFilterSaveTimer !== null) {
         clearTimeout(lastFilterSaveTimer);
         lastFilterSaveTimer = null;
@@ -377,6 +377,7 @@ export async function initializeApplication(modules: ApplicationModules): Promis
       takePendingApplicationQuit: () => invoke<boolean>('take_application_quit_request'),
       coordinator: shutdown,
     });
+    await invoke('complete_frontend_lifecycle_registration');
     debugLog('Initializing app...');
 
     // Initialize settings manager
@@ -428,12 +429,12 @@ export async function initializeApplication(modules: ApplicationModules): Promis
     });
     const initialReadingSession = restoredReadingSession ?? EMPTY_READING_SESSION;
     documentWorkspace = modules.createDocumentWorkspace({
-      dispatch: dispatchReaderActionOutcome,
-      dispatchIntakeAction: async (action) => {
+      dispatchReaderAction: dispatchReaderActionOutcome,
+      dispatchAcceptedIntakeAction: async (action) => {
         if (!readerActions) throw new Error('Reader Actions are unavailable');
         return readerActions.dispatch(action);
       },
-      canMutate: acceptsReaderWork,
+      acceptsReaderActions: acceptsReaderWork,
       snapshot: () => readerActions?.snapshot() ?? { ...initialReadingSession, revision: 0 },
       isDocumentOpen: (filePath) => readerActions?.isDocumentOpen(filePath) ?? false,
       defaultVisualState,
@@ -488,7 +489,8 @@ export async function initializeApplication(modules: ApplicationModules): Promis
         if (outcome.status === 'failure') throw outcome.error;
       },
     });
-    documentIntake = createShutdownAwareDocumentIntake(startupDocumentIntake, acceptsReaderWork);
+    documentIntake = startupDocumentIntake;
+    if (shutdown.isShutdownRequested()) documentIntake.stopAccepting();
     let observedActiveDocumentPath = readerActions.snapshot().activeDocumentPath;
     readerActions.observe((snapshot) => {
       documentWorkspace?.project(snapshot);

@@ -54,4 +54,21 @@ describe('requestConfirmation', () => {
 
     await expect(result).resolves.toBe(false);
   });
+
+  it('requires an explicit button choice when dismissal is disabled', async () => {
+    const result = requestConfirmation({
+      title: 'Changes not saved',
+      message: 'Choose how to continue.',
+      cancelLabel: 'Quit without saving',
+      dismissible: false,
+    });
+    const dialog = document.getElementById('confirmation-dialog') as HTMLDialogElement;
+
+    dialog.dispatchEvent(new Event('cancel', { cancelable: true }));
+    await Promise.resolve();
+
+    expect(dialog.open).toBe(true);
+    document.querySelector<HTMLButtonElement>('[data-dialog-cancel]')?.click();
+    await expect(result).resolves.toBe(false);
+  });
 });

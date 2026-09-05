@@ -358,4 +358,45 @@ describe('Document Intake', () => {
       failed: 0,
     });
   });
+
+  it('stops accepting new intake while allowing accepted intake to quiesce', async () => {
+    let finishRead: (() => void) | undefined;
+    const intake = createDocumentIntake({
+      source: {
+        describe: async (path) => ({ canonicalPath: path, title: 'accepted.pdf' }),
+        read: async () =>
+          new Promise<Uint8Array>((resolve) => {
+            finishRead = () => resolve(new Uint8Array([1]));
+          }),
+      },
+      runtime: {
+        isOpen: () => false,
+        activate: vi.fn(async () => undefined),
+        open: vi.fn(async () => undefined),
+        goToPage: vi.fn(async () => undefined),
+      },
+    });
+
+    const accepted = intake.begin(['/docs/accepted.pdf']);
+    await vi.waitFor(() => expect(finishRead).toBeTypeOf('function'));
+    intake.stopAccepting();
+    const rejected = intake.begin(['/docs/rejected.pdf']);
+    let quiesced = false;
+    const quiescence = intake.quiesce().then(() => {
+      quiesced = true;
+    });
+    await Promise.resolve();
+
+    expect(quiesced).toBe(false);
+    await expect(rejected.completion).resolves.toMatchObject({
+      opened: 0,
+      activated: 0,
+      failed: 1,
+    });
+
+    finishRead?.();
+    await Promise.all([accepted.completion, quiescence]);
+
+    expect(quiesced).toBe(true);
+  });
 });

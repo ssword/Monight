@@ -77,7 +77,7 @@ describe('Document workspace adapter', () => {
       revision: 2,
     }));
     const workspace = createDocumentWorkspace({
-      dispatch,
+      dispatchReaderAction: dispatch,
       snapshot: () => snapshot([], null),
       isDocumentOpen: () => false,
       defaultVisualState: () => ({
@@ -160,7 +160,7 @@ describe('Document workspace adapter', () => {
     });
     const createSurface = vi.fn(async () => ({ rendering, runtime: runtime as never }));
     const workspace = createDocumentWorkspace({
-      dispatch,
+      dispatchReaderAction: dispatch,
       snapshot: () => current,
       isDocumentOpen: () => false,
       defaultVisualState: () => ({
@@ -202,7 +202,7 @@ describe('Document workspace adapter', () => {
       readingPosition: { page: 3, location: 0.25 },
     };
     const workspace = createDocumentWorkspace({
-      dispatch: vi.fn(async () => ({ status: 'no-op' as const, revision: 0 })),
+      dispatchReaderAction: vi.fn(async () => ({ status: 'no-op' as const, revision: 0 })),
       snapshot: () => snapshot([savedDocument], '/docs/saved.pdf'),
       isDocumentOpen: () => false,
       defaultVisualState: () => ({
@@ -233,7 +233,7 @@ describe('Document workspace adapter', () => {
       documents: [],
     };
     const workspace = createDocumentWorkspace({
-      dispatch: (action) => reader.dispatch(action),
+      dispatchReaderAction: (action) => reader.dispatch(action),
       snapshot: () => reader?.snapshot() ?? { ...initialSession, revision: 0 },
       isDocumentOpen: (filePath) => reader?.isDocumentOpen(filePath) ?? false,
       defaultVisualState: () => ({
@@ -402,7 +402,7 @@ describe('Document workspace adapter', () => {
     let attempts = 0;
     const surfaces: ControllableSurface[] = [];
     const workspace = createDocumentWorkspace({
-      dispatch: (action) => reader.dispatch(action),
+      dispatchReaderAction: (action) => reader.dispatch(action),
       snapshot: () => reader?.snapshot() ?? { ...initialSession, revision: 0 },
       isDocumentOpen: (filePath) => reader?.isDocumentOpen(filePath) ?? false,
       defaultVisualState: () => ({
