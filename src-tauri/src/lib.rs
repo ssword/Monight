@@ -165,6 +165,15 @@ where
     })
 }
 
+fn should_await_frontend_quit(exit_code: Option<i32>, main_window_available: bool) -> bool {
+    exit_code.is_none() && main_window_available
+}
+
+#[tauri::command]
+fn complete_application_quit(app: tauri::AppHandle) {
+    app.exit(0);
+}
+
 pub(crate) fn payload_from_cli_args<I, T>(
     document_intake: &document_intake::DocumentIntake,
     args: I,
@@ -226,6 +235,7 @@ pub fn run() {
             commands::take_external_open_payloads,
             commands::validate_open_path,
             commands::open_external_url,
+            complete_application_quit,
         ])
         .on_webview_event(|webview, event| {
             if let tauri::WebviewEvent::DragDrop(tauri::DragDropEvent::Drop { paths, .. }) = event {
@@ -276,20 +286,36 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
 
-    app.run(|app, event| {
+    app.run(|app, event| match event {
+        tauri::RunEvent::ExitRequested { code, api, .. } => {
+            let main_window = app.get_webview_window("main");
+            if should_await_frontend_quit(code, main_window.is_some()) {
+                api.prevent_exit();
+                let window = main_window.expect("main window availability was checked");
+                let _ = window.emit("application-quit-requested", ());
+            }
+        }
         #[cfg(any(target_os = "macos", target_os = "ios", target_os = "android"))]
-        if let tauri::RunEvent::Opened { urls } = event {
+        tauri::RunEvent::Opened { urls } => {
             let document_intake = app.state::<document_intake::DocumentIntake>();
             if let Some(payload) = payload_from_opened_urls(document_intake.inner(), &urls) {
                 dispatch_external_open_payload(app, payload);
             }
         }
+        _ => {}
     });
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn user_quit_waits_for_frontend_but_frontend_acknowledgement_can_exit() {
+        assert!(should_await_frontend_quit(None, true));
+        assert!(!should_await_frontend_quit(Some(0), true));
+        assert!(!should_await_frontend_quit(None, false));
+    }
 
     fn copied_pdf_fixture(name: &str) -> PathBuf {
         let fixture =

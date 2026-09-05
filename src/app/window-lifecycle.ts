@@ -11,6 +11,21 @@ export interface ClosableWindow {
 
 export type FinalSaveFailureChoice = 'retry' | 'discard';
 
+export async function finishPendingReaderState(
+  saveReadingSession: () => Promise<void>,
+  chooseAfterFailure: (error: unknown) => Promise<FinalSaveFailureChoice>,
+): Promise<void> {
+  while (true) {
+    try {
+      await saveReadingSession();
+      return;
+    } catch (error) {
+      console.error('Failed to save Reading Session before exit:', error);
+      if ((await chooseAfterFailure(error)) === 'discard') return;
+    }
+  }
+}
+
 /** Finish the final Reading Session save before allowing the app window to disappear. */
 export async function registerReadingSessionCloseGuard(
   appWindow: ClosableWindow,
@@ -24,16 +39,7 @@ export async function registerReadingSessionCloseGuard(
     if (closing) return;
     closing = true;
 
-    while (true) {
-      try {
-        await saveReadingSession();
-        break;
-      } catch (error) {
-        console.error('Failed to save Reading Session before close:', error);
-        if ((await chooseAfterFailure(error)) === 'discard') break;
-      }
-    }
-
+    await finishPendingReaderState(saveReadingSession, chooseAfterFailure);
     await appWindow.destroy();
   });
 }

@@ -95,6 +95,7 @@ describe('Tauri drag and drop events', () => {
     updateTabBarVisibility: vi.fn(),
     updatePrintMenuState: vi.fn(async () => undefined),
     dispatchReaderAction: vi.fn(async () => undefined),
+    completeApplicationQuit: vi.fn(async () => undefined),
     ...overrides,
   });
 
@@ -293,5 +294,49 @@ describe('Tauri drag and drop events', () => {
       type: 'closeDocument',
       filePath: '/docs/report.pdf',
     });
+  });
+
+  it('acknowledges application Quit only after the final save completes', async () => {
+    let finishFinalSave: (() => void) | undefined;
+    const completeApplicationQuit = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finishFinalSave = resolve;
+        }),
+    );
+    await setupTauriListeners(context({ completeApplicationQuit }));
+
+    const quitting = mocks.getListener('application-quit-requested')?.();
+
+    expect(completeApplicationQuit).toHaveBeenCalledOnce();
+    let acknowledged = false;
+    void quitting?.then(() => {
+      acknowledged = true;
+    });
+    await Promise.resolve();
+    expect(acknowledged).toBe(false);
+
+    finishFinalSave?.();
+    await quitting;
+    expect(acknowledged).toBe(true);
+  });
+
+  it('coalesces repeated application Quit requests while final save is pending', async () => {
+    let finishFinalSave: (() => void) | undefined;
+    const completeApplicationQuit = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finishFinalSave = resolve;
+        }),
+    );
+    await setupTauriListeners(context({ completeApplicationQuit }));
+    const requestQuit = mocks.getListener('application-quit-requested');
+
+    const first = requestQuit?.();
+    const second = requestQuit?.();
+
+    expect(completeApplicationQuit).toHaveBeenCalledOnce();
+    finishFinalSave?.();
+    await Promise.all([first, second]);
   });
 });

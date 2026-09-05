@@ -35,6 +35,7 @@ interface TauriListenerContext {
   updateTabBarVisibility: () => void;
   updatePrintMenuState: () => Promise<void>;
   dispatchReaderAction: DispatchReaderAction;
+  completeApplicationQuit: () => Promise<void>;
 }
 
 export async function setupTauriListeners({
@@ -52,6 +53,7 @@ export async function setupTauriListeners({
   updateTabBarVisibility,
   updatePrintMenuState,
   dispatchReaderAction,
+  completeApplicationQuit,
 }: TauriListenerContext): Promise<void> {
   const handleExternalOpenPayload = async (payload: ExternalOpenPayload) => {
     debugLog('External Document request:', payload);
@@ -172,6 +174,22 @@ export async function setupTauriListeners({
       await dispatchReaderAction({ type: 'closeDocument', filePath: activeTab.filePath });
       updateTabBarVisibility();
     }
+  });
+
+  let applicationQuit: Promise<void> | null = null;
+  await listen('application-quit-requested', () => {
+    if (applicationQuit) return applicationQuit;
+    const pending = completeApplicationQuit();
+    applicationQuit = pending;
+    void pending.then(
+      () => {
+        if (applicationQuit === pending) applicationQuit = null;
+      },
+      () => {
+        if (applicationQuit === pending) applicationQuit = null;
+      },
+    );
+    return pending;
   });
 
   await listen('clear-reading-history', async () => {

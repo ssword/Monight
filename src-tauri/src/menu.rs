@@ -232,11 +232,7 @@ pub fn handle_menu_event(app: &AppHandle, event_id: &str) {
             emit_to_main(app, "menu-toggle-fullscreen");
         }
         "quit" => {
-            // Route application quit through the frontend close guard so its final
-            // Reading Session write completes before the process exits.
-            if let Some(window) = app.get_webview_window("main") {
-                let _ = window.close();
-            }
+            emit_to_main(app, "application-quit-requested");
         }
         "close_tab" => {
             emit_to_main(app, "menu-close-tab");

@@ -36,7 +36,11 @@ import {
   updateTabBarVisibility,
   updateUI,
 } from './app/ui';
-import { registerReadingSessionCloseGuard } from './app/window-lifecycle';
+import {
+  type FinalSaveFailureChoice,
+  finishPendingReaderState,
+  registerReadingSessionCloseGuard,
+} from './app/window-lifecycle';
 import { debugLog } from './lib/debug-log';
 import type { ViewMode } from './lib/document-features';
 import type { PdfLinkTarget } from './lib/pdf-links';
@@ -288,6 +292,16 @@ const flushReaderState = async (): Promise<void> => {
   await annotationAuthority?.flush();
   await recentDocumentAuthority?.flush();
 };
+
+const chooseAfterFinalSaveFailure = async (): Promise<FinalSaveFailureChoice> =>
+  (await requestConfirmation({
+    title: 'Reader state not saved',
+    message: 'Monight could not save the latest Reading Session, Recent Documents, or Annotations.',
+    confirmLabel: 'Retry save',
+    cancelLabel: 'Quit without saving',
+  }))
+    ? 'retry'
+    : 'discard';
 
 const restoreStartupReadingSession = async (
   payloads: readonly ExternalOpenPayload[],
@@ -700,6 +714,10 @@ async function initializeApp(): Promise<void> {
       updateTabBarVisibility: updateTabBar,
       updatePrintMenuState: () => updatePrintMenuState(tabManager),
       dispatchReaderAction,
+      completeApplicationQuit: async () => {
+        await finishPendingReaderState(flushReaderState, chooseAfterFinalSaveFailure);
+        await invoke('complete_application_quit');
+      },
     });
 
     // Show the correct initial surface after session/CLI restore has run.
@@ -717,16 +735,7 @@ async function initializeApp(): Promise<void> {
       async () => {
         await flushReaderState();
       },
-      async () =>
-        (await requestConfirmation({
-          title: 'Reader state not saved',
-          message:
-            'Monight could not save the latest Reading Session, Recent Documents, or Annotations.',
-          confirmLabel: 'Retry save',
-          cancelLabel: 'Quit without saving',
-        }))
-          ? 'retry'
-          : 'discard',
+      chooseAfterFinalSaveFailure,
     );
 
     // Show window after initialization

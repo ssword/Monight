@@ -86,4 +86,16 @@ describe('Reading Session close lifecycle', () => {
     expect(appWindow.destroy).toHaveBeenCalledOnce();
     error.mockRestore();
   });
+
+  it('does not flush the main Reading Session when an auxiliary window closes', async () => {
+    const mainWindow = fakeWindow();
+    const settingsWindow = fakeWindow();
+    const save = vi.fn(async () => undefined);
+
+    await registerReadingSessionCloseGuard(mainWindow, save);
+    await settingsWindow.requestClose();
+
+    expect(save).not.toHaveBeenCalled();
+    expect(mainWindow.destroy).not.toHaveBeenCalled();
+  });
 });

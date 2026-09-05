@@ -62,6 +62,13 @@ window. Reading sessions, Recent Documents, highlights, and notes are saved loca
 default dark mode presets, thumbnail visibility, session restoration, remembering the last
 filter, and keybind customization.
 
+Reading Position and Visual State changes are saved after a short debounce, while opening,
+closing, reordering, or activating a Document requests an immediate save. Normal window close and
+whole-app Quit wait for pending reader-state writes; if the final write fails, Monight offers retry
+or an explicit quit-without-saving choice. Forced process termination, operating-system failure,
+or power loss cannot be guaranteed, so ordinary debounced persistence remains the primary loss
+protection.
+
 ## Iconography
 The app icon is designed to follow Apple UI icon principles: minimal, bold silhouettes, and soft depth. The high-resolution source lives at `src-tauri/icons/icon-source.svg` and is used to generate the platform icon set.
 
