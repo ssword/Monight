@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => {
   let auxiliaryCloseHandler:
     | ((event: { preventDefault: () => void }) => void | Promise<void>)
     | null = null;
+  let requestAuxiliaryClose: (() => Promise<void>) | null = null;
   let pendingQuit = false;
   let restorePreviousSession = true;
   let confirmationChoices: boolean[] = [];
@@ -51,6 +52,10 @@ const mocks = vi.hoisted(() => {
       auxiliaryCloseHandler = handler;
     },
     getAuxiliaryCloseHandler: () => auxiliaryCloseHandler,
+    setAuxiliaryCloseRequester(request: () => Promise<void>) {
+      requestAuxiliaryClose = request;
+    },
+    requestAuxiliaryClose: () => requestAuxiliaryClose?.(),
     resetRestoration,
     waitForRestoration: () => restorationBarrier,
     finishRestoration: () => finishRestoration?.(),
@@ -120,6 +125,15 @@ vi.mock('@tauri-apps/api/webviewWindow', () => {
       mocks.events.push('auxiliary:destroy');
     }),
   };
+  mocks.setAuxiliaryCloseRequester(async () => {
+    let prevented = false;
+    await mocks.getAuxiliaryCloseHandler()?.({
+      preventDefault: () => {
+        prevented = true;
+      },
+    });
+    mocks.events.push(prevented ? 'auxiliary:prevented' : 'auxiliary:closed');
+  });
   return {
     getCurrentWebviewWindow: () => mainWindow,
     getAllWebviewWindows: vi.fn(async () => {
@@ -492,8 +506,10 @@ describe('application lifecycle composition', () => {
     expect(mocks.events).not.toContain('windows:all');
     expect(mocks.events.filter((event) => event === 'listen:close')).toHaveLength(1);
 
-    await mocks.getAuxiliaryCloseHandler()?.({ preventDefault: vi.fn() });
+    await mocks.requestAuxiliaryClose();
 
+    expect(mocks.events).toContain('auxiliary:closed');
+    expect(mocks.events).not.toContain('auxiliary:prevented');
     expect(mocks.events).not.toContain('intake:stop');
     expect(mocks.events).not.toContain('flush:intake-quiesce');
     expect(mocks.events).not.toContain('window:destroy');
