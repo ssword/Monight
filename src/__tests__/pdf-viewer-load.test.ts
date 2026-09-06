@@ -624,69 +624,6 @@ describe('PDFViewer initial load', () => {
     expect(surfaces).toEqual([continuousSurface, primarySurface, companionSurface]);
   });
 
-  it('turns modified wheel input and pinch gestures into anchored zoom', async () => {
-    vi.stubGlobal('document', {
-      createElement: () => ({ style: { width: '' } }),
-    });
-    vi.stubGlobal('window', {
-      requestAnimationFrame: (callback: FrameRequestCallback) => {
-        callback(0);
-        return 1;
-      },
-    });
-    const { PDFViewer } = await import('../scripts/pdf-viewer');
-    const viewer = Object.create(PDFViewer.prototype) as InstanceType<typeof PDFViewer>;
-    const previewZoomAtPoint = vi.fn();
-    Object.assign(viewer, {
-      state: {
-        currentPage: 1,
-        totalPages: 1,
-        zoom: 2,
-        rotation: 0,
-        fileName: 'book.pdf',
-        filePath: '/tmp/book.pdf',
-        viewMode: 'single',
-      },
-      container: {
-        scrollLeft: 0,
-        scrollTop: 0,
-        getBoundingClientRect: () => ({ left: 0, top: 0, width: 800, height: 600 }),
-      },
-      pendingWheelDelta: 0,
-      wheelZoomRafId: null,
-      pinchStartZoom: 2,
-      gestureZoomActive: false,
-      gestureBaseZoom: 2,
-      gesturePendingZoom: 2,
-      gestureSettleTimer: null,
-      previewZoomAtPoint,
-    });
-    const privateViewer = viewer as unknown as {
-      handleWheel: (event: WheelEvent) => void;
-      handleGestureStart: (event: Event) => void;
-      handleGestureChange: (event: Event & { scale: number }) => void;
-    };
-    const preventDefault = vi.fn();
-
-    privateViewer.handleWheel({
-      ctrlKey: true,
-      metaKey: false,
-      deltaY: -100,
-      clientX: 120,
-      clientY: 180,
-      preventDefault,
-    } as unknown as WheelEvent);
-    expect(preventDefault).toHaveBeenCalled();
-    expect(previewZoomAtPoint).toHaveBeenCalledWith(expect.any(Number), 120, 180);
-
-    privateViewer.handleGestureStart({ preventDefault } as unknown as Event);
-    privateViewer.handleGestureChange({
-      scale: 1.5,
-      preventDefault,
-    } as unknown as Event & { scale: number });
-    expect(previewZoomAtPoint).toHaveBeenLastCalledWith(3, 400, 300);
-  });
-
   it('updates annotation notes and emits a persistence snapshot', async () => {
     vi.stubGlobal('document', {
       createElement: () => ({ style: { width: '' } }),
