@@ -12,6 +12,8 @@ use tauri_plugin_store::StoreExt;
 mod commands;
 mod document_intake;
 mod menu;
+#[cfg(test)]
+mod test_support;
 
 /// Command line arguments for Monight PDF viewer
 #[derive(Parser, Debug, Clone)]
@@ -425,18 +427,8 @@ mod tests {
         assert!(!complete_frontend_lifecycle_registration_inner(&state));
     }
 
-    fn fixture_directory() -> PathBuf {
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("tests")
-            .join("fixtures")
-    }
-
-    fn fixture_path(name: &str) -> PathBuf {
-        fixture_directory().join(name)
-    }
-
     fn copied_pdf_fixture(name: &str) -> PathBuf {
-        let fixture = fixture_path("sample.pdf");
+        let fixture = test_support::fixture_path("sample.pdf");
         let directory = std::env::temp_dir().join(format!(
             "monight-entry-channel-tests-{}",
             std::process::id()
@@ -607,7 +599,7 @@ mod tests {
 
     #[test]
     fn os_opened_event_authorizes_only_its_file_url() {
-        let fixture = fixture_path("sample.pdf");
+        let fixture = test_support::fixture_path("sample.pdf");
         let denied = copied_pdf_fixture("opened-event-denied.pdf");
         let file_url = url::Url::from_file_path(&fixture).expect("fixture should become file URL");
         let expected_path = file_url
@@ -634,7 +626,7 @@ mod tests {
 
     #[test]
     fn os_opened_event_preserves_missing_paths_for_independent_frontend_outcomes() {
-        let fixture = fixture_path("sample.pdf");
+        let fixture = test_support::fixture_path("sample.pdf");
         let missing = fixture.with_file_name("missing-associated.pdf");
         let urls = [
             url::Url::from_file_path(&missing).expect("missing path should become a file URL"),
@@ -691,7 +683,10 @@ mod tests {
 
     #[test]
     fn forwarded_arguments_route_through_document_intake() {
-        let working_directory = fixture_directory();
+        let working_directory = test_support::fixture_path("sample.pdf")
+            .parent()
+            .expect("fixture should have a parent directory")
+            .to_path_buf();
         let expected_document_path = working_directory.join("sample.pdf");
         let document_intake = document_intake::DocumentIntake::default();
 

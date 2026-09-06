@@ -308,13 +308,7 @@ pub fn validate_open_path(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn fixture_path(name: &str) -> PathBuf {
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("tests")
-            .join("fixtures")
-            .join(name)
-    }
+    use crate::test_support::fixture_path;
 
     fn copied_pdf_fixture(name: &str) -> PathBuf {
         let fixture = fixture_path("sample.pdf");
