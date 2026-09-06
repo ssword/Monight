@@ -1,3 +1,4 @@
+import { awaitAbortableWork } from '../lib/abortable-work';
 import { debugLog } from '../lib/debug-log';
 import type { PdfLinkTarget } from '../lib/pdf-links';
 import { type AnnotationAccess, createTransientAnnotationAccess } from '../reader/annotations';
@@ -48,6 +49,7 @@ export interface DocumentSurfaceFactoryRequest {
   readonly title: string;
   readonly bytes: Uint8Array;
   readonly callbacks: DocumentSurfaceCallbacks;
+  readonly signal?: AbortSignal;
 }
 
 export type DocumentSurfaceFactory = (
@@ -56,7 +58,10 @@ export type DocumentSurfaceFactory = (
 
 interface DocumentWorkspaceOptions {
   dispatchReaderAction(action: ReaderAction): Promise<ReaderActionOutcome>;
-  dispatchAcceptedIntakeAction?: (action: ReaderAction) => Promise<ReaderActionOutcome>;
+  dispatchAcceptedIntakeAction?: (
+    action: ReaderAction,
+    options?: ReaderActionOptions,
+  ) => Promise<ReaderActionOutcome>;
   acceptsReaderActions?: () => boolean;
   snapshot(): ReadingSessionSnapshot;
   isDocumentOpen(filePath: string): boolean;
@@ -102,20 +107,41 @@ const cloneZoomIntent = (zoomIntent: ZoomIntent): ZoomIntent =>
 async function projectDocumentState(
   rendering: DocumentRendering,
   documentState: Pick<ReadingSessionDocument, 'readingPosition' | 'visualState'>,
+  options?: ReaderActionOptions,
 ): Promise<void> {
   if (documentState.visualState) {
-    rendering.applyFilter(buildFilterCSS(documentState.visualState.filterSettings));
-    await rendering.setRotation(documentState.visualState.rotation);
-    await rendering.setViewMode(documentState.visualState.viewMode);
-    await rendering.setZoomIntent(documentState.visualState.zoomIntent);
+    rendering.applyFilter(buildFilterCSS(documentState.visualState.filterSettings), options);
+    await rendering.setRotation(documentState.visualState.rotation, options);
+    await rendering.setViewMode(documentState.visualState.viewMode, options);
+    await rendering.setZoomIntent(documentState.visualState.zoomIntent, options);
   }
-  await rendering.goToReadingPosition(documentState.readingPosition);
+  await rendering.goToReadingPosition(documentState.readingPosition, options);
 }
 
 export function createDocumentWorkspace(options: DocumentWorkspaceOptions): DocumentWorkspace {
   const annotationAuthority = options.annotationAuthority ?? createTransientAnnotationAccess();
   const presented = new Map<string, PresentedDocument>();
   let visibleDocumentPath: string | null = null;
+  const disposedSurfaces = new WeakSet<DocumentSurface>();
+
+  const interruptionError = (): Error => new Error('Document Intake interrupted');
+
+  const disposeSurface = async (surface: DocumentSurface): Promise<unknown[]> => {
+    if (disposedSurfaces.has(surface)) return [];
+    disposedSurfaces.add(surface);
+    const cleanupErrors: unknown[] = [];
+    try {
+      surface.rendering.destroy();
+    } catch (error) {
+      cleanupErrors.push(error);
+    }
+    try {
+      await surface.runtime.destroy();
+    } catch (error) {
+      cleanupErrors.push(error);
+    }
+    return cleanupErrors;
+  };
 
   const requireRendering = (filePath: string): DocumentRendering => {
     const rendering = presented.get(filePath)?.rendering;
@@ -128,9 +154,13 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
     title,
     bytes,
     callbacks,
+    signal,
   }) => {
+    const requestPassword = options.requestPassword;
     const content: LoadableDocumentContent = createPdfDocumentContent({
-      requestPassword: options.requestPassword,
+      requestPassword: requestPassword
+        ? (fileName, reason) => requestPassword(fileName, reason, signal)
+        : undefined,
     });
     const resolveLinkTarget = options.resolveLinkTarget;
     const activateLinkTarget = options.activateLinkTarget;
@@ -162,12 +192,32 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
       annotationAuthority.replace(filePath, annotations);
       callbacks.stateChanged();
     });
+    let loadDisposed = false;
+    const disposeLoad = async (): Promise<void> => {
+      if (loadDisposed) return;
+      loadDisposed = true;
+      rendering.destroy();
+      await content.destroy();
+    };
+    const cancelLoad = (): void => {
+      void disposeLoad();
+    };
+    if (signal?.aborted) {
+      await disposeLoad();
+      throw interruptionError();
+    }
+    signal?.addEventListener('abort', cancelLoad, { once: true });
     try {
       await rendering.loadPDF(bytes, title, filePath);
     } catch (error) {
-      rendering.destroy();
-      await content.destroy();
+      await disposeLoad();
       throw error;
+    } finally {
+      signal?.removeEventListener('abort', cancelLoad);
+    }
+    if (signal?.aborted) {
+      await disposeLoad();
+      throw interruptionError();
     }
     let destroyed = false;
     return {
@@ -204,8 +254,20 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
   };
   const dispatchReaderActionOrThrow = (action: ReaderAction): Promise<void> =>
     dispatchOrThrow(options.dispatchReaderAction, action);
-  const dispatchAcceptedIntakeActionOrThrow = (action: ReaderAction): Promise<void> =>
-    dispatchOrThrow(options.dispatchAcceptedIntakeAction ?? options.dispatchReaderAction, action);
+  const dispatchAcceptedIntakeActionOrThrow = async (
+    action: ReaderAction,
+    actionOptions?: ReaderActionOptions,
+  ): Promise<ReaderActionOutcome> => {
+    const outcome = await (options.dispatchAcceptedIntakeAction ?? options.dispatchReaderAction)(
+      action,
+      actionOptions,
+    );
+    if (outcome.status === 'failure') throw outcome.error;
+    if (outcome.status === 'superseded') {
+      throw new Error('Document Intake registration cancelled');
+    }
+    return outcome;
+  };
 
   const renderDocumentControls = (readingSession: ReadingSessionSnapshot): void => {
     const container = document.getElementById('tab-container');
@@ -336,7 +398,12 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
   const intakeRuntime: DocumentRuntimeIntake = {
     isOpen: options.isDocumentOpen,
     async activate(filePath, activateOptions) {
-      await dispatchAcceptedIntakeActionOrThrow({ type: 'activateDocument', filePath });
+      const signal = activateOptions?.signal;
+      await dispatchAcceptedIntakeActionOrThrow(
+        { type: 'activateDocument', filePath },
+        signal ? { isCancelled: () => signal.aborted } : undefined,
+      );
+      if (signal?.aborted) throw interruptionError();
       if (activateOptions?.notifyOpened !== false) {
         const documentState = options
           .snapshot()
@@ -344,13 +411,14 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
         if (documentState) await notifyDocumentOpened(filePath, documentState.title);
       }
     },
-    async notifyOpened(filePath) {
+    async notifyOpened(filePath, operationOptions) {
+      if (operationOptions?.signal?.aborted) throw interruptionError();
       const documentState = options.snapshot().documents.find((item) => item.filePath === filePath);
       if (!documentState) throw new Error(`Cannot notify for unopened Document: ${filePath}`);
       await notifyDocumentOpened(filePath, documentState.title);
     },
     async open(request: DocumentRuntimeOpenRequest) {
-      const { document, bytes, initialPage, restoredDocument } = request;
+      const { document, bytes, initialPage, restoredDocument, signal } = request;
       const settleReadingPosition = (readingPosition: ReadingPosition): void => {
         void options.dispatchReaderAction({
           type: 'settleReadingPosition',
@@ -371,11 +439,22 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
             zoomIntent,
           }),
       };
-      const surface = await createSurface({
+      const surfaceWork = createSurface({
         filePath: document.canonicalPath,
         title: document.title,
         bytes,
         callbacks,
+        ...(signal ? { signal } : {}),
+      });
+      const surface = await awaitAbortableWork(surfaceWork, {
+        signal,
+        abortError: interruptionError,
+        onLateSuccess: async (lateSurface) => {
+          const cleanupErrors = await disposeSurface(lateSurface);
+          for (const cleanupError of cleanupErrors) {
+            console.error('Late Document Intake cleanup failed:', cleanupError);
+          }
+        },
       });
       presented.set(document.canonicalPath, {
         id: crypto.randomUUID(),
@@ -408,29 +487,26 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
             visualState: options.defaultVisualState(),
           };
       try {
-        await projectDocumentState(surface.rendering, initialDocument);
-        await dispatchAcceptedIntakeActionOrThrow({
-          type: 'registerDocument',
-          document: initialDocument,
-          runtime: surface.runtime,
-          activate: request.activate,
-          ...(initialPage !== undefined
-            ? { readingPosition: surface.rendering.getReadingPosition() }
-            : {}),
+        await awaitAbortableWork(projectDocumentState(surface.rendering, initialDocument), {
+          signal,
+          abortError: interruptionError,
         });
+        if (signal?.aborted) throw interruptionError();
+        await dispatchAcceptedIntakeActionOrThrow(
+          {
+            type: 'registerDocument',
+            document: initialDocument,
+            runtime: surface.runtime,
+            activate: request.activate,
+            ...(initialPage !== undefined
+              ? { readingPosition: surface.rendering.getReadingPosition() }
+              : {}),
+          },
+          signal ? { isCancelled: () => signal.aborted } : undefined,
+        );
       } catch (error) {
         presented.delete(document.canonicalPath);
-        const cleanupErrors: unknown[] = [];
-        try {
-          surface.rendering.destroy();
-        } catch (cleanupError) {
-          cleanupErrors.push(cleanupError);
-        }
-        try {
-          await surface.runtime.destroy();
-        } catch (cleanupError) {
-          cleanupErrors.push(cleanupError);
-        }
+        const cleanupErrors = await disposeSurface(surface);
         if (cleanupErrors.length > 0) {
           throw new AggregateError([error, ...cleanupErrors], 'Document Intake cleanup failed');
         }
@@ -441,10 +517,14 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
       }
       debugLog(`Prepared Document surface: ${document.title}`);
     },
-    async goToPage(filePath, page) {
-      await dispatchAcceptedIntakeActionOrThrow({ type: 'goToPage', filePath, page });
+    async goToPage(filePath, page, operationOptions) {
+      const signal = operationOptions?.signal;
+      await dispatchAcceptedIntakeActionOrThrow(
+        { type: 'goToPage', filePath, page },
+        signal ? { isCancelled: () => signal.aborted } : undefined,
+      );
     },
-    async restoreExistingDocument(filePath, documentState, { preserveReadingPosition }) {
+    async restoreExistingDocument(filePath, documentState, { preserveReadingPosition, signal }) {
       const rendering = requireRendering(filePath);
       const currentDocument = options
         .snapshot()
@@ -458,8 +538,13 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
           : documentState.readingPosition,
       };
       try {
-        await projectDocumentState(rendering, restoredDocument);
+        const actionOptions = signal ? { isCancelled: () => signal.aborted } : undefined;
+        await awaitAbortableWork(projectDocumentState(rendering, restoredDocument, actionOptions), {
+          signal,
+          abortError: interruptionError,
+        });
       } catch (error) {
+        if (signal?.aborted) throw error;
         try {
           await projectDocumentState(rendering, currentDocument);
         } catch (rollbackError) {

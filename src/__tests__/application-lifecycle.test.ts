@@ -1,9 +1,24 @@
 // @vitest-environment happy-dom
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  createDocumentWorkspace as createRealDocumentWorkspace,
+  type DocumentSurface,
+  type DocumentSurfaceFactory,
+} from '../app/document-workspace';
 import type { ApplicationModules } from '../application';
-import type { DocumentIntake } from '../reader/document-intake';
-import type { ReaderActions, ReadingSessionSnapshot } from '../reader/reader-actions';
+import {
+  createDocumentIntake as createRealDocumentIntake,
+  type DocumentIntake,
+  type PdfSource,
+} from '../reader/document-intake';
+import type { DocumentRendering } from '../reader/document-rendering';
+import {
+  createReaderActions as createRealReaderActions,
+  type PersistedReadingSession,
+  type ReaderActions,
+  type ReadingSessionSnapshot,
+} from '../reader/reader-actions';
 
 const mocks = vi.hoisted(() => {
   const events: string[] = [];
@@ -18,6 +33,19 @@ const mocks = vi.hoisted(() => {
   let confirmationChoices: boolean[] = [];
   let finishRestoration: (() => void) | null = null;
   let restorationBarrier = Promise.resolve();
+  let useRealRestoration = false;
+  let savedReadingSession: PersistedReadingSession = {
+    schemaVersion: 2,
+    activeDocumentPath: '/docs/report.pdf',
+    documents: [
+      {
+        filePath: '/docs/report.pdf',
+        title: 'report.pdf',
+        readingPosition: { page: 3, location: 0.25 },
+      },
+    ],
+  };
+  const persistedReadingSessions: ReadingSessionSnapshot[] = [];
 
   const resetRestoration = () => {
     restorationBarrier = new Promise<void>((resolve) => {
@@ -36,6 +64,15 @@ const mocks = vi.hoisted(() => {
       restorePreviousSession = value;
     },
     restorePreviousSession: () => restorePreviousSession,
+    setUseRealRestoration(value: boolean) {
+      useRealRestoration = value;
+    },
+    useRealRestoration: () => useRealRestoration,
+    setSavedReadingSession(session: PersistedReadingSession) {
+      savedReadingSession = session;
+    },
+    savedReadingSession: () => savedReadingSession,
+    persistedReadingSessions,
     setConfirmationChoices(choices: boolean[]) {
       confirmationChoices = [...choices];
     },
@@ -67,6 +104,19 @@ const mocks = vi.hoisted(() => {
       pendingQuit = false;
       restorePreviousSession = true;
       confirmationChoices = [];
+      useRealRestoration = false;
+      savedReadingSession = {
+        schemaVersion: 2,
+        activeDocumentPath: '/docs/report.pdf',
+        documents: [
+          {
+            filePath: '/docs/report.pdf',
+            title: 'report.pdf',
+            readingPosition: { page: 3, location: 0.25 },
+          },
+        ],
+      };
+      persistedReadingSessions.length = 0;
       resetRestoration();
     },
   };
@@ -178,26 +228,31 @@ vi.mock('../app/sidebar-controller', () => ({
     setThumbnailsEnabled = vi.fn();
   },
 }));
-vi.mock('../app/startup-restoration', () => ({
-  restoreReadingSessionAtStartup: vi.fn(async ({ onForegroundReady }) => {
-    mocks.events.push('restoration:start');
-    await onForegroundReady?.({
-      status: 'opened',
-      requestedPath: '/docs/report.pdf',
-      filePath: '/docs/report.pdf',
-    });
-    mocks.events.push('restoration:foreground');
-    await mocks.waitForRestoration();
-    mocks.events.push('restoration:done');
-    return {
-      outcomes: [],
-      opened: 1,
-      failed: 0,
-      failedPaths: [],
-      explicitRequestResult: { outcomes: [], opened: 0, activated: 0, failed: 0 },
-    };
-  }),
-}));
+vi.mock('../app/startup-restoration', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../app/startup-restoration')>();
+  return {
+    restoreReadingSessionAtStartup: vi.fn(async (options) => {
+      if (mocks.useRealRestoration()) return actual.restoreReadingSessionAtStartup(options);
+      const { onForegroundReady } = options;
+      mocks.events.push('restoration:start');
+      await onForegroundReady?.({
+        status: 'opened',
+        requestedPath: '/docs/report.pdf',
+        filePath: '/docs/report.pdf',
+      });
+      mocks.events.push('restoration:foreground');
+      await mocks.waitForRestoration();
+      mocks.events.push('restoration:done');
+      return {
+        outcomes: [],
+        opened: 1,
+        failed: 0,
+        failedPaths: [],
+        explicitRequestResult: { outcomes: [], opened: 0, activated: 0, failed: 0 },
+      };
+    }),
+  };
+});
 vi.mock('../app/ui', () => ({
   renderRecentFiles: vi.fn(),
   showSplash: vi.fn(),
@@ -221,17 +276,7 @@ vi.mock('../reader/annotations', () => ({
 }));
 vi.mock('../reader/reading-session-store', () => ({
   EMPTY_READING_SESSION: { schemaVersion: 2, activeDocumentPath: null, documents: [] },
-  loadReadingSession: vi.fn(async () => ({
-    schemaVersion: 2,
-    activeDocumentPath: '/docs/report.pdf',
-    documents: [
-      {
-        filePath: '/docs/report.pdf',
-        title: 'report.pdf',
-        readingPosition: { page: 3, location: 0.25 },
-      },
-    ],
-  })),
+  loadReadingSession: vi.fn(async () => mocks.savedReadingSession()),
 }));
 vi.mock('../reader/recent-documents', () => ({
   loadRecentDocuments: vi.fn(async () => ({
@@ -276,7 +321,18 @@ vi.mock('../scripts/sliders', () => ({
 }));
 
 function createModules(
-  options: { intakeQuiescence?: Promise<void>; sessionFlushFailures?: number } = {},
+  options: {
+    intakeQuiescence?: Promise<void>;
+    sessionFlushFailures?: number;
+    realRestoration?: {
+      source: PdfSource;
+      createSurface: DocumentSurfaceFactory;
+      activeReadingPosition?: {
+        filePath: string;
+        readingPosition: { page: number; location: number };
+      };
+    };
+  } = {},
 ): ApplicationModules {
   let remainingSessionFlushFailures = options.sessionFlushFailures ?? 0;
   const session: ReadingSessionSnapshot = {
@@ -317,6 +373,10 @@ function createModules(
     begin: vi.fn(),
     open: vi.fn(),
     restore: vi.fn(),
+    interruptRestoration: vi.fn(() => {
+      mocks.events.push('intake:interrupt-restoration');
+      mocks.finishRestoration();
+    }),
     stopAccepting: vi.fn(() => {
       mocks.events.push('intake:stop');
     }),
@@ -325,32 +385,105 @@ function createModules(
       await options.intakeQuiescence;
     }),
   } as unknown as DocumentIntake;
-
   return {
     createAnnotationStorage: vi.fn(() => ({}) as never),
     browserPrintAdapter: { print: vi.fn(async () => undefined) },
     externalLinkAdapter: { open: vi.fn(async () => undefined) },
-    createDocumentIntakeRuntime: vi.fn(() => intake),
-    createDocumentWorkspace: vi.fn(() => ({
-      intakeRuntime: {},
-      projection: {
-        activateDocument: vi.fn(async () => undefined),
-        goToReadingPosition: vi.fn(async () => undefined),
+    createDocumentIntakeRuntime: vi.fn(({ runtime, canonicalizeDocumentPaths }) =>
+      options.realRestoration
+        ? createRealDocumentIntake({
+            source: options.realRestoration.source,
+            runtime: {
+              ...runtime,
+              canonicalizeDocumentPaths,
+            },
+          })
+        : intake,
+    ),
+    createDocumentWorkspace: vi.fn(
+      (workspaceOptions: Parameters<typeof createRealDocumentWorkspace>[0]) => {
+        if (options.realRestoration) {
+          const workspace = createRealDocumentWorkspace({
+            ...workspaceOptions,
+            createSurface: options.realRestoration.createSurface,
+          });
+          return options.realRestoration.activeReadingPosition
+            ? {
+                ...workspace,
+                activeReadingPosition: () => options.realRestoration?.activeReadingPosition ?? null,
+              }
+            : workspace;
+        }
+        return {
+          intakeRuntime: {},
+          projection: {
+            activateDocument: vi.fn(async () => undefined),
+            goToReadingPosition: vi.fn(async () => undefined),
+          },
+          project: vi.fn(),
+          access: vi.fn(() => null),
+          activePresentation: vi.fn(() => null),
+          activeRenderingState: vi.fn(() => null),
+          activeReadingPosition: vi.fn(() => ({
+            filePath: '/docs/report.pdf',
+            readingPosition: { page: 4, location: 0.5 },
+          })),
+          replaceAnnotations: vi.fn(),
+        };
       },
-      project: vi.fn(),
-      access: vi.fn(() => null),
-      activePresentation: vi.fn(() => null),
-      activeRenderingState: vi.fn(() => null),
-      activeReadingPosition: vi.fn(() => ({
-        filePath: '/docs/report.pdf',
-        readingPosition: { page: 4, location: 0.5 },
-      })),
-      replaceAnnotations: vi.fn(),
-    })),
-    createReadingSessionStorage: vi.fn(() => ({}) as never),
+    ),
+    createReadingSessionStorage: vi.fn(
+      () =>
+        ({
+          write: vi.fn(async (snapshot: ReadingSessionSnapshot) => {
+            mocks.events.push('persist:session');
+            mocks.persistedReadingSessions.push(structuredClone(snapshot));
+          }),
+        }) as never,
+    ),
     createRecentDocumentStorage: vi.fn(() => ({}) as never),
-    createReaderActions: vi.fn(() => readerActions),
+    createReaderActions: vi.fn((readerOptions) =>
+      options.realRestoration
+        ? createRealReaderActions({ ...readerOptions, persistenceDebounceMs: 0 })
+        : readerActions,
+    ),
   } as unknown as ApplicationModules;
+}
+
+function createLifecycleSurface(filePath: string): {
+  surface: DocumentSurface;
+  rendering: DocumentRendering;
+  destroyRuntime: ReturnType<typeof vi.fn>;
+} {
+  let readingPosition = { page: 1, location: 0 };
+  const destroyRuntime = vi.fn(async () => undefined);
+  const rendering = {
+    getState: () => ({
+      currentPage: readingPosition.page,
+      totalPages: 12,
+      zoom: 1,
+      zoomIntent: { kind: 'manual' as const, scale: 1 },
+      rotation: 0,
+      fileName: filePath.split('/').pop() ?? filePath,
+      filePath,
+      viewMode: 'single' as const,
+    }),
+    getReadingPosition: () => readingPosition,
+    applyFilter: vi.fn(),
+    setRotation: vi.fn(async () => undefined),
+    setViewMode: vi.fn(async () => undefined),
+    setZoomIntent: vi.fn(async () => undefined),
+    goToReadingPosition: vi.fn(async (position) => {
+      readingPosition = { page: position.page, location: position.location ?? 0 };
+    }),
+    setVisible: vi.fn(),
+    destroy: vi.fn(),
+  } as unknown as DocumentRendering;
+  return {
+    rendering,
+    destroyRuntime,
+    surface: { rendering, runtime: { destroy: destroyRuntime } as never },
+  };
 }
 
 describe('application lifecycle composition', () => {
@@ -379,13 +512,14 @@ describe('application lifecycle composition', () => {
     const quitting = mocks.listeners.get('application-quit-requested')?.();
     await Promise.resolve();
     expect(mocks.events).toContain('intake:stop');
+    expect(mocks.events).toContain('intake:interrupt-restoration');
     expect(mocks.events).not.toContain('flush:intake-quiesce');
     expect(mocks.events).not.toContain('invoke:complete_application_quit');
 
-    mocks.finishRestoration();
     await Promise.all([initialization, quitting]);
 
     const ordered = [
+      'intake:interrupt-restoration',
       'restoration:done',
       'flush:intake-quiesce',
       'flush:actions-quiesce',
@@ -407,14 +541,96 @@ describe('application lifecycle composition', () => {
 
     await vi.waitFor(() => expect(mocks.events).toContain('restoration:foreground'));
     expect(mocks.events).not.toContain('window:show');
-    expect(mocks.events).not.toContain('flush:intake-quiesce');
-
-    mocks.finishRestoration();
     await initialization;
 
+    expect(mocks.events).toContain('intake:interrupt-restoration');
     expect(mocks.events).toContain('flush:intake-quiesce');
     expect(mocks.events).toContain('invoke:complete_application_quit');
     expect(mocks.events).not.toContain('window:destroy');
+  });
+
+  it('persists completed foreground changes while retaining interrupted Reading Session Documents', async () => {
+    mocks.setUseRealRestoration(true);
+    mocks.setSavedReadingSession({
+      schemaVersion: 2,
+      activeDocumentPath: '/docs/active.pdf',
+      documents: [
+        {
+          filePath: '/docs/active.pdf',
+          title: 'active.pdf',
+          readingPosition: { page: 2, location: 0.25 },
+        },
+        {
+          filePath: '/docs/missing.pdf',
+          title: 'missing.pdf',
+          readingPosition: { page: 3, location: 0.25 },
+        },
+        {
+          filePath: '/docs/password.pdf',
+          title: 'password.pdf',
+          readingPosition: { page: 4, location: 0.25 },
+        },
+        {
+          filePath: '/docs/later.pdf',
+          title: 'later.pdf',
+          readingPosition: { page: 5, location: 0.25 },
+        },
+      ],
+    });
+    let passwordPending = false;
+    const createdSurfaces = new Map<string, ReturnType<typeof createLifecycleSurface>>();
+    const createSurface = vi.fn(({ filePath, signal }) => {
+      const controlled = createLifecycleSurface(filePath);
+      createdSurfaces.set(filePath, controlled);
+      mocks.events.push(`surface:create:${filePath}`);
+      if (filePath !== '/docs/password.pdf') return Promise.resolve(controlled.surface);
+      passwordPending = true;
+      return new Promise<DocumentSurface>((resolve) => {
+        signal?.addEventListener('abort', () => resolve(controlled.surface), { once: true });
+      });
+    });
+    const modules = createModules({
+      realRestoration: {
+        source: {
+          describe: vi.fn(async (filePath) => {
+            if (filePath === '/docs/missing.pdf') throw new Error('missing');
+            return { canonicalPath: filePath, title: filePath.split('/').pop() ?? filePath };
+          }),
+          read: vi.fn(async () => new Uint8Array([1])),
+        },
+        createSurface,
+        activeReadingPosition: {
+          filePath: '/docs/active.pdf',
+          readingPosition: { page: 9, location: 0.5 },
+        },
+      },
+    });
+    const { initializeApplication } = await import('../application');
+    const initialization = initializeApplication(modules);
+
+    await vi.waitFor(() => expect(passwordPending).toBe(true));
+    const quitting = mocks.listeners.get('application-quit-requested')?.();
+    await Promise.all([initialization, quitting]);
+
+    expect(mocks.events).not.toContain('surface:create:/docs/later.pdf');
+    expect(mocks.events).toContain('invoke:complete_application_quit');
+    await vi.waitFor(() =>
+      expect(createdSurfaces.get('/docs/password.pdf')?.rendering.destroy).toHaveBeenCalledOnce(),
+    );
+    expect(createdSurfaces.get('/docs/password.pdf')?.destroyRuntime).toHaveBeenCalledOnce();
+    expect(mocks.persistedReadingSessions[mocks.persistedReadingSessions.length - 1]).toMatchObject(
+      {
+        activeDocumentPath: '/docs/active.pdf',
+        documents: [
+          {
+            filePath: '/docs/active.pdf',
+            readingPosition: { page: 9, location: 0.5 },
+          },
+          { filePath: '/docs/password.pdf' },
+          { filePath: '/docs/later.pdf' },
+        ],
+      },
+    );
   });
 
   it('coalesces repeated mixed requests through the production lifecycle', async () => {
@@ -456,11 +672,10 @@ describe('application lifecycle composition', () => {
     const { initializeApplication } = await import('../application');
     const initialization = initializeApplication(createModules({ sessionFlushFailures: 1 }));
     await vi.waitFor(() => expect(mocks.events).toContain('restoration:foreground'));
-    mocks.finishRestoration();
-    await initialization;
+    const closing = mocks.getCloseHandler()?.({ preventDefault: vi.fn() });
+    await Promise.all([initialization, closing]);
 
-    await mocks.getCloseHandler()?.({ preventDefault: vi.fn() });
-
+    expect(mocks.events).toContain('intake:interrupt-restoration');
     expect(mocks.events.filter((event) => event === 'flush:session')).toHaveLength(2);
     expect(mocks.events).toContain('confirmation:true');
     expect(mocks.events).toContain('window:destroy');
@@ -471,11 +686,10 @@ describe('application lifecycle composition', () => {
     const { initializeApplication } = await import('../application');
     const initialization = initializeApplication(createModules({ sessionFlushFailures: 1 }));
     await vi.waitFor(() => expect(mocks.events).toContain('restoration:foreground'));
-    mocks.finishRestoration();
-    await initialization;
+    const closing = mocks.getCloseHandler()?.({ preventDefault: vi.fn() });
+    await Promise.all([initialization, closing]);
 
-    await mocks.getCloseHandler()?.({ preventDefault: vi.fn() });
-
+    expect(mocks.events).toContain('intake:interrupt-restoration');
     expect(mocks.events.filter((event) => event === 'flush:session')).toHaveLength(1);
     expect(mocks.events).toContain('confirmation:false');
     expect(mocks.events).toContain('window:destroy');

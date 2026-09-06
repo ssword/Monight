@@ -88,4 +88,28 @@ describe('application persistence coordinator', () => {
     expect(readerActions.dispatch).not.toHaveBeenCalled();
     expect(readerActions.flush).not.toHaveBeenCalled();
   });
+
+  it('attempts every independent durable authority when Reading Session persistence fails', async () => {
+    const annotations = { flush: vi.fn(async () => undefined) };
+    const recentDocuments = { flush: vi.fn(async () => undefined) };
+    const coordinator = createPersistenceCoordinator({
+      readerActions: () =>
+        ({
+          quiesce: vi.fn(async () => undefined),
+          dispatch: vi.fn(async () => ({ status: 'no-op' as const, revision: 0 })),
+          flush: vi.fn(async () => {
+            throw new Error('session unavailable');
+          }),
+        }) as never,
+      annotations: () => annotations as never,
+      recentDocuments: () => recentDocuments as never,
+      activeReadingPosition: () => null,
+      shouldPersistReadingSession: () => true,
+    });
+
+    await expect(coordinator.flush()).rejects.toThrow('durable authorities');
+
+    expect(annotations.flush).toHaveBeenCalledOnce();
+    expect(recentDocuments.flush).toHaveBeenCalledOnce();
+  });
 });

@@ -1143,6 +1143,48 @@ describe('Reader Actions', () => {
     expect(reader.snapshot().documents[2].readingPosition).toEqual({ page: 4, location: 0.5 });
   });
 
+  it('does not register a Document when shutdown cancellation arrives during activation', async () => {
+    let releaseActivation: (() => void) | undefined;
+    let cancelled = false;
+    const persist = vi.fn(async () => undefined);
+    const reader = createReaderActions({
+      initialSession: INITIAL_SESSION,
+      projection: {
+        activateDocument: vi.fn(
+          () =>
+            new Promise<void>((resolve) => {
+              releaseActivation = resolve;
+            }),
+        ),
+        goToReadingPosition: vi.fn(),
+      },
+      persist,
+    });
+    const before = reader.snapshot();
+
+    const registration = reader.dispatch(
+      {
+        type: 'registerDocument',
+        runtime: createDocumentRuntime(),
+        document: {
+          filePath: '/docs/third.pdf',
+          title: 'third.pdf',
+          readingPosition: { page: 1, location: 0 },
+        },
+        activate: true,
+      },
+      { isCancelled: () => cancelled },
+    );
+    await vi.waitFor(() => expect(releaseActivation).toBeTypeOf('function'));
+    cancelled = true;
+    releaseActivation?.();
+
+    await expect(registration).resolves.toMatchObject({ status: 'superseded', revision: 0 });
+    expect(reader.snapshot()).toBe(before);
+    expect(reader.query('/docs/third.pdf')).toBeNull();
+    expect(persist).not.toHaveBeenCalled();
+  });
+
   it('keeps an immediate semantic commit authoritative when persistence fails', async () => {
     const persist = vi.fn(async () => {
       throw new Error('disk full');

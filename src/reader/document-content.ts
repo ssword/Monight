@@ -41,6 +41,7 @@ export interface DocumentContent {
 export type PdfPasswordRequester = (
   fileName: string,
   reason: 'required' | 'incorrect',
+  signal?: AbortSignal,
 ) => Promise<string | null>;
 
 export interface DocumentContentLoadRequest {

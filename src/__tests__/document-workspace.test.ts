@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { createDocumentWorkspace } from '../app/document-workspace';
+import { createDocumentWorkspace, type DocumentSurface } from '../app/document-workspace';
 import { createDocumentIntake, type DocumentRuntimeIntake } from '../reader/document-intake';
 import type { DocumentRendering } from '../reader/document-rendering';
 import {
@@ -377,6 +377,54 @@ describe('Document workspace adapter', () => {
     ).toHaveBeenCalledOnce();
     expect(createdSurfaces.get('/docs/successful-sibling.pdf')?.[0]?.visible()).toBe(true);
     expect(documentOpened).toHaveBeenCalledTimes(4);
+  });
+
+  it('rejects shutdown-aborted provisional intake and disposes a surface that arrives late', async () => {
+    let finishSurface: ((surface: DocumentSurface) => void) | undefined;
+    const lateSurface = createControllableSurface('/docs/password.pdf');
+    const dispatch = vi.fn(async () => ({ status: 'committed' as const, revision: 1 }));
+    const workspace = createDocumentWorkspace({
+      dispatchReaderAction: dispatch,
+      dispatchAcceptedIntakeAction: dispatch,
+      snapshot: () => snapshot([], null),
+      isDocumentOpen: () => false,
+      defaultVisualState: () => ({
+        filterSettings: PRESETS.default,
+        zoomIntent: { kind: 'manual', scale: 1 },
+        rotation: 0,
+        viewMode: 'single',
+      }),
+      createSurface: vi.fn(
+        () =>
+          new Promise<DocumentSurface>((resolve) => {
+            finishSurface = resolve;
+          }),
+      ),
+    });
+    const cancellation = new AbortController();
+
+    const opening = workspace.intakeRuntime.open({
+      document: { canonicalPath: '/docs/password.pdf', title: 'password.pdf' },
+      bytes: new Uint8Array([1]),
+      activate: false,
+      signal: cancellation.signal,
+    });
+    await vi.waitFor(() => expect(finishSurface).toBeTypeOf('function'));
+    cancellation.abort(new Error('shutdown'));
+    const earlySettlement = await Promise.race([
+      opening.then(
+        () => 'resolved',
+        () => 'rejected',
+      ),
+      new Promise<'pending'>((resolve) => setTimeout(() => resolve('pending'), 20)),
+    ]);
+    finishSurface?.({ rendering: lateSurface.rendering, runtime: lateSurface.runtime as never });
+    await opening.catch(() => undefined);
+
+    expect(earlySettlement).toBe('rejected');
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(lateSurface.rendering.destroy).toHaveBeenCalledOnce();
+    expect(lateSurface.runtime.destroy).toHaveBeenCalledOnce();
   });
 
   it('keeps a failed saved Document provisional until restoration can retry it', async () => {

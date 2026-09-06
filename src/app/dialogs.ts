@@ -27,6 +27,7 @@ function requestDialogValue<T>({
   submitValue,
   focusTarget,
   afterFocus,
+  signal,
 }: {
   dialog: HTMLDialogElement;
   form: HTMLFormElement;
@@ -36,6 +37,7 @@ function requestDialogValue<T>({
   submitValue: () => T | typeof KEEP_DIALOG_OPEN;
   focusTarget: HTMLElement;
   afterFocus?: () => void;
+  signal?: AbortSignal;
 }): Promise<T> {
   return new Promise((resolve) => {
     let settled = false;
@@ -45,6 +47,7 @@ function requestDialogValue<T>({
       form.removeEventListener('submit', handleSubmit);
       cancelButton.removeEventListener('click', handleCancel);
       dialog.removeEventListener('cancel', handleDialogCancel);
+      signal?.removeEventListener('abort', handleAbort);
       if (dialog.open) dialog.close();
       resolve(value);
     };
@@ -54,6 +57,7 @@ function requestDialogValue<T>({
       if (value !== KEEP_DIALOG_OPEN) finish(value);
     };
     const handleCancel = () => finish(cancelValue);
+    const handleAbort = () => finish(cancelValue);
     const handleDialogCancel = (event: Event) => {
       event.preventDefault();
       if (dismissValue !== KEEP_DIALOG_OPEN) finish(dismissValue);
@@ -62,6 +66,11 @@ function requestDialogValue<T>({
     form.addEventListener('submit', handleSubmit);
     cancelButton.addEventListener('click', handleCancel);
     dialog.addEventListener('cancel', handleDialogCancel);
+    if (signal?.aborted) {
+      finish(cancelValue);
+      return;
+    }
+    signal?.addEventListener('abort', handleAbort, { once: true });
     dialog.showModal();
     focusTarget.focus();
     afterFocus?.();
@@ -71,6 +80,7 @@ function requestDialogValue<T>({
 export function requestPdfPassword(
   fileName: string,
   reason: PasswordRequestReason,
+  signal?: AbortSignal,
 ): Promise<string | null> {
   const dialog = requireDialog('password-dialog');
   const form = dialog.querySelector<HTMLFormElement>('form');
@@ -99,6 +109,7 @@ export function requestPdfPassword(
     cancelValue: null,
     submitValue: () => input.value || KEEP_DIALOG_OPEN,
     focusTarget: input,
+    ...(signal ? { signal } : {}),
   });
 }
 

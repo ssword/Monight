@@ -19,18 +19,34 @@ export function createPersistenceCoordinator(
 ): PersistenceCoordinator {
   return {
     async flush() {
+      const failures: unknown[] = [];
       const actions = options.readerActions();
-      await actions?.quiesce();
-      if (actions && options.shouldPersistReadingSession()) {
-        const observedPosition = options.activeReadingPosition();
-        if (observedPosition) {
-          await actions.dispatch({ type: 'settleReadingPosition', ...observedPosition });
+      try {
+        await actions?.quiesce();
+        if (actions && options.shouldPersistReadingSession()) {
+          const observedPosition = options.activeReadingPosition();
+          if (observedPosition) {
+            await actions.dispatch({ type: 'settleReadingPosition', ...observedPosition });
+          }
+          await actions.flush();
         }
-        await actions.flush();
+      } catch (error) {
+        failures.push(error);
       }
 
-      await options.annotations()?.flush();
-      await options.recentDocuments()?.flush();
+      try {
+        await options.annotations()?.flush();
+      } catch (error) {
+        failures.push(error);
+      }
+      try {
+        await options.recentDocuments()?.flush();
+      } catch (error) {
+        failures.push(error);
+      }
+      if (failures.length > 0) {
+        throw new AggregateError(failures, 'Failed to flush one or more durable authorities');
+      }
     },
   };
 }

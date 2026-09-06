@@ -1,3 +1,4 @@
+import { awaitAbortableWork } from '../lib/abortable-work';
 import type { DocumentMetadata, PdfSource } from './pdf-source';
 import type { PersistedReadingSession, ReadingSessionDocument } from './reader-actions';
 import type { DocumentPathReconciliation } from './reading-session';
@@ -6,6 +7,11 @@ export type { DocumentMetadata, PdfSource } from './pdf-source';
 
 export interface DocumentRuntimeActivateOptions {
   notifyOpened?: boolean;
+  signal?: AbortSignal;
+}
+
+export interface DocumentRuntimeOperationOptions {
+  signal?: AbortSignal;
 }
 
 export interface DocumentRuntimeOpenRequest {
@@ -15,18 +21,23 @@ export interface DocumentRuntimeOpenRequest {
   initialPage?: number;
   notifyOpened?: boolean;
   restoredDocument?: ReadingSessionDocument;
+  signal?: AbortSignal;
 }
 
 export interface DocumentRuntimeIntake {
   isOpen(filePath: string): boolean;
   activate(filePath: string, options?: DocumentRuntimeActivateOptions): Promise<void>;
-  notifyOpened?(filePath: string): Promise<void>;
+  notifyOpened?(filePath: string, options?: DocumentRuntimeOperationOptions): Promise<void>;
   open(request: DocumentRuntimeOpenRequest): Promise<void>;
-  goToPage(filePath: string, page: number): Promise<void>;
+  goToPage(
+    filePath: string,
+    page: number,
+    options?: DocumentRuntimeOperationOptions,
+  ): Promise<void>;
   restoreExistingDocument?(
     filePath: string,
     document: ReadingSessionDocument,
-    options: { preserveReadingPosition: boolean },
+    options: { preserveReadingPosition: boolean; signal?: AbortSignal },
   ): Promise<ReadingSessionDocument>;
   canonicalizeDocumentPaths?(paths: readonly DocumentPathReconciliation[]): Promise<void>;
   setDocumentOrder?(filePaths: readonly string[]): void;
@@ -37,6 +48,10 @@ export type DocumentIntakeOutcome =
   | { status: 'activated'; requestedPath: string; filePath: string }
   | { status: 'failed'; requestedPath: string; error: unknown };
 
+export type RestoredDocumentOutcome =
+  | DocumentIntakeOutcome
+  | { status: 'interrupted'; requestedPath: string };
+
 export interface DocumentIntakeResult {
   readonly outcomes: readonly DocumentIntakeOutcome[];
   readonly opened: number;
@@ -45,10 +60,11 @@ export interface DocumentIntakeResult {
 }
 
 export interface RestoreSessionResult {
-  readonly outcomes: readonly DocumentIntakeOutcome[];
+  readonly outcomes: readonly RestoredDocumentOutcome[];
   readonly opened: number;
   readonly failed: number;
   readonly failedPaths: readonly string[];
+  readonly interruptedPaths: readonly string[];
   readonly explicitRequestResult: DocumentIntakeResult;
 }
 
@@ -118,6 +134,7 @@ export interface DocumentIntake {
     session: PersistedReadingSession,
     options?: RestoreReadingSessionOptions,
   ): Promise<RestoreSessionResult>;
+  interruptRestoration(): void;
   stopAccepting(): void;
   quiesce(): Promise<void>;
 }
@@ -158,7 +175,10 @@ export function createDocumentIntake({
   onObserverError = (error) => console.error('Document Intake observer failed:', error),
 }: DocumentIntakeOptions): DocumentIntake {
   let accepting = true;
+  let restorationInterrupted = false;
   const pending = new Set<Promise<unknown>>();
+  const activeRestorations = new Set<AbortController>();
+  const restorationInterruptions = new WeakMap<AbortSignal, Error>();
   const track = <T>(work: Promise<T>): Promise<T> => {
     pending.add(work);
     void work.then(
@@ -181,6 +201,22 @@ export function createDocumentIntake({
     }));
     return summarizeOutcomes(outcomes);
   };
+  const restorationInterruption = (signal: AbortSignal): Error => {
+    let interruption = restorationInterruptions.get(signal);
+    if (!interruption) {
+      interruption = new Error('Reading Session restoration interrupted by shutdown');
+      restorationInterruptions.set(signal, interruption);
+    }
+    return interruption;
+  };
+  const waitForRestorationWork = <T>(work: Promise<T>, signal?: AbortSignal): Promise<T> =>
+    awaitAbortableWork(work, {
+      signal,
+      abortError: () =>
+        signal ? restorationInterruption(signal) : new Error('Restoration interrupted'),
+    });
+  const wasRestorationInterrupted = (error: unknown, signal: AbortSignal): boolean =>
+    signal.aborted && error === restorationInterruption(signal);
 
   const intakeDescribedDocument = async (
     requestedPath: string,
@@ -190,44 +226,73 @@ export function createDocumentIntake({
       initialPage,
       origin,
       restoredDocument,
+      signal,
     }: {
       activate: boolean;
       initialPage?: number;
       origin: DocumentIntakeOrigin;
       restoredDocument?: ReadingSessionDocument;
+      signal?: AbortSignal;
     },
   ): Promise<{
     outcome: Extract<DocumentIntakeOutcome, { status: 'opened' | 'activated' }>;
     preparation: DocumentPreparationResult;
   }> => {
     const notifyOpened = origin === 'explicit';
-    const preparation = await coordinator.prepare(
-      document.canonicalPath,
-      () => runtime.isOpen(document.canonicalPath),
-      async () => {
-        const bytes = await source.read(document.canonicalPath);
-        await runtime.open({
-          document,
-          bytes,
-          activate,
-          ...(initialPage !== undefined ? { initialPage } : {}),
-          notifyOpened,
-          ...(restoredDocument ? { restoredDocument } : {}),
-        });
-      },
+    const preparation = await waitForRestorationWork(
+      coordinator.prepare(
+        document.canonicalPath,
+        () => runtime.isOpen(document.canonicalPath),
+        async () => {
+          const bytes = await waitForRestorationWork(source.read(document.canonicalPath), signal);
+          if (signal?.aborted) throw restorationInterruption(signal);
+          await waitForRestorationWork(
+            runtime.open({
+              document,
+              bytes,
+              activate,
+              ...(initialPage !== undefined ? { initialPage } : {}),
+              notifyOpened,
+              ...(restoredDocument ? { restoredDocument } : {}),
+              ...(signal ? { signal } : {}),
+            }),
+            signal,
+          );
+        },
+      ),
+      signal,
     );
+    if (signal?.aborted) throw restorationInterruption(signal);
     if (preparation === 'existing') {
       if (activate) {
-        if (notifyOpened === false) {
-          await runtime.activate(document.canonicalPath, { notifyOpened: false });
-        } else {
-          await runtime.activate(document.canonicalPath);
-        }
+        const activateOptions =
+          notifyOpened === false || signal
+            ? {
+                ...(notifyOpened === false ? { notifyOpened: false } : {}),
+                ...(signal ? { signal } : {}),
+              }
+            : undefined;
+        await waitForRestorationWork(
+          activateOptions
+            ? runtime.activate(document.canonicalPath, activateOptions)
+            : runtime.activate(document.canonicalPath),
+          signal,
+        );
       } else if (notifyOpened) {
-        await runtime.notifyOpened?.(document.canonicalPath);
+        await waitForRestorationWork(
+          (signal
+            ? runtime.notifyOpened?.(document.canonicalPath, { signal })
+            : runtime.notifyOpened?.(document.canonicalPath)) ?? Promise.resolve(),
+          signal,
+        );
       }
       if (initialPage !== undefined) {
-        await runtime.goToPage(document.canonicalPath, initialPage);
+        await waitForRestorationWork(
+          signal
+            ? runtime.goToPage(document.canonicalPath, initialPage, { signal })
+            : runtime.goToPage(document.canonicalPath, initialPage),
+          signal,
+        );
       }
     }
     const outcome: Extract<DocumentIntakeOutcome, { status: 'opened' | 'activated' }> =
@@ -295,13 +360,19 @@ export function createDocumentIntake({
     }
     const canonicalizeDocumentPaths = runtime.canonicalizeDocumentPaths;
     const setDocumentOrder = runtime.setDocumentOrder;
+    const cancellation = new AbortController();
+    activeRestorations.add(cancellation);
+    restorationInterruption(cancellation.signal);
+    if (restorationInterrupted) {
+      cancellation.abort();
+    }
 
     const completion = (async () => {
       const canonicalPaths = new Map<string, string>();
       const runtimeStateSources = new Set<string>();
       const restoredStateOverrides = new Map<string, ReadingSessionDocument>();
       const handledSavedPaths = new Set<string>();
-      const restoredOutcomes = new Map<string, DocumentIntakeOutcome>();
+      const restoredOutcomes = new Map<string, RestoredDocumentOutcome>();
       const explicitOutcomes: DocumentIntakeOutcome[] = [];
       const explicitCanonicalPaths = new Set<string>();
       const explicitSavedStateSources = new Map<string, string>();
@@ -322,7 +393,7 @@ export function createDocumentIntake({
 
       const recordSavedOutcome = (
         document: ReadingSessionDocument,
-        outcome: DocumentIntakeOutcome,
+        outcome: RestoredDocumentOutcome,
       ): void => {
         handledSavedPaths.add(document.filePath);
         restoredOutcomes.set(document.filePath, outcome);
@@ -341,11 +412,15 @@ export function createDocumentIntake({
         entry: (typeof explicitEntries)[number],
         activate: boolean,
       ): Promise<DocumentIntakeOutcome | null> => {
+        if (cancellation.signal.aborted) return null;
         let savedDocument = session.documents.find(
           (document) => document.filePath === entry.requestedPath,
         );
         try {
-          const described = await source.describe(entry.requestedPath);
+          const described = await waitForRestorationWork(
+            source.describe(entry.requestedPath),
+            cancellation.signal,
+          );
           savedDocument = findSavedDocument(entry.requestedPath, described);
           const restoredDocument = savedDocument
             ? {
@@ -364,6 +439,7 @@ export function createDocumentIntake({
               ...(entry.initialPage !== undefined ? { initialPage: entry.initialPage } : {}),
               origin: 'explicit',
               ...(restoredDocument ? { restoredDocument } : {}),
+              signal: cancellation.signal,
             },
           );
           explicitOutcomes.push(outcome);
@@ -389,6 +465,19 @@ export function createDocumentIntake({
           }
           return outcome;
         } catch (error) {
+          if (wasRestorationInterrupted(error, cancellation.signal)) {
+            const interrupted: RestoredDocumentOutcome = {
+              status: 'interrupted',
+              requestedPath: entry.requestedPath,
+            };
+            if (savedDocument) {
+              recordSavedOutcome(savedDocument, {
+                ...interrupted,
+                requestedPath: savedDocument.filePath,
+              });
+            }
+            return null;
+          }
           explicitOutcomes.push({ status: 'failed', requestedPath: entry.requestedPath, error });
           if (savedDocument) {
             recordSavedOutcome(savedDocument, {
@@ -405,8 +494,12 @@ export function createDocumentIntake({
         document: ReadingSessionDocument,
         activate: boolean,
       ): Promise<DocumentIntakeOutcome | null> => {
+        if (cancellation.signal.aborted) return null;
         try {
-          const described = await source.describe(document.filePath);
+          const described = await waitForRestorationWork(
+            source.describe(document.filePath),
+            cancellation.signal,
+          );
           const restoredDocument = { ...document, filePath: described.canonicalPath };
           const { outcome, preparation } = await intakeDescribedDocument(
             document.filePath,
@@ -415,9 +508,9 @@ export function createDocumentIntake({
               activate,
               origin: 'restoration',
               restoredDocument,
+              signal: cancellation.signal,
             },
           );
-          canonicalPaths.set(document.filePath, described.canonicalPath);
           if (preparation === 'opened') {
             runtimeStateSources.add(document.filePath);
           } else if (
@@ -425,16 +518,28 @@ export function createDocumentIntake({
             !explicitSavedStateSources.has(described.canonicalPath)
           ) {
             const mergedDocument = runtime.restoreExistingDocument
-              ? await runtime.restoreExistingDocument(described.canonicalPath, restoredDocument, {
-                  preserveReadingPosition: explicitPageOverrides.has(described.canonicalPath),
-                })
+              ? await waitForRestorationWork(
+                  runtime.restoreExistingDocument(described.canonicalPath, restoredDocument, {
+                    preserveReadingPosition: explicitPageOverrides.has(described.canonicalPath),
+                    signal: cancellation.signal,
+                  }),
+                  cancellation.signal,
+                )
               : restoredDocument;
             restoredStateOverrides.set(document.filePath, mergedDocument);
             explicitSavedStateSources.set(described.canonicalPath, document.filePath);
           }
+          canonicalPaths.set(document.filePath, described.canonicalPath);
           recordSavedOutcome(document, outcome);
           return outcome;
         } catch (error) {
+          if (wasRestorationInterrupted(error, cancellation.signal)) {
+            recordSavedOutcome(document, {
+              status: 'interrupted',
+              requestedPath: document.filePath,
+            });
+            return null;
+          }
           recordSavedOutcome(document, {
             status: 'failed',
             requestedPath: document.filePath,
@@ -453,6 +558,7 @@ export function createDocumentIntake({
       };
 
       for (const entry of explicitEntries) {
+        if (cancellation.signal.aborted) break;
         const outcome = await processExplicitEntry(entry, !hasForegroundDocument);
         await handOffForegroundDocument(outcome);
       }
@@ -463,6 +569,7 @@ export function createDocumentIntake({
       }
 
       for (const document of remainingSavedDocuments) {
+        if (cancellation.signal.aborted) break;
         if (handledSavedPaths.has(document.filePath)) continue;
         const outcome = await processSavedDocument(document, !hasForegroundDocument);
         await handOffForegroundDocument(outcome);
@@ -497,14 +604,20 @@ export function createDocumentIntake({
       const failedPaths = outcomes.flatMap((outcome) =>
         outcome.status === 'failed' ? [outcome.requestedPath] : [],
       );
+      const interruptedPaths = outcomes.flatMap((outcome) =>
+        outcome.status === 'interrupted' ? [outcome.requestedPath] : [],
+      );
       return {
         outcomes,
-        opened: outcomes.length - failedPaths.length,
+        opened: outcomes.length - failedPaths.length - interruptedPaths.length,
         failed: failedPaths.length,
         failedPaths,
+        interruptedPaths,
         explicitRequestResult: summarizeOutcomes(explicitOutcomes),
       };
-    })();
+    })().finally(() => {
+      activeRestorations.delete(cancellation);
+    });
 
     return track(completion);
   };
@@ -518,6 +631,12 @@ export function createDocumentIntake({
     begin,
     open,
     restore,
+    interruptRestoration() {
+      restorationInterrupted = true;
+      for (const restoration of activeRestorations) {
+        restoration.abort();
+      }
+    },
     stopAccepting() {
       accepting = false;
     },

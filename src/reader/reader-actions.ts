@@ -896,6 +896,9 @@ export function createReaderActions({
       if (action.type === 'registerDocument') {
         return enqueueGlobal(async () => {
           const current = session.snapshot();
+          if (options?.isCancelled?.()) {
+            return { status: 'superseded', revision: current.revision };
+          }
           const existingRuntime = runtimes.get(action.document.filePath);
           if (existingRuntime && existingRuntime.runtime !== action.runtime) {
             try {
@@ -920,6 +923,9 @@ export function createReaderActions({
           if (action.activate) {
             const activationFailure = await projectActivation(document, readingPosition);
             if (activationFailure) return activationFailure;
+            if (options?.isCancelled?.()) {
+              return { status: 'superseded', revision: revision() };
+            }
           }
           if (!existingRuntime) {
             const nextGeneration = (runtimeGenerations.get(action.document.filePath) ?? 0) + 1;
@@ -952,11 +958,17 @@ export function createReaderActions({
         }
         return enqueueGlobal(async () => {
           const current = session.snapshot();
+          if (options?.isCancelled?.()) {
+            return { status: 'superseded', revision: current.revision };
+          }
           const document = current.documents.find((item) => item.filePath === action.filePath);
           if (!document) return { status: 'no-op', revision: current.revision };
           const readingPosition = action.readingPosition ?? document.readingPosition;
           const activationFailure = await projectActivation(document, readingPosition);
           if (activationFailure) return activationFailure;
+          if (options?.isCancelled?.()) {
+            return { status: 'superseded', revision: revision() };
+          }
           const latest = session.snapshot();
           const latestDocument = latest.documents.find(
             (item) => item.filePath === document.filePath,

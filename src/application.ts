@@ -182,7 +182,6 @@ const getInitialViewMode = (): ViewMode => {
 };
 
 let lastFilterSaveTimer: number | null = null;
-let isRestoringSession = false;
 
 const getActivePresentation = () => documentWorkspace?.activePresentation() ?? null;
 
@@ -284,11 +283,7 @@ const persistence = createPersistenceCoordinator({
   recentDocuments: () => recentDocumentAuthority,
   activeReadingPosition: () => documentWorkspace?.activeReadingPosition() ?? null,
   shouldPersistReadingSession: () =>
-    Boolean(
-      readingSessionStorage &&
-        currentSettings?.general.restorePreviousSession &&
-        !isRestoringSession,
-    ),
+    Boolean(readingSessionStorage && currentSettings?.general.restorePreviousSession),
 });
 
 const chooseAfterFinalSaveFailure = async (): Promise<FinalSaveFailureChoice> =>
@@ -311,41 +306,36 @@ const restoreStartupReadingSession = async (
     : EMPTY_READING_SESSION;
   if (session.documents.length === 0 && payloads.length === 0) return 0;
 
-  isRestoringSession = true;
-  try {
-    const result = await restoreReadingSessionAtStartup({
-      intake: startupDocumentIntake,
-      session,
-      explicitRequests: payloads.map(({ files, page }) => ({
-        paths: files,
-        ...(page !== null && page > 0 ? { page } : {}),
-      })),
-      onForegroundReady: async () => {
-        if (applicationShutdown?.isShutdownRequested()) return;
-        showViewer();
-        const hasDocument = (readerActions?.snapshot().documents.length ?? 0) > 0;
-        updateTabBarVisibility(hasDocument);
-        await updatePrintMenuState(hasDocument);
-        await applyWindowAfterOpen();
-        const currentWindow = getCurrentWebviewWindow();
-        await currentWindow.show();
-        await currentWindow.setFocus();
-      },
-      pruneDocument: async (filePath) => {
-        const outcome = await readerActions?.dispatch({ type: 'removeDocument', filePath });
-        if (outcome?.status === 'failure') throw outcome.error;
-      },
-      reportFailure: (message) => showToast(message, 'error'),
-    });
-    reportDocumentIntakeOutcomes(result.explicitRequestResult);
-    const hasDocument = (readerActions?.snapshot().documents.length ?? 0) > 0;
-    updateTabBarVisibility(hasDocument);
-    await updatePrintMenuState(hasDocument);
+  const result = await restoreReadingSessionAtStartup({
+    intake: startupDocumentIntake,
+    session,
+    explicitRequests: payloads.map(({ files, page }) => ({
+      paths: files,
+      ...(page !== null && page > 0 ? { page } : {}),
+    })),
+    onForegroundReady: async () => {
+      if (applicationShutdown?.isShutdownRequested()) return;
+      showViewer();
+      const hasDocument = (readerActions?.snapshot().documents.length ?? 0) > 0;
+      updateTabBarVisibility(hasDocument);
+      await updatePrintMenuState(hasDocument);
+      await applyWindowAfterOpen();
+      const currentWindow = getCurrentWebviewWindow();
+      await currentWindow.show();
+      await currentWindow.setFocus();
+    },
+    pruneDocument: async (filePath) => {
+      const outcome = await readerActions?.dispatch({ type: 'removeDocument', filePath });
+      if (outcome?.status === 'failure') throw outcome.error;
+    },
+    reportFailure: (message) => showToast(message, 'error'),
+  });
+  reportDocumentIntakeOutcomes(result.explicitRequestResult);
+  const hasDocument = (readerActions?.snapshot().documents.length ?? 0) > 0;
+  updateTabBarVisibility(hasDocument);
+  await updatePrintMenuState(hasDocument);
 
-    return readerActions?.snapshot().documents.length ?? 0;
-  } finally {
-    isRestoringSession = false;
-  }
+  return readerActions?.snapshot().documents.length ?? 0;
 };
 
 export async function initializeApplication(modules: ApplicationModules): Promise<void> {
@@ -361,6 +351,7 @@ export async function initializeApplication(modules: ApplicationModules): Promis
       await invoke('complete_application_quit');
     },
     onShutdownStarted: () => {
+      documentIntake?.interruptRestoration();
       documentIntake?.stopAccepting();
       if (lastFilterSaveTimer !== null) {
         clearTimeout(lastFilterSaveTimer);
@@ -430,9 +421,9 @@ export async function initializeApplication(modules: ApplicationModules): Promis
     const initialReadingSession = restoredReadingSession ?? EMPTY_READING_SESSION;
     documentWorkspace = modules.createDocumentWorkspace({
       dispatchReaderAction: dispatchReaderActionOutcome,
-      dispatchAcceptedIntakeAction: async (action) => {
+      dispatchAcceptedIntakeAction: async (action, options) => {
         if (!readerActions) throw new Error('Reader Actions are unavailable');
-        return readerActions.dispatch(action);
+        return readerActions.dispatch(action, options);
       },
       acceptsReaderActions: acceptsReaderWork,
       snapshot: () => readerActions?.snapshot() ?? { ...initialReadingSession, revision: 0 },
@@ -490,7 +481,10 @@ export async function initializeApplication(modules: ApplicationModules): Promis
       },
     });
     documentIntake = startupDocumentIntake;
-    if (shutdown.isShutdownRequested()) documentIntake.stopAccepting();
+    if (shutdown.isShutdownRequested()) {
+      documentIntake.interruptRestoration();
+      documentIntake.stopAccepting();
+    }
     let observedActiveDocumentPath = readerActions.snapshot().activeDocumentPath;
     readerActions.observe((snapshot) => {
       documentWorkspace?.project(snapshot);
