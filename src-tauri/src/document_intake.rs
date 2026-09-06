@@ -59,7 +59,8 @@ impl DocumentIntake {
     }
 
     pub(crate) fn authorize_persisted_snapshot(&self, persisted_store: &serde_json::Value) {
-        const PERSISTED_DOCUMENT_LISTS: [&str; 6] = [
+        const PERSISTED_DOCUMENT_LISTS: [&str; 7] = [
+            "/recentDocuments/documents",
             "/readingSession/documents",
             "/recentFiles",
             "/settings/readingSession/documents",

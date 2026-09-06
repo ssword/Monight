@@ -1,10 +1,8 @@
-import {
-  viewModeIcon as getViewModeIcon,
-  type RecentFile,
-  viewModeLabel,
-} from '../lib/document-features';
+import { viewModeIcon as getViewModeIcon, viewModeLabel } from '../lib/document-features';
+import type { DocumentRenderingState } from '../reader/document-rendering';
+import type { ReadingSessionSnapshot } from '../reader/reader-actions';
+import type { RecentDocument } from '../reader/recent-documents';
 import { type FilterSettings, PRESETS } from '../scripts/filters';
-import type { TabManager } from '../scripts/tabs';
 
 // Show splash screen
 export function showSplash(): void {
@@ -22,7 +20,7 @@ export function showViewer(): void {
   if (viewer) viewer.classList.remove('hidden');
 }
 
-export function renderRecentFiles(recentFiles: readonly RecentFile[]): void {
+export function renderRecentFiles(recentFiles: readonly RecentDocument[]): void {
   const section = document.getElementById('recent-files-section');
   const list = document.getElementById('recent-files-list');
   if (!section || !list) return;
@@ -49,13 +47,11 @@ export function renderRecentFiles(recentFiles: readonly RecentFile[]): void {
 }
 
 // Update tab bar visibility
-export function updateTabBarVisibility(tabManager: TabManager | null): void {
+export function updateTabBarVisibility(hasDocument: boolean): void {
   const tabBar = document.getElementById('tab-bar');
   if (!tabBar) return;
 
-  const hasTab = (tabManager?.size ?? 0) > 0;
-
-  if (hasTab) {
+  if (hasDocument) {
     tabBar.classList.remove('hidden');
   } else {
     tabBar.classList.add('hidden');
@@ -88,14 +84,14 @@ export function updateActivePresetButton(settings: FilterSettings): void {
 }
 
 // Update UI based on viewer state
-export function updateUI(tabManager: TabManager | null): void {
-  const activeTab = tabManager?.getActiveTab();
-  if (!activeTab) return;
-
-  const viewer = tabManager?.getViewerForTab(activeTab.id);
-  if (!viewer) return;
-
-  const state = viewer.getState();
+export function updateUI(
+  readingSession: ReadingSessionSnapshot,
+  state: DocumentRenderingState | null,
+): void {
+  const activeDocument = readingSession.documents.find(
+    ({ filePath }) => filePath === readingSession.activeDocumentPath,
+  );
+  if (!activeDocument || !state) return;
 
   // Update page info
   const pageInput = document.getElementById('page-input') as HTMLInputElement;
@@ -117,7 +113,7 @@ export function updateUI(tabManager: TabManager | null): void {
   // Update file name
   const fileName = document.getElementById('file-name');
   if (fileName) {
-    fileName.textContent = activeTab.title || 'No file loaded';
+    fileName.textContent = activeDocument.title || 'No file loaded';
   }
 
   // Update view mode icon

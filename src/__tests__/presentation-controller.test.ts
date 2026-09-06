@@ -50,7 +50,12 @@ describe('PresentationController', () => {
     };
     const onStateChanged = vi.fn();
     const controller = new PresentationController({
-      getActiveViewer: () => viewer as never,
+      getActivePresentation: () => ({
+        snapshot: viewer.getState,
+        setViewMode: viewer.setViewMode,
+        fitToPage: viewer.fitToPage,
+        setZoomIntent: viewer.setZoomIntent,
+      }),
       onStateChanged,
     });
 
@@ -62,13 +67,57 @@ describe('PresentationController', () => {
     expect(viewer.setViewMode).toHaveBeenCalledWith('single');
     expect(viewer.fitToPage).toHaveBeenCalled();
 
-    await controller.exit();
+    const restore = await controller.exit();
 
     expect(controller.isActive()).toBe(false);
     expect(document.body.classList.contains('presentation-mode')).toBe(false);
     expect(currentWindow.setFullscreen).toHaveBeenLastCalledWith(false);
     expect(viewer.setViewMode).toHaveBeenLastCalledWith('spread');
     expect(viewer.setZoomIntent).toHaveBeenCalledWith({ kind: 'fit-width' });
+    expect(onStateChanged.mock.calls).toEqual([[true], [false]]);
+
+    await restore?.();
+
+    expect(controller.isActive()).toBe(true);
+    expect(document.body.classList.contains('presentation-mode')).toBe(true);
+    expect(currentWindow.setFullscreen).toHaveBeenLastCalledWith(true);
+    expect(onStateChanged.mock.calls).toEqual([[true], [false], [true]]);
+  });
+
+  it('exits presentation without restoring Visual State before close', async () => {
+    const { PresentationController } = await import('../app/presentation-controller');
+    const viewer = {
+      getState: () => ({
+        viewMode: 'spread' as const,
+        zoom: 1.75,
+        zoomIntent: { kind: 'fit-width' as const },
+      }),
+      setViewMode: vi.fn(async () => {}),
+      fitToPage: vi.fn(async () => {}),
+      setZoomIntent: vi.fn(async () => {}),
+    };
+    const onStateChanged = vi.fn();
+    const controller = new PresentationController({
+      getActivePresentation: () => ({
+        snapshot: viewer.getState,
+        setViewMode: viewer.setViewMode,
+        fitToPage: viewer.fitToPage,
+        setZoomIntent: viewer.setZoomIntent,
+      }),
+      onStateChanged,
+    });
+
+    await controller.enter();
+    viewer.setViewMode.mockClear();
+    viewer.setZoomIntent.mockClear();
+
+    await controller.exit({ restoreVisualState: false });
+
+    expect(controller.isActive()).toBe(false);
+    expect(document.body.classList.contains('presentation-mode')).toBe(false);
+    expect(currentWindow.setFullscreen).toHaveBeenLastCalledWith(false);
+    expect(viewer.setViewMode).not.toHaveBeenCalled();
+    expect(viewer.setZoomIntent).not.toHaveBeenCalled();
     expect(onStateChanged.mock.calls).toEqual([[true], [false]]);
   });
 });

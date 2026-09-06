@@ -14,11 +14,9 @@ describe('setupEventListeners', () => {
     } as unknown as KeybindManager;
 
     setupEventListeners({
-      tabManager: null,
       sliderManager: null,
       keybindManager,
       openPdfAndRefresh: vi.fn(async () => undefined),
-      printCurrentPDF: vi.fn(async () => undefined),
       updateUI: vi.fn(),
       activateDocument: vi.fn(async () => undefined),
       openRecentFile: vi.fn(async () => undefined),
@@ -47,11 +45,9 @@ describe('setupEventListeners', () => {
     const activateDocument = vi.fn(async () => undefined);
 
     setupEventListeners({
-      tabManager: {} as never,
       sliderManager: null,
       keybindManager: null,
       openPdfAndRefresh: vi.fn(async () => undefined),
-      printCurrentPDF: vi.fn(async () => undefined),
       updateUI: vi.fn(),
       activateDocument,
       openRecentFile: vi.fn(async () => undefined),
@@ -76,16 +72,15 @@ describe('setupEventListeners', () => {
       <button id="fit-width"></button>
       <button id="fit-page"></button>
       <button id="toggle-view-mode"></button>
+      <button id="print-file"></button>
       <button id="preset-original" class="preset-btn"></button>
     `;
     const dispatchReaderAction = vi.fn(async (_action: unknown) => undefined);
 
     setupEventListeners({
-      tabManager: null,
       sliderManager: null,
       keybindManager: null,
       openPdfAndRefresh: vi.fn(async () => undefined),
-      printCurrentPDF: vi.fn(async () => undefined),
       updateUI: vi.fn(),
       activateDocument: vi.fn(async () => undefined),
       openRecentFile: vi.fn(async () => undefined),
@@ -101,11 +96,12 @@ describe('setupEventListeners', () => {
       'fit-width',
       'fit-page',
       'toggle-view-mode',
+      'print-file',
       'preset-original',
     ]) {
       document.getElementById(id)?.click();
     }
-    await vi.waitFor(() => expect(dispatchReaderAction).toHaveBeenCalledTimes(6));
+    await vi.waitFor(() => expect(dispatchReaderAction).toHaveBeenCalledTimes(7));
 
     expect(dispatchReaderAction.mock.calls.map(([action]) => action)).toEqual([
       { type: 'zoomIn' },
@@ -113,6 +109,7 @@ describe('setupEventListeners', () => {
       { type: 'setZoomIntent', zoomIntent: { kind: 'fit-width' } },
       { type: 'setZoomIntent', zoomIntent: { kind: 'fit-page' } },
       { type: 'cycleViewMode' },
+      { type: 'printDocument' },
       {
         type: 'setFilterSettings',
         filterSettings: {

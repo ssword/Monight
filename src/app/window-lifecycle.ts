@@ -10,30 +10,120 @@ export interface ClosableWindow {
 }
 
 export type FinalSaveFailureChoice = 'retry' | 'discard';
+export type ApplicationShutdownRequest = 'close-main-window' | 'quit-application';
 
-/** Finish the final Reading Session save before allowing the app window to disappear. */
-export async function registerReadingSessionCloseGuard(
-  appWindow: ClosableWindow,
-  saveReadingSession: () => Promise<void>,
-  chooseAfterFailure: (error: unknown) => Promise<FinalSaveFailureChoice> = async () => 'discard',
-): Promise<() => void> {
-  let closing = false;
+interface ApplicationShutdownCoordinatorOptions {
+  flush: () => Promise<void>;
+  closeMainWindow: () => Promise<void>;
+  quitApplication: () => Promise<void>;
+  chooseAfterFailure?: (error: unknown) => Promise<FinalSaveFailureChoice>;
+  onShutdownStarted?: () => void;
+}
 
-  return appWindow.onCloseRequested(async (event) => {
-    event.preventDefault();
-    if (closing) return;
-    closing = true;
+export interface ApplicationShutdownCoordinator {
+  request(request: ApplicationShutdownRequest): Promise<void>;
+  markReady(): void;
+  isShutdownRequested(): boolean;
+  completion(): Promise<void> | null;
+}
 
-    while (true) {
-      try {
-        await saveReadingSession();
-        break;
-      } catch (error) {
-        console.error('Failed to save Reading Session before close:', error);
-        if ((await chooseAfterFailure(error)) === 'discard') break;
-      }
+interface RegisterApplicationShutdownHandlersOptions {
+  mainWindow: ClosableWindow;
+  listen(
+    event: 'application-quit-requested',
+    handler: () => void | Promise<void>,
+  ): Promise<() => void>;
+  takePendingApplicationQuit(): Promise<boolean>;
+  coordinator: ApplicationShutdownCoordinator;
+}
+
+async function completeFinalPersistence(
+  flushDurableAuthorities: () => Promise<void>,
+  chooseAfterFailure: (error: unknown) => Promise<FinalSaveFailureChoice>,
+): Promise<void> {
+  while (true) {
+    try {
+      await flushDurableAuthorities();
+      return;
+    } catch (error) {
+      console.error(
+        'Failed to flush Reading Session, Annotations, or Recent Documents before exit:',
+        error,
+      );
+      if ((await chooseAfterFailure(error)) === 'discard') return;
     }
+  }
+}
 
-    await appWindow.destroy();
+export function createApplicationShutdownCoordinator({
+  flush,
+  closeMainWindow,
+  quitApplication,
+  chooseAfterFailure = async () => 'discard',
+  onShutdownStarted,
+}: ApplicationShutdownCoordinatorOptions): ApplicationShutdownCoordinator {
+  let requestedEffect: ApplicationShutdownRequest | null = null;
+  let teardownEffect: ApplicationShutdownRequest | null = null;
+  let operation: Promise<void> | null = null;
+  let releaseReady!: () => void;
+  let ready = false;
+  const readyPromise = new Promise<void>((resolve) => {
+    releaseReady = resolve;
   });
+  const quitWasRequested = (): boolean => requestedEffect === 'quit-application';
+
+  const request = (next: ApplicationShutdownRequest): Promise<void> => {
+    const firstRequest = requestedEffect === null;
+    if (teardownEffect === null && requestedEffect !== 'quit-application') requestedEffect = next;
+    if (firstRequest) onShutdownStarted?.();
+
+    operation ??= (async () => {
+      await readyPromise;
+      await completeFinalPersistence(flush, chooseAfterFailure);
+      teardownEffect = quitWasRequested() ? 'quit-application' : 'close-main-window';
+
+      if (teardownEffect === 'quit-application') {
+        await quitApplication();
+        return;
+      }
+
+      await closeMainWindow();
+    })();
+    return operation;
+  };
+
+  return {
+    request,
+    markReady() {
+      if (ready) return;
+      ready = true;
+      releaseReady();
+    },
+    isShutdownRequested: () => requestedEffect !== null,
+    completion: () => operation,
+  };
+}
+
+export async function registerApplicationShutdownHandlers({
+  mainWindow,
+  listen,
+  takePendingApplicationQuit,
+  coordinator,
+}: RegisterApplicationShutdownHandlersOptions): Promise<() => void> {
+  const releaseClose = await mainWindow.onCloseRequested((event) => {
+    event.preventDefault();
+    return coordinator.request('close-main-window');
+  });
+  const releaseQuit = await listen('application-quit-requested', () =>
+    coordinator.request('quit-application'),
+  );
+
+  if (await takePendingApplicationQuit()) {
+    void coordinator.request('quit-application');
+  }
+
+  return () => {
+    releaseClose();
+    releaseQuit();
+  };
 }

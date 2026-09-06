@@ -84,6 +84,34 @@ function createForegroundSignal() {
 }
 
 describe('Reading Session restoration', () => {
+  it('does not emit explicit Recent Document observer semantics', async () => {
+    const onSucceeded = vi.fn();
+    const runtime: DocumentRuntimeIntake = {
+      isOpen: vi.fn(() => false),
+      activate: vi.fn(async () => undefined),
+      open: vi.fn(async () => undefined),
+      goToPage: vi.fn(async () => undefined),
+      canonicalizeDocumentPaths: vi.fn(async () => undefined),
+      setDocumentOrder: vi.fn(),
+    };
+    const intake = createDocumentIntake({
+      source: {
+        describe: async (path) => ({ canonicalPath: path, title: 'restored.pdf' }),
+        read: async () => new Uint8Array([1]),
+      },
+      runtime,
+      onSucceeded,
+    });
+
+    await intake.restore({
+      schemaVersion: 2,
+      activeDocumentPath: '/docs/restored.pdf',
+      documents: [savedDocument('/docs/restored.pdf', 3)],
+    });
+
+    expect(onSucceeded).not.toHaveBeenCalled();
+  });
+
   it('intakes the explicit startup Document first with saved Visual State and page precedence', async () => {
     const events: string[] = [];
     const { intake, runtime } = createRestoringIntake(
@@ -127,6 +155,7 @@ describe('Reading Session restoration', () => {
       activate: true,
       initialPage: 12,
       notifyOpened: true,
+      signal: expect.any(AbortSignal),
       restoredDocument: {
         ...explicit,
         readingPosition: { page: 12, location: 0 },
@@ -470,7 +499,7 @@ describe('Reading Session restoration', () => {
         filePath: '/docs/report.pdf',
         visualState: saved.visualState,
       }),
-      { preserveReadingPosition: true },
+      expect.objectContaining({ preserveReadingPosition: true }),
     );
     expect(runtime.canonicalizeDocumentPaths).toHaveBeenCalledWith([
       expect.objectContaining({
@@ -525,7 +554,7 @@ describe('Reading Session restoration', () => {
     expect(runtime.restoreExistingDocument).toHaveBeenCalledWith(
       '/docs/report.pdf',
       expect.objectContaining({ readingPosition: { page: 3, location: 0.25 } }),
-      { preserveReadingPosition: true },
+      expect.objectContaining({ preserveReadingPosition: true }),
     );
     expect(runtime.canonicalizeDocumentPaths).toHaveBeenCalledWith([
       {
@@ -744,6 +773,202 @@ describe('Reading Session restoration', () => {
       failed: 1,
       failedPaths: ['/docs/one.pdf'],
     });
+  });
+
+  it('interrupts pending restoration without pruning it or scheduling later Reading Session Documents', async () => {
+    let passwordRequested = false;
+    const open = vi.fn(
+      async ({
+        document,
+        signal,
+      }: {
+        document: { canonicalPath: string };
+        signal?: AbortSignal;
+      }) => {
+        if (document.canonicalPath !== '/docs/password.pdf') return;
+        passwordRequested = true;
+        await new Promise<void>((_resolve, reject) => {
+          signal?.addEventListener('abort', () => reject(signal.reason), { once: true });
+        });
+      },
+    );
+    const { intake, runtime } = createRestoringIntake({ open });
+    const session: PersistedReadingSession = {
+      schemaVersion: 2,
+      activeDocumentPath: '/docs/active.pdf',
+      documents: [
+        savedDocument('/docs/active.pdf', 1),
+        savedDocument('/docs/password.pdf', 2),
+        savedDocument('/docs/later.pdf', 3),
+      ],
+    };
+
+    const restoration = intake.restore(session);
+    await vi.waitFor(() => expect(passwordRequested).toBe(true));
+    intake.interruptRestoration();
+
+    await expect(restoration).resolves.toMatchObject({
+      opened: 1,
+      failed: 0,
+      failedPaths: [],
+      interruptedPaths: ['/docs/password.pdf'],
+    });
+    expect(
+      (runtime.open as ReturnType<typeof vi.fn>).mock.calls.map(
+        ([request]) => request.document.canonicalPath,
+      ),
+    ).toEqual(['/docs/active.pdf', '/docs/password.pdf']);
+  });
+
+  it('rejects late background loading completion after interrupted restoration', async () => {
+    let finishBackgroundRead: ((bytes: Uint8Array) => void) | undefined;
+    const { intake, runtime } = createRestoringIntake(
+      {},
+      {
+        read: async (filePath) => {
+          if (filePath !== '/docs/background.pdf') return new Uint8Array([1]);
+          return new Promise<Uint8Array>((resolve) => {
+            finishBackgroundRead = resolve;
+          });
+        },
+      },
+    );
+    const session: PersistedReadingSession = {
+      schemaVersion: 2,
+      activeDocumentPath: '/docs/active.pdf',
+      documents: [savedDocument('/docs/active.pdf', 1), savedDocument('/docs/background.pdf', 2)],
+    };
+
+    const restoration = intake.restore(session);
+    await vi.waitFor(() => expect(finishBackgroundRead).toBeTypeOf('function'));
+    intake.interruptRestoration();
+    const earlySettlement = await Promise.race([
+      restoration.then(() => 'resolved'),
+      new Promise<'pending'>((resolve) => setTimeout(() => resolve('pending'), 20)),
+    ]);
+    finishBackgroundRead?.(new Uint8Array([2]));
+    const result = await restoration;
+
+    expect(earlySettlement).toBe('resolved');
+    expect(result).toMatchObject({
+      failedPaths: [],
+      interruptedPaths: ['/docs/background.pdf'],
+    });
+    expect(runtime.open).toHaveBeenCalledTimes(1);
+    expect(runtime.open).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        document: expect.objectContaining({ canonicalPath: '/docs/background.pdf' }),
+      }),
+    );
+  });
+
+  it('does not start restoration after shutdown was requested during initialization', async () => {
+    const describe = vi.fn(async (filePath: string) => ({
+      canonicalPath: filePath,
+      title: filePath.split('/').pop() ?? filePath,
+    }));
+    const { intake, runtime } = createRestoringIntake({}, { describe });
+    const session: PersistedReadingSession = {
+      schemaVersion: 2,
+      activeDocumentPath: '/docs/active.pdf',
+      documents: [savedDocument('/docs/active.pdf', 1), savedDocument('/docs/later.pdf', 2)],
+    };
+
+    intake.interruptRestoration();
+    const result = await intake.restore(session);
+
+    expect(result).toMatchObject({ opened: 0, failed: 0, failedPaths: [], interruptedPaths: [] });
+    expect(describe).not.toHaveBeenCalled();
+    expect(runtime.open).not.toHaveBeenCalled();
+  });
+
+  it('interrupts blocked Reading Session state projection without canonicalizing its late result', async () => {
+    let finishProjection: (() => void) | undefined;
+    const opened = new Set<string>();
+    const { intake, runtime } = createRestoringIntake(
+      {
+        isOpen: vi.fn((filePath: string) => opened.has(filePath)),
+        open: vi.fn(async ({ document }) => {
+          opened.add(document.canonicalPath);
+        }),
+        restoreExistingDocument: vi.fn(
+          (): Promise<ReadingSessionDocument> =>
+            new Promise<ReadingSessionDocument>((resolve) => {
+              finishProjection = () =>
+                resolve({
+                  ...savedDocument('/docs/report.pdf', 7),
+                  readingPosition: { page: 12, location: 0.5 },
+                });
+            }),
+        ),
+      },
+      {
+        describe: async (filePath) => ({
+          canonicalPath: '/docs/report.pdf',
+          title: filePath.split('/').pop() ?? filePath,
+        }),
+      },
+    );
+    const session: PersistedReadingSession = {
+      schemaVersion: 2,
+      activeDocumentPath: '/alias/report.pdf',
+      documents: [savedDocument('/alias/report.pdf', 7)],
+    };
+
+    const restoration = intake.restore(session, {
+      explicitRequests: [{ paths: ['/docs/report.pdf'], page: 12 }],
+    });
+    await vi.waitFor(() => expect(finishProjection).toBeTypeOf('function'));
+    intake.interruptRestoration();
+    const earlySettlement = await Promise.race([
+      restoration.then(() => 'resolved'),
+      new Promise<'pending'>((resolve) => setTimeout(() => resolve('pending'), 20)),
+    ]);
+    finishProjection?.();
+    const result = await restoration;
+
+    expect(earlySettlement).toBe('resolved');
+    expect(result).toMatchObject({
+      failedPaths: [],
+      interruptedPaths: ['/alias/report.pdf'],
+    });
+    expect(runtime.canonicalizeDocumentPaths).toHaveBeenCalledWith([]);
+  });
+
+  it('interrupts blocked reactivation of an already-open Reading Session Document', async () => {
+    let finishActivation: (() => void) | undefined;
+    const { intake, runtime } = createRestoringIntake({
+      isOpen: vi.fn(() => true),
+      activate: vi.fn(
+        () =>
+          new Promise<void>((resolve) => {
+            finishActivation = resolve;
+          }),
+      ),
+    });
+    const session: PersistedReadingSession = {
+      schemaVersion: 2,
+      activeDocumentPath: '/docs/active.pdf',
+      documents: [savedDocument('/docs/active.pdf', 7)],
+    };
+
+    const restoration = intake.restore(session);
+    await vi.waitFor(() => expect(finishActivation).toBeTypeOf('function'));
+    intake.interruptRestoration();
+    const earlySettlement = await Promise.race([
+      restoration.then(() => 'resolved'),
+      new Promise<'pending'>((resolve) => setTimeout(() => resolve('pending'), 20)),
+    ]);
+    finishActivation?.();
+    const result = await restoration;
+
+    expect(earlySettlement).toBe('resolved');
+    expect(result).toMatchObject({
+      opened: 0,
+      failedPaths: [],
+      interruptedPaths: ['/docs/active.pdf'],
+    });
+    expect(runtime.canonicalizeDocumentPaths).toHaveBeenCalledWith([]);
   });
 
   it('does not canonicalize a restored alias whose transactional open failed', async () => {

@@ -1,9 +1,6 @@
 import type { DragDropEvent } from '@tauri-apps/api/webview';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { DocumentIntakeResult } from '../reader/document-intake';
-import { PRESETS } from '../scripts/filters';
-import type { SettingsManager } from '../scripts/settings';
-import type { TabManager } from '../scripts/tabs';
+import type { DocumentIntake, DocumentIntakeResult } from '../reader/document-intake';
 
 const mocks = vi.hoisted(() => {
   let dragDropHandler: ((event: { payload: DragDropEvent }) => void | Promise<void>) | undefined;
@@ -37,6 +34,9 @@ const mocks = vi.hoisted(() => {
         return vi.fn();
       },
     ),
+    show: vi.fn(async () => undefined),
+    unminimize: vi.fn(async () => undefined),
+    setFocus: vi.fn(async () => undefined),
     getDragDropHandler: () => dragDropHandler,
     resetDragDropHandler: () => {
       dragDropHandler = undefined;
@@ -55,6 +55,9 @@ vi.mock('@tauri-apps/api/webviewWindow', () => ({
   getCurrentWebviewWindow: () => ({
     isFullscreen: vi.fn(async () => false),
     setFullscreen: vi.fn(async () => undefined),
+    show: mocks.show,
+    unminimize: mocks.unminimize,
+    setFocus: mocks.setFocus,
   }),
 }));
 vi.mock('../app/file-actions', () => ({
@@ -82,28 +85,26 @@ describe('Tauri drag and drop events', () => {
   });
 
   const context = (overrides: Record<string, unknown> = {}) => ({
-    tabManager: {} as TabManager,
+    intake: {} as DocumentIntake,
+    getActiveDocumentPath: () => null,
     settingsManager: null,
     keybindManager: null,
     isMac: true,
     openPdfAndRefresh: vi.fn(async () => undefined),
-    getInitialFilterSettings: () => ({ ...PRESETS.default }),
-    getInitialViewMode: () => 'single' as const,
     handleStartupExternalOpenPayloads: vi.fn(async () => undefined),
     reloadSettings: vi.fn(async () => undefined),
-    readingHistoryCleared: vi.fn(),
+    clearReadingHistory: vi.fn(async () => undefined),
     applyWindowAfterOpen: vi.fn(async () => undefined),
     updateTabBarVisibility: vi.fn(),
     updatePrintMenuState: vi.fn(async () => undefined),
-    printCurrentPDF: vi.fn(async () => undefined),
     dispatchReaderAction: vi.fn(async () => undefined),
     ...overrides,
   });
 
   it('uses the Tauri 2 drag/drop API and reads paths from the v2 payload', async () => {
-    const tabManager = {} as TabManager;
+    const intake = {} as DocumentIntake;
 
-    await setupTauriListeners(context({ tabManager }));
+    await setupTauriListeners(context({ intake }));
 
     expect(mocks.onDragDropEvent).toHaveBeenCalledOnce();
     expect(mocks.listen).not.toHaveBeenCalledWith('tauri://file-drop', expect.any(Function));
@@ -131,7 +132,7 @@ describe('Tauri drag and drop events', () => {
     expect(removeClass).toHaveBeenCalledWith('drag-over');
     expect(mocks.intakeFiles).toHaveBeenCalledWith(
       ['/tmp/report.pdf', '/tmp/form.xfdf'],
-      expect.objectContaining({ tabManager }),
+      expect.objectContaining({ intake }),
     );
   });
 
@@ -213,7 +214,7 @@ describe('Tauri drag and drop events', () => {
 
     expect(mocks.intakeFiles).toHaveBeenCalledWith(
       ['/tmp/live.pdf'],
-      expect.objectContaining({ tabManager: expect.anything() }),
+      expect.objectContaining({ intake: expect.anything() }),
     );
   });
 
@@ -231,24 +232,36 @@ describe('Tauri drag and drop events', () => {
 
     expect(mocks.intakeFiles).toHaveBeenCalledWith(
       ['/tmp/associated.pdf', '/tmp/missing.pdf'],
-      expect.objectContaining({ tabManager: expect.anything() }),
+      expect.objectContaining({ intake: expect.anything() }),
     );
+    expect(mocks.show).toHaveBeenCalledOnce();
+    expect(mocks.unminimize).toHaveBeenCalledOnce();
+    expect(mocks.setFocus).toHaveBeenCalledOnce();
   });
 
   it('handles the Settings clear-history request in the main window', async () => {
-    const clearReadingHistory = vi.fn(async () => undefined);
-    const readingHistoryCleared = vi.fn();
-    await setupTauriListeners(
-      context({
-        settingsManager: { clearReadingHistory } as unknown as SettingsManager,
-        readingHistoryCleared,
-      }),
+    let finishClearing: (() => void) | undefined;
+    const clearReadingHistory = vi.fn(
+      async () =>
+        new Promise<void>((resolve) => {
+          finishClearing = resolve;
+        }),
     );
+    await setupTauriListeners(context({ clearReadingHistory }));
 
-    await mocks.getListener('clear-reading-history')?.();
+    const clearing = mocks.getListener('clear-reading-history')?.();
 
     expect(clearReadingHistory).toHaveBeenCalledOnce();
-    expect(readingHistoryCleared).toHaveBeenCalledOnce();
+    let completed = false;
+    void clearing?.then(() => {
+      completed = true;
+    });
+    await Promise.resolve();
+    expect(completed).toBe(false);
+
+    finishClearing?.();
+    await clearing;
+    expect(completed).toBe(true);
   });
 
   it('dispatches native menu zoom as the same typed Reader Action', async () => {
@@ -258,5 +271,31 @@ describe('Tauri drag and drop events', () => {
     await mocks.getListener('menu-zoom-in')?.();
 
     expect(dispatchReaderAction).toHaveBeenCalledWith({ type: 'zoomIn' });
+  });
+
+  it('dispatches native menu printing as a semantic Reader Action', async () => {
+    const dispatchReaderAction = vi.fn(async () => undefined);
+    await setupTauriListeners(context({ dispatchReaderAction }));
+
+    await mocks.getListener('menu-print')?.();
+
+    expect(dispatchReaderAction).toHaveBeenCalledWith({ type: 'printDocument' });
+  });
+
+  it('dispatches native menu close as a semantic Reader Action', async () => {
+    const dispatchReaderAction = vi.fn(async () => undefined);
+    await setupTauriListeners(
+      context({
+        getActiveDocumentPath: () => '/docs/report.pdf',
+        dispatchReaderAction,
+      }),
+    );
+
+    await mocks.getListener('menu-close-tab')?.();
+
+    expect(dispatchReaderAction).toHaveBeenCalledWith({
+      type: 'closeDocument',
+      filePath: '/docs/report.pdf',
+    });
   });
 });

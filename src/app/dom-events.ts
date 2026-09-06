@@ -2,16 +2,12 @@ import { debugLog } from '../lib/debug-log';
 import { type DispatchReaderAction, readerAction } from '../reader/reader-actions';
 import type { KeybindManager } from '../scripts/keybind-manager';
 import type { SliderManager } from '../scripts/sliders';
-import type { TabManager } from '../scripts/tabs';
 import { setupPresetButtons, toggleDarkConfigurator } from './presets';
-import { withActiveViewer } from './viewer-helpers';
 
 interface DomEventContext {
-  tabManager: TabManager | null;
   sliderManager: SliderManager | null;
   keybindManager: KeybindManager | null;
   openPdfAndRefresh: () => Promise<void>;
-  printCurrentPDF: () => Promise<void>;
   updateUI: () => void;
   activateDocument: (filePath: string) => Promise<void>;
   openRecentFile: (filePath: string) => Promise<void>;
@@ -23,11 +19,9 @@ interface DomEventContext {
 
 // Setup event listeners
 export function setupEventListeners({
-  tabManager,
   sliderManager,
   keybindManager,
   openPdfAndRefresh,
-  printCurrentPDF,
   updateUI,
   activateDocument,
   openRecentFile,
@@ -72,7 +66,7 @@ export function setupEventListeners({
   const printBtn = document.getElementById('print-file');
   printBtn?.addEventListener('click', () => {
     debugLog('Print button clicked');
-    printCurrentPDF();
+    void dispatchReaderAction({ type: 'printDocument' });
   });
 
   // Navigation buttons
@@ -92,17 +86,13 @@ export function setupEventListeners({
   // Page input
   const pageInput = document.getElementById('page-input') as HTMLInputElement | null;
   pageInput?.addEventListener('change', () => {
-    withActiveViewer(tabManager, async (viewer) => {
-      if (!pageInput) return;
-      const pageNum = Number.parseInt(pageInput.value, 10);
-      const state = viewer.getState();
-      if (pageNum >= 1 && pageNum <= state.totalPages) {
-        await goToPage(pageNum);
-        updateUI();
-      } else {
-        pageInput.value = state.currentPage.toString();
-      }
-    });
+    const pageNum = Number.parseInt(pageInput.value, 10);
+    const pageCount = Number.parseInt(pageInput.max, 10);
+    if (pageNum >= 1 && pageNum <= pageCount) {
+      void goToPage(pageNum).then(updateUI);
+    } else {
+      updateUI();
+    }
   });
 
   // Zoom buttons

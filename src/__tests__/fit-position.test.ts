@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { createInternalDocumentPage } from '../reader/internal-document-page';
 
 const getPdfEngine = vi.hoisted(() => vi.fn());
 
@@ -27,7 +28,7 @@ async function makeContinuousViewer(currentPage: number) {
   }
 
   Object.assign(viewer, {
-    pdfDoc: { numPages: 10, getPage: vi.fn() },
+    content: { pageCount: 10, getPage: vi.fn(async () => createInternalDocumentPage(1, {})) },
     canvas: {},
     container: { clientWidth: 1240, clientHeight: 900 },
     state: {

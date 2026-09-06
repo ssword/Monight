@@ -308,10 +308,10 @@ pub fn validate_open_path(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::fixture_path;
 
     fn copied_pdf_fixture(name: &str) -> PathBuf {
-        let fixture =
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/sample.pdf");
+        let fixture = fixture_path("sample.pdf");
         let directory =
             std::env::temp_dir().join(format!("monight-command-tests-{}", std::process::id()));
         std::fs::create_dir_all(&directory).expect("test directory should be created");
@@ -485,21 +485,21 @@ mod tests {
 
     #[test]
     fn dialog_selection_authorizes_the_selected_document() {
-        let fixture =
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/sample.pdf");
+        let fixture = fixture_path("sample.pdf");
+        let canonical = std::fs::canonicalize(&fixture).expect("fixture should canonicalize");
         let denied = copied_pdf_fixture("dialog-denied.pdf");
         let document_intake = DocumentIntake::default();
 
         let selected = authorize_dialog_selection(&document_intake, [fixture.clone()]);
 
-        assert_eq!(selected, vec![fixture.to_string_lossy().to_string()]);
+        assert_eq!(selected, vec![canonical.to_string_lossy().to_string()]);
         assert!(read_pdf_bytes(selected[0].clone(), &document_intake).is_ok());
         assert!(read_pdf_bytes(denied.to_string_lossy().to_string(), &document_intake).is_err());
         std::fs::remove_file(denied).expect("test copy should be removed");
     }
 
     #[test]
-    fn startup_snapshot_authorizes_recent_and_reading_session_documents_once() {
+    fn startup_snapshots_authorize_dedicated_recent_and_reading_session_documents_once() {
         let fixture =
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/sample.pdf");
         let test_directory =
@@ -511,18 +511,22 @@ mod tests {
         for target in [&recent_document, &session_document, &added_after_startup] {
             std::fs::copy(&fixture, target).expect("fixture copy should be created");
         }
-        let mut persisted_store = serde_json::json!({
-            "settings": {
-                "recentFiles": [{ "filePath": recent_document }]
-            },
+        let persisted_store = serde_json::json!({
             "readingSession": {
                 "documents": [{ "filePath": session_document }]
             },
         });
+        let mut persisted_recent_documents = serde_json::json!({
+            "recentDocuments": {
+                "schemaVersion": 1,
+                "documents": [{ "filePath": recent_document }]
+            }
+        });
         let document_intake = DocumentIntake::default();
 
         document_intake.authorize_persisted_snapshot(&persisted_store);
-        persisted_store["settings"]["recentFiles"] =
+        document_intake.authorize_persisted_snapshot(&persisted_recent_documents);
+        persisted_recent_documents["recentDocuments"]["documents"] =
             serde_json::json!([{ "filePath": added_after_startup }]);
 
         assert!(read_pdf_bytes(

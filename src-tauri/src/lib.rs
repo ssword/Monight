@@ -12,6 +12,8 @@ use tauri_plugin_store::StoreExt;
 mod commands;
 mod document_intake;
 mod menu;
+#[cfg(test)]
+mod test_support;
 
 /// Command line arguments for Monight PDF viewer
 #[derive(Parser, Debug, Clone)]
@@ -46,6 +48,18 @@ pub struct ExternalOpenPayload {
 #[derive(Default)]
 pub struct PendingExternalOpenPayloads(Mutex<VecDeque<ExternalOpenPayload>>);
 
+#[derive(Default)]
+pub struct PendingApplicationQuit(Mutex<bool>);
+
+#[derive(Default)]
+struct FrontendLifecycleStatus {
+    registered: bool,
+    foreground_requested: bool,
+}
+
+#[derive(Default)]
+pub struct FrontendLifecycleState(Mutex<FrontendLifecycleStatus>);
+
 pub(crate) fn is_supported_extension(path: &std::path::Path) -> bool {
     path.extension()
         .and_then(|e| e.to_str())
@@ -68,17 +82,60 @@ pub(crate) fn take_external_open_payloads_inner(
     guard.drain(..).collect()
 }
 
+pub(crate) fn queue_application_quit_inner(state: &PendingApplicationQuit) {
+    *state.0.lock().unwrap() = true;
+}
+
+pub(crate) fn take_application_quit_request_inner(state: &PendingApplicationQuit) -> bool {
+    std::mem::take(&mut *state.0.lock().unwrap())
+}
+
+#[cfg(any(target_os = "windows", target_os = "linux", test))]
+fn request_frontend_foreground_inner(state: &FrontendLifecycleState) -> bool {
+    let mut status = state.0.lock().unwrap();
+    if status.registered {
+        true
+    } else {
+        status.foreground_requested = true;
+        false
+    }
+}
+
+fn complete_frontend_lifecycle_registration_inner(state: &FrontendLifecycleState) -> bool {
+    let mut status = state.0.lock().unwrap();
+    status.registered = true;
+    std::mem::take(&mut status.foreground_requested)
+}
+
+fn foreground_main_window(app: &tauri::AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        #[cfg(any(target_os = "windows", target_os = "linux"))]
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+    }
+}
+
+#[cfg(any(target_os = "windows", target_os = "linux"))]
+fn request_main_window_foreground(app: &tauri::AppHandle) {
+    if request_frontend_foreground_inner(app.state::<FrontendLifecycleState>().inner()) {
+        foreground_main_window(app);
+    }
+}
+
 fn dispatch_external_open_payload(app: &tauri::AppHandle, payload: ExternalOpenPayload) {
-    let _ = commands::fit_main_window_for_pdf(app.clone(), true);
     let state = app.state::<PendingExternalOpenPayloads>();
     queue_external_open_payload_inner(state.inner(), payload);
 
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.emit("external-open-files-available", ());
-        let _ = window.show();
-        #[cfg(any(target_os = "windows", target_os = "linux"))]
-        let _ = window.unminimize();
-        let _ = window.set_focus();
+    }
+}
+
+pub(crate) fn request_application_quit(app: &tauri::AppHandle) {
+    queue_application_quit_inner(app.state::<PendingApplicationQuit>().inner());
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.emit("application-quit-requested", ());
     }
 }
 
@@ -165,6 +222,38 @@ where
     })
 }
 
+fn intercept_application_quit(
+    exit_code: Option<i32>,
+    main_window_available: bool,
+    prevent_exit: impl FnOnce(),
+    request_frontend: impl FnOnce(),
+) -> bool {
+    if exit_code.is_some() || !main_window_available {
+        return false;
+    }
+    prevent_exit();
+    request_frontend();
+    true
+}
+
+#[tauri::command]
+fn complete_application_quit(app: tauri::AppHandle) {
+    app.exit(0);
+}
+
+#[tauri::command]
+fn take_application_quit_request(state: tauri::State<'_, PendingApplicationQuit>) -> bool {
+    take_application_quit_request_inner(state.inner())
+}
+
+#[tauri::command]
+fn complete_frontend_lifecycle_registration(app: tauri::AppHandle) {
+    if complete_frontend_lifecycle_registration_inner(app.state::<FrontendLifecycleState>().inner())
+    {
+        foreground_main_window(&app);
+    }
+}
+
 pub(crate) fn payload_from_cli_args<I, T>(
     document_intake: &document_intake::DocumentIntake,
     args: I,
@@ -201,10 +290,8 @@ pub fn run() {
             Some(working_directory.as_path()),
         ) {
             dispatch_external_open_payload(app, payload);
-        } else if let Some(window) = app.get_webview_window("main") {
-            let _ = window.show();
-            let _ = window.unminimize();
-            let _ = window.set_focus();
+        } else {
+            request_main_window_foreground(app);
         }
     }));
 
@@ -213,6 +300,8 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_store::Builder::default().build())
         .manage(PendingExternalOpenPayloads::default())
+        .manage(PendingApplicationQuit::default())
+        .manage(FrontendLifecycleState::default())
         .manage(document_intake::DocumentIntake::default())
         .invoke_handler(tauri::generate_handler![
             commands::read_pdf_file,
@@ -226,6 +315,9 @@ pub fn run() {
             commands::take_external_open_payloads,
             commands::validate_open_path,
             commands::open_external_url,
+            complete_application_quit,
+            take_application_quit_request,
+            complete_frontend_lifecycle_registration,
         ])
         .on_webview_event(|webview, event| {
             if let tauri::WebviewEvent::DragDrop(tauri::DragDropEvent::Drop { paths, .. }) = event {
@@ -234,12 +326,14 @@ pub fn run() {
             }
         })
         .setup(|app| {
-            let store = app.store("settings.json")?;
-            let persisted_store = serde_json::Value::Object(store.entries().into_iter().collect());
             let document_intake = app.state::<document_intake::DocumentIntake>();
-            document_intake.authorize_persisted_snapshot(&persisted_store);
+            for store_name in ["settings.json", "recent-documents.json"] {
+                let store = app.store(store_name)?;
+                let persisted_store =
+                    serde_json::Value::Object(store.entries().into_iter().collect());
+                document_intake.authorize_persisted_snapshot(&persisted_store);
+            }
 
-            let window = app.get_webview_window("main").unwrap();
             let app_handle = app.handle();
 
             // Create and set application menu
@@ -258,9 +352,6 @@ pub fn run() {
                 dispatch_external_open_payload(app_handle, payload);
             }
 
-            // Show window after setup complete
-            window.show().unwrap();
-
             // Log startup
             #[cfg(debug_assertions)]
             println!("Monight (墨页) started successfully!");
@@ -273,14 +364,24 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
 
-    app.run(|app, event| {
+    app.run(|app, event| match event {
+        tauri::RunEvent::ExitRequested { code, api, .. } => {
+            let main_window = app.get_webview_window("main");
+            intercept_application_quit(
+                code,
+                main_window.is_some(),
+                || api.prevent_exit(),
+                || request_application_quit(app),
+            );
+        }
         #[cfg(any(target_os = "macos", target_os = "ios", target_os = "android"))]
-        if let tauri::RunEvent::Opened { urls } = event {
+        tauri::RunEvent::Opened { urls } => {
             let document_intake = app.state::<document_intake::DocumentIntake>();
             if let Some(payload) = payload_from_opened_urls(document_intake.inner(), &urls) {
                 dispatch_external_open_payload(app, payload);
             }
         }
+        _ => {}
     });
 }
 
@@ -288,9 +389,46 @@ pub fn run() {
 mod tests {
     use super::*;
 
+    #[test]
+    fn user_quit_waits_for_frontend_but_frontend_acknowledgement_can_exit() {
+        let mut prevented = false;
+        let mut requested_frontend = false;
+        let intercepted = intercept_application_quit(
+            None,
+            true,
+            || prevented = true,
+            || requested_frontend = true,
+        );
+
+        assert!(intercepted);
+        assert!(prevented);
+        assert!(requested_frontend);
+        assert!(!intercept_application_quit(Some(0), true, || {}, || {}));
+        assert!(!intercept_application_quit(None, false, || {}, || {}));
+    }
+
+    #[test]
+    fn application_quit_requests_are_retained_until_the_frontend_takes_them() {
+        let state = PendingApplicationQuit::default();
+
+        queue_application_quit_inner(&state);
+
+        assert!(take_application_quit_request_inner(&state));
+        assert!(!take_application_quit_request_inner(&state));
+    }
+
+    #[test]
+    fn foreground_requests_wait_for_frontend_lifecycle_registration() {
+        let state = FrontendLifecycleState::default();
+
+        assert!(!request_frontend_foreground_inner(&state));
+        assert!(complete_frontend_lifecycle_registration_inner(&state));
+        assert!(request_frontend_foreground_inner(&state));
+        assert!(!complete_frontend_lifecycle_registration_inner(&state));
+    }
+
     fn copied_pdf_fixture(name: &str) -> PathBuf {
-        let fixture =
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/sample.pdf");
+        let fixture = test_support::fixture_path("sample.pdf");
         let directory = std::env::temp_dir().join(format!(
             "monight-entry-channel-tests-{}",
             std::process::id()
@@ -461,16 +599,21 @@ mod tests {
 
     #[test]
     fn os_opened_event_authorizes_only_its_file_url() {
-        let fixture =
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/sample.pdf");
+        let fixture = test_support::fixture_path("sample.pdf");
         let denied = copied_pdf_fixture("opened-event-denied.pdf");
         let file_url = url::Url::from_file_path(&fixture).expect("fixture should become file URL");
+        let expected_path = file_url
+            .to_file_path()
+            .expect("file URL should preserve its platform path");
         let document_intake = document_intake::DocumentIntake::default();
 
         let payload = payload_from_opened_urls(&document_intake, &[file_url])
             .expect("opened file URL should be accepted");
 
-        assert_eq!(payload.files, vec![fixture.to_string_lossy().to_string()]);
+        assert_eq!(
+            payload.files,
+            vec![expected_path.to_string_lossy().to_string()]
+        );
         assert_eq!(payload.page, None);
         assert_eq!(payload.source, ExternalOpenSource::OperatingSystem);
         assert!(commands::read_pdf_bytes(payload.files[0].clone(), &document_intake).is_ok());
@@ -483,25 +626,27 @@ mod tests {
 
     #[test]
     fn os_opened_event_preserves_missing_paths_for_independent_frontend_outcomes() {
-        let fixture =
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/sample.pdf");
+        let fixture = test_support::fixture_path("sample.pdf");
         let missing = fixture.with_file_name("missing-associated.pdf");
         let urls = [
             url::Url::from_file_path(&missing).expect("missing path should become a file URL"),
             url::Url::from_file_path(&fixture).expect("fixture should become a file URL"),
         ];
+        let expected_paths = urls
+            .iter()
+            .map(|url| {
+                url.to_file_path()
+                    .expect("file URL should preserve its platform path")
+                    .to_string_lossy()
+                    .to_string()
+            })
+            .collect::<Vec<_>>();
         let document_intake = document_intake::DocumentIntake::default();
 
         let payload = payload_from_opened_urls(&document_intake, &urls)
             .expect("file association paths should be forwarded in order");
 
-        assert_eq!(
-            payload.files,
-            vec![
-                missing.to_string_lossy().to_string(),
-                fixture.to_string_lossy().to_string(),
-            ]
-        );
+        assert_eq!(payload.files, expected_paths);
         assert!(
             commands::read_pdf_bytes(fixture.to_string_lossy().to_string(), &document_intake)
                 .is_ok()
@@ -538,10 +683,11 @@ mod tests {
 
     #[test]
     fn forwarded_arguments_route_through_document_intake() {
-        let working_directory =
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
-        let expected =
-            std::fs::canonicalize(working_directory.join("sample.pdf")).expect("fixture exists");
+        let working_directory = test_support::fixture_path("sample.pdf")
+            .parent()
+            .expect("fixture should have a parent directory")
+            .to_path_buf();
+        let expected_document_path = working_directory.join("sample.pdf");
         let document_intake = document_intake::DocumentIntake::default();
 
         let payload = payload_from_cli_args(
@@ -551,7 +697,10 @@ mod tests {
         )
         .expect("forwarded arguments should produce a CLI payload");
 
-        assert_eq!(payload.files, vec![expected.to_string_lossy().to_string()]);
+        assert_eq!(
+            payload.files,
+            vec![expected_document_path.to_string_lossy().to_string()]
+        );
         assert_eq!(payload.page, Some(5));
         assert!(commands::read_pdf_bytes(payload.files[0].clone(), &document_intake).is_ok());
     }

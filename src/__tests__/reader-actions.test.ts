@@ -1,4 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
+import type { DocumentContent } from '../reader/document-content';
+import { createDocumentIntake } from '../reader/document-intake';
+import type { DocumentRuntime } from '../reader/document-queries';
 import {
   createReaderActions,
   type ReaderProjection,
@@ -22,7 +25,227 @@ const INITIAL_SESSION = {
   ],
 };
 
+function createDocumentRuntime(): DocumentRuntime {
+  const content: DocumentContent = {
+    pageCount: 0,
+    getPage: vi.fn(async () => {
+      throw new Error('Page unavailable in Reader Actions test');
+    }),
+    getData: vi.fn(async () => new Uint8Array()),
+    search: vi.fn(async () => []),
+    getOutline: vi.fn(async () => []),
+    getMetadata: vi.fn(async () => null),
+    resolveLinkTarget: vi.fn(async () => null),
+    destroy: vi.fn(async () => undefined),
+  };
+  return {
+    content,
+    destroy: vi.fn(async () => content.destroy()),
+    renderThumbnail: vi.fn(async () => {
+      throw new Error('Thumbnail unavailable in Reader Actions test');
+    }),
+    getAnnotations: vi.fn(() => []),
+  };
+}
+
 describe('Reader Actions', () => {
+  it('persists a changed Document order immediately', async () => {
+    const persist = vi.fn(async () => undefined);
+    const reader = createReaderActions({
+      initialSession: INITIAL_SESSION,
+      projection: { activateDocument: vi.fn(), goToReadingPosition: vi.fn() },
+      persist,
+    });
+
+    const outcome = await reader.dispatch({
+      type: 'reorderDocuments',
+      filePaths: ['/docs/second.pdf', '/docs/first.pdf'],
+    });
+
+    expect(outcome).toMatchObject({ status: 'committed', revision: 1 });
+    expect(reader.snapshot().documents.map((document) => document.filePath)).toEqual([
+      '/docs/second.pdf',
+      '/docs/first.pdf',
+    ]);
+    expect(persist).toHaveBeenCalledOnce();
+  });
+
+  it('activates an internal PDF target against its originating Document after activation changes', async () => {
+    let finishResolution: ((target: { kind: 'page'; pageNumber: number }) => void) | undefined;
+    const firstRuntime = createDocumentRuntime();
+    vi.mocked(firstRuntime.content.resolveLinkTarget).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finishResolution = resolve;
+        }),
+    );
+    const projection: ReaderProjection = {
+      activateDocument: vi.fn(async () => undefined),
+      goToReadingPosition: vi.fn(async () => undefined),
+    };
+    const reader = createReaderActions({
+      initialSession: INITIAL_SESSION,
+      projection,
+      persist: vi.fn(async () => undefined),
+    });
+    await reader.dispatch({
+      type: 'registerDocument',
+      document: INITIAL_SESSION.documents[0],
+      runtime: firstRuntime,
+    });
+
+    const activation = reader.dispatch({
+      type: 'activateDocumentTarget',
+      filePath: '/docs/first.pdf',
+      target: { dest: 'chapter-9' },
+    });
+    await vi.waitFor(() => expect(finishResolution).toBeTypeOf('function'));
+    await reader.dispatch({ type: 'activateDocument', filePath: '/docs/second.pdf' });
+    finishResolution?.({ kind: 'page', pageNumber: 9 });
+
+    await expect(activation).resolves.toMatchObject({ status: 'committed' });
+    expect(firstRuntime.content.resolveLinkTarget).toHaveBeenCalledWith(
+      { dest: 'chapter-9' },
+      expect.objectContaining({ isCancelled: expect.any(Function) }),
+    );
+    expect(projection.goToReadingPosition).toHaveBeenCalledWith(
+      '/docs/first.pdf',
+      { page: 9, location: 0 },
+      expect.objectContaining({ isCancelled: expect.any(Function) }),
+    );
+    expect(reader.snapshot()).toMatchObject({
+      activeDocumentPath: '/docs/second.pdf',
+      documents: [
+        { filePath: '/docs/first.pdf', readingPosition: { page: 9, location: 0 } },
+        { filePath: '/docs/second.pdf', readingPosition: { page: 7, location: 0.5 } },
+      ],
+    });
+  });
+
+  it('delegates an external PDF target without changing settled Reading Session state', async () => {
+    const runtime = createDocumentRuntime();
+    vi.mocked(runtime.content.resolveLinkTarget).mockResolvedValue({
+      kind: 'external',
+      url: 'https://example.com/report',
+    });
+    const open = vi.fn(async () => undefined);
+    const reader = createReaderActions({
+      initialSession: INITIAL_SESSION,
+      projection: { activateDocument: vi.fn(), goToReadingPosition: vi.fn() },
+      externalLinkAdapter: { open },
+      persist: vi.fn(async () => undefined),
+    });
+    await reader.dispatch({
+      type: 'registerDocument',
+      document: INITIAL_SESSION.documents[0],
+      runtime,
+    });
+    const before = reader.snapshot();
+
+    const outcome = await reader.dispatch({
+      type: 'activateDocumentTarget',
+      filePath: '/docs/first.pdf',
+      target: { url: 'https://example.com/report' },
+    });
+
+    expect(outcome).toEqual({ status: 'performed', revision: 0 });
+    expect(open).toHaveBeenCalledWith('https://example.com/report');
+    expect(reader.snapshot()).toEqual(before);
+  });
+
+  it('returns a typed failure when the external-link adapter rejects a scheme', async () => {
+    const runtime = createDocumentRuntime();
+    vi.mocked(runtime.content.resolveLinkTarget).mockResolvedValue({
+      kind: 'external',
+      url: 'javascript:alert(1)',
+    });
+    const error = new Error('Blocked unsupported PDF link scheme');
+    const reader = createReaderActions({
+      initialSession: INITIAL_SESSION,
+      projection: { activateDocument: vi.fn(), goToReadingPosition: vi.fn() },
+      externalLinkAdapter: { open: vi.fn(async () => Promise.reject(error)) },
+      persist: vi.fn(async () => undefined),
+    });
+    await reader.dispatch({
+      type: 'registerDocument',
+      document: INITIAL_SESSION.documents[0],
+      runtime,
+    });
+    const before = reader.snapshot();
+
+    const outcome = await reader.dispatch({
+      type: 'activateDocumentTarget',
+      filePath: '/docs/first.pdf',
+      target: { url: 'javascript:alert(1)' },
+    });
+
+    expect(outcome).toEqual({ status: 'failure', error, revision: 0 });
+    expect(reader.snapshot()).toEqual(before);
+  });
+
+  it('prints bytes from the captured Document after the active Document changes', async () => {
+    let finishData: ((bytes: Uint8Array) => void) | undefined;
+    const runtime = createDocumentRuntime();
+    vi.mocked(runtime.content.getData).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finishData = resolve;
+        }),
+    );
+    const print = vi.fn(async () => undefined);
+    const reader = createReaderActions({
+      initialSession: INITIAL_SESSION,
+      projection: { activateDocument: vi.fn(), goToReadingPosition: vi.fn() },
+      printAdapter: { print },
+      persist: vi.fn(async () => undefined),
+    });
+    await reader.dispatch({
+      type: 'registerDocument',
+      document: INITIAL_SESSION.documents[0],
+      runtime,
+    });
+
+    const printing = reader.dispatch({ type: 'printDocument' });
+    await vi.waitFor(() => expect(finishData).toBeTypeOf('function'));
+    await reader.dispatch({ type: 'activateDocument', filePath: '/docs/second.pdf' });
+    finishData?.(new Uint8Array([4, 5, 6]));
+
+    await expect(printing).resolves.toMatchObject({ status: 'performed' });
+    expect(runtime.content.getData).toHaveBeenCalledOnce();
+    expect(print).toHaveBeenCalledWith({
+      filePath: '/docs/first.pdf',
+      title: 'first.pdf',
+      bytes: new Uint8Array([4, 5, 6]),
+    });
+    expect(reader.snapshot().activeDocumentPath).toBe('/docs/second.pdf');
+  });
+
+  it('returns a typed failure when the print adapter fails without changing settled state', async () => {
+    const runtime = createDocumentRuntime();
+    vi.mocked(runtime.content.getData).mockResolvedValue(new Uint8Array([7, 8, 9]));
+    const error = new Error('print dialog unavailable');
+    const reader = createReaderActions({
+      initialSession: INITIAL_SESSION,
+      projection: { activateDocument: vi.fn(), goToReadingPosition: vi.fn() },
+      printAdapter: { print: vi.fn(async () => Promise.reject(error)) },
+      persist: vi.fn(async () => undefined),
+    });
+    await reader.dispatch({
+      type: 'registerDocument',
+      document: INITIAL_SESSION.documents[0],
+      runtime,
+    });
+    const before = reader.snapshot();
+
+    const outcome = await reader.dispatch({
+      type: 'printDocument',
+      filePath: '/docs/first.pdf',
+    });
+
+    expect(outcome).toEqual({ status: 'failure', error, revision: 0 });
+    expect(reader.snapshot()).toEqual(before);
+  });
+
   it('initializes missing Visual State from configured reader defaults', () => {
     const reader = createReaderActions({
       initialSession: INITIAL_SESSION,
@@ -285,10 +508,14 @@ describe('Reader Actions', () => {
     finishNavigation?.();
     const outcome = await navigation;
 
-    expect(projection.goToReadingPosition).toHaveBeenCalledWith('/docs/first.pdf', {
-      page: 9,
-      location: 0,
-    });
+    expect(projection.goToReadingPosition).toHaveBeenCalledWith(
+      '/docs/first.pdf',
+      {
+        page: 9,
+        location: 0,
+      },
+      expect.objectContaining({ isCancelled: expect.any(Function) }),
+    );
     expect(outcome.status).toBe('committed');
     expect(reader.snapshot()).toMatchObject({
       activeDocumentPath: '/docs/second.pdf',
@@ -299,7 +526,7 @@ describe('Reader Actions', () => {
     });
   });
 
-  it('resolves implicit navigation after an earlier activation commits', async () => {
+  it('keeps implicit relative navigation on the Document active at dispatch', async () => {
     let releaseActivation: (() => void) | undefined;
     const pages: Array<{ filePath: string; page: number }> = [];
     const reader = createReaderActions({
@@ -331,7 +558,143 @@ describe('Reader Actions', () => {
     releaseActivation?.();
     await expect(activation).resolves.toMatchObject({ status: 'committed', revision: 1 });
     await expect(navigation).resolves.toMatchObject({ status: 'committed', revision: 2 });
-    expect(pages).toEqual([{ filePath: '/docs/second.pdf', page: 8 }]);
+    expect(pages).toEqual([{ filePath: '/docs/first.pdf', page: 3 }]);
+    expect(reader.snapshot()).toMatchObject({
+      activeDocumentPath: '/docs/second.pdf',
+      documents: [
+        { filePath: '/docs/first.pdf', readingPosition: { page: 3, location: 0 } },
+        { filePath: '/docs/second.pdf', readingPosition: { page: 7, location: 0.5 } },
+      ],
+    });
+  });
+
+  it('keeps an explicit target unchanged while another Document activates', async () => {
+    let releaseActivation: (() => void) | undefined;
+    const goToReadingPosition = vi.fn(async () => undefined);
+    const reader = createReaderActions({
+      initialSession: INITIAL_SESSION,
+      projection: {
+        activateDocument: vi.fn(
+          () =>
+            new Promise<void>((resolve) => {
+              releaseActivation = resolve;
+            }),
+        ),
+        goToReadingPosition,
+      },
+      persist: vi.fn(),
+    });
+
+    const activation = reader.dispatch({
+      type: 'activateDocument',
+      filePath: '/docs/second.pdf',
+    });
+    await vi.waitFor(() => expect(releaseActivation).toBeTypeOf('function'));
+    const navigation = reader.dispatch({
+      type: 'goToPage',
+      filePath: '/docs/first.pdf',
+      page: 10,
+    });
+    releaseActivation?.();
+
+    await expect(activation).resolves.toMatchObject({ status: 'committed', revision: 1 });
+    await expect(navigation).resolves.toMatchObject({ status: 'committed', revision: 2 });
+    expect(goToReadingPosition).toHaveBeenCalledWith(
+      '/docs/first.pdf',
+      { page: 10, location: 0 },
+      expect.objectContaining({ isCancelled: expect.any(Function) }),
+    );
+    expect(reader.snapshot()).toMatchObject({
+      activeDocumentPath: '/docs/second.pdf',
+      documents: [
+        { filePath: '/docs/first.pdf', readingPosition: { page: 10, location: 0 } },
+        { filePath: '/docs/second.pdf', readingPosition: { page: 7, location: 0.5 } },
+      ],
+    });
+  });
+
+  it('keeps an absent active target as a no-op after activation completes', async () => {
+    let releaseActivation: (() => void) | undefined;
+    const goToReadingPosition = vi.fn(async () => undefined);
+    const reader = createReaderActions({
+      initialSession: { ...INITIAL_SESSION, activeDocumentPath: null },
+      projection: {
+        activateDocument: vi.fn(
+          () =>
+            new Promise<void>((resolve) => {
+              releaseActivation = resolve;
+            }),
+        ),
+        goToReadingPosition,
+      },
+      persist: vi.fn(),
+    });
+
+    const activation = reader.dispatch({
+      type: 'activateDocument',
+      filePath: '/docs/second.pdf',
+    });
+    await vi.waitFor(() => expect(releaseActivation).toBeTypeOf('function'));
+    const navigation = reader.dispatch({ type: 'goToPage', page: 10 });
+    releaseActivation?.();
+
+    await expect(activation).resolves.toMatchObject({ status: 'committed', revision: 1 });
+    await expect(navigation).resolves.toMatchObject({ status: 'no-op', revision: 0 });
+    expect(goToReadingPosition).not.toHaveBeenCalled();
+    expect(reader.snapshot().documents).toMatchObject(INITIAL_SESSION.documents);
+  });
+
+  it('does not apply a captured target to a reopened Document generation', async () => {
+    let releaseActivation: (() => void) | undefined;
+    const goToReadingPosition = vi.fn(async () => undefined);
+    const closeDocument = vi.fn(async () => undefined);
+    let reader!: ReturnType<typeof createReaderActions>;
+    reader = createReaderActions({
+      initialSession: INITIAL_SESSION,
+      projection: {
+        activateDocument: vi.fn(
+          () =>
+            new Promise<void>((resolve) => {
+              releaseActivation = resolve;
+            }),
+        ),
+        goToReadingPosition,
+        closeDocument,
+      },
+      persist: vi.fn(),
+      reopenDocument: async (filePath) => {
+        await reader.dispatch({
+          type: 'registerDocument',
+          document: INITIAL_SESSION.documents[0],
+          runtime: createDocumentRuntime(),
+        });
+        expect(filePath).toBe('/docs/first.pdf');
+      },
+    });
+
+    const activation = reader.dispatch({
+      type: 'activateDocument',
+      filePath: '/docs/second.pdf',
+    });
+    await vi.waitFor(() => expect(releaseActivation).toBeTypeOf('function'));
+    const close = reader.dispatch({ type: 'closeDocument', filePath: '/docs/first.pdf' });
+    const reopen = reader.dispatch({ type: 'reopenLastClosedDocument' });
+    const navigation = reader.dispatch({ type: 'goToPage', page: 10 });
+    releaseActivation?.();
+
+    await expect(activation).resolves.toMatchObject({ status: 'committed' });
+    await expect(close).resolves.toMatchObject({ status: 'committed' });
+    await expect(reopen).resolves.toMatchObject({ status: 'committed' });
+    await expect(navigation).resolves.toMatchObject({ status: 'no-op' });
+    expect(closeDocument).toHaveBeenCalledWith('/docs/first.pdf', '/docs/second.pdf');
+    expect(goToReadingPosition).not.toHaveBeenCalled();
+    expect(reader.snapshot()).toMatchObject({
+      activeDocumentPath: '/docs/second.pdf',
+      documents: [
+        { filePath: '/docs/second.pdf', readingPosition: { page: 7, location: 0.5 } },
+        { filePath: '/docs/first.pdf', readingPosition: { page: 2, location: 0.25 } },
+      ],
+    });
   });
 
   it('coalesces absolute actions waiting behind a global mutation', async () => {
@@ -366,10 +729,14 @@ describe('Reader Actions', () => {
     await expect(obsolete).resolves.toMatchObject({ status: 'superseded' });
     await expect(newest).resolves.toMatchObject({ status: 'committed', revision: 2 });
     expect(goToReadingPosition).toHaveBeenCalledOnce();
-    expect(goToReadingPosition).toHaveBeenCalledWith('/docs/second.pdf', {
-      page: 10,
-      location: 0,
-    });
+    expect(goToReadingPosition).toHaveBeenCalledWith(
+      '/docs/first.pdf',
+      {
+        page: 10,
+        location: 0,
+      },
+      expect.objectContaining({ isCancelled: expect.any(Function) }),
+    );
   });
 
   it('does not commit an explicit page when its rendering operation fails', async () => {
@@ -405,6 +772,7 @@ describe('Reader Actions', () => {
               finishNavigation = resolve;
             }),
         ),
+        closeDocument: vi.fn(async () => undefined),
       },
       persist,
     });
@@ -491,6 +859,7 @@ describe('Reader Actions', () => {
 
     await reader.dispatch({
       type: 'registerDocument',
+      runtime: createDocumentRuntime(),
       document: {
         filePath: '/docs/third.pdf',
         title: 'third.pdf',
@@ -499,6 +868,7 @@ describe('Reader Actions', () => {
     });
     const duplicate = await reader.dispatch({
       type: 'registerDocument',
+      runtime: createDocumentRuntime(),
       document: {
         filePath: '/docs/first.pdf',
         title: 'renamed.pdf',
@@ -527,6 +897,7 @@ describe('Reader Actions', () => {
 
     const registration = reader.dispatch({
       type: 'registerDocument',
+      runtime: createDocumentRuntime(),
       document: {
         filePath: '/docs/third.pdf',
         title: 'third.pdf',
@@ -541,10 +912,14 @@ describe('Reader Actions', () => {
 
     await expect(registration).resolves.toMatchObject({ status: 'committed', revision: 1 });
     await expect(navigation).resolves.toMatchObject({ status: 'committed', revision: 2 });
-    expect(goToReadingPosition).toHaveBeenCalledWith('/docs/third.pdf', {
-      page: 4,
-      location: 0,
-    });
+    expect(goToReadingPosition).toHaveBeenCalledWith(
+      '/docs/third.pdf',
+      {
+        page: 4,
+        location: 0,
+      },
+      expect.objectContaining({ isCancelled: expect.any(Function) }),
+    );
   });
 
   it('preserves global dispatch order for Document-set mutations', async () => {
@@ -564,10 +939,11 @@ describe('Reader Actions', () => {
       persist: vi.fn(),
     });
 
-    const removal = reader.dispatch({ type: 'removeDocument', filePath: '/docs/first.pdf' });
+    const removal = reader.dispatch({ type: 'closeDocument', filePath: '/docs/first.pdf' });
     await vi.waitFor(() => expect(releaseClose).toBeTypeOf('function'));
     const registration = reader.dispatch({
       type: 'registerDocument',
+      runtime: createDocumentRuntime(),
       document: {
         filePath: '/docs/third.pdf',
         title: 'third.pdf',
@@ -583,6 +959,281 @@ describe('Reader Actions', () => {
       '/docs/second.pdf',
       '/docs/third.pdf',
     ]);
+  });
+
+  it('closes the active Document after presentation exits and selects the right neighbor', async () => {
+    const events: string[] = [];
+    const exitPresentation = vi.fn(async () => {
+      events.push('presentation:exit');
+      return undefined;
+    });
+    const reader = createReaderActions({
+      initialSession: INITIAL_SESSION,
+      projection: {
+        activateDocument: vi.fn(),
+        goToReadingPosition: vi.fn(),
+        exitPresentation,
+        closeDocument: vi.fn(async (filePath, nextActiveDocumentPath) => {
+          events.push(`close:${filePath}:activate:${nextActiveDocumentPath}`);
+        }),
+      },
+      persist: vi.fn(async () => undefined),
+    });
+
+    const outcome = await reader.dispatch({
+      type: 'closeDocument',
+      filePath: '/docs/first.pdf',
+    });
+
+    expect(outcome).toMatchObject({ status: 'committed', revision: 1 });
+    expect(exitPresentation).toHaveBeenCalledWith({ restoreVisualState: false });
+    expect(events).toEqual([
+      'presentation:exit',
+      'close:/docs/first.pdf:activate:/docs/second.pdf',
+    ]);
+    expect(reader.snapshot()).toMatchObject({
+      activeDocumentPath: '/docs/second.pdf',
+      documents: [{ filePath: '/docs/second.pdf' }],
+    });
+  });
+
+  it('selects the left neighbor when closing the rightmost active Document', async () => {
+    const closeDocument = vi.fn(async () => undefined);
+    const reader = createReaderActions({
+      initialSession: {
+        ...INITIAL_SESSION,
+        activeDocumentPath: '/docs/second.pdf',
+      },
+      projection: {
+        activateDocument: vi.fn(),
+        goToReadingPosition: vi.fn(),
+        closeDocument,
+      },
+      persist: vi.fn(async () => undefined),
+    });
+
+    await reader.dispatch({ type: 'closeDocument', filePath: '/docs/second.pdf' });
+
+    expect(closeDocument).toHaveBeenCalledWith('/docs/second.pdf', '/docs/first.pdf');
+    expect(reader.snapshot().activeDocumentPath).toBe('/docs/first.pdf');
+  });
+
+  it('does not exit presentation when closing an inactive Document', async () => {
+    const exitPresentation = vi.fn(async () => undefined);
+    const closeDocument = vi.fn(async () => undefined);
+    const reader = createReaderActions({
+      initialSession: INITIAL_SESSION,
+      projection: {
+        activateDocument: vi.fn(),
+        goToReadingPosition: vi.fn(),
+        exitPresentation,
+        closeDocument,
+      },
+      persist: vi.fn(async () => undefined),
+    });
+
+    await reader.dispatch({ type: 'closeDocument', filePath: '/docs/second.pdf' });
+
+    expect(exitPresentation).not.toHaveBeenCalled();
+    expect(closeDocument).toHaveBeenCalledWith('/docs/second.pdf', '/docs/first.pdf');
+    expect(reader.snapshot().activeDocumentPath).toBe('/docs/first.pdf');
+  });
+
+  it('does not commit semantic close without a runtime-close projection', async () => {
+    const reader = createReaderActions({
+      initialSession: INITIAL_SESSION,
+      projection: {
+        activateDocument: vi.fn(),
+        goToReadingPosition: vi.fn(),
+      },
+      persist: vi.fn(async () => undefined),
+    });
+
+    await expect(
+      reader.dispatch({ type: 'closeDocument', filePath: '/docs/first.pdf' }),
+    ).resolves.toMatchObject({ status: 'failure', revision: 0 });
+    expect(reader.snapshot()).toMatchObject({
+      activeDocumentPath: '/docs/first.pdf',
+      documents: [{ filePath: '/docs/first.pdf' }, { filePath: '/docs/second.pdf' }],
+    });
+  });
+
+  it('reopens successfully closed Documents in last-in-first-out order', async () => {
+    const reopenDocument = vi.fn(async () => undefined);
+    const reader = createReaderActions({
+      initialSession: INITIAL_SESSION,
+      projection: {
+        activateDocument: vi.fn(),
+        goToReadingPosition: vi.fn(),
+        closeDocument: vi.fn(async () => undefined),
+      },
+      reopenDocument,
+      persist: vi.fn(async () => undefined),
+    });
+
+    await reader.dispatch({ type: 'closeDocument', filePath: '/docs/first.pdf' });
+    await reader.dispatch({ type: 'closeDocument', filePath: '/docs/second.pdf' });
+    const firstReopen = await reader.dispatch({ type: 'reopenLastClosedDocument' });
+    const secondReopen = await reader.dispatch({ type: 'reopenLastClosedDocument' });
+
+    expect(firstReopen.status).toBe('committed');
+    expect(secondReopen.status).toBe('committed');
+    expect(reopenDocument.mock.calls).toEqual([['/docs/second.pdf'], ['/docs/first.pdf']]);
+  });
+
+  it('orders later Document-set actions behind a reopen intake', async () => {
+    let finishReopen: (() => void) | undefined;
+    const closeDocument = vi.fn(async () => undefined);
+    const reader = createReaderActions({
+      initialSession: INITIAL_SESSION,
+      projection: {
+        activateDocument: vi.fn(),
+        goToReadingPosition: vi.fn(),
+        closeDocument,
+      },
+      reopenDocument: vi.fn(
+        () =>
+          new Promise<void>((resolve) => {
+            finishReopen = resolve;
+          }),
+      ),
+      persist: vi.fn(async () => undefined),
+    });
+    await reader.dispatch({ type: 'closeDocument', filePath: '/docs/first.pdf' });
+    closeDocument.mockClear();
+
+    const reopen = reader.dispatch({ type: 'reopenLastClosedDocument' });
+    await vi.waitFor(() => expect(finishReopen).toBeTypeOf('function'));
+    const laterClose = reader.dispatch({
+      type: 'closeDocument',
+      filePath: '/docs/second.pdf',
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(closeDocument).not.toHaveBeenCalled();
+    finishReopen?.();
+    await expect(reopen).resolves.toMatchObject({ status: 'committed' });
+    await expect(laterClose).resolves.toMatchObject({ status: 'committed' });
+    expect(closeDocument).toHaveBeenCalledWith('/docs/second.pdf', null);
+  });
+
+  it('retains the most recently closed Document when reopen fails', async () => {
+    const reopenDocument = vi
+      .fn<(filePath: string) => Promise<void>>()
+      .mockRejectedValueOnce(new Error('Document Intake failed'))
+      .mockResolvedValueOnce(undefined);
+    const reader = createReaderActions({
+      initialSession: INITIAL_SESSION,
+      projection: {
+        activateDocument: vi.fn(),
+        goToReadingPosition: vi.fn(),
+        closeDocument: vi.fn(async () => undefined),
+      },
+      reopenDocument,
+      persist: vi.fn(async () => undefined),
+    });
+
+    await reader.dispatch({ type: 'closeDocument', filePath: '/docs/first.pdf' });
+
+    await expect(reader.dispatch({ type: 'reopenLastClosedDocument' })).resolves.toMatchObject({
+      status: 'failure',
+    });
+    await expect(reader.dispatch({ type: 'reopenLastClosedDocument' })).resolves.toMatchObject({
+      status: 'committed',
+    });
+    expect(reopenDocument).toHaveBeenNthCalledWith(1, '/docs/first.pdf');
+    expect(reopenDocument).toHaveBeenNthCalledWith(2, '/docs/first.pdf');
+  });
+
+  it('starts a new app run with no Recently Closed Documents', async () => {
+    const firstRun = createReaderActions({
+      initialSession: INITIAL_SESSION,
+      projection: {
+        activateDocument: vi.fn(),
+        goToReadingPosition: vi.fn(),
+        closeDocument: vi.fn(async () => undefined),
+      },
+      reopenDocument: vi.fn(async () => undefined),
+      persist: vi.fn(async () => undefined),
+    });
+    await firstRun.dispatch({ type: 'closeDocument', filePath: '/docs/first.pdf' });
+
+    const reopenDocument = vi.fn(async () => undefined);
+    const secondRun = createReaderActions({
+      initialSession: firstRun.snapshot(),
+      projection: {
+        activateDocument: vi.fn(),
+        goToReadingPosition: vi.fn(),
+      },
+      reopenDocument,
+      persist: vi.fn(async () => undefined),
+    });
+
+    await expect(secondRun.dispatch({ type: 'reopenLastClosedDocument' })).resolves.toMatchObject({
+      status: 'no-op',
+    });
+    expect(reopenDocument).not.toHaveBeenCalled();
+    expect(Object.keys(firstRun.snapshot())).not.toContain('recentlyClosedDocumentPaths');
+  });
+
+  it('reopens a duplicate path through normal Document Intake semantics', async () => {
+    const read = vi.fn(async () => new Uint8Array([1]));
+    const open = vi.fn(async () => undefined);
+    const onSucceeded = vi.fn();
+    let reader!: ReturnType<typeof createReaderActions>;
+    const intake = createDocumentIntake({
+      source: {
+        describe: async (requestedPath) => ({
+          canonicalPath: requestedPath,
+          title: requestedPath.split('/').pop() ?? requestedPath,
+        }),
+        read,
+      },
+      runtime: {
+        isOpen: (filePath) =>
+          reader.snapshot().documents.some((document) => document.filePath === filePath),
+        activate: async (filePath) => {
+          const outcome = await reader.dispatch({ type: 'activateDocument', filePath });
+          if (outcome.status === 'failure') throw outcome.error;
+        },
+        open,
+        goToPage: vi.fn(async () => undefined),
+      },
+      onSucceeded,
+    });
+    reader = createReaderActions({
+      initialSession: INITIAL_SESSION,
+      projection: {
+        activateDocument: vi.fn(async () => undefined),
+        goToReadingPosition: vi.fn(),
+        closeDocument: vi.fn(async () => undefined),
+      },
+      reopenDocument: async (filePath) => {
+        const result = await intake.open([filePath]);
+        const failure = result.outcomes.find((outcome) => outcome.status === 'failed');
+        if (failure?.status === 'failed') throw failure.error;
+      },
+      persist: vi.fn(async () => undefined),
+    });
+
+    await reader.dispatch({ type: 'closeDocument', filePath: '/docs/first.pdf' });
+    await reader.dispatch({
+      type: 'registerDocument',
+      runtime: createDocumentRuntime(),
+      document: INITIAL_SESSION.documents[0],
+    });
+
+    await expect(reader.dispatch({ type: 'reopenLastClosedDocument' })).resolves.toMatchObject({
+      status: 'committed',
+    });
+    expect(reader.snapshot().activeDocumentPath).toBe('/docs/first.pdf');
+    expect(read).not.toHaveBeenCalled();
+    expect(open).not.toHaveBeenCalled();
+    expect(onSucceeded).toHaveBeenCalledWith({
+      status: 'activated',
+      requestedPath: '/docs/first.pdf',
+      filePath: '/docs/first.pdf',
+    });
   });
 
   it('orders later Document actions behind earlier global mutations', async () => {
@@ -608,6 +1259,7 @@ describe('Reader Actions', () => {
     await vi.waitFor(() => expect(releaseActivation).toBeTypeOf('function'));
     const registration = reader.dispatch({
       type: 'registerDocument',
+      runtime: createDocumentRuntime(),
       document: {
         filePath: '/docs/third.pdf',
         title: 'third.pdf',
@@ -627,6 +1279,48 @@ describe('Reader Actions', () => {
     expect(reader.snapshot().documents[2].readingPosition).toEqual({ page: 4, location: 0.5 });
   });
 
+  it('does not register a Document when shutdown cancellation arrives during activation', async () => {
+    let releaseActivation: (() => void) | undefined;
+    let cancelled = false;
+    const persist = vi.fn(async () => undefined);
+    const reader = createReaderActions({
+      initialSession: INITIAL_SESSION,
+      projection: {
+        activateDocument: vi.fn(
+          () =>
+            new Promise<void>((resolve) => {
+              releaseActivation = resolve;
+            }),
+        ),
+        goToReadingPosition: vi.fn(),
+      },
+      persist,
+    });
+    const before = reader.snapshot();
+
+    const registration = reader.dispatch(
+      {
+        type: 'registerDocument',
+        runtime: createDocumentRuntime(),
+        document: {
+          filePath: '/docs/third.pdf',
+          title: 'third.pdf',
+          readingPosition: { page: 1, location: 0 },
+        },
+        activate: true,
+      },
+      { isCancelled: () => cancelled },
+    );
+    await vi.waitFor(() => expect(releaseActivation).toBeTypeOf('function'));
+    cancelled = true;
+    releaseActivation?.();
+
+    await expect(registration).resolves.toMatchObject({ status: 'superseded', revision: 0 });
+    expect(reader.snapshot()).toBe(before);
+    expect(reader.query('/docs/third.pdf')).toBeNull();
+    expect(persist).not.toHaveBeenCalled();
+  });
+
   it('keeps an immediate semantic commit authoritative when persistence fails', async () => {
     const persist = vi.fn(async () => {
       throw new Error('disk full');
@@ -642,6 +1336,7 @@ describe('Reader Actions', () => {
 
     const outcome = await reader.dispatch({
       type: 'registerDocument',
+      runtime: createDocumentRuntime(),
       document: {
         filePath: '/docs/third.pdf',
         title: 'third.pdf',
@@ -930,6 +1625,7 @@ describe('Reader Actions', () => {
     await reader.dispatch({ type: 'removeDocument', filePath: '/docs/first.pdf' });
     await reader.dispatch({
       type: 'registerDocument',
+      runtime: createDocumentRuntime(),
       document: INITIAL_SESSION.documents[0],
     });
     releasePageCount?.();
@@ -962,7 +1658,7 @@ describe('Reader Actions', () => {
     expect(reader.snapshot().documents[0].readingPosition).toEqual({ page: 1, location: 0 });
   });
 
-  it('cancels late page commits when a Document is removed', async () => {
+  it('ignores late page completions after a Document is closed', async () => {
     let finishNavigation: (() => void) | undefined;
     const reader = createReaderActions({
       initialSession: INITIAL_SESSION,
@@ -974,13 +1670,14 @@ describe('Reader Actions', () => {
               finishNavigation = resolve;
             }),
         ),
+        closeDocument: vi.fn(async () => undefined),
       },
       persist: vi.fn(),
     });
 
     const navigation = reader.dispatch({ type: 'goToPage', page: 9 });
     await vi.waitFor(() => expect(finishNavigation).toBeTypeOf('function'));
-    await reader.dispatch({ type: 'removeDocument', filePath: '/docs/first.pdf' });
+    await reader.dispatch({ type: 'closeDocument', filePath: '/docs/first.pdf' });
     finishNavigation?.();
 
     await expect(navigation).resolves.toMatchObject({ status: 'no-op' });
@@ -990,7 +1687,64 @@ describe('Reader Actions', () => {
     });
   });
 
-  it('rejects later settled state while a Document removal is in flight', async () => {
+  it('cancels in-flight Document work as soon as semantic close is dispatched', async () => {
+    let finishNavigation: (() => void) | undefined;
+    let navigationOptions: { isCancelled?: () => boolean } | undefined;
+    const reader = createReaderActions({
+      initialSession: INITIAL_SESSION,
+      projection: {
+        activateDocument: vi.fn(),
+        goToReadingPosition: vi.fn((_filePath, _position, options) => {
+          navigationOptions = options;
+          return new Promise<void>((resolve) => {
+            finishNavigation = resolve;
+          });
+        }),
+        closeDocument: vi.fn(async () => undefined),
+      },
+      persist: vi.fn(),
+    });
+
+    const navigation = reader.dispatch({ type: 'goToPage', page: 9 });
+    await vi.waitFor(() => expect(finishNavigation).toBeTypeOf('function'));
+    const close = reader.dispatch({ type: 'closeDocument', filePath: '/docs/first.pdf' });
+
+    expect(navigationOptions?.isCancelled?.()).toBe(true);
+    finishNavigation?.();
+    await expect(close).resolves.toMatchObject({ status: 'committed' });
+    await expect(navigation).resolves.toMatchObject({ status: 'no-op' });
+  });
+
+  it('cancels in-flight visual work as soon as semantic close is dispatched', async () => {
+    let finishViewMode: (() => void) | undefined;
+    let viewModeOptions: { isCancelled?: () => boolean } | undefined;
+    const reader = createReaderActions({
+      initialSession: INITIAL_SESSION,
+      projection: {
+        activateDocument: vi.fn(),
+        goToReadingPosition: vi.fn(),
+        applyViewMode: vi.fn((_filePath, _viewMode, options) => {
+          viewModeOptions = options;
+          return new Promise<void>((resolve) => {
+            finishViewMode = resolve;
+          });
+        }),
+        closeDocument: vi.fn(async () => undefined),
+      },
+      persist: vi.fn(),
+    });
+
+    const viewMode = reader.dispatch({ type: 'cycleViewMode' });
+    await vi.waitFor(() => expect(finishViewMode).toBeTypeOf('function'));
+    const close = reader.dispatch({ type: 'closeDocument', filePath: '/docs/first.pdf' });
+
+    expect(viewModeOptions?.isCancelled?.()).toBe(true);
+    finishViewMode?.();
+    await expect(close).resolves.toMatchObject({ status: 'committed' });
+    await expect(viewMode).resolves.toMatchObject({ status: 'no-op' });
+  });
+
+  it('rejects later settled state while a Document close is in flight', async () => {
     let releaseClose: (() => void) | undefined;
     const reader = createReaderActions({
       initialSession: INITIAL_SESSION,
@@ -1007,7 +1761,7 @@ describe('Reader Actions', () => {
       persist: vi.fn(),
     });
 
-    const removal = reader.dispatch({ type: 'removeDocument', filePath: '/docs/first.pdf' });
+    const removal = reader.dispatch({ type: 'closeDocument', filePath: '/docs/first.pdf' });
     await vi.waitFor(() => expect(releaseClose).toBeTypeOf('function'));
     const settled = reader.dispatch({
       type: 'settleReadingPosition',
@@ -1029,7 +1783,7 @@ describe('Reader Actions', () => {
     ]);
   });
 
-  it('preserves later actions when a Document removal fails', async () => {
+  it('preserves later actions when a Document close fails', async () => {
     let rejectClose: ((error: Error) => void) | undefined;
     const reader = createReaderActions({
       initialSession: INITIAL_SESSION,
@@ -1046,7 +1800,7 @@ describe('Reader Actions', () => {
       persist: vi.fn(),
     });
 
-    const removal = reader.dispatch({ type: 'removeDocument', filePath: '/docs/first.pdf' });
+    const removal = reader.dispatch({ type: 'closeDocument', filePath: '/docs/first.pdf' });
     await vi.waitFor(() => expect(rejectClose).toBeTypeOf('function'));
     const settled = reader.dispatch({
       type: 'settleReadingPosition',
@@ -1174,7 +1928,7 @@ describe('Reader Actions', () => {
     expect(applyZoomIntent).toHaveBeenCalledWith(
       '/docs/first.pdf',
       { kind: 'fit-width' },
-      undefined,
+      expect.objectContaining({ isCancelled: expect.any(Function) }),
     );
     expect(outcome).toMatchObject({ status: 'no-op', revision: 0 });
   });
@@ -1271,8 +2025,16 @@ describe('Reader Actions', () => {
     await reader.dispatch({ type: 'setViewMode', viewMode: 'continuous' });
     await reader.dispatch({ type: 'setFilterSettings', filterSettings });
 
-    expect(applyViewMode).toHaveBeenCalledWith('/docs/first.pdf', 'continuous', undefined);
-    expect(applyFilterSettings).toHaveBeenCalledWith('/docs/first.pdf', filterSettings, undefined);
+    expect(applyViewMode).toHaveBeenCalledWith(
+      '/docs/first.pdf',
+      'continuous',
+      expect.objectContaining({ isCancelled: expect.any(Function) }),
+    );
+    expect(applyFilterSettings).toHaveBeenCalledWith(
+      '/docs/first.pdf',
+      filterSettings,
+      expect.objectContaining({ isCancelled: expect.any(Function) }),
+    );
     expect(Object.keys(reader.snapshot().documents[0].visualState ?? {}).sort()).toEqual([
       'filterSettings',
       'rotation',
@@ -1387,5 +2149,38 @@ describe('Reader Actions', () => {
     await expect(obsolete).resolves.toMatchObject({ status: 'superseded' });
     await expect(newest).resolves.toMatchObject({ status: 'committed' });
     expect(applied).toEqual(['/docs/second.pdf:fit-page', '/docs/first.pdf:fit-width']);
+  });
+
+  it('quiesces accepted Reader Actions before a final snapshot is taken', async () => {
+    let finishNavigation: (() => void) | undefined;
+    const reader = createReaderActions({
+      initialSession: INITIAL_SESSION,
+      projection: {
+        activateDocument: vi.fn(),
+        goToReadingPosition: vi.fn(
+          () =>
+            new Promise<void>((resolve) => {
+              finishNavigation = resolve;
+            }),
+        ),
+      },
+      persist: vi.fn(async () => undefined),
+    });
+
+    const navigation = reader.dispatch({ type: 'goToPage', page: 12 });
+    await vi.waitFor(() => expect(finishNavigation).toBeTypeOf('function'));
+    let quiesced = false;
+    const quiescence = reader.quiesce().then(() => {
+      quiesced = true;
+    });
+    await Promise.resolve();
+
+    expect(quiesced).toBe(false);
+    expect(reader.snapshot().documents[0]?.readingPosition).toEqual({ page: 2, location: 0.25 });
+
+    finishNavigation?.();
+    await Promise.all([navigation, quiescence]);
+
+    expect(reader.snapshot().documents[0]?.readingPosition).toEqual({ page: 12, location: 0 });
   });
 });

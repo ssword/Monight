@@ -157,20 +157,3 @@ export interface PdfAnnotation {
   createdAt: number;
   updatedAt: number;
 }
-
-export interface RecentFile {
-  filePath: string;
-  title: string;
-  openedAt: number;
-}
-
-export function updateRecentFiles(
-  recentFiles: readonly RecentFile[],
-  opened: RecentFile,
-  limit = 8,
-): RecentFile[] {
-  return [opened, ...recentFiles.filter((recent) => recent.filePath !== opened.filePath)].slice(
-    0,
-    Math.max(0, limit),
-  );
-}

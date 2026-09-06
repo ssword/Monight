@@ -188,6 +188,43 @@ describe('startup Reading Session workflow', () => {
     expect(reportFailure).not.toHaveBeenCalled();
   });
 
+  it('prunes established failures but retains shutdown-interrupted Reading Session Documents', async () => {
+    const intake = {
+      restore: vi.fn(() =>
+        Promise.resolve({
+          outcomes: [
+            {
+              status: 'failed' as const,
+              requestedPath: '/docs/missing.pdf',
+              error: new Error('missing'),
+            },
+            { status: 'interrupted' as const, requestedPath: '/docs/password.pdf' },
+          ],
+          opened: 0,
+          failed: 1,
+          failedPaths: ['/docs/missing.pdf'],
+          interruptedPaths: ['/docs/password.pdf'],
+          explicitRequestResult: { outcomes: [], opened: 0, activated: 0, failed: 0 },
+        }),
+      ),
+    } as unknown as DocumentIntake;
+    const pruneDocument = vi.fn(async () => undefined);
+    const reportFailure = vi.fn();
+
+    await restoreReadingSessionAtStartup({
+      intake,
+      session: emptySession,
+      pruneDocument,
+      reportFailure,
+    });
+
+    expect(pruneDocument).toHaveBeenCalledOnce();
+    expect(pruneDocument).toHaveBeenCalledWith('/docs/missing.pdf');
+    expect(reportFailure).toHaveBeenCalledWith(
+      'Pruned 1 saved Document while restoring the Reading Session.',
+    );
+  });
+
   it('waits for foreground startup work before continuing background restoration', async () => {
     const events: string[] = [];
     let releaseForegroundReady: (() => void) | undefined;

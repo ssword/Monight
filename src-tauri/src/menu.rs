@@ -141,6 +141,10 @@ fn emit_to_main(app: &AppHandle, event: &str) {
     }
 }
 
+fn quit_lifecycle_event(event_id: &str) -> Option<&'static str> {
+    (event_id == "quit").then_some("application-quit-requested")
+}
+
 fn help_url(event_id: &str) -> Option<&'static str> {
     match event_id {
         "learn_more" => Some("https://github.com/ssword/Monight"),
@@ -201,6 +205,12 @@ pub fn create_menu(app: &AppHandle) -> Result<Menu<Wry>, tauri::Error> {
 
 /// Handle menu events
 pub fn handle_menu_event(app: &AppHandle, event_id: &str) {
+    if let Some(event) = quit_lifecycle_event(event_id) {
+        debug_assert_eq!(event, "application-quit-requested");
+        crate::request_application_quit(app);
+        return;
+    }
+
     match event_id {
         "open" => {
             // Emit event to frontend to open file dialog
@@ -230,13 +240,6 @@ pub fn handle_menu_event(app: &AppHandle, event_id: &str) {
         }
         "toggle_fullscreen" => {
             emit_to_main(app, "menu-toggle-fullscreen");
-        }
-        "quit" => {
-            // Route application quit through the frontend close guard so its final
-            // Reading Session write completes before the process exits.
-            if let Some(window) = app.get_webview_window("main") {
-                let _ = window.close();
-            }
         }
         "close_tab" => {
             emit_to_main(app, "menu-close-tab");
@@ -269,5 +272,14 @@ mod tests {
             Some("https://github.com/ssword/Monight/issues/new")
         );
         assert_eq!(help_url("contact"), Some("https://github.com/ssword"));
+    }
+
+    #[test]
+    fn quit_menu_requests_the_frontend_lifecycle_handshake() {
+        assert_eq!(
+            quit_lifecycle_event("quit"),
+            Some("application-quit-requested")
+        );
+        assert_eq!(quit_lifecycle_event("close_tab"), None);
     }
 }

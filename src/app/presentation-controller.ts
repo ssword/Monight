@@ -1,15 +1,22 @@
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 import type { ViewMode } from '../lib/document-features';
-import type { ZoomIntent } from '../reader/reader-actions';
-import type { PDFViewer } from '../scripts/pdf-viewer';
+import type { DocumentRenderingState } from '../reader/document-rendering';
+import type { PresentationExitOptions, ZoomIntent } from '../reader/reader-actions';
+
+export interface PresentationSurface {
+  snapshot(): Pick<DocumentRenderingState, 'viewMode' | 'zoomIntent'>;
+  setViewMode(viewMode: ViewMode): Promise<void>;
+  fitToPage(): Promise<void>;
+  setZoomIntent(zoomIntent: ZoomIntent): Promise<void>;
+}
 
 interface PresentationControllerOptions {
-  getActiveViewer: () => PDFViewer | null;
+  getActivePresentation: () => PresentationSurface | null;
   onStateChanged: (active: boolean) => void;
 }
 
 export class PresentationController {
-  private readonly getActiveViewer: () => PDFViewer | null;
+  private readonly getActivePresentation: () => PresentationSurface | null;
   private readonly onStateChanged: (active: boolean) => void;
   private active = false;
   private previousViewMode: ViewMode = 'single';
@@ -17,7 +24,7 @@ export class PresentationController {
   private wasFullscreen = false;
 
   constructor(options: PresentationControllerOptions) {
-    this.getActiveViewer = options.getActiveViewer;
+    this.getActivePresentation = options.getActivePresentation;
     this.onStateChanged = options.onStateChanged;
     document.getElementById('presentation-mode')?.addEventListener('click', () => {
       void this.toggle();
@@ -48,10 +55,10 @@ export class PresentationController {
   }
 
   async enter(): Promise<void> {
-    const viewer = this.getActiveViewer();
-    if (!viewer || this.active) return;
+    const presentation = this.getActivePresentation();
+    if (!presentation || this.active) return;
 
-    const state = viewer.getState();
+    const state = presentation.snapshot();
     this.previousViewMode = state.viewMode;
     this.previousZoomIntent = state.zoomIntent;
     const currentWindow = getCurrentWebviewWindow();
@@ -61,23 +68,26 @@ export class PresentationController {
     if (!this.wasFullscreen) await currentWindow.setFullscreen(true);
 
     await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
-    await viewer.setViewMode('single');
-    await viewer.fitToPage();
+    await presentation.setViewMode('single');
+    await presentation.fitToPage();
     this.onStateChanged(true);
   }
 
-  async exit(): Promise<void> {
-    if (!this.active) return;
-    const viewer = this.getActiveViewer();
+  async exit(options: PresentationExitOptions = {}): Promise<(() => Promise<void>) | undefined> {
+    if (!this.active) return undefined;
+    const presentation = this.getActivePresentation();
     this.active = false;
     document.body.classList.remove('presentation-mode');
     const currentWindow = getCurrentWebviewWindow();
     if (!this.wasFullscreen) await currentWindow.setFullscreen(false);
 
-    if (viewer) {
-      await viewer.setViewMode(this.previousViewMode);
-      await viewer.setZoomIntent(this.previousZoomIntent);
+    if (presentation && options.restoreVisualState !== false) {
+      await presentation.setViewMode(this.previousViewMode);
+      await presentation.setZoomIntent(this.previousZoomIntent);
     }
     this.onStateChanged(false);
+    return async () => {
+      if (!this.active) await this.enter();
+    };
   }
 }

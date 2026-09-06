@@ -1,4 +1,9 @@
+import { Window } from 'happy-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import type { LoadableDocumentContent } from '../reader/document-content';
+import { createInternalDocumentPage } from '../reader/internal-document-page';
+import { createReaderActions } from '../reader/reader-actions';
 
 const getPdfEngine = vi.hoisted(() => vi.fn());
 vi.mock('../lib/pdf-engine', () => ({ getPdfEngine }));
@@ -49,12 +54,12 @@ type Viewer = {
   handleWheel: (event: unknown) => void;
   handleGestureStart: (event: unknown) => void;
   handleGestureChange: (event: unknown) => void;
-  renderPage: (pageNum: number, expectedGestureEpoch?: number | null) => Promise<void>;
-  calculateAllPageDimensions: (expectedGestureEpoch?: number | null) => Promise<void>;
+  renderPage: (pageNum: number, expectedRenderGeneration?: number | null) => Promise<void>;
+  calculateAllPageDimensions: (expectedRenderGeneration?: number | null) => Promise<void>;
   renderVisiblePages: (
     forceRender?: boolean,
     isInitialRender?: boolean,
-    expectedGestureEpoch?: number | null,
+    expectedRenderGeneration?: number | null,
   ) => Promise<void>;
   container: ReturnType<typeof makeContainer>;
   scrollContainer: PreviewTarget | null;
@@ -123,7 +128,7 @@ async function makeViewer(
     gesturePendingZoom: 1,
     gestureSettleTimer: null,
     gesturePreviewBaseMinHeight: null,
-    gestureRenderEpoch: 0,
+    renderGeneration: 0,
     pinchStartZoom: 1,
     wheelZoomRafId: null,
     pendingWheelDelta: 0,
@@ -152,6 +157,127 @@ const wheelEvent = (deltaY: number, clientX: number, clientY: number) => ({
   preventDefault: vi.fn(),
 });
 
+const productionHarnessCleanups: Array<() => Promise<void>> = [];
+
+function installProductionGestureBrowser() {
+  const browser = new Window();
+  browser.document.body.innerHTML = '<div id="pdf-container"></div>';
+  vi.stubGlobal('document', browser.document);
+  vi.stubGlobal('window', browser);
+  Object.defineProperty(browser.HTMLCanvasElement.prototype, 'getContext', {
+    configurable: true,
+    value: vi.fn(() => ({
+      drawImage: vi.fn(),
+      fillRect: vi.fn(),
+      fillStyle: '',
+    })),
+  });
+  Object.defineProperty(browser, 'requestAnimationFrame', {
+    configurable: true,
+    value: (callback: FrameRequestCallback) => {
+      callback(0);
+      return 1;
+    },
+  });
+  Object.defineProperty(browser, 'cancelAnimationFrame', {
+    configurable: true,
+    value: vi.fn(),
+  });
+  const container = browser.document.getElementById('pdf-container');
+  if (!container) throw new Error('Gesture test container was not created');
+  Object.defineProperties(container, {
+    clientHeight: { value: 800 },
+    clientWidth: { value: 600 },
+  });
+  return { browser, container };
+}
+
+function createGestureDocumentContent(): LoadableDocumentContent {
+  const page = {
+    getViewport: ({ scale = 1 }: { scale?: number }) => ({
+      width: 600 * scale,
+      height: 800 * scale,
+      scale,
+      rotation: 0,
+      convertToViewportRectangle: (rect: number[]) => rect,
+      convertToPdfPoint: (x: number, y: number) => [x, y],
+    }),
+    render: () => ({ promise: Promise.resolve(), cancel: vi.fn() }),
+    getTextContent: async () => ({ items: [] }),
+    getAnnotations: async () => [],
+    pageNumber: 1,
+  };
+  return {
+    pageCount: 1,
+    load: vi.fn(async () => undefined),
+    getPage: vi.fn(async () => createInternalDocumentPage(1, page)),
+    getData: vi.fn(async () => new Uint8Array([1])),
+    search: vi.fn(async () => []),
+    getOutline: vi.fn(async () => []),
+    getMetadata: vi.fn(async () => null),
+    resolveLinkTarget: vi.fn(async () => null),
+    destroy: vi.fn(async () => undefined),
+  };
+}
+
+async function createProductionGestureHarness() {
+  const { browser, container } = installProductionGestureBrowser();
+  getPdfEngine.mockResolvedValue({
+    TextLayer: class {
+      render = async () => undefined;
+      cancel = vi.fn();
+    },
+    AnnotationType: { LINK: 2 },
+  });
+  const content = createGestureDocumentContent();
+  const { createDocumentWorkspace } = await import('../app/document-workspace');
+  const initialSession = {
+    schemaVersion: 2 as const,
+    activeDocumentPath: null,
+    documents: [],
+  };
+  const persist = vi.fn(async () => undefined);
+  let reader!: ReturnType<typeof createReaderActions>;
+  const workspace = createDocumentWorkspace({
+    dispatchReaderAction: (action, options) => reader.dispatch(action, options),
+    snapshot: () => reader?.snapshot() ?? { ...initialSession, revision: 0 },
+    isDocumentOpen: (filePath) => reader?.isDocumentOpen(filePath) ?? false,
+    defaultVisualState: () => ({
+      filterSettings: {
+        brightness: 100,
+        grayscale: 0,
+        invert: 0,
+        sepia: 0,
+        hue: 0,
+        extraBrightness: 100,
+      },
+      zoomIntent: { kind: 'manual', scale: 1 },
+      rotation: 0,
+      viewMode: 'single',
+    }),
+    createDocumentContent: () => content,
+  });
+  reader = createReaderActions({
+    initialSession,
+    projection: workspace.projection,
+    persist,
+  });
+  await workspace.intakeRuntime.open({
+    document: { canonicalPath: '/docs/report.pdf', title: 'report.pdf' },
+    bytes: new Uint8Array([1]),
+    activate: true,
+    notifyOpened: false,
+  });
+  persist.mockClear();
+  const dispatch = vi.spyOn(reader, 'dispatch');
+  productionHarnessCleanups.push(async () => {
+    await workspace.projection.closeDocument?.('/docs/report.pdf', null);
+    await content.destroy();
+  });
+
+  return { browser, container, dispatch, persist, reader, workspace };
+}
+
 describe('gesture zoom preview', () => {
   const rafCallbacks: FrameRequestCallback[] = [];
 
@@ -167,7 +293,8 @@ describe('gesture zoom preview', () => {
     });
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    for (const cleanup of productionHarnessCleanups.splice(0)) await cleanup();
     vi.useRealTimers();
     vi.unstubAllGlobals();
   });
@@ -231,17 +358,75 @@ describe('gesture zoom preview', () => {
     expect(setZoom).toHaveBeenCalledTimes(1);
   });
 
-  it('dispatches settled gesture zoom through the Reader Action callback', async () => {
-    const { viewer, setZoom } = await makeViewer('continuous');
-    const onZoomIntentRequest = vi.fn(async () => undefined);
-    Object.assign(viewer, { onZoomIntentRequest });
+  it.each([
+    'modifier+wheel',
+    'pinch gesture',
+  ] as const)('commits one settled Zoom Intent from public %s events', async (input) => {
+    const { browser, container, dispatch, persist, reader, workspace } =
+      await createProductionGestureHarness();
 
-    viewer.handleGestureStart({ preventDefault: vi.fn() });
-    viewer.handleGestureChange({ scale: 1.5, preventDefault: vi.fn() });
+    if (input === 'modifier+wheel') {
+      const wheel = new browser.Event('wheel', { bubbles: true, cancelable: true });
+      Object.defineProperties(wheel, {
+        ctrlKey: { value: true },
+        metaKey: { value: false },
+        deltaY: { value: -Math.log(1.5) / 0.002 },
+        clientX: { value: 300 },
+        clientY: { value: 400 },
+      });
+      container.dispatchEvent(wheel);
+    } else {
+      container.dispatchEvent(
+        new browser.Event('gesturestart', { bubbles: true, cancelable: true }),
+      );
+      const change = new browser.Event('gesturechange', { bubbles: true, cancelable: true });
+      Object.defineProperties(change, {
+        scale: { value: 1.5 },
+        clientX: { value: 300 },
+        clientY: { value: 400 },
+      });
+      container.dispatchEvent(change);
+    }
+
+    expect(
+      (container.querySelector('.pdf-page-surface') as unknown as HTMLElement | null)?.style
+        .transform,
+    ).toBe('scale(1.5)');
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(reader.snapshot().documents[0]?.visualState?.zoomIntent).toEqual({
+      kind: 'manual',
+      scale: 1,
+    });
+    expect(persist).not.toHaveBeenCalled();
+
     await vi.advanceTimersByTimeAsync(500);
+    await reader.quiesce();
+    await reader.flush();
 
-    expect(onZoomIntentRequest).toHaveBeenCalledWith({ kind: 'manual', scale: 1.5 });
-    expect(setZoom).not.toHaveBeenCalled();
+    expect(
+      dispatch.mock.calls
+        .map(([action]) => action)
+        .filter((action) => action.type === 'setZoomIntent'),
+    ).toEqual([
+      {
+        type: 'setZoomIntent',
+        filePath: '/docs/report.pdf',
+        zoomIntent: { kind: 'manual', scale: 1.5 },
+      },
+    ]);
+    expect(
+      (container.querySelector('.pdf-page-surface') as unknown as HTMLElement | null)?.style
+        .transform,
+    ).toBe('');
+    expect(workspace.activeRenderingState()?.zoomIntent).toEqual({
+      kind: 'manual',
+      scale: 1.5,
+    });
+    expect(reader.snapshot().documents[0]?.visualState?.zoomIntent).toEqual({
+      kind: 'manual',
+      scale: 1.5,
+    });
+    expect(persist).toHaveBeenCalledOnce();
   });
 
   it('anchors continuous-mode zoom at the pointer position', async () => {
@@ -391,7 +576,7 @@ describe('gesture zoom preview', () => {
       calculateAllPageDimensions: Viewer['calculateAllPageDimensions'];
     };
     Object.assign(viewer, {
-      pdfDoc: {},
+      content: { pageCount: 10 },
       setZoom: prototype.setZoom.bind(viewer),
       calculateAllPageDimensions: prototype.calculateAllPageDimensions.bind(viewer),
       scheduleDimensionRefinement: vi.fn(),
@@ -442,17 +627,18 @@ describe('gesture zoom preview', () => {
       renderPageToContinuousCanvas: (
         pageNum: number,
         forceRender?: boolean,
-        expectedGestureEpoch?: number | null,
+        expectedRenderGeneration?: number | null,
       ) => Promise<void>;
       startSurfaceRender: (
         pageNum: number,
         surface: unknown,
         renderCanvas?: unknown,
-        expectedGestureEpoch?: number | null,
+        expectedRenderGeneration?: number | null,
       ) => Promise<unknown>;
     };
     Object.assign(viewer, {
-      pdfDoc: {
+      content: {
+        pageCount: 10,
         getPage: vi.fn(
           () =>
             new Promise((resolve) => {
@@ -469,13 +655,13 @@ describe('gesture zoom preview', () => {
       insertSurfaceAtPosition: vi.fn(),
       state: { ...viewer.state, zoom: 1.5 },
       gestureCommit: { epoch: 1, targetZoom: 1.5, previousZoom: 1 },
-      gestureRenderEpoch: 1,
+      renderGeneration: 1,
     });
     const renderPromise = prototype.renderPageToContinuousCanvas.call(viewer, 1, true, 1);
 
     await Promise.resolve();
     viewer.handleGestureStart({ preventDefault: vi.fn() });
-    releasePage?.(page);
+    releasePage?.(createInternalDocumentPage(1, page));
     await renderPromise;
 
     expect(pageRender).not.toHaveBeenCalled();
@@ -509,7 +695,10 @@ describe('gesture zoom preview', () => {
     };
     vi.stubGlobal('document', { createElement: () => renderCanvas });
     Object.assign(viewer, {
-      pdfDoc: { getPage: vi.fn(async () => page) },
+      content: {
+        pageCount: 10,
+        getPage: vi.fn(async () => createInternalDocumentPage(1, page)),
+      },
       canvas: visibleCanvas,
       canvasId: 'test',
       createPageSurface: vi.fn(() => stagedSurface),
@@ -521,7 +710,7 @@ describe('gesture zoom preview', () => {
             releaseLayers = resolve;
           }),
       ),
-      gestureRenderEpoch: 1,
+      renderGeneration: 1,
     });
     const renderPromise = prototype.renderPage.call(viewer, 1, 1);
 
