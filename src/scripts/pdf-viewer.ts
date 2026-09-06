@@ -1157,7 +1157,10 @@ export class PDFViewer implements DocumentRendering {
 
   setSearchQuery(query: string): void {
     const normalizedQuery = query.trim();
-    if (this.searchQuery !== normalizedQuery) this.activeSearchMatch = null;
+    if (this.searchQuery !== normalizedQuery) {
+      this.searchToken = (this.searchToken ?? 0) + 1;
+      this.activeSearchMatch = null;
+    }
     this.searchQuery = normalizedQuery;
     this.refreshSearchHighlights();
   }

@@ -57,7 +57,10 @@ export type DocumentSurfaceFactory = (
 ) => Promise<DocumentSurface>;
 
 interface DocumentWorkspaceOptions {
-  dispatchReaderAction(action: ReaderAction): Promise<ReaderActionOutcome>;
+  dispatchReaderAction(
+    action: ReaderAction,
+    options?: ReaderActionOptions,
+  ): Promise<ReaderActionOutcome>;
   dispatchAcceptedIntakeAction?: (
     action: ReaderAction,
     options?: ReaderActionOptions,
@@ -246,14 +249,17 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
   };
 
   const dispatchOrThrow = async (
-    dispatch: (action: ReaderAction) => Promise<ReaderActionOutcome>,
+    dispatch: (action: ReaderAction, options?: ReaderActionOptions) => Promise<ReaderActionOutcome>,
     action: ReaderAction,
+    actionOptions?: ReaderActionOptions,
   ): Promise<void> => {
-    const outcome = await dispatch(action);
+    const outcome = await dispatch(action, actionOptions);
     if (outcome.status === 'failure') throw outcome.error;
   };
-  const dispatchReaderActionOrThrow = (action: ReaderAction): Promise<void> =>
-    dispatchOrThrow(options.dispatchReaderAction, action);
+  const dispatchReaderActionOrThrow = (
+    action: ReaderAction,
+    actionOptions?: ReaderActionOptions,
+  ): Promise<void> => dispatchOrThrow(options.dispatchReaderAction, action, actionOptions);
   const dispatchAcceptedIntakeActionOrThrow = async (
     action: ReaderAction,
     actionOptions?: ReaderActionOptions,
@@ -430,8 +436,11 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
         stateChanged: () => options.renderingStateChanged?.(),
         readingPositionObserved: settleReadingPosition,
         readingPositionSettled: settleReadingPosition,
-        pageNavigationRequested: (page) =>
-          dispatchReaderActionOrThrow({ type: 'goToPage', filePath: document.canonicalPath, page }),
+        pageNavigationRequested: (page, actionOptions) =>
+          dispatchReaderActionOrThrow(
+            { type: 'goToPage', filePath: document.canonicalPath, page },
+            actionOptions,
+          ),
         zoomIntentRequested: (zoomIntent) =>
           dispatchReaderActionOrThrow({
             type: 'setZoomIntent',
