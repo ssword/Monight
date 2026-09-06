@@ -3,11 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { LoadableDocumentContent } from '../reader/document-content';
 import { createInternalDocumentPage } from '../reader/internal-document-page';
-import {
-  createReaderActions,
-  type ReaderActionOptions,
-  type ZoomIntent,
-} from '../reader/reader-actions';
+import { createReaderActions } from '../reader/reader-actions';
 
 const getPdfEngine = vi.hoisted(() => vi.fn());
 vi.mock('../lib/pdf-engine', () => ({ getPdfEngine }));
@@ -161,9 +157,9 @@ const wheelEvent = (deltaY: number, clientX: number, clientY: number) => ({
   preventDefault: vi.fn(),
 });
 
-const productionViewers: Array<{ destroy(): void }> = [];
+const productionHarnessCleanups: Array<() => Promise<void>> = [];
 
-async function createProductionGestureHarness() {
+function installProductionGestureBrowser() {
   const browser = new Window();
   browser.document.body.innerHTML = '<div id="pdf-container"></div>';
   vi.stubGlobal('document', browser.document);
@@ -193,13 +189,10 @@ async function createProductionGestureHarness() {
     clientHeight: { value: 800 },
     clientWidth: { value: 600 },
   });
-  getPdfEngine.mockResolvedValue({
-    TextLayer: class {
-      render = async () => undefined;
-      cancel = vi.fn();
-    },
-    AnnotationType: { LINK: 2 },
-  });
+  return { browser, container };
+}
+
+function createGestureDocumentContent(): LoadableDocumentContent {
   const page = {
     getViewport: ({ scale = 1 }: { scale?: number }) => ({
       width: 600 * scale,
@@ -214,7 +207,7 @@ async function createProductionGestureHarness() {
     getAnnotations: async () => [],
     pageNumber: 1,
   };
-  const content: LoadableDocumentContent = {
+  return {
     pageCount: 1,
     load: vi.fn(async () => undefined),
     getPage: vi.fn(async () => createInternalDocumentPage(1, page)),
@@ -225,60 +218,64 @@ async function createProductionGestureHarness() {
     resolveLinkTarget: vi.fn(async () => null),
     destroy: vi.fn(async () => undefined),
   };
-  const { PDFViewer } = await import('../scripts/pdf-viewer');
-  const viewer = new PDFViewer('pdf-container', 'pdf-canvas', { content });
-  productionViewers.push(viewer);
-  const applyZoomIntent = vi.fn(
-    async (_filePath: string, zoomIntent: ZoomIntent, options?: ReaderActionOptions) => {
-      await viewer.setZoomIntent(zoomIntent, options);
-      return viewer.getState().zoomIntent;
+}
+
+async function createProductionGestureHarness() {
+  const { browser, container } = installProductionGestureBrowser();
+  getPdfEngine.mockResolvedValue({
+    TextLayer: class {
+      render = async () => undefined;
+      cancel = vi.fn();
     },
-  );
+    AnnotationType: { LINK: 2 },
+  });
+  const content = createGestureDocumentContent();
+  const { createDocumentWorkspace } = await import('../app/document-workspace');
+  const initialSession = {
+    schemaVersion: 2 as const,
+    activeDocumentPath: null,
+    documents: [],
+  };
   const persist = vi.fn(async () => undefined);
-  const reader = createReaderActions({
-    initialSession: {
-      schemaVersion: 2,
-      activeDocumentPath: '/docs/report.pdf',
-      documents: [
-        {
-          filePath: '/docs/report.pdf',
-          title: 'report.pdf',
-          readingPosition: { page: 1, location: 0 },
-          visualState: {
-            filterSettings: {
-              brightness: 100,
-              grayscale: 0,
-              invert: 0,
-              sepia: 0,
-              hue: 0,
-              extraBrightness: 100,
-            },
-            zoomIntent: { kind: 'manual', scale: 1 },
-            rotation: 0,
-            viewMode: 'single',
-          },
-        },
-      ],
-    },
-    projection: {
-      activateDocument: vi.fn(async () => undefined),
-      goToReadingPosition: vi.fn(async () => undefined),
-      applyZoomIntent,
-    },
+  let reader!: ReturnType<typeof createReaderActions>;
+  const workspace = createDocumentWorkspace({
+    dispatchReaderAction: (action, options) => reader.dispatch(action, options),
+    snapshot: () => reader?.snapshot() ?? { ...initialSession, revision: 0 },
+    isDocumentOpen: (filePath) => reader?.isDocumentOpen(filePath) ?? false,
+    defaultVisualState: () => ({
+      filterSettings: {
+        brightness: 100,
+        grayscale: 0,
+        invert: 0,
+        sepia: 0,
+        hue: 0,
+        extraBrightness: 100,
+      },
+      zoomIntent: { kind: 'manual', scale: 1 },
+      rotation: 0,
+      viewMode: 'single',
+    }),
+    createDocumentContent: () => content,
+  });
+  reader = createReaderActions({
+    initialSession,
+    projection: workspace.projection,
     persist,
   });
-  viewer.setOnZoomIntentRequest(async (zoomIntent) => {
-    const outcome = await reader.dispatch({
-      type: 'setZoomIntent',
-      filePath: '/docs/report.pdf',
-      zoomIntent,
-    });
-    if (outcome.status === 'failure') throw outcome.error;
+  await workspace.intakeRuntime.open({
+    document: { canonicalPath: '/docs/report.pdf', title: 'report.pdf' },
+    bytes: new Uint8Array([1]),
+    activate: true,
+    notifyOpened: false,
   });
-  await viewer.loadPDF(new Uint8Array([1]), 'report.pdf', '/docs/report.pdf');
-  viewer.setVisible(true);
+  persist.mockClear();
+  const dispatch = vi.spyOn(reader, 'dispatch');
+  productionHarnessCleanups.push(async () => {
+    await workspace.projection.closeDocument?.('/docs/report.pdf', null);
+    await content.destroy();
+  });
 
-  return { applyZoomIntent, browser, container, persist, reader, viewer };
+  return { browser, container, dispatch, persist, reader, workspace };
 }
 
 describe('gesture zoom preview', () => {
@@ -296,8 +293,8 @@ describe('gesture zoom preview', () => {
     });
   });
 
-  afterEach(() => {
-    for (const viewer of productionViewers.splice(0)) viewer.destroy();
+  afterEach(async () => {
+    for (const cleanup of productionHarnessCleanups.splice(0)) await cleanup();
     vi.useRealTimers();
     vi.unstubAllGlobals();
   });
@@ -364,7 +361,7 @@ describe('gesture zoom preview', () => {
   it.each(['modifier+wheel', 'pinch gesture'] as const)(
     'commits one settled Zoom Intent from public %s events',
     async (input) => {
-      const { applyZoomIntent, browser, container, persist, reader, viewer } =
+      const { browser, container, dispatch, persist, reader, workspace } =
         await createProductionGestureHarness();
 
       if (input === 'modifier+wheel') {
@@ -390,8 +387,11 @@ describe('gesture zoom preview', () => {
         container.dispatchEvent(change);
       }
 
-      expect(viewer.getCanvas()?.parentElement?.style.transform).toBe('scale(1.5)');
-      expect(applyZoomIntent).not.toHaveBeenCalled();
+      expect(
+        (container.querySelector('.pdf-page-surface') as unknown as HTMLElement | null)?.style
+          .transform,
+      ).toBe('scale(1.5)');
+      expect(dispatch).not.toHaveBeenCalled();
       expect(reader.snapshot().documents[0]?.visualState?.zoomIntent).toEqual({
         kind: 'manual',
         scale: 1,
@@ -402,14 +402,25 @@ describe('gesture zoom preview', () => {
       await reader.quiesce();
       await reader.flush();
 
-      expect(applyZoomIntent).toHaveBeenCalledOnce();
-      expect(applyZoomIntent).toHaveBeenCalledWith(
-        '/docs/report.pdf',
-        { kind: 'manual', scale: 1.5 },
-        expect.objectContaining({ isCancelled: expect.any(Function) }),
-      );
-      expect(viewer.getCanvas()?.parentElement?.style.transform).toBe('');
-      expect(viewer.getState().zoomIntent).toEqual({ kind: 'manual', scale: 1.5 });
+      expect(
+        dispatch.mock.calls
+          .map(([action]) => action)
+          .filter((action) => action.type === 'setZoomIntent'),
+      ).toEqual([
+        {
+          type: 'setZoomIntent',
+          filePath: '/docs/report.pdf',
+          zoomIntent: { kind: 'manual', scale: 1.5 },
+        },
+      ]);
+      expect(
+        (container.querySelector('.pdf-page-surface') as unknown as HTMLElement | null)?.style
+          .transform,
+      ).toBe('');
+      expect(workspace.activeRenderingState()?.zoomIntent).toEqual({
+        kind: 'manual',
+        scale: 1.5,
+      });
       expect(reader.snapshot().documents[0]?.visualState?.zoomIntent).toEqual({
         kind: 'manual',
         scale: 1.5,

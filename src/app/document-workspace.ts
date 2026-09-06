@@ -70,6 +70,9 @@ interface DocumentWorkspaceOptions {
   isDocumentOpen(filePath: string): boolean;
   defaultVisualState(): ReadingSessionVisualState;
   createSurface?: DocumentSurfaceFactory;
+  createDocumentContent?: (options: {
+    readonly requestPassword?: PdfPasswordRequester;
+  }) => LoadableDocumentContent;
   annotationAuthority?: AnnotationAccess;
   requestPassword?: PdfPasswordRequester;
   requestAnnotationNote?: AnnotationNoteRequester;
@@ -160,11 +163,13 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
     signal,
   }) => {
     const requestPassword = options.requestPassword;
-    const content: LoadableDocumentContent = createPdfDocumentContent({
-      requestPassword: requestPassword
-        ? (fileName, reason) => requestPassword(fileName, reason, signal)
-        : undefined,
-    });
+    const requestDocumentPassword = requestPassword
+      ? (fileName: string, reason: 'required' | 'incorrect') =>
+          requestPassword(fileName, reason, signal)
+      : undefined;
+    const content: LoadableDocumentContent = options.createDocumentContent
+      ? options.createDocumentContent({ requestPassword: requestDocumentPassword })
+      : createPdfDocumentContent({ requestPassword: requestDocumentPassword });
     const resolveLinkTarget = options.resolveLinkTarget;
     const activateLinkTarget = options.activateLinkTarget;
     const rendering = new PDFViewer('pdf-container', `pdf-canvas-${crypto.randomUUID()}`, {
