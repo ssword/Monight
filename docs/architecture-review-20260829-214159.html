@@ -1,0 +1,445 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Architecture review for Monight</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script type="module">
+      import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+
+      mermaid.initialize({
+        startOnLoad: true,
+        theme: "neutral",
+        securityLevel: "loose",
+        flowchart: { curve: "basis", htmlLabels: true },
+      });
+    </script>
+    <style>
+      :root { color-scheme: light; }
+      html { scroll-behavior: smooth; }
+      body {
+        background:
+          radial-gradient(circle at 15% -10%, rgba(16, 185, 129, 0.08), transparent 32rem),
+          #fafaf9;
+      }
+      .deep {
+        background: linear-gradient(135deg, #0f172a, #1e293b);
+        box-shadow: 0 18px 42px rgba(15, 23, 42, 0.18);
+      }
+      .diagram-grid {
+        background-image:
+          linear-gradient(rgba(148, 163, 184, 0.10) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(148, 163, 184, 0.10) 1px, transparent 1px);
+        background-size: 22px 22px;
+      }
+      .module-box { border: 1px solid #cbd5e1; background: rgba(255,255,255,.94); }
+      .seam-box { border: 2px dashed #94a3b8; }
+      .leak-line { height: 2px; background: #dc2626; position: relative; }
+      .leak-line::after {
+        content: "";
+        position: absolute;
+        right: -1px;
+        top: -4px;
+        border-left: 8px solid #dc2626;
+        border-top: 5px solid transparent;
+        border-bottom: 5px solid transparent;
+      }
+      .tiny-label { font-size: 10px; letter-spacing: .13em; text-transform: uppercase; }
+      .mass-interface { background: #fca5a5; border: 1px solid #ef4444; }
+      .mass-implementation { background: #cbd5e1; border: 1px solid #94a3b8; }
+      .mass-deep-interface { background: #6ee7b7; border: 1px solid #10b981; }
+      .mass-deep-implementation { background: #1e293b; border: 1px solid #0f172a; color: white; }
+      .mermaid { min-height: 270px; display: grid; place-items: center; }
+      code { overflow-wrap: anywhere; }
+      @media print {
+        body { background: white; }
+        article { break-inside: avoid; }
+      }
+    </style>
+  </head>
+  <body class="font-sans text-slate-900 antialiased">
+    <main class="mx-auto max-w-6xl space-y-12 px-5 py-12 sm:px-8">
+      <header class="border-b border-slate-200 pb-8">
+        <div class="flex flex-col gap-6 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <div class="mb-3 text-xs font-semibold uppercase tracking-[0.2em] text-emerald-700">Architecture review</div>
+            <h1 class="font-serif text-4xl tracking-tight text-slate-950 sm:text-5xl">Monight</h1>
+            <div class="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-sm text-slate-500">
+              <span>29 August 2026</span>
+              <span>Scope: Reading Session + PDF reader flow</span>
+              <span>Baseline: 61 tests pass</span>
+              <span>ADRs: none recorded</span>
+            </div>
+          </div>
+          <div class="grid grid-cols-2 gap-x-5 gap-y-2 text-xs text-slate-600">
+            <span class="flex items-center gap-2"><i class="h-4 w-6 rounded border border-slate-400 bg-white"></i>module</span>
+            <span class="flex items-center gap-2"><i class="h-4 w-6 rounded border-2 border-dashed border-slate-400"></i>seam</span>
+            <span class="flex items-center gap-2"><i class="h-0.5 w-6 bg-red-600"></i>leakage</span>
+            <span class="flex items-center gap-2"><i class="h-4 w-6 rounded bg-slate-900"></i>deep module</span>
+          </div>
+        </div>
+      </header>
+
+      <section id="candidates" class="space-y-12">
+        <article id="reader-actions" class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+          <div class="border-b border-slate-200 px-6 py-6 sm:px-8">
+            <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <div class="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-700">Candidate 01</div>
+                <h2 class="mt-2 font-serif text-3xl tracking-tight">Route every reader gesture through one deep module</h2>
+              </div>
+              <div class="flex shrink-0 gap-2">
+                <span class="rounded-full bg-emerald-100 px-3 py-1 text-xs font-bold text-emerald-800">Strong</span>
+                <span class="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700">in-process</span>
+              </div>
+            </div>
+            <div class="mt-4 font-mono text-xs leading-6 text-slate-600">
+              src/app/dom-events.ts:9–20, 74–170 · src/app/keybinds.ts:9–23, 103–193 ·
+              src/app/tauri-events.ts:13–28, 149–199 · src/main.ts:366–465
+            </div>
+          </div>
+
+          <div class="grid gap-6 p-6 sm:p-8 lg:grid-cols-2">
+            <section>
+              <div class="mb-3 text-xs font-bold uppercase tracking-[0.16em] text-red-700">Before · semantics leak into adapters</div>
+              <div class="diagram-grid overflow-hidden rounded-xl border border-red-200 bg-red-50/40 p-3">
+                <pre class="mermaid">
+flowchart TB
+  D[DOM adapter] -->|navigate| V[PDFViewer]
+  D -->|save| S[tab-state]
+  D -->|refresh| U[UI]
+  K[keybind adapter] -->|navigate| V
+  K -->|save| S
+  K -->|refresh| U
+  T[Tauri menu adapter] -->|navigate| V
+  T -->|save| S
+  T -->|refresh| U
+  classDef leak fill:#fff1f2,stroke:#dc2626,stroke-width:2px;
+  class D,K,T,S,U leak;
+                </pre>
+              </div>
+            </section>
+            <section>
+              <div class="mb-3 text-xs font-bold uppercase tracking-[0.16em] text-emerald-700">After · adapters cross one seam</div>
+              <div class="diagram-grid overflow-hidden rounded-xl border border-emerald-200 bg-emerald-50/40 p-3">
+                <pre class="mermaid">
+flowchart TB
+  D[DOM adapter] --> I
+  K[keybind adapter] --> I
+  T[Tauri menu adapter] --> I
+  subgraph RA["Reader actions module · deep"]
+    direction TB
+    I[small interface]
+    X[viewer mutation + Reading Session sync + UI refresh]
+    I --> X
+  end
+  X --> O[observable reader outcome]
+  style RA fill:#0f172a,stroke:#0f172a,stroke-width:3px,color:#fff
+                </pre>
+              </div>
+            </section>
+          </div>
+
+          <div class="grid gap-6 border-t border-slate-100 px-6 py-6 sm:px-8 lg:grid-cols-[1fr_1fr_auto]">
+            <div>
+              <h3 class="tiny-label font-bold text-red-700">Problem</h3>
+              <p class="mt-2 text-sm leading-6 text-slate-700">Three adapters repeat viewer mutation, state save, and UI refresh; their wide context interfaces expose the implementation choreography.</p>
+            </div>
+            <div>
+              <h3 class="tiny-label font-bold text-emerald-700">Solution</h3>
+              <p class="mt-2 text-sm leading-6 text-slate-700">Deepen one reader actions module; keep DOM, keybind, and Tauri modules as thin adapters at a single seam.</p>
+            </div>
+            <div class="min-w-56 rounded-xl bg-slate-50 p-4">
+              <h3 class="tiny-label font-bold text-slate-600">Benefits</h3>
+              <ul class="mt-3 space-y-2 text-sm text-slate-700">
+                <li>locality: one action path</li>
+                <li>leverage: three adapters</li>
+                <li>Tests hit one interface</li>
+                <li>Delete repeated choreography</li>
+              </ul>
+            </div>
+          </div>
+          <div class="border-t border-slate-100 bg-slate-50 px-6 py-3 text-xs text-slate-600 sm:px-8"><strong>Deletion test:</strong> deleting the repeated adapter logic concentrates the same semantics in one module; no reader capability disappears.</div>
+        </article>
+
+        <article id="reading-session" class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+          <div class="border-b border-slate-200 px-6 py-6 sm:px-8">
+            <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <div class="text-xs font-semibold uppercase tracking-[0.18em] text-indigo-700">Candidate 02</div>
+                <h2 class="mt-2 font-serif text-3xl tracking-tight">Let the Reading Session own visual-state persistence</h2>
+              </div>
+              <div class="flex shrink-0 gap-2">
+                <span class="rounded-full bg-emerald-100 px-3 py-1 text-xs font-bold text-emerald-800">Strong</span>
+                <span class="rounded-full bg-indigo-100 px-3 py-1 text-xs font-semibold text-indigo-800">local-substitutable</span>
+              </div>
+            </div>
+            <div class="mt-4 font-mono text-xs leading-6 text-slate-600">
+              src/main.ts:129–279, 292–361 · src/app/session-state.ts:14–105 · src/app/tab-state.ts:7–69 ·
+              src/scripts/tabs.ts:8–53, 96–137, 186–232 · src/scripts/settings.ts:5–20, 233–315
+            </div>
+          </div>
+
+          <div class="grid gap-6 p-6 sm:p-8 lg:grid-cols-2">
+            <section>
+              <div class="mb-3 text-xs font-bold uppercase tracking-[0.16em] text-red-700">Before · one concept, five owners</div>
+              <div class="diagram-grid relative min-h-[292px] rounded-xl border border-red-200 bg-red-50/40 p-5">
+                <div class="grid h-full gap-3">
+                  <div class="module-box rounded-lg p-3"><span class="tiny-label font-bold">main.ts</span><div class="mt-1 text-xs text-slate-600">timers · restore guard · store writes</div></div>
+                  <div class="grid grid-cols-2 gap-3">
+                    <div class="module-box rounded-lg p-3"><span class="tiny-label font-bold">session-state</span><div class="mt-1 text-xs text-slate-600">serialize · reopen</div></div>
+                    <div class="module-box rounded-lg p-3"><span class="tiny-label font-bold">tab-state</span><div class="mt-1 text-xs text-slate-600">copy · ordered restore</div></div>
+                  </div>
+                  <div class="grid grid-cols-2 gap-3">
+                    <div class="module-box rounded-lg p-3"><span class="tiny-label font-bold">TabManager</span><div class="mt-1 text-xs text-slate-600">mutable TabData</div></div>
+                    <div class="module-box rounded-lg p-3"><span class="tiny-label font-bold">PDFViewer</span><div class="mt-1 text-xs text-slate-600">live visual state</div></div>
+                  </div>
+                  <div class="leak-line mx-8"></div>
+                  <div class="text-center text-[11px] font-semibold text-red-700">ordering + mutation leak across every seam</div>
+                </div>
+              </div>
+            </section>
+            <section>
+              <div class="mb-3 text-xs font-bold uppercase tracking-[0.16em] text-emerald-700">After · one domain module owns the invariant</div>
+              <div class="diagram-grid min-h-[292px] rounded-xl border border-emerald-200 bg-emerald-50/40 p-5">
+                <div class="deep mx-auto flex min-h-[250px] max-w-md flex-col rounded-2xl border-4 border-slate-950 p-5 text-white">
+                  <div class="flex items-center justify-between border-b border-slate-600 pb-3">
+                    <span class="tiny-label font-bold text-emerald-300">Reading Session module</span>
+                    <span class="rounded-full bg-white/10 px-2 py-1 text-[10px]">small interface</span>
+                  </div>
+                  <div class="grid flex-1 grid-cols-2 gap-3 py-4 text-xs text-slate-300">
+                    <div class="rounded-lg border border-slate-600 p-3">capture visual state</div>
+                    <div class="rounded-lg border border-slate-600 p-3">restore in order</div>
+                    <div class="rounded-lg border border-slate-600 p-3">debounce persistence</div>
+                    <div class="rounded-lg border border-slate-600 p-3">suppress restore writes</div>
+                  </div>
+                  <div class="seam-box rounded-lg border-emerald-400 bg-white/5 p-3 text-center text-xs text-emerald-200">Tauri Store adapter · in-memory adapter</div>
+                </div>
+              </div>
+            </section>
+          </div>
+
+          <div class="grid gap-6 border-t border-slate-100 px-6 py-6 sm:px-8 lg:grid-cols-[1fr_1fr_auto]">
+            <div>
+              <h3 class="tiny-label font-bold text-red-700">Problem</h3>
+              <p class="mt-2 text-sm leading-6 text-slate-700">Reading Session correctness depends on mutable TabData plus timing and call order spread across five modules; the core domain seam has low locality.</p>
+            </div>
+            <div>
+              <h3 class="tiny-label font-bold text-emerald-700">Solution</h3>
+              <p class="mt-2 text-sm leading-6 text-slate-700">Deepen the Reading Session module so capture, restore, persistence timing, and live visual-state synchronization share one implementation.</p>
+            </div>
+            <div class="min-w-56 rounded-xl bg-slate-50 p-4">
+              <h3 class="tiny-label font-bold text-slate-600">Benefits</h3>
+              <ul class="mt-3 space-y-2 text-sm text-slate-700">
+                <li>locality: invariant in one module</li>
+                <li>leverage: every tab transition</li>
+                <li>Tests cover full restore</li>
+                <li>TabData stops leaking</li>
+              </ul>
+            </div>
+          </div>
+          <div class="border-t border-slate-100 bg-slate-50 px-6 py-3 text-xs text-slate-600 sm:px-8"><strong>Deletion test:</strong> deleting session-state and tab-state only moves their orchestration into main and TabManager; the interface complexity remains.</div>
+        </article>
+
+        <article id="document-intake" class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+          <div class="border-b border-slate-200 px-6 py-6 sm:px-8">
+            <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <div class="text-xs font-semibold uppercase tracking-[0.18em] text-amber-700">Candidate 03</div>
+                <h2 class="mt-2 font-serif text-3xl tracking-tight">Collapse every PDF intake path into one module</h2>
+              </div>
+              <div class="flex shrink-0 gap-2">
+                <span class="rounded-full bg-emerald-100 px-3 py-1 text-xs font-bold text-emerald-800">Strong</span>
+                <span class="rounded-full bg-indigo-100 px-3 py-1 text-xs font-semibold text-indigo-800">local-substitutable</span>
+              </div>
+            </div>
+            <div class="mt-4 font-mono text-xs leading-6 text-slate-600">
+              src/app/file-actions.ts:9–110 · src/app/tauri-events.ts:46–147 · src/app/session-state.ts:44–76 ·
+              src/app/keybinds.ts:63–88 · src/main.ts:88–106, 180–196 · src-tauri/src/lib.rs:43–143, 175–223
+            </div>
+          </div>
+
+          <div class="grid gap-6 p-6 sm:p-8 lg:grid-cols-2">
+            <section>
+              <div class="mb-3 text-xs font-bold uppercase tracking-[0.16em] text-red-700">Before · sources choose different pipelines</div>
+              <div class="diagram-grid overflow-hidden rounded-xl border border-red-200 bg-red-50/40 p-3">
+                <pre class="mermaid">
+flowchart TB
+  A[Dialog] --> F[openPDFFile]
+  B[Drop / OS / CLI] --> T[tauri-events]
+  C[Recent] --> M[main]
+  D[Session restore] --> S[session-state]
+  E[Reopen tab] --> K[keybinds]
+  F --> O[openFiles]
+  T --> O
+  M --> O
+  S --> O
+  K --> O
+  O --> R[Tauri validate + read + name]
+  O --> X[TabManager]
+  F -.-> U[after-open effects]
+  T -.-> U
+  M -.-> U
+  K -.-> U
+  classDef leak fill:#fff1f2,stroke:#dc2626,stroke-width:2px;
+  class F,T,M,S,K,U leak;
+                </pre>
+              </div>
+            </section>
+            <section>
+              <div class="mb-3 text-xs font-bold uppercase tracking-[0.16em] text-emerald-700">After · sources are adapters</div>
+              <div class="diagram-grid overflow-hidden rounded-xl border border-emerald-200 bg-emerald-50/40 p-3">
+                <pre class="mermaid">
+flowchart TB
+  A[Dialog adapter] --> I
+  B[Drop adapter] --> I
+  C[OS / CLI adapter] --> I
+  D[Recent adapter] --> I
+  E[Reading Session adapter] --> I
+  F[Reopen adapter] --> I
+  I[PDF intake module · deep] --> O[opened documents + one finalized state]
+  subgraph P["implementation"]
+    V[canonicalize + validate] --> R[read bytes + identity]
+    R --> T[open / activate]
+    T --> X[finalize reader state]
+  end
+  I --> P
+  classDef deep fill:#0f172a,color:#fff,stroke:#0f172a,stroke-width:3px;
+  class I deep;
+                </pre>
+              </div>
+            </section>
+          </div>
+
+          <div class="grid gap-6 border-t border-slate-100 px-6 py-6 sm:px-8 lg:grid-cols-[1fr_1fr_auto]">
+            <div>
+              <h3 class="tiny-label font-bold text-red-700">Problem</h3>
+              <p class="mt-2 text-sm leading-6 text-slate-700">Six callers know defaults, error policy, TabManager, and after-open effects; the Rust/TypeScript seam also validates related facts in separate round-trips.</p>
+            </div>
+            <div>
+              <h3 class="tiny-label font-bold text-emerald-700">Solution</h3>
+              <p class="mt-2 text-sm leading-6 text-slate-700">Deepen one PDF intake module; make dialog, drop, OS/CLI, recent, restore, and reopen paths adapters that supply intent only.</p>
+            </div>
+            <div class="min-w-56 rounded-xl bg-slate-50 p-4">
+              <h3 class="tiny-label font-bold text-slate-600">Benefits</h3>
+              <ul class="mt-3 space-y-2 text-sm text-slate-700">
+                <li>locality: one open transaction</li>
+                <li>leverage: six intake adapters</li>
+                <li>Tests cover whole intake</li>
+                <li>Errors become consistent</li>
+              </ul>
+            </div>
+          </div>
+          <div class="border-t border-slate-100 bg-slate-50 px-6 py-3 text-xs text-slate-600 sm:px-8"><strong>Deletion test:</strong> deleting the caller-specific intake choreography concentrates validation, opening, and finalization without removing behaviour.</div>
+        </article>
+
+        <article id="document-feature-seam" class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+          <div class="border-b border-slate-200 px-6 py-6 sm:px-8">
+            <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <div class="text-xs font-semibold uppercase tracking-[0.18em] text-slate-600">Candidate 04</div>
+                <h2 class="mt-2 font-serif text-3xl tracking-tight">Find the document-feature seam inside PDFViewer</h2>
+              </div>
+              <div class="flex shrink-0 gap-2">
+                <span class="rounded-full bg-amber-100 px-3 py-1 text-xs font-bold text-amber-800">Worth exploring</span>
+                <span class="rounded-full bg-rose-100 px-3 py-1 text-xs font-semibold text-rose-800">mock</span>
+              </div>
+            </div>
+            <div class="mt-4 font-mono text-xs leading-6 text-slate-600">
+              src/scripts/pdf-viewer.ts:176–269, 373–444, 1048–1215, 1217–1685 ·
+              src/app/search-controller.ts:1–17, 114–164 · src/app/sidebar-controller.ts:1–23, 145–365 ·
+              src/__tests__/pdf-viewer-load.test.ts:7–303
+            </div>
+          </div>
+
+          <div class="grid gap-6 p-6 sm:p-8 lg:grid-cols-2">
+            <section>
+              <div class="mb-3 text-xs font-bold uppercase tracking-[0.16em] text-red-700">Before · every tool sees the whole viewer</div>
+              <div class="diagram-grid min-h-[292px] rounded-xl border border-red-200 bg-red-50/40 p-5">
+                <div class="grid min-h-[250px] grid-cols-[auto_1fr] items-center gap-4">
+                  <div class="space-y-3 text-center text-xs font-semibold text-slate-700">
+                    <div class="module-box rounded-lg px-3 py-2">Search</div>
+                    <div class="module-box rounded-lg px-3 py-2">Sidebar</div>
+                    <div class="module-box rounded-lg px-3 py-2">Presentation</div>
+                    <div class="rounded-lg border-2 border-red-500 bg-red-100 px-3 py-2 text-red-800">Tests cast private state</div>
+                  </div>
+                  <div class="relative rounded-2xl border-4 border-slate-800 bg-slate-100 p-4">
+                    <div class="grid grid-cols-3 gap-2 text-center text-[10px] font-semibold text-red-900">
+                      <span class="mass-interface rounded p-2">load</span>
+                      <span class="mass-interface rounded p-2">render</span>
+                      <span class="mass-interface rounded p-2">navigate</span>
+                      <span class="mass-interface rounded p-2">search</span>
+                      <span class="mass-interface rounded p-2">outline</span>
+                      <span class="mass-interface rounded p-2">thumbnails</span>
+                      <span class="mass-interface rounded p-2">annotations</span>
+                      <span class="mass-interface rounded p-2">print</span>
+                      <span class="mass-interface rounded p-2">visibility</span>
+                    </div>
+                    <div class="mt-4 flex h-24 items-center justify-center rounded-lg bg-slate-300 text-center text-xs font-bold text-slate-700">one concrete PDFViewer<br/>mixes document semantics + page surfaces + gestures</div>
+                    <div class="absolute -left-4 bottom-9 w-4 leak-line"></div>
+                  </div>
+                </div>
+              </div>
+            </section>
+            <section>
+              <div class="mb-3 text-xs font-bold uppercase tracking-[0.16em] text-emerald-700">After · deep internal seam, rendering stays local</div>
+              <div class="diagram-grid min-h-[292px] rounded-xl border border-emerald-200 bg-emerald-50/40 p-5">
+                <div class="mx-auto flex min-h-[250px] max-w-lg flex-col justify-center gap-3">
+                  <div class="grid grid-cols-3 gap-3 text-center text-xs font-semibold text-slate-700">
+                    <div class="module-box rounded-lg px-3 py-2">Search</div>
+                    <div class="module-box rounded-lg px-3 py-2">Sidebar</div>
+                    <div class="module-box rounded-lg px-3 py-2">Future tools</div>
+                  </div>
+                  <div class="mass-deep-interface rounded-lg px-3 py-2 text-center text-xs font-bold text-emerald-950">small document-feature interface</div>
+                  <div class="deep rounded-2xl border-4 border-slate-950 p-4 text-white">
+                    <div class="tiny-label text-center font-bold text-emerald-300">deep internal document-feature module</div>
+                    <div class="mt-3 grid grid-cols-3 gap-2 text-center text-[10px] text-slate-300">
+                      <span class="rounded border border-slate-600 p-2">loading + password</span>
+                      <span class="rounded border border-slate-600 p-2">text cache + search</span>
+                      <span class="rounded border border-slate-600 p-2">outline + metadata</span>
+                    </div>
+                    <div class="mt-3 seam-box rounded-lg border-rose-400 p-2 text-center text-[10px] text-rose-200">PDF.js adapter · controlled mock adapter</div>
+                  </div>
+                  <div class="module-box rounded-lg px-3 py-3 text-center text-xs text-slate-600"><strong>Page-surface rendering implementation</strong><br/>canvas · text layer · gestures · highlights</div>
+                </div>
+              </div>
+            </section>
+          </div>
+
+          <div class="grid gap-6 border-t border-slate-100 px-6 py-6 sm:px-8 lg:grid-cols-[1fr_1fr_auto]">
+            <div>
+              <h3 class="tiny-label font-bold text-red-700">Problem</h3>
+              <p class="mt-2 text-sm leading-6 text-slate-700">PDFViewer mixes document loading, queries, rendering, gestures, annotations, and printing; tests bypass its interface by constructing uninitialized instances and assigning private implementation state.</p>
+            </div>
+            <div>
+              <h3 class="tiny-label font-bold text-emerald-700">Solution</h3>
+              <p class="mt-2 text-sm leading-6 text-slate-700">Deepen a cohesive internal document-feature module around PDF.js semantics and caching; keep page-surface rendering mechanics local to the rendering implementation.</p>
+            </div>
+            <div class="min-w-56 rounded-xl bg-slate-50 p-4">
+              <h3 class="tiny-label font-bold text-slate-600">Benefits</h3>
+              <ul class="mt-3 space-y-2 text-sm text-slate-700">
+                <li>locality: PDF.js semantics concentrate</li>
+                <li>leverage: every document tool</li>
+                <li>Interface becomes test surface</li>
+                <li>Private casts disappear</li>
+              </ul>
+            </div>
+          </div>
+          <div class="border-t border-slate-100 bg-slate-50 px-6 py-3 text-xs text-slate-600 sm:px-8"><strong>Deletion test:</strong> PDFViewer passes strongly; this is an internal seam inside an already deep module, not a split based on file size.</div>
+        </article>
+      </section>
+
+      <section id="top-recommendation" class="rounded-2xl border border-emerald-300 bg-emerald-950 p-7 text-white shadow-xl sm:p-9">
+        <div class="text-xs font-bold uppercase tracking-[0.2em] text-emerald-300">Top recommendation</div>
+        <div class="mt-4 flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <h2 class="font-serif text-3xl tracking-tight sm:text-4xl">Reading Session lifecycle module</h2>
+            <p class="mt-3 max-w-3xl text-sm leading-6 text-emerald-50">It is Monight’s only named domain concept, changed across the last three major commits, and currently depends on manual synchronization among four representations plus sequencing in main.ts.</p>
+          </div>
+          <a href="#reading-session" class="shrink-0 rounded-full bg-emerald-300 px-5 py-2.5 text-sm font-bold text-emerald-950 hover:bg-emerald-200">View candidate ↑</a>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>

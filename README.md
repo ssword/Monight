@@ -51,6 +51,21 @@ npm run tauri:dev
 npm run tauri:build
 ```
 
+### Release for macOS
+
+After the release commit is on `master`, push a semantic version tag that matches the version in
+`package.json` to build a universal DMG for Apple Silicon and Intel Macs and publish it on GitHub
+Releases:
+
+```bash
+git tag vX.Y.Z
+git push origin vX.Y.Z
+```
+
+The workflow uses ad hoc code signing and does not require Apple credentials. Users may need to
+approve the app in macOS Privacy & Security. Configure Apple Developer ID signing and notarization
+before distributing the app to a broad audience.
+
 ### Web Preview (UI only)
 ```bash
 npm run dev
