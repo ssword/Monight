@@ -425,9 +425,18 @@ mod tests {
         assert!(!complete_frontend_lifecycle_registration_inner(&state));
     }
 
+    fn fixture_directory() -> PathBuf {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests")
+            .join("fixtures")
+    }
+
+    fn fixture_path(name: &str) -> PathBuf {
+        fixture_directory().join(name)
+    }
+
     fn copied_pdf_fixture(name: &str) -> PathBuf {
-        let fixture =
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/sample.pdf");
+        let fixture = fixture_path("sample.pdf");
         let directory = std::env::temp_dir().join(format!(
             "monight-entry-channel-tests-{}",
             std::process::id()
@@ -598,16 +607,18 @@ mod tests {
 
     #[test]
     fn os_opened_event_authorizes_only_its_file_url() {
-        let fixture =
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/sample.pdf");
+        let fixture = fixture_path("sample.pdf");
         let denied = copied_pdf_fixture("opened-event-denied.pdf");
         let file_url = url::Url::from_file_path(&fixture).expect("fixture should become file URL");
+        let expected = file_url
+            .to_file_path()
+            .expect("file URL should preserve its platform path");
         let document_intake = document_intake::DocumentIntake::default();
 
         let payload = payload_from_opened_urls(&document_intake, &[file_url])
             .expect("opened file URL should be accepted");
 
-        assert_eq!(payload.files, vec![fixture.to_string_lossy().to_string()]);
+        assert_eq!(payload.files, vec![expected.to_string_lossy().to_string()]);
         assert_eq!(payload.page, None);
         assert_eq!(payload.source, ExternalOpenSource::OperatingSystem);
         assert!(commands::read_pdf_bytes(payload.files[0].clone(), &document_intake).is_ok());
@@ -620,25 +631,27 @@ mod tests {
 
     #[test]
     fn os_opened_event_preserves_missing_paths_for_independent_frontend_outcomes() {
-        let fixture =
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/sample.pdf");
+        let fixture = fixture_path("sample.pdf");
         let missing = fixture.with_file_name("missing-associated.pdf");
         let urls = [
             url::Url::from_file_path(&missing).expect("missing path should become a file URL"),
             url::Url::from_file_path(&fixture).expect("fixture should become a file URL"),
         ];
+        let expected = urls
+            .iter()
+            .map(|url| {
+                url.to_file_path()
+                    .expect("file URL should preserve its platform path")
+                    .to_string_lossy()
+                    .to_string()
+            })
+            .collect::<Vec<_>>();
         let document_intake = document_intake::DocumentIntake::default();
 
         let payload = payload_from_opened_urls(&document_intake, &urls)
             .expect("file association paths should be forwarded in order");
 
-        assert_eq!(
-            payload.files,
-            vec![
-                missing.to_string_lossy().to_string(),
-                fixture.to_string_lossy().to_string(),
-            ]
-        );
+        assert_eq!(payload.files, expected);
         assert!(
             commands::read_pdf_bytes(fixture.to_string_lossy().to_string(), &document_intake)
                 .is_ok()
@@ -675,10 +688,8 @@ mod tests {
 
     #[test]
     fn forwarded_arguments_route_through_document_intake() {
-        let working_directory =
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
-        let expected =
-            std::fs::canonicalize(working_directory.join("sample.pdf")).expect("fixture exists");
+        let working_directory = fixture_directory();
+        let expected = working_directory.join("sample.pdf");
         let document_intake = document_intake::DocumentIntake::default();
 
         let payload = payload_from_cli_args(

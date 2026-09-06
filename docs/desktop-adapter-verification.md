@@ -4,6 +4,9 @@ Issue #39 verifies that platform adapters preserve the same Document Intake, Rea
 Reader Action, and Document Query behavior on macOS, Windows, and Linux. Platform branching must
 remain in the adapters listed below; it must not enter those domain modules.
 
+The focused repair evidence and pending native matrix for issue #52 are recorded in
+[`issue-52-verification.md`](issue-52-verification.md).
+
 ## Automated contract gate
 
 The `CI` workflow runs the complete TypeScript and Rust suites on `macos-latest`,

@@ -358,76 +358,76 @@ describe('gesture zoom preview', () => {
     expect(setZoom).toHaveBeenCalledTimes(1);
   });
 
-  it.each(['modifier+wheel', 'pinch gesture'] as const)(
-    'commits one settled Zoom Intent from public %s events',
-    async (input) => {
-      const { browser, container, dispatch, persist, reader, workspace } =
-        await createProductionGestureHarness();
+  it.each([
+    'modifier+wheel',
+    'pinch gesture',
+  ] as const)('commits one settled Zoom Intent from public %s events', async (input) => {
+    const { browser, container, dispatch, persist, reader, workspace } =
+      await createProductionGestureHarness();
 
-      if (input === 'modifier+wheel') {
-        const wheel = new browser.Event('wheel', { bubbles: true, cancelable: true });
-        Object.defineProperties(wheel, {
-          ctrlKey: { value: true },
-          metaKey: { value: false },
-          deltaY: { value: -Math.log(1.5) / 0.002 },
-          clientX: { value: 300 },
-          clientY: { value: 400 },
-        });
-        container.dispatchEvent(wheel);
-      } else {
-        container.dispatchEvent(
-          new browser.Event('gesturestart', { bubbles: true, cancelable: true }),
-        );
-        const change = new browser.Event('gesturechange', { bubbles: true, cancelable: true });
-        Object.defineProperties(change, {
-          scale: { value: 1.5 },
-          clientX: { value: 300 },
-          clientY: { value: 400 },
-        });
-        container.dispatchEvent(change);
-      }
-
-      expect(
-        (container.querySelector('.pdf-page-surface') as unknown as HTMLElement | null)?.style
-          .transform,
-      ).toBe('scale(1.5)');
-      expect(dispatch).not.toHaveBeenCalled();
-      expect(reader.snapshot().documents[0]?.visualState?.zoomIntent).toEqual({
-        kind: 'manual',
-        scale: 1,
+    if (input === 'modifier+wheel') {
+      const wheel = new browser.Event('wheel', { bubbles: true, cancelable: true });
+      Object.defineProperties(wheel, {
+        ctrlKey: { value: true },
+        metaKey: { value: false },
+        deltaY: { value: -Math.log(1.5) / 0.002 },
+        clientX: { value: 300 },
+        clientY: { value: 400 },
       });
-      expect(persist).not.toHaveBeenCalled();
-
-      await vi.advanceTimersByTimeAsync(500);
-      await reader.quiesce();
-      await reader.flush();
-
-      expect(
-        dispatch.mock.calls
-          .map(([action]) => action)
-          .filter((action) => action.type === 'setZoomIntent'),
-      ).toEqual([
-        {
-          type: 'setZoomIntent',
-          filePath: '/docs/report.pdf',
-          zoomIntent: { kind: 'manual', scale: 1.5 },
-        },
-      ]);
-      expect(
-        (container.querySelector('.pdf-page-surface') as unknown as HTMLElement | null)?.style
-          .transform,
-      ).toBe('');
-      expect(workspace.activeRenderingState()?.zoomIntent).toEqual({
-        kind: 'manual',
-        scale: 1.5,
+      container.dispatchEvent(wheel);
+    } else {
+      container.dispatchEvent(
+        new browser.Event('gesturestart', { bubbles: true, cancelable: true }),
+      );
+      const change = new browser.Event('gesturechange', { bubbles: true, cancelable: true });
+      Object.defineProperties(change, {
+        scale: { value: 1.5 },
+        clientX: { value: 300 },
+        clientY: { value: 400 },
       });
-      expect(reader.snapshot().documents[0]?.visualState?.zoomIntent).toEqual({
-        kind: 'manual',
-        scale: 1.5,
-      });
-      expect(persist).toHaveBeenCalledOnce();
-    },
-  );
+      container.dispatchEvent(change);
+    }
+
+    expect(
+      (container.querySelector('.pdf-page-surface') as unknown as HTMLElement | null)?.style
+        .transform,
+    ).toBe('scale(1.5)');
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(reader.snapshot().documents[0]?.visualState?.zoomIntent).toEqual({
+      kind: 'manual',
+      scale: 1,
+    });
+    expect(persist).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(500);
+    await reader.quiesce();
+    await reader.flush();
+
+    expect(
+      dispatch.mock.calls
+        .map(([action]) => action)
+        .filter((action) => action.type === 'setZoomIntent'),
+    ).toEqual([
+      {
+        type: 'setZoomIntent',
+        filePath: '/docs/report.pdf',
+        zoomIntent: { kind: 'manual', scale: 1.5 },
+      },
+    ]);
+    expect(
+      (container.querySelector('.pdf-page-surface') as unknown as HTMLElement | null)?.style
+        .transform,
+    ).toBe('');
+    expect(workspace.activeRenderingState()?.zoomIntent).toEqual({
+      kind: 'manual',
+      scale: 1.5,
+    });
+    expect(reader.snapshot().documents[0]?.visualState?.zoomIntent).toEqual({
+      kind: 'manual',
+      scale: 1.5,
+    });
+    expect(persist).toHaveBeenCalledOnce();
+  });
 
   it('anchors continuous-mode zoom at the pointer position', async () => {
     const { viewer, setZoom } = await makeViewer('continuous');

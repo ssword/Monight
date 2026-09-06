@@ -309,9 +309,15 @@ pub fn validate_open_path(
 mod tests {
     use super::*;
 
+    fn fixture_path(name: &str) -> PathBuf {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests")
+            .join("fixtures")
+            .join(name)
+    }
+
     fn copied_pdf_fixture(name: &str) -> PathBuf {
-        let fixture =
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/sample.pdf");
+        let fixture = fixture_path("sample.pdf");
         let directory =
             std::env::temp_dir().join(format!("monight-command-tests-{}", std::process::id()));
         std::fs::create_dir_all(&directory).expect("test directory should be created");
@@ -485,14 +491,14 @@ mod tests {
 
     #[test]
     fn dialog_selection_authorizes_the_selected_document() {
-        let fixture =
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/sample.pdf");
+        let fixture = fixture_path("sample.pdf");
+        let canonical = std::fs::canonicalize(&fixture).expect("fixture should canonicalize");
         let denied = copied_pdf_fixture("dialog-denied.pdf");
         let document_intake = DocumentIntake::default();
 
         let selected = authorize_dialog_selection(&document_intake, [fixture.clone()]);
 
-        assert_eq!(selected, vec![fixture.to_string_lossy().to_string()]);
+        assert_eq!(selected, vec![canonical.to_string_lossy().to_string()]);
         assert!(read_pdf_bytes(selected[0].clone(), &document_intake).is_ok());
         assert!(read_pdf_bytes(denied.to_string_lossy().to_string(), &document_intake).is_err());
         std::fs::remove_file(denied).expect("test copy should be removed");
