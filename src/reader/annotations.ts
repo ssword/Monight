@@ -3,6 +3,13 @@ import type {
   PdfAnnotationColor,
   PdfAnnotationKind,
 } from '../lib/document-features';
+import {
+  createDurableAuthorityPersistence,
+  type DurableAuthorityConflictPolicy,
+  type DurableAuthorityMessages,
+  type DurableAuthorityRecovery,
+  recoverDurableAuthority,
+} from './durable-authority-persistence';
 
 export interface PersistedAnnotations {
   readonly schemaVersion: 1;
@@ -35,16 +42,22 @@ interface LoadAnnotationsOptions {
   readonly onObserverError?: (error: unknown) => void;
 }
 
-interface RevisionedAnnotations extends PersistedAnnotations {
-  readonly revision: number;
-}
-
-type DedicatedWriteGuard = PersistedAnnotations | 'unknown' | null;
-
-class AnnotationPersistenceConflictError extends Error {}
-
 const ANNOTATION_KINDS = new Set<PdfAnnotationKind>(['highlight', 'note']);
 const ANNOTATION_COLORS = new Set<PdfAnnotationColor>(['yellow', 'green', 'blue', 'pink']);
+class AnnotationPersistenceConflictError extends Error {}
+
+const PERSISTENCE_CONFLICTS: DurableAuthorityConflictPolicy = {
+  create: (message) => new AnnotationPersistenceConflictError(message),
+  isRetryable: (error) => !(error instanceof AnnotationPersistenceConflictError),
+};
+const PERSISTENCE_MESSAGES: DurableAuthorityMessages = {
+  invalidDedicatedValue: 'Dedicated Annotation state is invalid',
+  unreconciledDedicatedValue:
+    'The dedicated Annotation state could not be reconciled after a failed read',
+  invalidDedicatedSchema: 'Dedicated Annotation state has an unsupported or invalid schema',
+  unsafeDedicatedReplacement: 'Dedicated Annotation state could not be safely replaced',
+  migrationVerificationFailed: 'Annotation migration could not be verified',
+};
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -161,19 +174,10 @@ function replaceDocumentAnnotations(
   return next;
 }
 
-function createSnapshot(
+function persistedValue(
   documents: Readonly<Record<string, readonly PdfAnnotation[]>>,
-  revision: number,
-): RevisionedAnnotations {
-  return {
-    schemaVersion: 1,
-    revision,
-    documents: cloneDocuments(documents),
-  };
-}
-
-function persistedValue(snapshot: RevisionedAnnotations): PersistedAnnotations {
-  return { schemaVersion: 1, documents: cloneDocuments(snapshot.documents) };
+): PersistedAnnotations {
+  return { schemaVersion: 1, documents: cloneDocuments(documents) };
 }
 
 function collectionsEqual(left: PersistedAnnotations, right: PersistedAnnotations): boolean {
@@ -219,117 +223,17 @@ function collectionsEqual(left: PersistedAnnotations, right: PersistedAnnotation
 
 function createAnnotationAuthority(
   storage: AnnotationStorage,
-  initial: PersistedAnnotations,
+  recovery: DurableAuthorityRecovery<PersistedAnnotations>,
   {
     debounceMs,
     retryMs,
     onPersistenceError,
     onChanged,
     onObserverError,
-    initiallyPersisted,
-    legacyCleanupPending,
-    writeGuard,
-  }: Required<LoadAnnotationsOptions> & {
-    readonly initiallyPersisted: boolean;
-    readonly legacyCleanupPending: boolean;
-    readonly writeGuard: DedicatedWriteGuard;
-  },
+  }: Required<LoadAnnotationsOptions>,
 ): AnnotationAuthority {
-  let current = createSnapshot(initial.documents, 0);
-  let persistedRevision = initiallyPersisted ? 0 : -1;
-  let persistence: Promise<void> | null = null;
-  let persistenceTimer: ReturnType<typeof setTimeout> | null = null;
-  let shouldRemoveLegacy = legacyCleanupPending;
-  let requiredDedicatedValue = writeGuard;
-
-  const clearPersistenceTimer = (): void => {
-    if (persistenceTimer === null) return;
-    clearTimeout(persistenceTimer);
-    persistenceTimer = null;
-  };
-
-  const persistDirtySnapshots = (): Promise<void> => {
-    if (persistence) return persistence;
-    const running = (async () => {
-      while (persistedRevision < current.revision) {
-        const target = current;
-        const value = persistedValue(target);
-        if (requiredDedicatedValue) {
-          const rawDedicated = await storage.read();
-          if (rawDedicated !== undefined) {
-            const dedicated = parseAnnotations(rawDedicated);
-            if (!dedicated) {
-              throw new AnnotationPersistenceConflictError('Dedicated Annotation state is invalid');
-            }
-            if (requiredDedicatedValue === 'unknown' && target.revision === 0) {
-              current = createSnapshot(dedicated.documents, 0);
-              persistedRevision = 0;
-              requiredDedicatedValue = null;
-              notifyChanged(null);
-              continue;
-            }
-            if (
-              requiredDedicatedValue === 'unknown' ||
-              !collectionsEqual(dedicated, requiredDedicatedValue)
-            ) {
-              throw new AnnotationPersistenceConflictError(
-                'The dedicated Annotation state could not be reconciled after a failed read',
-              );
-            }
-          } else if (requiredDedicatedValue === 'unknown' && target.revision === 0) {
-            persistedRevision = 0;
-            requiredDedicatedValue = null;
-            continue;
-          }
-          requiredDedicatedValue = null;
-        }
-        await storage.write(value);
-        if (shouldRemoveLegacy) {
-          const verified = parseAnnotations(await storage.read());
-          if (!verified || !collectionsEqual(verified, value)) {
-            throw new Error('Annotation migration could not be verified');
-          }
-          try {
-            await storage.removeLegacy();
-            shouldRemoveLegacy = false;
-          } catch {
-            // The dedicated value is authoritative; retry legacy cleanup on the next load.
-          }
-        }
-        persistedRevision = target.revision;
-      }
-    })();
-    persistence = running;
-    void running.then(
-      () => {
-        if (persistence === running) persistence = null;
-      },
-      () => {
-        if (persistence === running) persistence = null;
-      },
-    );
-    return running;
-  };
-
-  const reportPersistenceFailure = (error: unknown): void => {
-    onPersistenceError(error);
-  };
-
-  const isRetryable = (error: unknown): boolean =>
-    !(error instanceof AnnotationPersistenceConflictError);
-
-  const schedulePersistence = (delayMs: number): void => {
-    clearPersistenceTimer();
-    persistenceTimer = setTimeout(() => {
-      persistenceTimer = null;
-      void persistDirtySnapshots().catch((error) => {
-        reportPersistenceFailure(error);
-        if (isRetryable(error)) schedulePersistence(retryMs);
-      });
-    }, delayMs);
-  };
-
-  const requestPersistence = (): void => schedulePersistence(debounceMs);
+  let documents = cloneDocuments(recovery.value.documents);
+  let revision = 0;
 
   const notifyChanged = (filePath: string | null): void => {
     try {
@@ -339,42 +243,47 @@ function createAnnotationAuthority(
     }
   };
 
+  const persistence = createDurableAuthorityPersistence({
+    storage,
+    recovery,
+    revision: () => revision,
+    value: () => persistedValue(documents),
+    adoptDedicated(value) {
+      documents = cloneDocuments(value.documents);
+      notifyChanged(null);
+    },
+    parseDedicated: parseAnnotations,
+    equals: collectionsEqual,
+    messages: PERSISTENCE_MESSAGES,
+    conflicts: PERSISTENCE_CONFLICTS,
+    debounceMs,
+    retryMs,
+    onPersistenceError,
+  });
+
   const replaceDocuments = (
-    documents: Readonly<Record<string, readonly PdfAnnotation[]>>,
+    next: Readonly<Record<string, readonly PdfAnnotation[]>>,
     filePath: string | null,
   ): void => {
-    current = createSnapshot(documents, current.revision + 1);
+    documents = cloneDocuments(next);
+    revision += 1;
     notifyChanged(filePath);
-    requestPersistence();
+    persistence.changed();
   };
 
-  const authority: AnnotationAuthority = {
+  return {
     snapshot(filePath) {
-      return (current.documents[filePath] ?? []).map(cloneAnnotation);
+      return (documents[filePath] ?? []).map(cloneAnnotation);
     },
     replace(filePath, annotations) {
-      replaceDocuments(
-        replaceDocumentAnnotations(current.documents, filePath, annotations),
-        filePath,
-      );
+      replaceDocuments(replaceDocumentAnnotations(documents, filePath, annotations), filePath);
     },
     clear() {
       replaceDocuments({}, null);
     },
-    async flush() {
-      clearPersistenceTimer();
-      try {
-        while (persistedRevision < current.revision) await persistDirtySnapshots();
-      } catch (error) {
-        reportPersistenceFailure(error);
-        if (isRetryable(error)) schedulePersistence(retryMs);
-        throw error;
-      }
-    },
-    isDirty: () => persistedRevision < current.revision,
+    flush: () => persistence.flush(),
+    isDirty: () => persistence.isDirty(),
   };
-  if (!initiallyPersisted) schedulePersistence(retryMs);
-  return authority;
 }
 
 export function createTransientAnnotationAccess(): AnnotationAccess {
@@ -399,108 +308,21 @@ export async function loadAnnotations(
     onObserverError = (error) => console.error('Annotation observer failed:', error),
   }: LoadAnnotationsOptions = {},
 ): Promise<AnnotationAuthority> {
-  let rawStored: unknown;
-  let storedReadFailed = false;
-  try {
-    rawStored = await storage.read();
-  } catch (error) {
-    storedReadFailed = true;
-    onPersistenceError(error);
-  }
-
-  const stored = parseAnnotations(rawStored);
-  const dedicatedStateUnavailable = storedReadFailed || rawStored !== undefined;
-  if (stored) {
-    const rawLegacy = await storage.readLegacy().catch(() => undefined);
-    let legacyCleanupPending = false;
-    if (rawLegacy !== undefined) {
-      try {
-        await storage.removeLegacy();
-      } catch {
-        legacyCleanupPending = true;
-      }
-    }
-    return createAnnotationAuthority(storage, stored, {
-      debounceMs,
-      retryMs,
-      onPersistenceError,
-      onChanged,
-      onObserverError,
-      initiallyPersisted: true,
-      legacyCleanupPending,
-      writeGuard: null,
-    });
-  }
-
-  let rawLegacy: unknown;
-  try {
-    rawLegacy = await storage.readLegacy();
-  } catch (error) {
-    onPersistenceError(error);
-  }
-  const legacy = parseLegacyAnnotations(rawLegacy);
-  if (!legacy) {
-    if (!storedReadFailed && dedicatedStateUnavailable) {
-      onPersistenceError(
-        new AnnotationPersistenceConflictError(
-          'Dedicated Annotation state has an unsupported or invalid schema',
-        ),
-      );
-    }
-    return createAnnotationAuthority(
-      storage,
-      { schemaVersion: 1, documents: {} },
-      {
-        debounceMs,
-        retryMs,
-        onPersistenceError,
-        onChanged,
-        onObserverError,
-        initiallyPersisted: !dedicatedStateUnavailable,
-        legacyCleanupPending: false,
-        writeGuard: dedicatedStateUnavailable ? 'unknown' : null,
-      },
-    );
-  }
-
-  try {
-    if (dedicatedStateUnavailable) {
-      throw new AnnotationPersistenceConflictError(
-        'Dedicated Annotation state could not be safely replaced',
-      );
-    }
-    await storage.write(legacy);
-    const verified = parseAnnotations(await storage.read());
-    if (!verified || !collectionsEqual(verified, legacy)) {
-      throw new Error('Annotation migration could not be verified');
-    }
-    let legacyCleanupPending = false;
-    try {
-      await storage.removeLegacy();
-    } catch {
-      legacyCleanupPending = true;
-    }
-    return createAnnotationAuthority(storage, verified, {
-      debounceMs,
-      retryMs,
-      onPersistenceError,
-      onChanged,
-      onObserverError,
-      initiallyPersisted: true,
-      legacyCleanupPending,
-      writeGuard: null,
-    });
-  } catch (error) {
-    onPersistenceError(error);
-    return createAnnotationAuthority(storage, legacy, {
-      debounceMs,
-      retryMs,
-      onPersistenceError,
-      onChanged,
-      onObserverError,
-      initiallyPersisted: false,
-      legacyCleanupPending: true,
-      writeGuard: dedicatedStateUnavailable ? legacy : null,
-    });
-  }
+  const recovery = await recoverDurableAuthority({
+    storage,
+    empty: { schemaVersion: 1, documents: {} },
+    parseDedicated: parseAnnotations,
+    parseLegacy: parseLegacyAnnotations,
+    equals: collectionsEqual,
+    messages: PERSISTENCE_MESSAGES,
+    conflicts: PERSISTENCE_CONFLICTS,
+    onPersistenceError,
+  });
+  return createAnnotationAuthority(storage, recovery, {
+    debounceMs,
+    retryMs,
+    onPersistenceError,
+    onChanged,
+    onObserverError,
+  });
 }

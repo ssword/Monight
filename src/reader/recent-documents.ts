@@ -1,3 +1,11 @@
+import {
+  createDurableAuthorityPersistence,
+  type DurableAuthorityConflictPolicy,
+  type DurableAuthorityMessages,
+  type DurableAuthorityRecovery,
+  recoverDurableAuthority,
+} from './durable-authority-persistence';
+
 export interface RecentDocument {
   readonly filePath: string;
   readonly title: string;
@@ -33,9 +41,21 @@ interface LoadRecentDocumentsOptions {
   readonly onObserverError?: (error: unknown) => void;
 }
 
-type DedicatedWriteGuard = PersistedRecentDocuments | 'unknown' | null;
-
 class RecentDocumentPersistenceConflictError extends Error {}
+
+const PERSISTENCE_CONFLICTS: DurableAuthorityConflictPolicy = {
+  create: (message) => new RecentDocumentPersistenceConflictError(message),
+  isRetryable: (error) => !(error instanceof RecentDocumentPersistenceConflictError),
+  reportInvalidDedicatedOnReadFailure: true,
+};
+const PERSISTENCE_MESSAGES: DurableAuthorityMessages = {
+  invalidDedicatedValue: 'Dedicated Recent Documents state is invalid',
+  unreconciledDedicatedValue:
+    'Dedicated Recent Documents state could not be reconciled after a failed read',
+  invalidDedicatedSchema: 'Dedicated Recent Documents state has an unsupported or invalid schema',
+  unsafeDedicatedReplacement: 'Dedicated Recent Documents state could not be safely replaced',
+  migrationVerificationFailed: 'Recent Documents migration could not be verified',
+};
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -114,7 +134,7 @@ function collectionsEqual(
 
 function createRecentDocumentAuthority(
   storage: RecentDocumentStorage,
-  initial: PersistedRecentDocuments,
+  recovery: DurableAuthorityRecovery<PersistedRecentDocuments>,
   {
     limit,
     debounceMs,
@@ -122,22 +142,10 @@ function createRecentDocumentAuthority(
     onPersistenceError,
     onChanged,
     onObserverError,
-    initiallyPersisted,
-    legacyCleanupPending,
-    writeGuard,
-  }: Required<LoadRecentDocumentsOptions> & {
-    readonly initiallyPersisted: boolean;
-    readonly legacyCleanupPending: boolean;
-    readonly writeGuard: DedicatedWriteGuard;
-  },
+  }: Required<LoadRecentDocumentsOptions>,
 ): RecentDocumentAuthority {
-  let documents = cloneDocuments(initial.documents).slice(0, limit);
+  let documents = cloneDocuments(recovery.value.documents).slice(0, limit);
   let revision = 0;
-  let persistedRevision = initiallyPersisted ? 0 : -1;
-  let persistence: Promise<void> | null = null;
-  let persistenceTimer: ReturnType<typeof setTimeout> | null = null;
-  let shouldRemoveLegacy = legacyCleanupPending;
-  let requiredDedicatedValue = writeGuard;
 
   const notifyChanged = (): void => {
     try {
@@ -147,102 +155,32 @@ function createRecentDocumentAuthority(
     }
   };
 
-  const clearPersistenceTimer = (): void => {
-    if (persistenceTimer === null) return;
-    clearTimeout(persistenceTimer);
-    persistenceTimer = null;
-  };
-
-  const persistDirtySnapshots = (): Promise<void> => {
-    if (persistence) return persistence;
-    const running = (async () => {
-      while (persistedRevision < revision) {
-        const targetRevision = revision;
-        const value: PersistedRecentDocuments = {
-          schemaVersion: 1,
-          documents: cloneDocuments(documents),
-        };
-        if (requiredDedicatedValue) {
-          const rawDedicated = await storage.read();
-          if (rawDedicated !== undefined) {
-            const dedicated = parseRecentDocuments(rawDedicated);
-            if (!dedicated) {
-              throw new RecentDocumentPersistenceConflictError(
-                'Dedicated Recent Documents state is invalid',
-              );
-            }
-            if (requiredDedicatedValue === 'unknown' && targetRevision === 0) {
-              documents = cloneDocuments(dedicated.documents).slice(0, limit);
-              persistedRevision = 0;
-              requiredDedicatedValue = null;
-              notifyChanged();
-              continue;
-            }
-            if (
-              requiredDedicatedValue === 'unknown' ||
-              !collectionsEqual(dedicated, requiredDedicatedValue)
-            ) {
-              throw new RecentDocumentPersistenceConflictError(
-                'Dedicated Recent Documents state could not be reconciled after a failed read',
-              );
-            }
-          } else if (requiredDedicatedValue === 'unknown' && targetRevision === 0) {
-            persistedRevision = 0;
-            requiredDedicatedValue = null;
-            continue;
-          }
-          requiredDedicatedValue = null;
-        }
-        await storage.write(value);
-        if (shouldRemoveLegacy) {
-          const verified = parseRecentDocuments(await storage.read());
-          if (!verified || !collectionsEqual(verified, value)) {
-            throw new Error('Recent Documents migration could not be verified');
-          }
-          try {
-            await storage.removeLegacy();
-            shouldRemoveLegacy = false;
-          } catch {
-            // The verified dedicated value remains authoritative; retry cleanup next launch.
-          }
-        }
-        persistedRevision = targetRevision;
-      }
-    })();
-    persistence = running;
-    void running.then(
-      () => {
-        if (persistence === running) persistence = null;
-      },
-      () => {
-        if (persistence === running) persistence = null;
-      },
-    );
-    return running;
-  };
-
-  const isRetryable = (error: unknown): boolean =>
-    !(error instanceof RecentDocumentPersistenceConflictError);
-
-  const schedulePersistence = (delayMs: number): void => {
-    clearPersistenceTimer();
-    persistenceTimer = setTimeout(() => {
-      persistenceTimer = null;
-      void persistDirtySnapshots().catch((error) => {
-        onPersistenceError(error);
-        if (isRetryable(error)) schedulePersistence(retryMs);
-      });
-    }, delayMs);
-  };
+  const persistence = createDurableAuthorityPersistence({
+    storage,
+    recovery,
+    revision: () => revision,
+    value: () => ({ schemaVersion: 1 as const, documents: cloneDocuments(documents) }),
+    adoptDedicated(value) {
+      documents = cloneDocuments(value.documents).slice(0, limit);
+      notifyChanged();
+    },
+    parseDedicated: parseRecentDocuments,
+    equals: collectionsEqual,
+    messages: PERSISTENCE_MESSAGES,
+    conflicts: PERSISTENCE_CONFLICTS,
+    debounceMs,
+    retryMs,
+    onPersistenceError,
+  });
 
   const replaceDocuments = (next: readonly RecentDocument[]): void => {
     documents = cloneDocuments(next).slice(0, limit);
     revision += 1;
     notifyChanged();
-    schedulePersistence(debounceMs);
+    persistence.changed();
   };
 
-  const authority: RecentDocumentAuthority = {
+  return {
     snapshot: () => cloneDocuments(documents),
     record(document) {
       replaceDocuments([
@@ -253,20 +191,9 @@ function createRecentDocumentAuthority(
     clear() {
       replaceDocuments([]);
     },
-    async flush() {
-      clearPersistenceTimer();
-      try {
-        while (persistedRevision < revision) await persistDirtySnapshots();
-      } catch (error) {
-        onPersistenceError(error);
-        if (isRetryable(error)) schedulePersistence(retryMs);
-        throw error;
-      }
-    },
-    isDirty: () => persistedRevision < revision,
+    flush: () => persistence.flush(),
+    isDirty: () => persistence.isDirty(),
   };
-  if (!initiallyPersisted) schedulePersistence(retryMs);
-  return authority;
 }
 
 export async function loadRecentDocuments(
@@ -289,95 +216,15 @@ export async function loadRecentDocuments(
     onChanged,
     onObserverError,
   };
-  let rawStored: unknown;
-  let storedReadFailed = false;
-  try {
-    rawStored = await storage.read();
-  } catch (error) {
-    storedReadFailed = true;
-    onPersistenceError(error);
-  }
-
-  const stored = parseRecentDocuments(rawStored);
-  const dedicatedStateUnavailable = storedReadFailed || rawStored !== undefined;
-  if (stored) {
-    if ((await storage.readLegacy().catch(() => undefined)) !== undefined) {
-      try {
-        await storage.removeLegacy();
-      } catch {
-        return createRecentDocumentAuthority(storage, stored, {
-          ...options,
-          initiallyPersisted: true,
-          legacyCleanupPending: true,
-          writeGuard: null,
-        });
-      }
-    }
-    return createRecentDocumentAuthority(storage, stored, {
-      ...options,
-      initiallyPersisted: true,
-      legacyCleanupPending: false,
-      writeGuard: null,
-    });
-  }
-
-  let rawLegacy: unknown;
-  try {
-    rawLegacy = await storage.readLegacy();
-  } catch (error) {
-    onPersistenceError(error);
-  }
-  const legacy = parseLegacyRecentDocuments(rawLegacy, normalizedLimit);
-  if (!legacy) {
-    if (dedicatedStateUnavailable) {
-      onPersistenceError(
-        new RecentDocumentPersistenceConflictError(
-          'Dedicated Recent Documents state has an unsupported or invalid schema',
-        ),
-      );
-    }
-    return createRecentDocumentAuthority(
-      storage,
-      { schemaVersion: 1, documents: [] },
-      {
-        ...options,
-        initiallyPersisted: !dedicatedStateUnavailable,
-        legacyCleanupPending: false,
-        writeGuard: dedicatedStateUnavailable ? 'unknown' : null,
-      },
-    );
-  }
-
-  try {
-    if (dedicatedStateUnavailable) {
-      throw new RecentDocumentPersistenceConflictError(
-        'Dedicated Recent Documents state could not be safely replaced',
-      );
-    }
-    await storage.write(legacy);
-    const verified = parseRecentDocuments(await storage.read());
-    if (!verified || !collectionsEqual(verified, legacy)) {
-      throw new Error('Recent Documents migration could not be verified');
-    }
-    let legacyCleanupPending = false;
-    try {
-      await storage.removeLegacy();
-    } catch {
-      legacyCleanupPending = true;
-    }
-    return createRecentDocumentAuthority(storage, verified, {
-      ...options,
-      initiallyPersisted: true,
-      legacyCleanupPending,
-      writeGuard: null,
-    });
-  } catch (error) {
-    onPersistenceError(error);
-    return createRecentDocumentAuthority(storage, legacy, {
-      ...options,
-      initiallyPersisted: false,
-      legacyCleanupPending: true,
-      writeGuard: dedicatedStateUnavailable ? legacy : null,
-    });
-  }
+  const recovery = await recoverDurableAuthority({
+    storage,
+    empty: { schemaVersion: 1, documents: [] },
+    parseDedicated: parseRecentDocuments,
+    parseLegacy: (value) => parseLegacyRecentDocuments(value, normalizedLimit),
+    equals: collectionsEqual,
+    messages: PERSISTENCE_MESSAGES,
+    conflicts: PERSISTENCE_CONFLICTS,
+    onPersistenceError,
+  });
+  return createRecentDocumentAuthority(storage, recovery, options);
 }
