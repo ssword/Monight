@@ -6,7 +6,7 @@ claim native desktop completion for any platform without observed evidence.
 ## Verification subject
 
 - Repair integration commit: `05949aa203a0dc0f6c9803ab820c19ab30e30a32`
-- Verified issue #52 source/CI tree: `a2646a19e046ad25acc9528a0104ac3c0b3ad984`
+- Verified issue #52 source/CI tree: `fa73c667dc826ecf26ebf7c7aaa17c26dc71950c`
 - Repair issues: #47, #48, #49, #50, and #51
 - Verification date: 2026-09-06
 - Tester: Codex local verification
