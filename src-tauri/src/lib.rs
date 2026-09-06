@@ -610,7 +610,7 @@ mod tests {
         let fixture = fixture_path("sample.pdf");
         let denied = copied_pdf_fixture("opened-event-denied.pdf");
         let file_url = url::Url::from_file_path(&fixture).expect("fixture should become file URL");
-        let expected = file_url
+        let expected_path = file_url
             .to_file_path()
             .expect("file URL should preserve its platform path");
         let document_intake = document_intake::DocumentIntake::default();
@@ -618,7 +618,10 @@ mod tests {
         let payload = payload_from_opened_urls(&document_intake, &[file_url])
             .expect("opened file URL should be accepted");
 
-        assert_eq!(payload.files, vec![expected.to_string_lossy().to_string()]);
+        assert_eq!(
+            payload.files,
+            vec![expected_path.to_string_lossy().to_string()]
+        );
         assert_eq!(payload.page, None);
         assert_eq!(payload.source, ExternalOpenSource::OperatingSystem);
         assert!(commands::read_pdf_bytes(payload.files[0].clone(), &document_intake).is_ok());
@@ -637,7 +640,7 @@ mod tests {
             url::Url::from_file_path(&missing).expect("missing path should become a file URL"),
             url::Url::from_file_path(&fixture).expect("fixture should become a file URL"),
         ];
-        let expected = urls
+        let expected_paths = urls
             .iter()
             .map(|url| {
                 url.to_file_path()
@@ -651,7 +654,7 @@ mod tests {
         let payload = payload_from_opened_urls(&document_intake, &urls)
             .expect("file association paths should be forwarded in order");
 
-        assert_eq!(payload.files, expected);
+        assert_eq!(payload.files, expected_paths);
         assert!(
             commands::read_pdf_bytes(fixture.to_string_lossy().to_string(), &document_intake)
                 .is_ok()
@@ -689,7 +692,7 @@ mod tests {
     #[test]
     fn forwarded_arguments_route_through_document_intake() {
         let working_directory = fixture_directory();
-        let expected = working_directory.join("sample.pdf");
+        let expected_document_path = working_directory.join("sample.pdf");
         let document_intake = document_intake::DocumentIntake::default();
 
         let payload = payload_from_cli_args(
@@ -699,7 +702,10 @@ mod tests {
         )
         .expect("forwarded arguments should produce a CLI payload");
 
-        assert_eq!(payload.files, vec![expected.to_string_lossy().to_string()]);
+        assert_eq!(
+            payload.files,
+            vec![expected_document_path.to_string_lossy().to_string()]
+        );
         assert_eq!(payload.page, Some(5));
         assert!(commands::read_pdf_bytes(payload.files[0].clone(), &document_intake).is_ok());
     }
