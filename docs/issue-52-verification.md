@@ -6,6 +6,7 @@ claim native desktop completion for any platform without observed evidence.
 ## Verification subject
 
 - Repair integration commit: `05949aa203a0dc0f6c9803ab820c19ab30e30a32`
+- Verified issue #52 source/CI tree: `a2646a19e046ad25acc9528a0104ac3c0b3ad984`
 - Repair issues: #47, #48, #49, #50, and #51
 - Verification date: 2026-09-06
 - Tester: Codex local verification
@@ -52,6 +53,22 @@ Observed failures included:
 This confirms the repair regressions are sensitive to the reported old behavior. Some failures
 also report missing public methods because those shutdown seams did not exist at the baseline.
 
+Reproduce the comparison from a clone containing `ab1a096`:
+
+```bash
+git worktree add --detach ../monight-issue52-baseline 2a82c0c
+tests="application-lifecycle window-lifecycle session-restoration document-workspace reader-actions search-navigation-integration gesture-zoom durable-authority-contracts"
+for test in $tests; do
+  git show ab1a096:src/__tests__/$test.test.ts > ../monight-issue52-baseline/src/__tests__/$test.test.ts
+done
+cd ../monight-issue52-baseline
+npm ci
+npm test -- --run $(printf 'src/__tests__/%s.test.ts ' $tests)
+```
+
+The expected baseline result is 45 failures and 119 passes. Remove the temporary worktree after
+capturing the output.
+
 ## Cross-platform CI evidence
 
 There is no CI run for integrated commit `05949aa`: the local `develop` branch has not been
@@ -72,9 +89,9 @@ The most recent published run is CI run
 | npm dependency audit | 101291525480 | Pass | Pre-repair commit only |
 | Rust dependency audit | 101291525377 | Pass | Pre-repair commit only |
 
-The issue #52 verification changes add `.gitattributes` with LF checkout policy and make the four
-Rust fixture assertions platform-stable. These are not passing Windows evidence until a new CI run
-executes them.
+The issue #52 verification changes add LF checkout policy for Biome-supported source/config files
+and make the four Rust fixture assertions platform-stable. These are not passing Windows evidence
+until a new CI run executes them.
 
 ## Native repair checks
 
