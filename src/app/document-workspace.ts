@@ -490,6 +490,9 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
         rendering: surface.rendering,
         presentation: {
           snapshot: () => surface.rendering.getState(),
+          ...(surface.rendering.openSearch
+            ? { openSearch: () => surface.rendering.openSearch?.() }
+            : {}),
           setSearchQuery: (query) => surface.rendering.setSearchQuery(query),
           clearSearch: () => surface.rendering.clearSearch(),
           revealSearchMatch: (match) => surface.rendering.revealSearchMatch(match),

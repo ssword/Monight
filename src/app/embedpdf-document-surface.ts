@@ -1,10 +1,12 @@
 import EmbedPDF, {
+  type CommandsCapability,
   type DocumentManagerCapability,
   type PDFViewerConfig,
   type PluginRegistry,
   type RotateCapability,
   Rotation,
   type ScrollCapability,
+  ScrollStrategy,
   type SearchCapability,
   type SpreadCapability,
   SpreadMode,
@@ -143,6 +145,7 @@ interface CreateEmbedPdfViewerRequest {
 
 export interface EmbedPdfViewerRuntime {
   open(request: EmbedPdfOpenRequest): Promise<void>;
+  openSearch(): void;
   pageCount(): number;
   currentPage(): number;
   currentZoom(): number;
@@ -297,6 +300,26 @@ export function restoreEmbedPdfReadingPositionCoordinates(
   }
 }
 
+export function embedPdfLayoutForViewMode(viewMode: ViewMode): {
+  scrollStrategy: ScrollStrategy;
+  spreadMode: SpreadMode;
+} {
+  return viewMode === 'continuous'
+    ? { scrollStrategy: ScrollStrategy.Vertical, spreadMode: SpreadMode.None }
+    : {
+        scrollStrategy: ScrollStrategy.Horizontal,
+        spreadMode: viewMode === 'spread' ? SpreadMode.Odd : SpreadMode.None,
+      };
+}
+
+const viewModeForEmbedPdfLayout = (
+  scrollStrategy: ScrollStrategy,
+  spreadMode: SpreadMode,
+): ViewMode => {
+  if (spreadMode !== SpreadMode.None) return 'spread';
+  return scrollStrategy === ScrollStrategy.Horizontal ? 'single' : 'continuous';
+};
+
 async function blobToCanvas(blob: Blob, maxWidth?: number): Promise<HTMLCanvasElement> {
   const bitmap = await createImageBitmap(blob);
   const scale = maxWidth && bitmap.width > maxWidth ? maxWidth / bitmap.width : 1;
@@ -331,6 +354,7 @@ async function createProductionViewer({
     registry,
     'document-manager',
   );
+  const commands = requireCapability<CommandsCapability>(registry, 'commands');
   const scroll = requireCapability<ScrollCapability>(registry, 'scroll');
   const zoom = requireCapability<ZoomCapability>(registry, 'zoom');
   const rotate = requireCapability<RotateCapability>(registry, 'rotate');
@@ -346,11 +370,10 @@ async function createProductionViewer({
   let documentObject: ReturnType<DocumentManagerCapability['getDocument']> = null;
   let selectedViewMode: ViewMode = 'single';
   let selectedRotation = 0;
+  let selectedScrollStrategy = ScrollStrategy.Vertical;
+  let selectedSpreadMode = SpreadMode.None;
   let destroyed = false;
-  let projectingPage = 0;
-  let projectingZoom = 0;
-  let projectingRotation = 0;
-  let projectingSpread = 0;
+  const projectionDepth = { page: 0, zoom: 0, rotation: 0, viewMode: 0 };
   let initialLayoutReady = false;
   let resolveInitialLayout!: () => void;
   const initialLayoutReadyPromise = new Promise<void>((resolve) => {
@@ -363,12 +386,21 @@ async function createProductionViewer({
     metrics: EmbedPdfScrollMetrics = scrollScope.getMetrics(),
   ): ReadingPosition =>
     captureEmbedPdfReadingPosition(currentPageNumber(), metrics, scrollScope.getLayout());
+  const publishViewModeFromLayout = (): void => {
+    const nextViewMode = viewModeForEmbedPdfLayout(selectedScrollStrategy, selectedSpreadMode);
+    const changed = nextViewMode !== selectedViewMode;
+    selectedViewMode = nextViewMode;
+    callbacks.stateChanged();
+    if (projectionDepth.viewMode === 0 && changed) {
+      void callbacks.viewModeRequested?.(nextViewMode);
+    }
+  };
 
   unsubscribers.push(
     scroll.onPageChange((event) => {
       if (event.documentId !== documentId) return;
       callbacks.stateChanged();
-      if (projectingPage === 0) void callbacks.pageNavigationRequested(event.pageNumber);
+      if (projectionDepth.page === 0) void callbacks.pageNavigationRequested(event.pageNumber);
     }),
     scrollScope.onScroll((metrics) => {
       callbacks.stateChanged();
@@ -378,6 +410,11 @@ async function createProductionViewer({
       if (event.documentId !== documentId || !event.isInitial || initialLayoutReady) return;
       initialLayoutReady = true;
       resolveInitialLayout();
+    }),
+    scroll.onStateChange((state) => {
+      if (state.strategy === selectedScrollStrategy) return;
+      selectedScrollStrategy = state.strategy;
+      publishViewModeFromLayout();
     }),
     viewport.onScrollActivity((event) => {
       if (
@@ -391,7 +428,7 @@ async function createProductionViewer({
     zoom.onZoomChange((event) => {
       if (event.documentId !== documentId) return;
       callbacks.stateChanged();
-      if (projectingZoom === 0)
+      if (projectionDepth.zoom === 0)
         void callbacks.zoomIntentRequested(zoomIntentFromLevel(event.level));
     }),
     rotate.onRotateChange((event) => {
@@ -400,26 +437,17 @@ async function createProductionViewer({
       const delta = (nextRotation - selectedRotation + 360) % 360;
       selectedRotation = nextRotation;
       callbacks.stateChanged();
-      if (projectingRotation === 0 && delta === 90) {
+      if (projectionDepth.rotation === 0 && delta === 90) {
         void callbacks.rotationRequested?.('clockwise');
-      } else if (projectingRotation === 0 && delta === 270) {
+      } else if (projectionDepth.rotation === 0 && delta === 270) {
         void callbacks.rotationRequested?.('counter-clockwise');
       }
     }),
     spread.onSpreadChange((event) => {
       if (event.documentId !== documentId) return;
-      const nextViewMode =
-        event.spreadMode === SpreadMode.None
-          ? selectedViewMode === 'spread'
-            ? 'continuous'
-            : selectedViewMode
-          : 'spread';
-      const changed = nextViewMode !== selectedViewMode;
-      selectedViewMode = nextViewMode;
-      callbacks.stateChanged();
-      if (projectingSpread === 0 && changed) {
-        void callbacks.viewModeRequested?.(nextViewMode);
-      }
+      if (event.spreadMode === selectedSpreadMode) return;
+      selectedSpreadMode = event.spreadMode;
+      publishViewModeFromLayout();
     }),
   );
 
@@ -427,40 +455,16 @@ async function createProductionViewer({
     if (!documentObject) throw new Error('EmbedPDF Document Content is not loaded');
     return documentObject;
   };
-  const withPageProjection = async (work: () => void): Promise<void> => {
-    projectingPage += 1;
+  const withProjection = async (
+    kind: keyof typeof projectionDepth,
+    work: () => void,
+  ): Promise<void> => {
+    projectionDepth[kind] += 1;
     try {
       work();
       await waitForPresentationFrames();
     } finally {
-      projectingPage -= 1;
-    }
-  };
-  const withZoomProjection = async (work: () => void): Promise<void> => {
-    projectingZoom += 1;
-    try {
-      work();
-      await waitForPresentationFrames();
-    } finally {
-      projectingZoom -= 1;
-    }
-  };
-  const withRotationProjection = async (work: () => void): Promise<void> => {
-    projectingRotation += 1;
-    try {
-      work();
-      await waitForPresentationFrames();
-    } finally {
-      projectingRotation -= 1;
-    }
-  };
-  const withSpreadProjection = async (work: () => void): Promise<void> => {
-    projectingSpread += 1;
-    try {
-      work();
-      await waitForPresentationFrames();
-    } finally {
-      projectingSpread -= 1;
+      projectionDepth[kind] -= 1;
     }
   };
 
@@ -526,6 +530,9 @@ async function createProductionViewer({
       await waitForInitialLayout(request.signal);
       if (request.signal?.aborted) throw new Error('Document Intake interrupted');
     },
+    openSearch() {
+      commands.forDocument(documentId).execute('panel:toggle-search', 'api');
+    },
     pageCount: () => documentObject?.pageCount ?? 0,
     currentPage: currentPageNumber,
     currentZoom: () => zoom.forDocument(documentId).getState().currentZoomLevel,
@@ -534,11 +541,11 @@ async function createProductionViewer({
     viewMode: () => selectedViewMode,
     readingPosition: currentReadingPosition,
     goToPage: (pageNumber) =>
-      withPageProjection(() =>
+      withProjection('page', () =>
         scroll.forDocument(documentId).scrollToPage({ pageNumber, behavior: 'instant' }),
       ),
     goToReadingPosition: (position) =>
-      withPageProjection(() => {
+      withProjection('page', () => {
         if ('legacyOffset' in position) {
           scrollScope.scrollToPage({ pageNumber: position.page, behavior: 'instant' });
           return;
@@ -555,25 +562,27 @@ async function createProductionViewer({
         });
       }),
     setZoomIntent: (intent) =>
-      withZoomProjection(() =>
+      withProjection('zoom', () =>
         zoom.forDocument(documentId).requestZoom(zoomLevelFromIntent(intent)),
       ),
-    zoomIn: () => withZoomProjection(() => zoom.forDocument(documentId).zoomIn()),
-    zoomOut: () => withZoomProjection(() => zoom.forDocument(documentId).zoomOut()),
+    zoomIn: () => withProjection('zoom', () => zoom.forDocument(documentId).zoomIn()),
+    zoomOut: () => withProjection('zoom', () => zoom.forDocument(documentId).zoomOut()),
     setRotation: (rotation) =>
-      withRotationProjection(() => {
+      withProjection('rotation', () => {
         selectedRotation = ((rotation % 360) + 360) % 360;
         rotate.forDocument(documentId).setRotation(rotationFromDegrees(rotation));
       }),
     setViewMode: (viewMode) =>
-      withSpreadProjection(() => {
+      withProjection('viewMode', () => {
+        const layout = embedPdfLayoutForViewMode(viewMode);
         selectedViewMode = viewMode;
-        spread
-          .forDocument(documentId)
-          .setSpreadMode(viewMode === 'spread' ? SpreadMode.Odd : SpreadMode.None);
+        selectedScrollStrategy = layout.scrollStrategy;
+        selectedSpreadMode = layout.spreadMode;
+        scrollScope.setScrollStrategy(layout.scrollStrategy);
+        spread.forDocument(documentId).setSpreadMode(layout.spreadMode);
       }),
     fitToPage: () =>
-      withZoomProjection(() => zoom.forDocument(documentId).requestZoom(ZoomMode.FitPage)),
+      withProjection('zoom', () => zoom.forDocument(documentId).requestZoom(ZoomMode.FitPage)),
     applyFilter(filterCss) {
       container.style.filter = filterCss;
     },
@@ -755,6 +764,7 @@ export function createEmbedPdfDocumentSurfaceFactory({
           viewMode: openedViewer.viewMode(),
         };
       },
+      openSearch: () => openedViewer.openSearch(),
       getScrollPosition: () => 0,
       getReadingPosition: () => openedViewer.readingPosition(),
       goToPage: (pageNumber) => openedViewer.goToPage(pageNumber),

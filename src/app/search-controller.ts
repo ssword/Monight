@@ -61,7 +61,12 @@ export class SearchController {
   }
 
   open(): void {
-    if (!this.getActiveDocument()) return;
+    const activeDocument = this.getActiveDocument();
+    if (!activeDocument) return;
+    if (activeDocument.presentation.openSearch) {
+      activeDocument.presentation.openSearch();
+      return;
+    }
     this.bar.classList.remove('hidden');
     this.input.focus();
     this.input.select();

@@ -6,10 +6,11 @@ Audited on 2026-09-08 for issue 56 against the installed `@embedpdf/snippet` pac
 
 - `EmbedPDF.init` and `EmbedPdfContainer.registry` mount the ready-made viewer and expose its initialized plugin registry.
 - `DocumentManagerCapability.openDocumentBuffer`, `retryDocument`, `getDocument`, and `closeDocument` support byte-based native intake, password retry, publication checks, and disposal.
-- `ScrollCapability.forDocument` provides page count, current page, page navigation, and page-change events.
+- `ScrollCapability.forDocument` provides page count, current page, page navigation, page-change events, and horizontal/vertical strategies for Monight's single/continuous View Modes.
 - `ScrollCapability.onLayoutReady` defines initial presentation readiness. Monight does not publish a live Document until the first measurable viewer layout has completed.
 - `ZoomCapability.forDocument` provides manual zoom, fit width, fit page, zoom in/out, and zoom-change events.
 - `RotateCapability.forDocument` and `SpreadCapability.forDocument` project retained Visual State.
+- `CommandsCapability.forDocument.execute` routes Monight's retained Find shortcut to the ready-made viewer's `panel:toggle-search` command.
 - `SearchCapability.forDocument`, the PDF engine metadata/bookmark methods, and `ThumbnailCapability.forDocument` back existing Document Query boundaries without exposing EmbedPDF handles.
 
 ## Offline configuration

@@ -99,6 +99,26 @@ afterEach(() => {
 });
 
 describe('SearchController', () => {
+  it('delegates opening search to a Document-owned ready-made viewer', () => {
+    const controls = createSearchControls();
+    vi.stubGlobal('document', {
+      getElementById: (id: string) => controls.get(id) ?? null,
+    });
+    const current = activeDocument({
+      searchText: vi.fn(async () => []),
+      revealSearchMatch: vi.fn(async () => {}),
+      clearSearch: vi.fn(),
+    });
+    const openSearch = vi.fn();
+    current.presentation.openSearch = openSearch;
+    const controller = new SearchController(() => current);
+
+    controller.open();
+
+    expect(openSearch).toHaveBeenCalledOnce();
+    expect(controls.get('search-bar')?.classList.remove).not.toHaveBeenCalled();
+  });
+
   it('does not restart an active scan when navigation is requested before page progress', async () => {
     const controls = createSearchControls();
     vi.stubGlobal('document', {

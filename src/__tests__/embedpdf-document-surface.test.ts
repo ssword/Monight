@@ -7,6 +7,7 @@ import {
   createEmbedPdfDocumentSurfaceFactory,
   createEmbedPdfViewerConfig,
   type EmbedPdfViewerRuntime,
+  embedPdfLayoutForViewMode,
   restoreEmbedPdfReadingPositionCoordinates,
 } from '../app/embedpdf-document-surface';
 import { createDocumentIntake } from '../reader/document-intake';
@@ -17,6 +18,7 @@ const createViewerRuntime = (
   overrides: Partial<EmbedPdfViewerRuntime> = {},
 ): EmbedPdfViewerRuntime => ({
   open: vi.fn(async () => undefined),
+  openSearch: vi.fn(),
   pageCount: () => 2,
   currentPage: () => 1,
   currentZoom: () => 1,
@@ -83,12 +85,28 @@ describe('EmbedPDF Document surface', () => {
     ).toEqual({ x: 100, y: 600 });
   });
 
+  it('maps every retained View Mode to a distinct EmbedPDF layout', () => {
+    expect(embedPdfLayoutForViewMode('single')).toEqual({
+      scrollStrategy: 'horizontal',
+      spreadMode: 'none',
+    });
+    expect(embedPdfLayoutForViewMode('continuous')).toEqual({
+      scrollStrategy: 'vertical',
+      spreadMode: 'none',
+    });
+    expect(embedPdfLayoutForViewMode('spread')).toEqual({
+      scrollStrategy: 'horizontal',
+      spreadMode: 'odd',
+    });
+  });
+
   it('opens intake bytes before exposing page navigation and zoom through Document Rendering', async () => {
     let currentPage = 1;
     let zoom = 1;
     let callbacks: DocumentSurfaceCallbacks | undefined;
     const runtime: EmbedPdfViewerRuntime = {
       open: vi.fn(async () => undefined),
+      openSearch: vi.fn(),
       pageCount: () => 2,
       currentPage: () => currentPage,
       currentZoom: () => zoom,
@@ -455,6 +473,7 @@ describe('EmbedPDF Document surface', () => {
   it('keeps Monight Visual State projection available without making the viewer editable', async () => {
     const runtime = {
       open: vi.fn(async () => undefined),
+      openSearch: vi.fn(),
       pageCount: () => 1,
       currentPage: () => 1,
       currentZoom: () => 1,
@@ -494,11 +513,13 @@ describe('EmbedPDF Document surface', () => {
     });
 
     surface.rendering.applyFilter('brightness(0.8)');
+    surface.rendering.openSearch?.();
     await surface.rendering.setViewMode('continuous');
     await surface.rendering.setRotation(90);
     await surface.rendering.setZoomIntent({ kind: 'fit-width' });
 
     expect(runtime.applyFilter).toHaveBeenCalledWith('brightness(0.8)');
+    expect(runtime.openSearch).toHaveBeenCalledOnce();
     expect(runtime.setViewMode).toHaveBeenCalledWith('continuous');
     expect(runtime.setRotation).toHaveBeenCalledWith(90);
     expect(runtime.setZoomIntent).toHaveBeenCalledWith({ kind: 'fit-width' });

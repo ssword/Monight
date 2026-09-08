@@ -4,6 +4,7 @@ import type { DocumentRenderingState } from './document-rendering';
 
 export interface DocumentPresentation {
   snapshot(): DocumentRenderingState;
+  openSearch?(): void;
   setSearchQuery(query: string): void;
   clearSearch(): void;
   revealSearchMatch(match: PdfSearchMatch): Promise<void>;
