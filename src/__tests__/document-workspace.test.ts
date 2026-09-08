@@ -1,7 +1,11 @@
 // @vitest-environment happy-dom
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { createDocumentWorkspace, type DocumentSurface } from '../app/document-workspace';
+import {
+  createDocumentWorkspace,
+  type DocumentSurface,
+  type DocumentSurfaceCallbacks,
+} from '../app/document-workspace';
 import { createDocumentIntake, type DocumentRuntimeIntake } from '../reader/document-intake';
 import type { DocumentRendering } from '../reader/document-rendering';
 import {
@@ -217,6 +221,43 @@ describe('Document workspace adapter', () => {
     });
 
     expect(workspace.intakeRuntime.isOpen('/docs/saved.pdf')).toBe(false);
+  });
+
+  it('routes native surface links through the originating Document Reader Action', async () => {
+    let surfaceCallbacks: DocumentSurfaceCallbacks | undefined;
+    const dispatch = vi.fn(async () => ({ status: 'committed' as const, revision: 1 }));
+    const surface = createControllableSurface('/docs/report.pdf');
+    const workspace = createDocumentWorkspace({
+      dispatchReaderAction: dispatch,
+      snapshot: () => snapshot([], null),
+      isDocumentOpen: () => false,
+      defaultVisualState: () => ({
+        filterSettings: PRESETS.default,
+        zoomIntent: { kind: 'manual', scale: 1 },
+        rotation: 0,
+        viewMode: 'single',
+      }),
+      createSurface: vi.fn(async ({ callbacks }) => {
+        surfaceCallbacks = callbacks;
+        return { rendering: surface.rendering, runtime: surface.runtime as never };
+      }),
+    });
+
+    await workspace.intakeRuntime.open({
+      document: { canonicalPath: '/docs/report.pdf', title: 'report.pdf' },
+      bytes: new Uint8Array([1]),
+      activate: true,
+    });
+    await surfaceCallbacks?.linkTargetRequested?.({ url: 'https://example.com/report' });
+
+    expect(dispatch).toHaveBeenCalledWith(
+      {
+        type: 'activateDocumentTarget',
+        filePath: '/docs/report.pdf',
+        target: { url: 'https://example.com/report' },
+      },
+      undefined,
+    );
   });
 
   it('publishes a new Document only after activation succeeds and permits a clean retry', async () => {

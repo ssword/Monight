@@ -113,6 +113,11 @@ export function createPdfDocumentContent({
     options: DocumentContentQueryOptions,
   ): Promise<number | null> => {
     const document = currentDocument();
+    if (!Array.isArray(destination) && typeof destination !== 'string') {
+      return options.isCancelled()
+        ? null
+        : Math.max(1, Math.min(destination.pageIndex + 1, document.numPages));
+    }
     const explicitDestination = Array.isArray(destination)
       ? destination
       : await document.getDestination(destination);

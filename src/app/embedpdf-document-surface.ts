@@ -1,4 +1,5 @@
 import EmbedPDF, {
+  type AnnotationCapability,
   type CommandsCapability,
   type DocumentManagerCapability,
   type PDFViewerConfig,
@@ -126,6 +127,7 @@ export function createEmbedPdfViewerConfig(fontLoader?: LocalFontLoader): PDFVie
       },
     },
     render: { withAnnotations: true, withForms: false },
+    annotations: { autoOpenLinks: false },
     form: { withForms: false, withAnnotations: true },
   };
 }
@@ -186,6 +188,48 @@ const requireCapability = <T>(registry: PluginRegistry, pluginId: string): T => 
   if (!capability) throw new Error(`EmbedPDF ${pluginId} capability is unavailable`);
   return capability;
 };
+
+type EmbedPdfShortcutRegistry = Pick<
+  CommandsCapability,
+  'getCommandByShortcut' | 'registerCommand' | 'unregisterCommand'
+>;
+
+export function removeEmbedPdfCommandShortcuts(
+  registry: EmbedPdfShortcutRegistry,
+  commandId: string,
+  shortcuts: readonly string[],
+): void {
+  const command = shortcuts
+    .map((shortcut) => registry.getCommandByShortcut(shortcut))
+    .find((candidate) => candidate?.id === commandId);
+  if (!command) return;
+
+  registry.unregisterCommand(commandId);
+  registry.registerCommand({ ...command, shortcuts: undefined });
+}
+
+interface EmbedPdfNavigateEvent {
+  readonly result: { readonly outcome: string; readonly uri?: string };
+  readonly target:
+    | { readonly type: 'destination'; readonly destination: { readonly pageIndex: number } }
+    | {
+        readonly type: 'action';
+        readonly action: {
+          readonly type: number;
+          readonly uri?: string;
+          readonly destination?: { readonly pageIndex: number };
+        };
+      };
+}
+
+export function embedPdfNavigationTarget(event: EmbedPdfNavigateEvent): PdfLinkTarget | null {
+  if (event.result.outcome === 'uri' && event.result.uri) return { url: event.result.uri };
+  const destination =
+    event.target.type === 'destination'
+      ? event.target.destination
+      : event.target.action.destination;
+  return destination ? { dest: destination } : null;
+}
 
 const zoomIntentFromLevel = (level: ZoomLevel): ZoomIntent => {
   if (typeof level === 'number') return { kind: 'manual', scale: level };
@@ -355,6 +399,8 @@ async function createProductionViewer({
     'document-manager',
   );
   const commands = requireCapability<CommandsCapability>(registry, 'commands');
+  removeEmbedPdfCommandShortcuts(commands, 'panel:toggle-search', ['Ctrl+F', 'Meta+F']);
+  const annotations = requireCapability<AnnotationCapability>(registry, 'annotation');
   const scroll = requireCapability<ScrollCapability>(registry, 'scroll');
   const zoom = requireCapability<ZoomCapability>(registry, 'zoom');
   const rotate = requireCapability<RotateCapability>(registry, 'rotate');
@@ -448,6 +494,13 @@ async function createProductionViewer({
       if (event.spreadMode === selectedSpreadMode) return;
       selectedSpreadMode = event.spreadMode;
       publishViewModeFromLayout();
+    }),
+    annotations.forDocument(documentId).onNavigate((event) => {
+      const target = embedPdfNavigationTarget(event);
+      if (!target || !callbacks.linkTargetRequested) return;
+      void callbacks.linkTargetRequested(target).catch((error) => {
+        console.error('Failed to activate EmbedPDF link:', error);
+      });
     }),
   );
 
@@ -672,7 +725,14 @@ async function createProductionViewer({
     },
     async resolveLinkTarget(target, options) {
       if (options.isCancelled()) return null;
-      return target.url ? { kind: 'external', url: target.url } : null;
+      if (target.url) return { kind: 'external', url: target.url };
+      if (target.dest && !Array.isArray(target.dest) && typeof target.dest !== 'string') {
+        return {
+          kind: 'page',
+          pageNumber: Math.max(1, Math.min(target.dest.pageIndex + 1, currentDocument().pageCount)),
+        };
+      }
+      return null;
     },
     async renderThumbnail(pageNumber, maxWidth) {
       const blob = await thumbnails

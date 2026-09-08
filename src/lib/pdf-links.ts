@@ -1,4 +1,4 @@
-export type PdfDestination = string | unknown[];
+export type PdfDestination = string | unknown[] | { readonly pageIndex: number };
 
 export interface PdfLinkTarget {
   url?: string;

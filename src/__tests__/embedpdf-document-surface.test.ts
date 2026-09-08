@@ -8,6 +8,8 @@ import {
   createEmbedPdfViewerConfig,
   type EmbedPdfViewerRuntime,
   embedPdfLayoutForViewMode,
+  embedPdfNavigationTarget,
+  removeEmbedPdfCommandShortcuts,
   restoreEmbedPdfReadingPositionCoordinates,
 } from '../app/embedpdf-document-surface';
 import { createDocumentIntake } from '../reader/document-intake';
@@ -100,13 +102,63 @@ describe('EmbedPDF Document surface', () => {
     });
   });
 
+  it('removes EmbedPDF Find shortcuts while preserving the search command', () => {
+    const action = vi.fn();
+    const command = {
+      id: 'panel:toggle-search',
+      action,
+      shortcuts: ['Ctrl+F', 'Meta+F'],
+      categories: ['panel', 'panel-search'],
+    };
+    const unregisterCommand = vi.fn();
+    const registerCommand = vi.fn();
+
+    removeEmbedPdfCommandShortcuts(
+      {
+        getCommandByShortcut: vi.fn(() => command),
+        unregisterCommand,
+        registerCommand,
+      },
+      'panel:toggle-search',
+      ['Ctrl+F', 'Meta+F'],
+    );
+
+    expect(unregisterCommand).toHaveBeenCalledWith('panel:toggle-search');
+    expect(registerCommand).toHaveBeenCalledWith({
+      ...command,
+      shortcuts: undefined,
+    });
+    expect(registerCommand.mock.calls[0]?.[0].action).toBe(action);
+  });
+
+  it('translates EmbedPDF navigation events into Monight link targets', () => {
+    const destination = { pageIndex: 4, zoom: { mode: 0 }, view: [] };
+
+    expect(
+      embedPdfNavigationTarget({
+        result: { outcome: 'uri', uri: 'https://example.com/report' },
+        target: { type: 'action', action: { type: 3, uri: 'https://example.com/report' } },
+      }),
+    ).toEqual({ url: 'https://example.com/report' });
+    expect(
+      embedPdfNavigationTarget({
+        result: { outcome: 'navigated' },
+        target: { type: 'destination', destination },
+      }),
+    ).toEqual({ dest: destination });
+    expect(
+      embedPdfNavigationTarget({
+        result: { outcome: 'unsupported' },
+        target: { type: 'action', action: { type: 0 } },
+      }),
+    ).toBeNull();
+  });
+
   it('opens intake bytes before exposing page navigation and zoom through Document Rendering', async () => {
     let currentPage = 1;
     let zoom = 1;
     let callbacks: DocumentSurfaceCallbacks | undefined;
-    const runtime: EmbedPdfViewerRuntime = {
-      open: vi.fn(async () => undefined),
-      openSearch: vi.fn(),
+    const runtime = createViewerRuntime({
       pageCount: () => 2,
       currentPage: () => currentPage,
       currentZoom: () => zoom,
@@ -129,13 +181,6 @@ describe('EmbedPDF Document surface', () => {
       zoomOut: vi.fn(async () => {
         zoom -= 0.25;
       }),
-      setRotation: vi.fn(async () => undefined),
-      setViewMode: vi.fn(async () => undefined),
-      fitToPage: vi.fn(async () => undefined),
-      applyFilter: vi.fn(),
-      setVisible: vi.fn(),
-      search: vi.fn(async () => []),
-      outline: vi.fn(async () => []),
       metadata: vi.fn(async () => ({
         title: 'Report',
         author: null,
@@ -143,10 +188,7 @@ describe('EmbedPDF Document surface', () => {
         keywords: [],
         pageCount: 2,
       })),
-      resolveLinkTarget: vi.fn(async () => null),
-      renderThumbnail: vi.fn(async () => document.createElement('canvas')),
-      destroy: vi.fn(async () => undefined),
-    };
+    });
     const createViewer = vi.fn(async (request) => {
       callbacks = request.callbacks;
       return runtime;
@@ -206,6 +248,7 @@ describe('EmbedPDF Document surface', () => {
       signature: null,
     });
     expect(config.fontFallback).toMatchObject({ baseUrl: '/embedpdf/fonts' });
+    expect(config.annotations).toMatchObject({ autoOpenLinks: false });
     expect(config.stamp).toEqual({ manifests: [], defaultLibrary: false });
     expect(config.disabledCategories).toEqual(
       expect.arrayContaining([
@@ -471,33 +514,7 @@ describe('EmbedPDF Document surface', () => {
   });
 
   it('keeps Monight Visual State projection available without making the viewer editable', async () => {
-    const runtime = {
-      open: vi.fn(async () => undefined),
-      openSearch: vi.fn(),
-      pageCount: () => 1,
-      currentPage: () => 1,
-      currentZoom: () => 1,
-      zoomIntent: () => ({ kind: 'manual' as const, scale: 1 }),
-      rotation: () => 0,
-      viewMode: () => 'single' as const,
-      readingPosition: () => ({ page: 1, location: 0 }),
-      goToPage: vi.fn(async () => undefined),
-      goToReadingPosition: vi.fn(async () => undefined),
-      setZoomIntent: vi.fn(async () => undefined),
-      zoomIn: vi.fn(async () => undefined),
-      zoomOut: vi.fn(async () => undefined),
-      setRotation: vi.fn(async () => undefined),
-      setViewMode: vi.fn(async () => undefined),
-      fitToPage: vi.fn(async () => undefined),
-      applyFilter: vi.fn(),
-      setVisible: vi.fn(),
-      search: vi.fn(async () => []),
-      outline: vi.fn(async () => []),
-      metadata: vi.fn(async () => null),
-      resolveLinkTarget: vi.fn(async () => null),
-      renderThumbnail: vi.fn(async () => document.createElement('canvas')),
-      destroy: vi.fn(async () => undefined),
-    } satisfies EmbedPdfViewerRuntime;
+    const runtime = createViewerRuntime({ pageCount: () => 1 });
     const factory = createEmbedPdfDocumentSurfaceFactory({ createViewer: async () => runtime });
     const surface = await factory({
       filePath: '/docs/report.pdf',

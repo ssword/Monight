@@ -45,6 +45,7 @@ export interface DocumentSurfaceCallbacks {
   readonly zoomIntentRequested: (zoomIntent: ZoomIntent) => Promise<void>;
   readonly rotationRequested?: (direction: 'clockwise' | 'counter-clockwise') => Promise<void>;
   readonly viewModeRequested?: (viewMode: ViewMode) => Promise<void>;
+  readonly linkTargetRequested?: (target: PdfLinkTarget) => Promise<void>;
 }
 
 export interface DocumentSurfaceFactoryRequest {
@@ -465,6 +466,12 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
             type: 'setViewMode',
             filePath: document.canonicalPath,
             viewMode,
+          }),
+        linkTargetRequested: (target) =>
+          dispatchReaderActionOrThrow({
+            type: 'activateDocumentTarget',
+            filePath: document.canonicalPath,
+            target,
           }),
       };
       const surfaceWork = createSurface({

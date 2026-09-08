@@ -11,6 +11,8 @@ Audited on 2026-09-08 for issue 56 against the installed `@embedpdf/snippet` pac
 - `ZoomCapability.forDocument` provides manual zoom, fit width, fit page, zoom in/out, and zoom-change events.
 - `RotateCapability.forDocument` and `SpreadCapability.forDocument` project retained Visual State.
 - `CommandsCapability.forDocument.execute` routes Monight's retained Find shortcut to the ready-made viewer's `panel:toggle-search` command.
+- The ready-made viewer registers fixed `Ctrl+F` and `Meta+F` shortcuts for that command. Monight removes those shortcut mappings after plugin initialization so its configurable Find binding remains the sole keyboard owner while the EmbedPDF toolbar button and command action continue to work.
+- `AnnotationPluginConfig.autoOpenLinks` is disabled. `AnnotationCapability.onNavigate` translates native URI and page-destination clicks into Monight link targets, which the originating Document dispatches through `activateDocumentTarget` and the existing external-link adapter.
 - `SearchCapability.forDocument`, the PDF engine metadata/bookmark methods, and `ThumbnailCapability.forDocument` back existing Document Query boundaries without exposing EmbedPDF handles.
 
 ## Offline configuration
