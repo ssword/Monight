@@ -117,8 +117,11 @@ try {
   }));
 
   if (result.status !== 'ready') throw new Error(result.error || 'EmbedPDF smoke failed');
-  if (!result.state || result.state.pageCount < 1 || result.state.currentPage !== 1) {
+  if (!result.state || result.state.pageCount !== 2 || result.state.currentPage !== 2) {
     throw new Error(`Invalid EmbedPDF state: ${JSON.stringify(result.state)}`);
+  }
+  if (result.state.zoom <= result.state.initialZoom) {
+    throw new Error(`EmbedPDF zoom did not change: ${JSON.stringify(result.state)}`);
   }
   if (renderedImages.length === 0)
     throw new Error('EmbedPDF did not render a non-empty page image');

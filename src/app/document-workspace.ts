@@ -1,5 +1,6 @@
 import { awaitAbortableWork } from '../lib/abortable-work';
 import { debugLog } from '../lib/debug-log';
+import type { ViewMode } from '../lib/document-features';
 import type { PdfLinkTarget } from '../lib/pdf-links';
 import { type AnnotationAccess, createTransientAnnotationAccess } from '../reader/annotations';
 import type { DocumentAccess, DocumentPresentation } from '../reader/document-access';
@@ -42,6 +43,8 @@ export interface DocumentSurfaceCallbacks {
   readonly stateChanged: () => void;
   readonly pageNavigationRequested: (page: number, options?: ReaderActionOptions) => Promise<void>;
   readonly zoomIntentRequested: (zoomIntent: ZoomIntent) => Promise<void>;
+  readonly rotationRequested?: (direction: 'clockwise' | 'counter-clockwise') => Promise<void>;
+  readonly viewModeRequested?: (viewMode: ViewMode) => Promise<void>;
 }
 
 export interface DocumentSurfaceFactoryRequest {
@@ -451,6 +454,17 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
             type: 'setZoomIntent',
             filePath: document.canonicalPath,
             zoomIntent,
+          }),
+        rotationRequested: (direction) =>
+          dispatchReaderActionOrThrow({
+            type: direction === 'clockwise' ? 'rotateClockwise' : 'rotateCounterClockwise',
+            filePath: document.canonicalPath,
+          }),
+        viewModeRequested: (viewMode) =>
+          dispatchReaderActionOrThrow({
+            type: 'setViewMode',
+            filePath: document.canonicalPath,
+            viewMode,
           }),
       };
       const surfaceWork = createSurface({

@@ -7,6 +7,7 @@ Audited on 2026-09-08 for issue 56 against the installed `@embedpdf/snippet` pac
 - `EmbedPDF.init` and `EmbedPdfContainer.registry` mount the ready-made viewer and expose its initialized plugin registry.
 - `DocumentManagerCapability.openDocumentBuffer`, `retryDocument`, `getDocument`, and `closeDocument` support byte-based native intake, password retry, publication checks, and disposal.
 - `ScrollCapability.forDocument` provides page count, current page, page navigation, and page-change events.
+- `ScrollCapability.onLayoutReady` defines initial presentation readiness. Monight does not publish a live Document until the first measurable viewer layout has completed.
 - `ZoomCapability.forDocument` provides manual zoom, fit width, fit page, zoom in/out, and zoom-change events.
 - `RotateCapability.forDocument` and `SpreadCapability.forDocument` project retained Visual State.
 - `SearchCapability.forDocument`, the PDF engine metadata/bookmark methods, and `ThumbnailCapability.forDocument` back existing Document Query boundaries without exposing EmbedPDF handles.
@@ -26,4 +27,4 @@ Audited on 2026-09-08 for issue 56 against the installed `@embedpdf/snippet` pac
   library. The package otherwise requests its default manifest from jsDelivr during startup.
 - Annotation, redaction, insertion, export, protection, capture, and library-owned open/close controls are disabled. PDF permissions remain enforced and modifying contents, annotations, and forms is explicitly denied.
 
-Run `npm run test:embedpdf-offline` to launch the actual `2.15.0` runtime with external requests blocked. The harness opens a generated PDF that references an unembedded Simplified Chinese font and verifies that the page image contains visible glyph pixels with the local WASM and fallback-font configuration.
+Run `npm run test:embedpdf-offline` to launch the actual `2.15.0` runtime with external requests blocked. The harness opens a generated two-page PDF that references an unembedded Simplified Chinese font, navigates to page 2, increases zoom, and verifies that the page image contains visible glyph pixels with the local WASM and fallback-font configuration.

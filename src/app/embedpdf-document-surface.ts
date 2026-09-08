@@ -9,6 +9,7 @@ import EmbedPDF, {
   type SpreadCapability,
   SpreadMode,
   type ThumbnailCapability,
+  type ViewportCapability,
   type ZoomCapability,
   type ZoomLevel,
   ZoomMode,
@@ -89,7 +90,12 @@ async function preloadLocalFonts(): Promise<Map<string, Uint8Array>> {
       return [url, new Uint8Array(await response.arrayBuffer())] as const;
     }),
   ).then((entries) => new Map(entries));
-  return localFontData;
+  try {
+    return await localFontData;
+  } catch (error) {
+    localFontData = null;
+    throw error;
+  }
 }
 
 export function createEmbedPdfViewerConfig(fontLoader?: LocalFontLoader): PDFViewerConfig {
@@ -226,6 +232,70 @@ const searchExcerpt = (context: {
     .replace(/\s+/g, ' ')
     .trim();
 
+const createSearchMatch = (
+  result: {
+    readonly charIndex: number;
+    readonly context: Parameters<typeof searchExcerpt>[0];
+  },
+  pageNumber: number,
+  pageOccurrence: number,
+): PdfSearchMatch => ({
+  pageNumber,
+  pageOccurrence,
+  index: result.charIndex,
+  excerpt: searchExcerpt(result.context),
+});
+
+interface EmbedPdfScrollMetrics {
+  readonly pageVisibilityMetrics: readonly {
+    readonly pageNumber: number;
+    readonly original: { readonly pageY: number };
+  }[];
+}
+
+interface EmbedPdfScrollLayout {
+  readonly virtualItems: readonly {
+    readonly pageLayouts: readonly {
+      readonly pageNumber: number;
+      readonly rotatedHeight: number;
+    }[];
+  }[];
+}
+
+export function captureEmbedPdfReadingPosition(
+  page: number,
+  metrics: EmbedPdfScrollMetrics,
+  layout: EmbedPdfScrollLayout,
+): ReadingPosition {
+  const visibility = metrics.pageVisibilityMetrics.find((item) => item.pageNumber === page);
+  const pageLayout = layout.virtualItems
+    .flatMap((item) => item.pageLayouts)
+    .find((item) => item.pageNumber === page);
+  const location =
+    visibility && pageLayout && pageLayout.rotatedHeight > 0
+      ? Math.min(1, Math.max(0, visibility.original.pageY / pageLayout.rotatedHeight))
+      : 0;
+  return { page, location };
+}
+
+export function restoreEmbedPdfReadingPositionCoordinates(
+  pageSize: { readonly width: number; readonly height: number },
+  rotation: Rotation,
+  position: ReadingPosition,
+): { x: number; y: number } {
+  const location = Math.min(1, Math.max(0, position.location));
+  switch (rotation) {
+    case Rotation.Degree90:
+      return { x: pageSize.width * location, y: pageSize.height };
+    case Rotation.Degree180:
+      return { x: pageSize.width, y: pageSize.height * (1 - location) };
+    case Rotation.Degree270:
+      return { x: pageSize.width * (1 - location), y: 0 };
+    default:
+      return { x: 0, y: pageSize.height * location };
+  }
+}
+
 async function blobToCanvas(blob: Blob, maxWidth?: number): Promise<HTMLCanvasElement> {
   const bitmap = await createImageBitmap(blob);
   const scale = maxWidth && bitmap.width > maxWidth ? maxWidth / bitmap.width : 1;
@@ -236,6 +306,11 @@ async function blobToCanvas(blob: Blob, maxWidth?: number): Promise<HTMLCanvasEl
   bitmap.close();
   return canvas;
 }
+
+const waitForPresentationFrames = async (): Promise<void> => {
+  await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+  await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+};
 
 async function createProductionViewer({
   target,
@@ -261,6 +336,7 @@ async function createProductionViewer({
   const spread = requireCapability<SpreadCapability>(registry, 'spread');
   const search = requireCapability<SearchCapability>(registry, 'search');
   const thumbnails = requireCapability<ThumbnailCapability>(registry, 'thumbnail');
+  const viewport = requireCapability<ViewportCapability>(registry, 'viewport');
   const engine = registry.getEngine();
   const unsubscribers: Array<() => void> = [];
   const documentId = `monight-${crypto.randomUUID()}`;
@@ -268,18 +344,48 @@ async function createProductionViewer({
   let fileName = '';
   let documentObject: ReturnType<DocumentManagerCapability['getDocument']> = null;
   let selectedViewMode: ViewMode = 'single';
+  let selectedRotation = 0;
   let destroyed = false;
   let projectingPage = 0;
   let projectingZoom = 0;
+  let projectingRotation = 0;
+  let projectingSpread = 0;
+  let initialLayoutReady = false;
+  let resolveInitialLayout!: () => void;
+  const initialLayoutReadyPromise = new Promise<void>((resolve) => {
+    resolveInitialLayout = resolve;
+  });
+
+  const scrollScope = scroll.forDocument(documentId);
+  const currentPageNumber = () => scrollScope.getCurrentPage();
+  const currentReadingPosition = (
+    metrics: EmbedPdfScrollMetrics = scrollScope.getMetrics(),
+  ): ReadingPosition =>
+    captureEmbedPdfReadingPosition(currentPageNumber(), metrics, scrollScope.getLayout());
 
   unsubscribers.push(
     scroll.onPageChange((event) => {
       if (event.documentId !== documentId) return;
       callbacks.stateChanged();
-      const position = { page: event.pageNumber, location: 0 };
-      callbacks.readingPositionObserved(position);
-      callbacks.readingPositionSettled(position);
       if (projectingPage === 0) void callbacks.pageNavigationRequested(event.pageNumber);
+    }),
+    scrollScope.onScroll((metrics) => {
+      callbacks.stateChanged();
+      callbacks.readingPositionObserved(currentReadingPosition(metrics));
+    }),
+    scroll.onLayoutReady((event) => {
+      if (event.documentId !== documentId || !event.isInitial || initialLayoutReady) return;
+      initialLayoutReady = true;
+      resolveInitialLayout();
+    }),
+    viewport.onScrollActivity((event) => {
+      if (
+        event.documentId === documentId &&
+        !event.activity.isScrolling &&
+        !event.activity.isSmoothScrolling
+      ) {
+        callbacks.readingPositionSettled(currentReadingPosition());
+      }
     }),
     zoom.onZoomChange((event) => {
       if (event.documentId !== documentId) return;
@@ -288,10 +394,31 @@ async function createProductionViewer({
         void callbacks.zoomIntentRequested(zoomIntentFromLevel(event.level));
     }),
     rotate.onRotateChange((event) => {
-      if (event.documentId === documentId) callbacks.stateChanged();
+      if (event.documentId !== documentId) return;
+      const nextRotation = degreesFromRotation(event.rotation);
+      const delta = (nextRotation - selectedRotation + 360) % 360;
+      selectedRotation = nextRotation;
+      callbacks.stateChanged();
+      if (projectingRotation === 0 && delta === 90) {
+        void callbacks.rotationRequested?.('clockwise');
+      } else if (projectingRotation === 0 && delta === 270) {
+        void callbacks.rotationRequested?.('counter-clockwise');
+      }
     }),
     spread.onSpreadChange((event) => {
-      if (event.documentId === documentId) callbacks.stateChanged();
+      if (event.documentId !== documentId) return;
+      const nextViewMode =
+        event.spreadMode === SpreadMode.None
+          ? selectedViewMode === 'spread'
+            ? 'continuous'
+            : selectedViewMode
+          : 'spread';
+      const changed = nextViewMode !== selectedViewMode;
+      selectedViewMode = nextViewMode;
+      callbacks.stateChanged();
+      if (projectingSpread === 0 && changed) {
+        void callbacks.viewModeRequested?.(nextViewMode);
+      }
     }),
   );
 
@@ -299,12 +426,11 @@ async function createProductionViewer({
     if (!documentObject) throw new Error('EmbedPDF Document Content is not loaded');
     return documentObject;
   };
-  const currentPageNumber = () => scroll.forDocument(documentId).getCurrentPage();
   const withPageProjection = async (work: () => void): Promise<void> => {
     projectingPage += 1;
     try {
       work();
-      await Promise.resolve();
+      await waitForPresentationFrames();
     } finally {
       projectingPage -= 1;
     }
@@ -313,9 +439,27 @@ async function createProductionViewer({
     projectingZoom += 1;
     try {
       work();
-      await Promise.resolve();
+      await waitForPresentationFrames();
     } finally {
       projectingZoom -= 1;
+    }
+  };
+  const withRotationProjection = async (work: () => void): Promise<void> => {
+    projectingRotation += 1;
+    try {
+      work();
+      await waitForPresentationFrames();
+    } finally {
+      projectingRotation -= 1;
+    }
+  };
+  const withSpreadProjection = async (work: () => void): Promise<void> => {
+    projectingSpread += 1;
+    try {
+      work();
+      await waitForPresentationFrames();
+    } finally {
+      projectingSpread -= 1;
     }
   };
 
@@ -330,6 +474,22 @@ async function createProductionViewer({
       })
       .toPromise();
     return response.task.toPromise();
+  };
+
+  const waitForInitialLayout = async (signal?: AbortSignal): Promise<void> => {
+    if (!initialLayoutReady) {
+      await new Promise<void>((resolve, reject) => {
+        const abort = () => reject(new Error('Document Intake interrupted'));
+        signal?.addEventListener('abort', abort, { once: true });
+        void initialLayoutReadyPromise.then(() => {
+          signal?.removeEventListener('abort', abort);
+          resolve();
+        });
+      });
+    }
+    await new Promise<void>((resolve) =>
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+    );
   };
 
   return {
@@ -362,6 +522,8 @@ async function createProductionViewer({
       if (request.signal?.aborted) throw new Error('Document Intake interrupted');
       if (!documentObject) documentObject = documentManager.getDocument(documentId);
       if (!documentObject) throw new Error('EmbedPDF did not publish the opened Document');
+      await waitForInitialLayout(request.signal);
+      if (request.signal?.aborted) throw new Error('Document Intake interrupted');
     },
     pageCount: () => documentObject?.pageCount ?? 0,
     currentPage: currentPageNumber,
@@ -369,39 +531,53 @@ async function createProductionViewer({
     zoomIntent: () => zoomIntentFromLevel(zoom.forDocument(documentId).getState().zoomLevel),
     rotation: () => degreesFromRotation(rotate.forDocument(documentId).getRotation()),
     viewMode: () => selectedViewMode,
-    readingPosition: () => ({ page: currentPageNumber(), location: 0 }),
+    readingPosition: currentReadingPosition,
     goToPage: (pageNumber) =>
       withPageProjection(() =>
         scroll.forDocument(documentId).scrollToPage({ pageNumber, behavior: 'instant' }),
       ),
     goToReadingPosition: (position) =>
-      withPageProjection(() =>
-        scroll
-          .forDocument(documentId)
-          .scrollToPage({ pageNumber: position.page, behavior: 'instant' }),
-      ),
+      withPageProjection(() => {
+        if ('legacyOffset' in position) {
+          scrollScope.scrollToPage({ pageNumber: position.page, behavior: 'instant' });
+          return;
+        }
+        const page = currentDocument().pages[position.page - 1];
+        const rotation = (((page?.rotation ?? 0) + rotate.forDocument(documentId).getRotation()) %
+          4) as Rotation;
+        scrollScope.scrollToPage({
+          pageNumber: position.page,
+          pageCoordinates: page
+            ? restoreEmbedPdfReadingPositionCoordinates(page.size, rotation, position)
+            : undefined,
+          behavior: 'instant',
+        });
+      }),
     setZoomIntent: (intent) =>
       withZoomProjection(() =>
         zoom.forDocument(documentId).requestZoom(zoomLevelFromIntent(intent)),
       ),
     zoomIn: () => withZoomProjection(() => zoom.forDocument(documentId).zoomIn()),
     zoomOut: () => withZoomProjection(() => zoom.forDocument(documentId).zoomOut()),
-    async setRotation(rotation) {
-      rotate.forDocument(documentId).setRotation(rotationFromDegrees(rotation));
-    },
-    async setViewMode(viewMode) {
-      selectedViewMode = viewMode;
-      spread
-        .forDocument(documentId)
-        .setSpreadMode(viewMode === 'spread' ? SpreadMode.Odd : SpreadMode.None);
-    },
+    setRotation: (rotation) =>
+      withRotationProjection(() => {
+        selectedRotation = ((rotation % 360) + 360) % 360;
+        rotate.forDocument(documentId).setRotation(rotationFromDegrees(rotation));
+      }),
+    setViewMode: (viewMode) =>
+      withSpreadProjection(() => {
+        selectedViewMode = viewMode;
+        spread
+          .forDocument(documentId)
+          .setSpreadMode(viewMode === 'spread' ? SpreadMode.Odd : SpreadMode.None);
+      }),
     fitToPage: () =>
       withZoomProjection(() => zoom.forDocument(documentId).requestZoom(ZoomMode.FitPage)),
     applyFilter(filterCss) {
       container.style.filter = filterCss;
     },
     setVisible(visible) {
-      target.hidden = !visible;
+      target.dataset.visible = String(visible);
     },
     async search(query, options) {
       if (options.isCancelled() || !query.trim()) return [];
@@ -414,12 +590,7 @@ async function createProductionViewer({
           const pageNumber = page + 1;
           const pageOccurrence = pageOccurrences.get(pageNumber) ?? 0;
           pageOccurrences.set(pageNumber, pageOccurrence + 1);
-          return {
-            pageNumber,
-            pageOccurrence,
-            index: result.charIndex,
-            excerpt: searchExcerpt(result.context),
-          };
+          return createSearchMatch(result, pageNumber, pageOccurrence);
         });
         progressMatches.push(...pageMatches);
         options.onProgress?.({
@@ -436,12 +607,7 @@ async function createProductionViewer({
         const pageNumber = match.pageIndex + 1;
         const pageOccurrence = occurrences.get(pageNumber) ?? 0;
         occurrences.set(pageNumber, pageOccurrence + 1);
-        return {
-          pageNumber,
-          pageOccurrence,
-          index: match.charIndex,
-          excerpt: searchExcerpt(match.context),
-        };
+        return createSearchMatch(match, pageNumber, pageOccurrence);
       });
     },
     async outline(options) {
@@ -531,17 +697,19 @@ export function createEmbedPdfDocumentSurfaceFactory({
   requestPassword,
 }: CreateEmbedPdfDocumentSurfaceFactoryOptions = {}): DocumentSurfaceFactory {
   return async ({ filePath, title, bytes, callbacks, signal }) => {
+    if (signal?.aborted) throw new Error('Document Intake interrupted');
     const root = document.getElementById('pdf-container');
     if (!root) throw new Error("Container element 'pdf-container' not found");
     const target = document.createElement('div');
     target.className = 'embedpdf-document-surface';
-    target.hidden = true;
+    target.dataset.visible = 'false';
     root.append(target);
     let viewer: EmbedPdfViewerRuntime | null = null;
     const sourceBytes = bytes.slice();
     try {
       viewer = await createViewer({ target, callbacks, requestPassword });
       await viewer.open({ bytes: sourceBytes, title, filePath, signal });
+      if (signal?.aborted) throw new Error('Document Intake interrupted');
     } catch (error) {
       await viewer?.destroy();
       target.remove();
@@ -601,12 +769,18 @@ export function createEmbedPdfDocumentSurfaceFactory({
       revealSearchMatch: (match) => openedViewer.goToPage(match.pageNumber),
       setSearchQuery: () => undefined,
       clearSearch: () => undefined,
-      setAnnotations: () => undefined,
+      setAnnotations() {
+        throw new Error('EmbedPDF development surface is read-only');
+      },
       async addPageNote() {
         throw new Error('EmbedPDF development surface is read-only');
       },
-      updateAnnotation: () => undefined,
-      removeAnnotation: () => undefined,
+      updateAnnotation() {
+        throw new Error('EmbedPDF development surface is read-only');
+      },
+      removeAnnotation() {
+        throw new Error('EmbedPDF development surface is read-only');
+      },
       destroy() {
         void destroy();
       },

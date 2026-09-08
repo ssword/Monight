@@ -4,6 +4,7 @@ declare global {
   interface Window {
     embedPdfSmoke?: {
       currentPage: number;
+      initialZoom: number;
       pageCount: number;
       zoom: number;
     };
@@ -14,11 +15,13 @@ function createRequiredFontPdf(): Uint8Array {
   const content = 'BT /F1 24 Tf 72 720 Td <4F60597D> Tj ET';
   const objects = [
     '<< /Type /Catalog /Pages 2 0 R >>',
-    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
-    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>',
+    '<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 5 0 R /Resources << /Font << /F1 7 0 R >> >> >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 6 0 R /Resources << /Font << /F1 7 0 R >> >> >>',
     `<< /Length ${content.length} >>\nstream\n${content}\nendstream`,
-    '<< /Type /Font /Subtype /Type0 /BaseFont /STSong-Light /Encoding /UniGB-UCS2-H /DescendantFonts [6 0 R] >>',
-    '<< /Type /Font /Subtype /CIDFontType0 /BaseFont /STSong-Light /CIDSystemInfo << /Registry (Adobe) /Ordering (GB1) /Supplement 4 >> /FontDescriptor 7 0 R >>',
+    `<< /Length ${content.length} >>\nstream\n${content}\nendstream`,
+    '<< /Type /Font /Subtype /Type0 /BaseFont /STSong-Light /Encoding /UniGB-UCS2-H /DescendantFonts [8 0 R] >>',
+    '<< /Type /Font /Subtype /CIDFontType0 /BaseFont /STSong-Light /CIDSystemInfo << /Registry (Adobe) /Ordering (GB1) /Supplement 4 >> /FontDescriptor 9 0 R >>',
     '<< /Type /FontDescriptor /FontName /STSong-Light /Flags 4 /FontBBox [0 -200 1000 900] /ItalicAngle 0 /Ascent 880 /Descent -120 /CapHeight 700 /StemV 80 >>',
   ];
   const offsets: number[] = [];
@@ -50,11 +53,19 @@ async function run(): Promise<void> {
       },
     });
     surface.rendering.setVisible(true);
-    await surface.rendering.goToPage(1);
+    await surface.rendering.setZoomIntent({ kind: 'manual', scale: 1 });
+    const initialZoom = surface.rendering.getState().zoom;
+    await surface.rendering.goToPage(2);
     await surface.rendering.zoomIn();
-    const state = surface.rendering.getState();
+    let state = surface.rendering.getState();
+    for (let attempt = 0; attempt < 50; attempt += 1) {
+      if (state.currentPage === 2 && state.zoom > initialZoom) break;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      state = surface.rendering.getState();
+    }
     window.embedPdfSmoke = {
       currentPage: state.currentPage,
+      initialZoom,
       pageCount: state.totalPages,
       zoom: state.zoom,
     };

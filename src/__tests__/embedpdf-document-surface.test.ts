@@ -3,9 +3,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createDocumentWorkspace, type DocumentSurfaceCallbacks } from '../app/document-workspace';
 import {
+  captureEmbedPdfReadingPosition,
   createEmbedPdfDocumentSurfaceFactory,
   createEmbedPdfViewerConfig,
   type EmbedPdfViewerRuntime,
+  restoreEmbedPdfReadingPositionCoordinates,
 } from '../app/embedpdf-document-surface';
 import { createDocumentIntake } from '../reader/document-intake';
 import { createReaderActions, type ReaderActions } from '../reader/reader-actions';
@@ -44,6 +46,41 @@ const createViewerRuntime = (
 describe('EmbedPDF Document surface', () => {
   beforeEach(() => {
     document.body.innerHTML = '<div id="pdf-container"></div>';
+  });
+
+  it('preserves normalized within-page Reading Position through EmbedPDF scroll geometry', () => {
+    const metrics = {
+      pageVisibilityMetrics: [
+        {
+          pageNumber: 2,
+          original: { pageY: 150 },
+        },
+      ],
+    };
+    const layout = {
+      virtualItems: [
+        {
+          pageLayouts: [{ pageNumber: 2, rotatedHeight: 600 }],
+        },
+      ],
+    };
+
+    expect(captureEmbedPdfReadingPosition(2, metrics, layout)).toEqual({
+      page: 2,
+      location: 0.25,
+    });
+    expect(
+      restoreEmbedPdfReadingPositionCoordinates({ width: 400, height: 600 }, 0, {
+        page: 2,
+        location: 0.25,
+      }),
+    ).toEqual({ x: 0, y: 150 });
+    expect(
+      restoreEmbedPdfReadingPositionCoordinates({ width: 400, height: 600 }, 1, {
+        page: 2,
+        location: 0.25,
+      }),
+    ).toEqual({ x: 100, y: 600 });
   });
 
   it('opens intake bytes before exposing page navigation and zoom through Document Rendering', async () => {
@@ -180,6 +217,7 @@ describe('EmbedPDF Document surface', () => {
 
   it('keeps Document Intake provisional until the EmbedPDF surface opens', async () => {
     let finishOpen: (() => void) | undefined;
+    let surfaceCallbacks: DocumentSurfaceCallbacks | undefined;
     const runtime = createViewerRuntime({
       open: vi.fn(
         () =>
@@ -189,7 +227,10 @@ describe('EmbedPDF Document surface', () => {
       ),
     });
     const createSurface = createEmbedPdfDocumentSurfaceFactory({
-      createViewer: async () => runtime,
+      createViewer: async ({ callbacks }) => {
+        surfaceCallbacks = callbacks;
+        return runtime;
+      },
     });
     const initialSession = {
       schemaVersion: 2 as const,
@@ -237,6 +278,72 @@ describe('EmbedPDF Document surface', () => {
     });
     expect(reader.query('/docs/report.pdf')).not.toBeNull();
     expect(document.querySelectorAll('.embedpdf-document-surface')).toHaveLength(1);
+
+    await surfaceCallbacks?.rotationRequested?.('clockwise');
+    await surfaceCallbacks?.viewModeRequested?.('spread');
+
+    expect(reader.snapshot().documents[0]?.visualState).toMatchObject({
+      rotation: 90,
+      viewMode: 'spread',
+    });
+  });
+
+  it('keeps independent Intake outcomes and removes a failed provisional surface', async () => {
+    const failedDestroy = vi.fn(async () => undefined);
+    const createSurface = createEmbedPdfDocumentSurfaceFactory({
+      createViewer: async () =>
+        createViewerRuntime({
+          open: vi.fn(async ({ title }) => {
+            if (title === 'invalid.pdf') throw new Error('invalid PDF');
+          }),
+          destroy: vi.fn(async () => {
+            failedDestroy();
+          }),
+        }),
+    });
+    const initialSession = {
+      schemaVersion: 2 as const,
+      activeDocumentPath: null,
+      documents: [],
+    };
+    let reader: ReaderActions;
+    const workspace = createDocumentWorkspace({
+      dispatchReaderAction: (action) => reader.dispatch(action),
+      snapshot: () => reader?.snapshot() ?? { ...initialSession, revision: 0 },
+      isDocumentOpen: (filePath) => reader?.isDocumentOpen(filePath) ?? false,
+      defaultVisualState: () => ({
+        filterSettings: PRESETS.default,
+        zoomIntent: { kind: 'manual', scale: 1 },
+        rotation: 0,
+        viewMode: 'single',
+      }),
+      createSurface,
+    });
+    reader = createReaderActions({
+      initialSession,
+      projection: workspace.projection,
+      persist: vi.fn(async () => undefined),
+    });
+    const intake = createDocumentIntake({
+      source: {
+        describe: async (path) => ({
+          canonicalPath: path,
+          title: path.endsWith('invalid.pdf') ? 'invalid.pdf' : 'report.pdf',
+        }),
+        read: async () => new Uint8Array([1, 2, 3]),
+      },
+      runtime: workspace.intakeRuntime,
+    });
+
+    const result = await intake.open(['/docs/invalid.pdf', '/docs/report.pdf']);
+
+    expect(result).toMatchObject({ opened: 1, failed: 1 });
+    expect(reader.snapshot()).toMatchObject({
+      activeDocumentPath: '/docs/report.pdf',
+      documents: [{ filePath: '/docs/report.pdf', title: 'report.pdf' }],
+    });
+    expect(document.querySelectorAll('.embedpdf-document-surface')).toHaveLength(1);
+    expect(failedDestroy).toHaveBeenCalledOnce();
   });
 
   it('shares one asynchronous teardown across rendering, runtime, and content owners', async () => {
@@ -309,6 +416,41 @@ describe('EmbedPDF Document surface', () => {
     expect(document.querySelector('.embedpdf-document-surface')).toBeNull();
   });
 
+  it('disposes a provisional viewer when preparation is cancelled', async () => {
+    let finishOpen: (() => void) | undefined;
+    const runtime = createViewerRuntime({
+      open: vi.fn(
+        () =>
+          new Promise<void>((resolve) => {
+            finishOpen = resolve;
+          }),
+      ),
+    });
+    const factory = createEmbedPdfDocumentSurfaceFactory({ createViewer: async () => runtime });
+    const cancellation = new AbortController();
+    const opening = factory({
+      filePath: '/docs/report.pdf',
+      title: 'report.pdf',
+      bytes: new Uint8Array([1]),
+      signal: cancellation.signal,
+      callbacks: {
+        readingPositionObserved: vi.fn(),
+        readingPositionSettled: vi.fn(),
+        stateChanged: vi.fn(),
+        pageNavigationRequested: vi.fn(async () => undefined),
+        zoomIntentRequested: vi.fn(async () => undefined),
+      },
+    });
+    await vi.waitFor(() => expect(finishOpen).toBeTypeOf('function'));
+
+    cancellation.abort();
+    finishOpen?.();
+
+    await expect(opening).rejects.toThrow('Document Intake interrupted');
+    expect(runtime.destroy).toHaveBeenCalledOnce();
+    expect(document.querySelector('.embedpdf-document-surface')).toBeNull();
+  });
+
   it('keeps Monight Visual State projection available without making the viewer editable', async () => {
     const runtime = {
       open: vi.fn(async () => undefined),
@@ -359,6 +501,9 @@ describe('EmbedPDF Document surface', () => {
     expect(runtime.setViewMode).toHaveBeenCalledWith('continuous');
     expect(runtime.setRotation).toHaveBeenCalledWith(90);
     expect(runtime.setZoomIntent).toHaveBeenCalledWith({ kind: 'fit-width' });
+    expect(() => surface.rendering.setAnnotations([])).toThrow(/read-only/);
+    expect(() => surface.rendering.updateAnnotation('annotation-1', {})).toThrow(/read-only/);
+    expect(() => surface.rendering.removeAnnotation('annotation-1')).toThrow(/read-only/);
     expect(PRESETS.default).toBeDefined();
   });
 });
