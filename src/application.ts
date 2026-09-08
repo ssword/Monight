@@ -8,6 +8,7 @@ import {
   requestPdfPassword,
   showToast,
 } from './app/dialogs';
+import type { DocumentSurfaceProvider } from './app/document-surface-gate';
 import type { DocumentWorkspace } from './app/document-workspace';
 import { setupEventListeners } from './app/dom-events';
 import {
@@ -75,6 +76,7 @@ export interface ApplicationModules {
   externalLinkAdapter: import('./reader/reader-actions').ExternalLinkAdapter;
   createDocumentIntakeRuntime: typeof import('./app/document-intake-runtime').createDocumentIntakeRuntime;
   createDocumentWorkspace: typeof import('./app/document-workspace').createDocumentWorkspace;
+  createDocumentSurface?: DocumentSurfaceProvider;
   createReadingSessionStorage: typeof import('./app/reading-session-storage').createReadingSessionStorage;
   createRecentDocumentStorage: typeof import('./app/recent-document-storage').createRecentDocumentStorage;
   createReaderActions: typeof import('./reader/reader-actions').createReaderActions;
@@ -419,6 +421,7 @@ export async function initializeApplication(modules: ApplicationModules): Promis
       viewMode: getInitialViewMode(),
     });
     const initialReadingSession = restoredReadingSession ?? EMPTY_READING_SESSION;
+    const createSurface = modules.createDocumentSurface?.({ requestPassword: requestPdfPassword });
     documentWorkspace = modules.createDocumentWorkspace({
       dispatchReaderAction: dispatchReaderActionOutcome,
       dispatchAcceptedIntakeAction: async (action, options) => {
@@ -429,6 +432,7 @@ export async function initializeApplication(modules: ApplicationModules): Promis
       snapshot: () => readerActions?.snapshot() ?? { ...initialReadingSession, revision: 0 },
       isDocumentOpen: (filePath) => readerActions?.isDocumentOpen(filePath) ?? false,
       defaultVisualState,
+      ...(createSurface ? { createSurface } : {}),
       ...(annotationAuthority ? { annotationAuthority } : {}),
       requestPassword: requestPdfPassword,
       requestAnnotationNote,
