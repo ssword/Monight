@@ -196,6 +196,7 @@ describe('EmbedPDF Document surface', () => {
         'insert',
         'document-open',
         'document-close',
+        'document-print',
         'document-export',
         'document-protect',
       ]),

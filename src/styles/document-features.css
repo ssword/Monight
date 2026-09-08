@@ -37,7 +37,9 @@ html[data-pdf-surface="embedpdf"] #pdf-container {
   padding: 0;
 }
 
-html[data-pdf-surface="embedpdf"] #toolbar,
+html[data-pdf-surface="embedpdf"] #toolbar > .viewer-navigation,
+html[data-pdf-surface="embedpdf"] #toolbar > .viewer-zoom,
+html[data-pdf-surface="embedpdf"] #toolbar > .viewer-tools,
 html[data-pdf-surface="embedpdf"] #search-bar,
 html[data-pdf-surface="embedpdf"] #document-sidebar {
   display: none !important;

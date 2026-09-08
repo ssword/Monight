@@ -25,6 +25,6 @@ Audited on 2026-09-08 for issue 56 against the installed `@embedpdf/snippet` pac
 - `PDFViewerConfig.fonts.ui` uses the system font stack with no stylesheet URL; signature fonts are disabled in this read-only slice.
 - `PDFViewerConfig.stamp` disables both remote stamp manifests and the mutable default stamp
   library. The package otherwise requests its default manifest from jsDelivr during startup.
-- Annotation, redaction, insertion, export, protection, capture, and library-owned open/close controls are disabled. PDF permissions remain enforced and modifying contents, annotations, and forms is explicitly denied.
+- Annotation, redaction, insertion, export, protection, capture, print, and library-owned open/close controls are disabled. Monight retains its existing print adapter and shell controls. PDF permissions remain enforced and modifying contents, annotations, and forms is explicitly denied.
 
 Run `npm run test:embedpdf-offline` to launch the actual `2.15.0` runtime with external requests blocked. The harness opens a generated two-page PDF that references an unembedded Simplified Chinese font, navigates to page 2, increases zoom, and verifies that the page image contains visible glyph pixels with the local WASM and fallback-font configuration.

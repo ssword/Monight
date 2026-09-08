@@ -51,6 +51,7 @@ const READ_ONLY_CATEGORIES = [
   'insert',
   'document-open',
   'document-close',
+  'document-print',
   'document-export',
   'document-protect',
   'document-capture',
