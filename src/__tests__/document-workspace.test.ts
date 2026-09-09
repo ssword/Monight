@@ -24,7 +24,7 @@ const snapshot = (
 
 interface ControllableSurface {
   readonly rendering: DocumentRendering;
-  readonly runtime: { destroy: ReturnType<typeof vi.fn> };
+  readonly runtime: { destroy: () => Promise<void> };
   visible(): boolean;
 }
 
@@ -258,6 +258,105 @@ describe('Document workspace adapter', () => {
       },
       { isCancelled: expect.any(Function) },
     );
+  });
+
+  it('reopens a written PDF before changing just the originating tab and routes later actions to its new path', async () => {
+    let reader: ReaderActions;
+    let originCallbacks: DocumentSurfaceCallbacks | undefined;
+    let dirty = true;
+    const initialSession = { schemaVersion: 2 as const, activeDocumentPath: null, documents: [] };
+    const visualState = {
+      filterSettings: PRESETS.default,
+      zoomIntent: { kind: 'fit-width' as const },
+      rotation: 90,
+      viewMode: 'spread' as const,
+    };
+    const openedPaths: string[] = [];
+    const workspace = createDocumentWorkspace({
+      dispatchReaderAction: (action, options) => reader.dispatch(action, options),
+      snapshot: () => reader?.snapshot() ?? { ...initialSession, revision: 0 },
+      isDocumentOpen: (path) => reader?.isDocumentOpen(path) ?? false,
+      defaultVisualState: () => visualState,
+      createSurface: async ({ filePath, callbacks }) => {
+        openedPaths.push(filePath);
+        const substitute = createControllableSurface(filePath);
+        if (filePath === '/docs/original.pdf') originCallbacks = callbacks;
+        return {
+          rendering: substitute.rendering,
+          runtime: {
+            destroy: async () => {
+              await substitute.runtime.destroy();
+            },
+            content: {
+              pageCount: 12,
+              getData: async () => new Uint8Array([1]),
+              getPage: async () => {
+                throw new Error('No page handle needed');
+              },
+              search: async () => [],
+              getOutline: async () => [],
+              getMetadata: async () => null,
+              resolveLinkTarget: async () => null,
+              destroy: async () => undefined,
+            },
+            renderThumbnail: async () => document.createElement('canvas'),
+            getAnnotations: () => [],
+            editing: {
+              state: () => ({ dirty, revision: 1, readOnlyReason: null }),
+              exportPdf: async () => new Uint8Array([2]),
+              markSaved: () => {
+                dirty = false;
+              },
+            },
+          },
+        };
+      },
+    });
+    reader = createReaderActions({
+      initialSession,
+      projection: workspace.projection,
+      persist: async () => undefined,
+      pdfSaveAdapter: {
+        chooseDestination: async () => ({
+          token: 'chosen',
+          canonicalPath: '/docs/new.pdf',
+          title: 'new.pdf',
+        }),
+        writeNew: async (_destination, bytes) => bytes,
+        releaseDestination: async () => undefined,
+      },
+    });
+    reader.observe(workspace.project);
+    await workspace.intakeRuntime.open({
+      document: { canonicalPath: '/docs/original.pdf', title: 'original.pdf' },
+      bytes: new Uint8Array([1]),
+      activate: true,
+    });
+    await reader.dispatch({
+      type: 'settleReadingPosition',
+      filePath: '/docs/original.pdf',
+      readingPosition: { page: 4, location: 0.25 },
+    });
+    expect(document.querySelector('[aria-label="Unsaved changes"]')).not.toBeNull();
+    expect((await reader.dispatch({ type: 'saveDocumentAs' })).status).toBe('committed');
+    expect(openedPaths).toEqual(['/docs/original.pdf', '/docs/new.pdf']);
+    expect(reader.snapshot().documents).toEqual([
+      {
+        filePath: '/docs/new.pdf',
+        title: 'new.pdf',
+        visualState,
+        readingPosition: { page: 4, location: 0.25 },
+      },
+    ]);
+    expect(document.querySelector('.tab-title')?.textContent).toBe('new.pdf');
+    expect(workspace.activeRenderingState()?.filePath).toBe('/docs/new.pdf');
+    await originCallbacks?.zoomIntentRequested({ kind: 'fit-page' });
+    expect(reader.snapshot().documents[0].visualState?.zoomIntent).toEqual({
+      kind: 'manual',
+      scale: 1,
+    });
+    await originCallbacks?.pageNavigationRequested(5);
+    expect(reader.snapshot().documents[0].readingPosition.page).toBe(5);
   });
 
   it('publishes a new Document only after activation succeeds and permits a clean retry', async () => {

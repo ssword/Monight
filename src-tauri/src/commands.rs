@@ -567,3 +567,62 @@ mod tests {
         assert!(validate_external_url("https://").is_err());
     }
 }
+
+#[command]
+pub fn inspect_pdf_editing(bytes: Vec<u8>) -> Option<String> {
+    crate::pdf_save::editing_status(&bytes)
+}
+
+#[command]
+pub async fn choose_pdf_save_destination(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+    writer: State<'_, crate::pdf_save::PdfSave>,
+    title: String,
+) -> Result<Option<crate::pdf_save::SaveDestination>, String> {
+    if window.label() != "main" {
+        return Err("Only the main reader can save PDFs".into());
+    }
+    let selected = tauri::async_runtime::spawn_blocking(move || {
+        app.dialog()
+            .file()
+            .add_filter("PDF Documents", &["pdf"])
+            .set_file_name(title)
+            .blocking_save_file()
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+    selected
+        .map(|file| writer.authorize(&file.into_path().map_err(|e| e.to_string())?))
+        .transpose()
+}
+
+#[command]
+pub fn release_pdf_save_destination(
+    window: tauri::WebviewWindow,
+    writer: State<'_, crate::pdf_save::PdfSave>,
+    token: String,
+) -> Result<(), String> {
+    if window.label() != "main" {
+        return Err("Only the main reader can save PDFs".into());
+    }
+    writer.release(&token);
+    Ok(())
+}
+
+#[command]
+pub fn write_new_pdf(
+    window: tauri::WebviewWindow,
+    writer: State<'_, crate::pdf_save::PdfSave>,
+    document_intake: State<'_, DocumentIntake>,
+    token: String,
+    bytes: Vec<u8>,
+    original: Vec<u8>,
+) -> Result<tauri::ipc::Response, String> {
+    if window.label() != "main" {
+        return Err("Only the main reader can save PDFs".into());
+    }
+    let (path, reopened) = writer.write_new(&token, &bytes, &original)?;
+    document_intake.authorize([path]);
+    Ok(tauri::ipc::Response::new(reopened))
+}

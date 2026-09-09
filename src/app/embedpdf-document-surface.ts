@@ -2,6 +2,7 @@ import EmbedPDF, {
   type AnnotationCapability,
   type CommandsCapability,
   type DocumentManagerCapability,
+  LockModeType,
   type PDFViewerConfig,
   PdfAnnotationSubtype,
   type PdfLinkAnnoObject,
@@ -37,6 +38,7 @@ import type {
 import type { DocumentRuntime } from '../reader/document-queries';
 import type { DocumentRendering, DocumentRenderingState } from '../reader/document-rendering';
 import { createInternalDocumentPage } from '../reader/internal-document-page';
+import type { NativePdfEditing } from '../reader/native-pdf-editing';
 import type {
   ReaderActionOptions,
   ReadingPosition,
@@ -108,7 +110,10 @@ async function preloadLocalFonts(): Promise<Map<string, Uint8Array>> {
   }
 }
 
-export function createEmbedPdfViewerConfig(fontLoader?: LocalFontLoader): PDFViewerConfig {
+export function createEmbedPdfViewerConfig(
+  fontLoader?: LocalFontLoader,
+  editable = false,
+): PDFViewerConfig {
   return {
     worker: false,
     wasmUrl: EMBEDPDF_WASM_URL,
@@ -122,18 +127,44 @@ export function createEmbedPdfViewerConfig(fontLoader?: LocalFontLoader): PDFVie
       ui: { family: 'system-ui, sans-serif', stylesheetUrl: null },
       signature: null,
     },
-    disabledCategories: [...DISABLED_CATEGORIES],
+    disabledCategories: [
+      ...DISABLED_CATEGORIES.filter((category) => !editable || category !== 'annotation'),
+      'form',
+      'signature',
+      'annotation-ink',
+      'annotation-shape',
+      'annotation-text',
+      'annotation-underline',
+      'annotation-strikeout',
+      'annotation-squiggly',
+      'annotation-insert-text',
+      'annotation-replace-text',
+      'annotation-link',
+      'annotation-group',
+      'annotation-widget-edit',
+    ],
     permissions: {
       enforceDocumentPermissions: true,
       overrides: {
         modifyContents: false,
-        modifyAnnotations: false,
+        ...(editable ? {} : { modifyAnnotations: false }),
         fillForms: false,
         assembleDocument: false,
       },
     },
     render: { withAnnotations: true, withForms: false },
-    annotations: { autoOpenLinks: false },
+    annotations: {
+      autoOpenLinks: false,
+      annotationAuthor: 'Guest',
+      autoCommit: false,
+      tools: [
+        { id: 'highlight', categories: ['monight-native'] },
+        { id: 'textComment', categories: ['monight-native'] },
+      ],
+      locked: editable
+        ? { type: LockModeType.Exclude, categories: ['monight-native'] }
+        : { type: LockModeType.All },
+    },
     form: { withForms: false, withAnnotations: true },
   };
 }
@@ -146,12 +177,14 @@ interface EmbedPdfOpenRequest {
 }
 
 interface CreateEmbedPdfViewerRequest {
+  readonly readOnlyReason?: string | null;
   readonly target: HTMLElement;
   readonly callbacks: DocumentSurfaceCallbacks;
   readonly requestPassword?: PdfPasswordRequester;
 }
 
 export interface EmbedPdfViewerRuntime {
+  readonly editing?: NativePdfEditing;
   open(request: EmbedPdfOpenRequest): Promise<void>;
   openSearch(): void;
   setSearchQuery(query: string): void;
@@ -521,16 +554,71 @@ const waitForPresentationFrames = async (): Promise<void> => {
   await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
 };
 
+/** Compare the supported editable fields, tolerating PDF float serialization only. */
+function nativeAnnotationMatches(
+  expected: TrackedAnnotation['object'],
+  actual: TrackedAnnotation['object'],
+): boolean {
+  const equal = (a: unknown, b: unknown): boolean => {
+    if (typeof a === 'number' && typeof b === 'number') return Math.abs(a - b) < 0.001;
+    if (Array.isArray(a) && Array.isArray(b))
+      return a.length === b.length && a.every((value, index) => equal(value, b[index]));
+    if (a && b && typeof a === 'object' && typeof b === 'object') {
+      return Object.entries(a).every(([key, value]) => equal(value, Reflect.get(b, key)));
+    }
+    return a === b;
+  };
+  const fields = [
+    'id',
+    'type',
+    'pageIndex',
+    'rect',
+    'contents',
+    'author',
+    'strokeColor',
+    'opacity',
+    'segmentRects',
+  ] as const;
+  return fields.every((field) => {
+    const value = Reflect.get(expected, field);
+    const saved = Reflect.get(actual, field);
+    if (value === undefined) return true;
+    if (field === 'strokeColor' && typeof value === 'string' && typeof saved === 'string')
+      return value.toLowerCase() === saved.toLowerCase();
+    // PDFium represents alpha in 8 bits and standard note icons as 20pt squares
+    // anchored at the lower-left PDF point, independent of the UI's 24pt hit box.
+    if (field === 'opacity' && typeof value === 'number' && typeof saved === 'number')
+      return Math.round(value * 255) === Math.round(saved * 255);
+    if (field === 'rect' && expected.type === PdfAnnotationSubtype.TEXT) {
+      return equal(
+        {
+          origin: {
+            x: expected.rect.origin.x,
+            y: expected.rect.origin.y + expected.rect.size.height - 20,
+          },
+          size: { width: 20, height: 20 },
+        },
+        saved,
+      );
+    }
+    return equal(value, saved);
+  });
+}
+
 async function createProductionViewer({
   target,
   callbacks,
   requestPassword,
+  readOnlyReason = 'Native editing is disabled in this development surface',
 }: CreateEmbedPdfViewerRequest): Promise<EmbedPdfViewerRuntime> {
   const fonts = await preloadLocalFonts();
   const container = EmbedPDF.init({
     type: 'container',
     target,
-    ...createEmbedPdfViewerConfig((fontPath) => fonts.get(fontPath) ?? null),
+    ...createEmbedPdfViewerConfig(
+      (fontPath) => fonts.get(fontPath) ?? null,
+      readOnlyReason === null,
+    ),
   });
   if (!container) throw new Error('EmbedPDF did not create a viewer container');
   const registry = await container.registry;
@@ -553,7 +641,8 @@ async function createProductionViewer({
       commands.registerCommand({
         ...original,
         action: (context) => {
-          if (target.dataset.visible === 'true') original.action(context);
+          if (target.dataset.visible === 'true' && !target.closest('[inert]'))
+            original.action(context);
         },
       });
     }
@@ -607,6 +696,96 @@ async function createProductionViewer({
 
   const scrollScope = scroll.forDocument(documentId);
   const annotationScope = annotations.forDocument(documentId);
+  let editRevision = 0;
+  let savedRevision = 0;
+  unsubscribers.push(
+    annotationScope.onAnnotationEvent((event) => {
+      if (event.type !== 'loaded' && !event.committed) {
+        editRevision += 1;
+        callbacks.stateChanged();
+      }
+    }),
+  );
+  let retryNativeAnnotations = false;
+  const editing: NativePdfEditing = {
+    state: () => ({
+      revision: editRevision,
+      dirty: editRevision !== savedRevision,
+      readOnlyReason,
+    }),
+    async exportPdf() {
+      if (readOnlyReason) throw new Error(readOnlyReason);
+      const revision = editRevision;
+      const expected = annotationScope
+        .getAnnotations()
+        .filter(({ commitState }) => commitState !== 'deleted')
+        .map(({ object }) => structuredClone(object));
+      const retry = retryNativeAnnotations;
+      retryNativeAnnotations = true;
+      await annotationScope.commit().toPromise();
+      if (retry) {
+        // A failed plugin batch may already be labelled synced. Reconcile the
+        // current live edits through the public engine API on an explicit retry,
+        // without clearing/recreating the UI or its undo history.
+        const doc = currentDocument();
+        for (const page of doc.pages) {
+          const native = await engine.getPageAnnotations(doc, page).toPromise();
+          const desired = expected.filter((annotation) => annotation.pageIndex === page.index);
+          for (const annotation of native) {
+            if (revision !== editRevision) throw new Error('Annotations changed; retry Save As');
+            if (!desired.some((item) => item.id === annotation.id)) {
+              if (!(await engine.removePageAnnotation(doc, page, annotation).toPromise()))
+                throw new Error('Native annotation deletion failed');
+            }
+          }
+          for (const annotation of desired) {
+            if (revision !== editRevision) throw new Error('Annotations changed; retry Save As');
+            const existing = native.find((item) => item.id === annotation.id);
+            if (!existing) await engine.createPageAnnotation(doc, page, annotation).toPromise();
+            else if (!nativeAnnotationMatches(annotation, existing)) {
+              if (!(await engine.updatePageAnnotation(doc, page, annotation).toPromise()))
+                throw new Error('Native annotation update failed');
+            }
+          }
+        }
+      }
+      const buffer = await engine.saveAsCopy(currentDocument()).toPromise();
+      // The pinned plugin can resolve commit() despite a failed individual mutation.
+      // Reopen exported bytes and check native fields before permitting a disk write.
+      const verification = await engine
+        .openDocumentBuffer({ id: `verify-${crypto.randomUUID()}`, content: buffer })
+        .toPromise();
+      try {
+        const actual = (
+          await Promise.all(
+            verification.pages.map((page) =>
+              engine.getPageAnnotations(verification, page).toPromise(),
+            ),
+          )
+        ).flat();
+        if (
+          expected.length !== actual.length ||
+          expected.some((annotation) => {
+            const reopened = actual.find((item) => item.id === annotation.id);
+            return !reopened || !nativeAnnotationMatches(annotation, reopened);
+          })
+        ) {
+          throw new Error('Native annotation verification failed; unsaved edits were retained');
+        }
+      } finally {
+        await engine.closeDocument(verification).toPromise();
+      }
+      const bytes = new Uint8Array(buffer);
+      if (revision !== editRevision)
+        throw new Error('Annotations changed during export; retry Save As');
+      retryNativeAnnotations = false;
+      return bytes;
+    },
+    markSaved(revision) {
+      savedRevision = revision;
+      callbacks.stateChanged();
+    },
+  };
   const currentPageNumber = () => scrollScope.getCurrentPage();
   const currentReadingPosition = (
     metrics: EmbedPdfScrollMetrics = scrollScope.getMetrics(),
@@ -877,6 +1056,7 @@ async function createProductionViewer({
   };
 
   return {
+    editing,
     async open(request) {
       if (request.signal?.aborted) throw new Error('Document Intake interrupted');
       sourceBytes = request.bytes.slice();
@@ -1121,6 +1301,7 @@ async function createProductionViewer({
 }
 
 interface CreateEmbedPdfDocumentSurfaceFactoryOptions {
+  readonly assessEditing?: (bytes: Uint8Array) => Promise<string | null>;
   readonly createViewer?: EmbedPdfViewerFactory;
   readonly requestPassword?: CreateEmbedPdfViewerRequest['requestPassword'];
 }
@@ -1128,6 +1309,7 @@ interface CreateEmbedPdfDocumentSurfaceFactoryOptions {
 export function createEmbedPdfDocumentSurfaceFactory({
   createViewer = createProductionViewer,
   requestPassword,
+  assessEditing,
 }: CreateEmbedPdfDocumentSurfaceFactoryOptions = {}): DocumentSurfaceFactory {
   return async ({ filePath, title, bytes, callbacks, signal }) => {
     if (signal?.aborted) throw new Error('Document Intake interrupted');
@@ -1140,7 +1322,27 @@ export function createEmbedPdfDocumentSurfaceFactory({
     let viewer: EmbedPdfViewerRuntime | null = null;
     const sourceBytes = bytes.slice();
     try {
-      viewer = await createViewer({ target, callbacks, requestPassword });
+      let readOnlyReason = 'Native editing is disabled in this development surface';
+      if (assessEditing) {
+        try {
+          readOnlyReason = (await assessEditing(sourceBytes)) ?? '';
+        } catch {
+          readOnlyReason = 'PDF safety inspection failed; this Document is read-only';
+        }
+      }
+      viewer = await createViewer({
+        target,
+        callbacks,
+        requestPassword,
+        readOnlyReason: readOnlyReason || null,
+      });
+      if (assessEditing && readOnlyReason) {
+        const status = document.createElement('div');
+        status.className = 'pdf-read-only-status';
+        status.setAttribute('role', 'status');
+        status.textContent = readOnlyReason;
+        target.prepend(status);
+      }
       await viewer.open({ bytes: sourceBytes, title, filePath, signal });
       if (signal?.aborted) throw new Error('Document Intake interrupted');
     } catch (error) {
@@ -1228,6 +1430,7 @@ export function createEmbedPdfDocumentSurfaceFactory({
       },
     };
     const runtime: DocumentRuntime = {
+      ...(assessEditing && openedViewer.editing ? { editing: openedViewer.editing } : {}),
       content,
       renderThumbnail: (pageNumber, options) =>
         openedViewer.renderThumbnail(pageNumber, options?.maxWidth),

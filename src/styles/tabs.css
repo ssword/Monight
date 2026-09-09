@@ -183,3 +183,39 @@
     width: 44px;
   }
 }
+
+.tab-dirty-indicator {
+  flex-shrink: 0;
+  color: var(--accent-color, #5b9aff);
+  margin-left: 6px;
+}
+
+.tab-save-as {
+  align-self: center;
+  flex-shrink: 0;
+  background: transparent;
+  color: inherit;
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  padding: 2px 5px;
+  margin-right: 28px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.tab-save-as:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.pdf-read-only-status {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 10;
+  padding: 6px 12px;
+  background: #fff2ce;
+  color: #463713;
+  font-size: 12px;
+}

@@ -367,6 +367,7 @@ function createModules(
         throw new Error('session store unavailable');
       }
     }),
+    hasUnsavedPdfWork: vi.fn(() => false),
     hasDirtySession: vi.fn(() => false),
   } as ReaderActions;
   const intake = {

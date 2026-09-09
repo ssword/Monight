@@ -49,6 +49,174 @@ function createDocumentRuntime(): DocumentRuntime {
 }
 
 describe('Reader Actions', () => {
+  it('Save As follows its originating Document across a tab switch and preserves newer edits', async () => {
+    let releaseDialog!: () => void;
+    const dialog = new Promise<void>((resolve) => {
+      releaseDialog = resolve;
+    });
+    let editedRevision = 1;
+    let savedRevision = 0;
+    const runtime = createDocumentRuntime();
+    runtime.editing = {
+      state: () => ({
+        revision: editedRevision,
+        dirty: editedRevision > savedRevision,
+        readOnlyReason: null,
+      }),
+      exportPdf: async () => new Uint8Array([37, 80, 68, 70]),
+      markSaved: (revision) => {
+        savedRevision = revision;
+      },
+    };
+    const reader = createReaderActions({
+      initialSession: INITIAL_SESSION,
+      projection: {
+        activateDocument: async () => undefined,
+        goToReadingPosition: async () => undefined,
+        verifySavedDocument: async () => undefined,
+        reidentifyDocument: () => undefined,
+      },
+      pdfSaveAdapter: {
+        chooseDestination: async () => {
+          await dialog;
+          return { token: 'selected', canonicalPath: '/docs/copy.pdf', title: 'copy.pdf' };
+        },
+        writeNew: async (_destination, bytes) => {
+          editedRevision = 2;
+          return bytes;
+        },
+        releaseDestination: async () => undefined,
+      },
+      persist: async () => undefined,
+    });
+    await reader.dispatch({
+      type: 'registerDocument',
+      document: INITIAL_SESSION.documents[0],
+      runtime,
+    });
+    const saving = reader.dispatch({ type: 'saveDocumentAs' });
+    await reader.dispatch({ type: 'activateDocument', filePath: '/docs/second.pdf' });
+    releaseDialog();
+    expect(await saving).toMatchObject({ status: 'committed' });
+    expect(reader.snapshot().activeDocumentPath).toBe('/docs/second.pdf');
+    expect(reader.snapshot().documents[0]).toMatchObject({
+      filePath: '/docs/copy.pdf',
+      title: 'copy.pdf',
+      readingPosition: { page: 2, location: 0.25 },
+    });
+    expect(runtime.editing.state().dirty).toBe(true);
+    expect(reader.query('/docs/first.pdf')).toBeNull();
+    expect(reader.query('/docs/copy.pdf')?.isCurrent()).toBe(true);
+  });
+
+  it.each([
+    'dialog',
+    'export',
+    'write',
+    'verify',
+    'cancel-preparation',
+    'changed-bytes',
+    'already-open',
+  ] as const)('Save As retains the original identity and unsaved work after %s', async (stage) => {
+    let saved = false;
+    let cancelled = false;
+    const runtime = createDocumentRuntime();
+    runtime.editing = {
+      state: () => ({ revision: 1, dirty: !saved, readOnlyReason: null }),
+      exportPdf: async () => {
+        if (stage === 'export') throw new Error('export failed');
+        return new Uint8Array([1, 2]);
+      },
+      markSaved: () => {
+        saved = true;
+      },
+    };
+    const reader = createReaderActions({
+      initialSession: INITIAL_SESSION,
+      projection: {
+        activateDocument: async () => undefined,
+        goToReadingPosition: async () => undefined,
+        verifySavedDocument: async () => {
+          if (stage === 'verify') throw new Error('reopen failed');
+          if (stage === 'cancel-preparation') cancelled = true;
+        },
+        reidentifyDocument: () => undefined,
+      },
+      pdfSaveAdapter: {
+        chooseDestination: async () =>
+          stage === 'dialog'
+            ? null
+            : {
+                token: 'one',
+                canonicalPath: stage === 'already-open' ? '/docs/second.pdf' : '/docs/copy.pdf',
+                title: 'copy.pdf',
+              },
+        writeNew: async (_destination, bytes) => {
+          if (stage === 'write') throw new Error('disk full');
+          return stage === 'changed-bytes' ? new Uint8Array([9]) : bytes;
+        },
+        releaseDestination: async () => undefined,
+      },
+      persist: async () => undefined,
+    });
+    await reader.dispatch({
+      type: 'registerDocument',
+      document: INITIAL_SESSION.documents[0],
+      runtime,
+    });
+    const before = reader.snapshot();
+    const query = reader.query();
+    const result = await reader.dispatch(
+      { type: 'saveDocumentAs' },
+      { isCancelled: () => cancelled },
+    );
+    expect(result.status).toBe(
+      ['dialog', 'cancel-preparation'].includes(stage) ? 'superseded' : 'failure',
+    );
+    expect(reader.snapshot()).toEqual(before);
+    expect(query?.isCurrent()).toBe(true);
+    expect(reader.hasUnsavedPdfWork()).toBe(true);
+    expect(
+      (await reader.dispatch({ type: 'closeDocument', filePath: '/docs/first.pdf' })).status,
+    ).toBe('failure');
+    expect(reader.snapshot()).toEqual(before);
+  });
+
+  it('keeps a Document open when it becomes dirty while presentation exit delays its close', async () => {
+    let dirty = false;
+    const runtime = createDocumentRuntime();
+    runtime.editing = {
+      state: () => ({ revision: dirty ? 1 : 0, dirty, readOnlyReason: null }),
+      exportPdf: async () => new Uint8Array(),
+      markSaved: () => undefined,
+    };
+    const close = vi.fn(async () => undefined);
+    const reader = createReaderActions({
+      initialSession: INITIAL_SESSION,
+      projection: {
+        activateDocument: async () => undefined,
+        goToReadingPosition: async () => undefined,
+        closeDocument: close,
+        exitPresentation: async () => {
+          dirty = true;
+          return undefined;
+        },
+      },
+      persist: async () => undefined,
+    });
+    await reader.dispatch({
+      type: 'registerDocument',
+      document: INITIAL_SESSION.documents[0],
+      runtime,
+    });
+    expect(
+      (await reader.dispatch({ type: 'closeDocument', filePath: '/docs/first.pdf' })).status,
+    ).toBe('failure');
+    expect(reader.query('/docs/first.pdf')?.isCurrent()).toBe(true);
+    expect(reader.hasUnsavedPdfWork()).toBe(true);
+    expect(close).not.toHaveBeenCalled();
+  });
+
   it('persists a changed Document order immediately', async () => {
     const persist = vi.fn(async () => undefined);
     const reader = createReaderActions({

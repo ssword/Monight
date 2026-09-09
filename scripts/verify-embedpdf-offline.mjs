@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import { chromium } from 'playwright';
+import { verifyAnnotations } from './verify-embedpdf-annotations.mjs';
 import { verifyNavigation } from './verify-embedpdf-navigation.mjs';
 import { verifyReading } from './verify-embedpdf-reading.mjs';
 
@@ -199,6 +200,7 @@ try {
     `EmbedPDF offline smoke passed: ${result.state.pageCount} page(s), zoom ${result.state.zoom}`,
   );
   await verifyReading(browser, origin);
+  await verifyAnnotations(page, origin);
   await verifyNavigation(browser, origin);
 } finally {
   await browser?.close();

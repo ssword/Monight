@@ -56,6 +56,47 @@ function lifecycleAdapters(options: { pendingQuit?: boolean } = {}) {
 }
 
 describe('application shutdown lifecycle', () => {
+  it('blocks dirty development Documents before teardown starts and remains usable', async () => {
+    let dirty = true;
+    const close = vi.fn(async () => undefined);
+    const started = vi.fn();
+    const coordinator = createApplicationShutdownCoordinator({
+      canShutdown: () => !dirty,
+      flush: async () => undefined,
+      closeMainWindow: close,
+      quitApplication: close,
+      onShutdownStarted: started,
+    });
+    coordinator.markReady();
+    await coordinator.request('quit-application');
+    expect(close).not.toHaveBeenCalled();
+    expect(started).not.toHaveBeenCalled();
+    expect(coordinator.isShutdownRequested()).toBe(false);
+    dirty = false;
+    await coordinator.request('close-main-window');
+    expect(close).toHaveBeenCalledOnce();
+  });
+
+  it('cancels teardown if a pending UI edit becomes dirty during the final flush', async () => {
+    let dirty = false;
+    const close = vi.fn(async () => undefined);
+    const cancelled = vi.fn();
+    const coordinator = createApplicationShutdownCoordinator({
+      canShutdown: () => !dirty,
+      flush: async () => {
+        dirty = true;
+      },
+      closeMainWindow: close,
+      quitApplication: close,
+      onShutdownCancelled: cancelled,
+    });
+    coordinator.markReady();
+    await coordinator.request('quit-application');
+    expect(close).not.toHaveBeenCalled();
+    expect(cancelled).toHaveBeenCalledOnce();
+    expect(coordinator.isShutdownRequested()).toBe(false);
+  });
+
   it('registers close and Quit before retaining an initialization-time Quit', async () => {
     const adapters = lifecycleAdapters({ pendingQuit: true });
     const flush = vi.fn(async () => {

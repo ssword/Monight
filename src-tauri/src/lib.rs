@@ -12,6 +12,7 @@ use tauri_plugin_store::StoreExt;
 mod commands;
 mod document_intake;
 mod menu;
+mod pdf_save;
 #[cfg(test)]
 mod test_support;
 
@@ -303,7 +304,12 @@ pub fn run() {
         .manage(PendingApplicationQuit::default())
         .manage(FrontendLifecycleState::default())
         .manage(document_intake::DocumentIntake::default())
+        .manage(pdf_save::PdfSave::default())
         .invoke_handler(tauri::generate_handler![
+            commands::inspect_pdf_editing,
+            commands::choose_pdf_save_destination,
+            commands::release_pdf_save_destination,
+            commands::write_new_pdf,
             commands::read_pdf_file,
             commands::open_pdf_dialog,
             commands::describe_pdf_file,

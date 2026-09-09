@@ -2,6 +2,7 @@ import type { ViewMode } from '../lib/document-features';
 import type { PdfLinkTarget } from '../lib/pdf-links';
 import { type FilterSettings, PRESETS } from '../scripts/filters';
 import { createDocumentQuery, type DocumentQuery, type DocumentRuntime } from './document-queries';
+import type { NativePdfSaveAdapter, PdfSaveDestination } from './native-pdf-editing';
 import {
   createReadingSession,
   type DocumentPathReconciliation,
@@ -56,6 +57,12 @@ export interface PresentationExitOptions {
 export type RestorePresentation = () => Promise<void>;
 
 export interface ReaderProjection {
+  verifySavedDocument?(
+    document: ReadingSessionDocument,
+    bytes: Uint8Array,
+    options: ReaderActionOptions,
+  ): Promise<void>;
+  reidentifyDocument?(filePath: string, destination: PdfSaveDestination): void;
   activateDocument(
     filePath: string,
     position: RestorableReadingPosition,
@@ -123,6 +130,7 @@ export type ReaderAction =
     }
   | { type: 'activateDocumentTarget'; filePath: string; target: PdfLinkTarget }
   | { type: 'printDocument'; filePath?: string }
+  | { type: 'saveDocumentAs'; filePath?: string }
   | { type: 'reorderDocuments'; filePaths: readonly string[] }
   | { type: 'closeDocument'; filePath: string }
   | { type: 'reopenLastClosedDocument' }
@@ -179,6 +187,7 @@ interface CreateReaderActionsOptions {
   projection: ReaderProjection;
   externalLinkAdapter?: ExternalLinkAdapter;
   printAdapter?: PrintAdapter;
+  pdfSaveAdapter?: NativePdfSaveAdapter;
   reopenDocument?: (filePath: string) => Promise<void>;
   persist: (snapshot: ReadingSessionSnapshot) => Promise<void>;
   persistenceDebounceMs?: number;
@@ -197,6 +206,7 @@ export interface ReaderActions {
   quiesce(): Promise<void>;
   flush(): Promise<void>;
   hasDirtySession(): boolean;
+  hasUnsavedPdfWork(): boolean;
 }
 
 interface PendingAbsoluteAction {
@@ -355,6 +365,7 @@ export function createReaderActions({
   projection,
   externalLinkAdapter,
   printAdapter,
+  pdfSaveAdapter,
   reopenDocument,
   persist,
   persistenceDebounceMs = 250,
@@ -380,6 +391,7 @@ export function createReaderActions({
   const lanes = new Map<string, DocumentLane>();
   const runtimes = new Map<string, RegisteredDocumentRuntime>();
   const runtimeGenerations = new Map<string, number>();
+  const pendingSaves = new Map<string, Promise<ReaderActionOutcome>>();
   const recentlyClosedDocumentPaths: string[] = [];
   let globalTail = Promise.resolve();
   let activeReopenReservation: GlobalLaneReservation | null = null;
@@ -791,6 +803,122 @@ export function createReaderActions({
 
   return {
     async dispatch(action, options) {
+      if (action.type === 'saveDocumentAs') {
+        const captured = session.snapshot();
+        const filePath = action.filePath ?? captured.activeDocumentPath;
+        if (!filePath) return { status: 'no-op', revision: revision() };
+        const pending = pendingSaves.get(filePath);
+        if (pending) return pending;
+        const registered = runtimes.get(filePath);
+        const editing = registered?.runtime.editing;
+        const document = captured.documents.find((item) => item.filePath === filePath);
+        if (
+          !registered ||
+          !editing ||
+          !document ||
+          !pdfSaveAdapter ||
+          !projection.verifySavedDocument ||
+          !projection.reidentifyDocument
+        ) {
+          return {
+            status: 'failure',
+            error: new Error('Native Save As is unavailable'),
+            revision: revision(),
+          };
+        }
+        const state = editing.state();
+        if (state.readOnlyReason)
+          return {
+            status: 'failure',
+            error: new Error(state.readOnlyReason),
+            revision: revision(),
+          };
+        const expectedGeneration = generation(filePath);
+        const isCancelled = () =>
+          cancelled(filePath, expectedGeneration, options) || runtimes.get(filePath) !== registered;
+        const save = (async (): Promise<ReaderActionOutcome> => {
+          let destination: PdfSaveDestination | null = null;
+          try {
+            if (isCancelled()) return { status: 'superseded', revision: revision() };
+            destination = await pdfSaveAdapter.chooseDestination(document.title);
+            if (!destination || isCancelled())
+              return { status: 'superseded', revision: revision() };
+            if (
+              session
+                .snapshot()
+                .documents.some((item) => item.filePath === destination?.canonicalPath)
+            ) {
+              throw new Error('Save As destination is already open');
+            }
+            const bytes = await editing.exportPdf();
+            if (isCancelled()) return { status: 'superseded', revision: revision() };
+            const original = await registered.runtime.content.getData();
+            if (isCancelled()) return { status: 'superseded', revision: revision() };
+            const reopened = await pdfSaveAdapter.writeNew(destination, bytes, original);
+            if (isCancelled()) return { status: 'superseded', revision: revision() };
+            if (
+              bytes.length !== reopened.length ||
+              bytes.some((value, index) => value !== reopened[index])
+            )
+              throw new Error('Written PDF verification failed');
+            const selected = destination;
+            return await enqueueGlobal(async () => {
+              if (isCancelled()) return { status: 'superseded', revision: revision() };
+              const current = session.snapshot();
+              if (current.documents.some((item) => item.filePath === selected.canonicalPath))
+                throw new Error('Save As destination is already open');
+              const origin = current.documents.find((item) => item.filePath === filePath);
+              if (!origin) return { status: 'superseded', revision: revision() };
+              const replacement = {
+                ...origin,
+                filePath: selected.canonicalPath,
+                title: selected.title,
+              };
+              await projection.verifySavedDocument?.(replacement, reopened, { isCancelled });
+              if (isCancelled()) return { status: 'superseded', revision: revision() };
+              projection.reidentifyDocument?.(filePath, selected);
+              invalidateRuntime(filePath);
+              runtimes.delete(filePath);
+              const nextGeneration = (runtimeGenerations.get(selected.canonicalPath) ?? 0) + 1;
+              runtimeGenerations.set(selected.canonicalPath, nextGeneration);
+              runtimes.set(selected.canonicalPath, {
+                generation: nextGeneration,
+                runtime: registered.runtime,
+              });
+              laneFor(filePath).generation += 1;
+              laneFor(selected.canonicalPath).generation += 1;
+              editing.markSaved(state.revision);
+              const latest = session.snapshot();
+              return commit(
+                {
+                  schemaVersion: 2,
+                  activeDocumentPath:
+                    latest.activeDocumentPath === filePath
+                      ? selected.canonicalPath
+                      : latest.activeDocumentPath,
+                  documents: latest.documents.map((item) =>
+                    item.filePath === filePath
+                      ? { ...item, filePath: selected.canonicalPath, title: selected.title }
+                      : item,
+                  ),
+                },
+                'immediate',
+              );
+            });
+          } catch (error) {
+            return { status: 'failure', error, revision: revision() };
+          } finally {
+            if (destination)
+              await pdfSaveAdapter.releaseDestination(destination).catch(() => undefined);
+          }
+        })();
+        pendingSaves.set(filePath, save);
+        try {
+          return await save;
+        } finally {
+          pendingSaves.delete(filePath);
+        }
+      }
       if (action.type === 'reorderDocuments') {
         return enqueueGlobal(async () => {
           const current = session.snapshot();
@@ -869,6 +997,16 @@ export function createReaderActions({
       }
 
       if (action.type === 'closeDocument' || action.type === 'removeDocument') {
+        if (
+          pendingSaves.has(action.filePath) ||
+          runtimes.get(action.filePath)?.runtime.editing?.state().dirty
+        ) {
+          return {
+            status: 'failure',
+            error: new Error('Save this development Document as a new PDF before closing it.'),
+            revision: revision(),
+          };
+        }
         const lane = laneFor(action.filePath);
         lane.pendingRemovals += 1;
         lane.generation += 1;
@@ -899,6 +1037,12 @@ export function createReaderActions({
               try {
                 if (current.activeDocumentPath === action.filePath) {
                   await projection.exitPresentation?.({ restoreVisualState: false });
+                }
+                if (
+                  pendingSaves.has(action.filePath) ||
+                  runtimes.get(action.filePath)?.runtime.editing?.state().dirty
+                ) {
+                  throw new Error('Save this development Document as a new PDF before closing it.');
                 }
                 await projection.closeDocument?.(action.filePath, transition.activeDocumentPath);
               } catch (error) {
@@ -1388,6 +1532,9 @@ export function createReaderActions({
     observe: session.observe,
     quiesce,
     flush: session.flush,
+    hasUnsavedPdfWork: () =>
+      pendingSaves.size > 0 ||
+      [...runtimes.values()].some(({ runtime }) => runtime.editing?.state().dirty),
     hasDirtySession: session.isDirty,
   };
 }

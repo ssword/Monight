@@ -10,6 +10,7 @@ import type {
   DocumentContentMetadata,
   ResolvedDocumentLinkTarget,
 } from './document-content';
+import type { NativePdfEditing } from './native-pdf-editing';
 
 export interface DocumentThumbnailOptions {
   readonly maxWidth?: number;
@@ -17,6 +18,7 @@ export interface DocumentThumbnailOptions {
 }
 
 export interface DocumentRuntime {
+  editing?: NativePdfEditing;
   readonly content: DocumentContent;
   destroy(): Promise<void>;
   renderThumbnail(

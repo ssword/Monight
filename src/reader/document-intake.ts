@@ -136,6 +136,7 @@ export interface DocumentIntake {
   ): Promise<RestoreSessionResult>;
   interruptRestoration(): void;
   stopAccepting(): void;
+  resumeAccepting(): void;
   quiesce(): Promise<void>;
 }
 
@@ -636,6 +637,9 @@ export function createDocumentIntake({
       for (const restoration of activeRestorations) {
         restoration.abort();
       }
+    },
+    resumeAccepting() {
+      accepting = true;
     },
     stopAccepting() {
       accepting = false;

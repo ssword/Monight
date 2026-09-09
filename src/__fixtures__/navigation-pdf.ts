@@ -1,10 +1,14 @@
 /** Small authored PDF with repeated text, nested bookmarks, metadata, and link actions. */
-export function navigationPdf(title = 'Navigation fixture', nativeRotation = 0): Uint8Array {
+export function navigationPdf(
+  title = 'Navigation fixture',
+  nativeRotation = 0,
+  includeLinks = true,
+): Uint8Array {
   const stream = (text: string) => `<< /Length ${text.length} >>\nstream\n${text}\nendstream`;
   const objects = [
     '<< /Type /Catalog /Pages 2 0 R /Outlines 10 0 R >>',
     `<< /Type /Pages /Kids [3 0 R 4 0 R 5 0 R] /Count 3${nativeRotation ? ` /Rotate ${nativeRotation}` : ''} >>`,
-    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 6 0 R /Resources << /Font << /F1 9 0 R >> >> /Annots [17 0 R 18 0 R] >>',
+    `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 6 0 R /Resources << /Font << /F1 9 0 R >> >> ${includeLinks ? '/Annots [17 0 R 18 0 R]' : ''} >>`,
     '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 7 0 R /Resources << /Font << /F1 9 0 R >> >> >>',
     '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 8 0 R /Resources << /Font << /F1 9 0 R >> >> >>',
     stream('BT /F1 24 Tf 72 720 Td (moon first page) Tj 0 -300 Td (moon lower match) Tj ET'),
@@ -18,8 +22,12 @@ export function navigationPdf(title = 'Navigation fixture', nativeRotation = 0):
     '<< /Title (Chapter) /Parent 10 0 R /Prev 13 0 R /Dest [3 0 R /Fit] >>',
     '<< /Title (Nested chapter) /Parent 11 0 R /Dest [5 0 R /Fit] >>',
     `<< /Title (${title}) /Author (Monight) /Subject (Navigation) /Keywords (reader; queries) >>`,
-    '<< /Type /Annot /Subtype /Link /P 3 0 R /Rect [72 650 260 685] /Border [0 0 1] /A << /S /URI /URI (https://example.com/page) >> >>',
-    '<< /Type /Annot /Subtype /Link /P 3 0 R /Rect [72 590 260 625] /Border [0 0 1] /Dest [4 0 R /XYZ 0 396 0] >>',
+    ...(includeLinks
+      ? [
+          '<< /Type /Annot /Subtype /Link /P 3 0 R /Rect [72 650 260 685] /Border [0 0 1] /A << /S /URI /URI (https://example.com/page) >> >>',
+          '<< /Type /Annot /Subtype /Link /P 3 0 R /Rect [72 590 260 625] /Border [0 0 1] /Dest [4 0 R /XYZ 0 396 0] >>',
+        ]
+      : []),
   ];
   let pdf = '%PDF-1.4\n';
   const offsets = objects.map((object, index) => {

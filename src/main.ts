@@ -1,3 +1,4 @@
+import { inspectNativePdfEditing, nativePdfSaveAdapter } from './app/native-pdf-save-adapter';
 import 'nouislider/dist/nouislider.css';
 import { createAnnotationStorage } from './app/annotation-storage';
 import { browserPrintAdapter } from './app/browser-print-adapter';
@@ -23,12 +24,15 @@ const documentSurfaceKind = resolveDocumentSurfaceKind(import.meta.env.VITE_PDF_
 document.documentElement.dataset.pdfSurface = documentSurfaceKind;
 const createDocumentSurface = createDevelopmentDocumentSurfaceProvider(
   import.meta.env.VITE_PDF_SURFACE,
+  undefined,
+  import.meta.env.VITE_NATIVE_PDF_EDITING === '1' ? inspectNativePdfEditing : undefined,
 );
 
 const startApplication = () =>
   initializeApplication({
     createAnnotationStorage,
     browserPrintAdapter,
+    ...(createDocumentSurface ? { pdfSaveAdapter: nativePdfSaveAdapter } : {}),
     createDocumentIntakeRuntime,
     createDocumentWorkspace,
     ...(createDocumentSurface ? { createDocumentSurface } : {}),

@@ -71,6 +71,7 @@ interface AppInfo {
 }
 
 export interface ApplicationModules {
+  pdfSaveAdapter?: import('./reader/native-pdf-editing').NativePdfSaveAdapter;
   createAnnotationStorage: typeof import('./app/annotation-storage').createAnnotationStorage;
   browserPrintAdapter: typeof import('./app/browser-print-adapter').browserPrintAdapter;
   externalLinkAdapter: import('./reader/reader-actions').ExternalLinkAdapter;
@@ -343,6 +344,14 @@ const restoreStartupReadingSession = async (
 export async function initializeApplication(modules: ApplicationModules): Promise<void> {
   const currentWindow = getCurrentWebviewWindow();
   const shutdown = createApplicationShutdownCoordinator({
+    canShutdown: () => {
+      if (!readerActions?.hasUnsavedPdfWork()) return true;
+      showToast(
+        'Save edited development Documents as new PDFs before closing or quitting.',
+        'error',
+      );
+      return false;
+    },
     flush: async () => {
       await documentIntake?.quiesce();
       await persistence.flush();
@@ -352,7 +361,14 @@ export async function initializeApplication(modules: ApplicationModules): Promis
     quitApplication: async () => {
       await invoke('complete_application_quit');
     },
+    onShutdownCancelled: () => {
+      documentIntake?.resumeAccepting();
+      const container = document.getElementById('pdf-container');
+      if (container) container.inert = false;
+    },
     onShutdownStarted: () => {
+      const container = document.getElementById('pdf-container');
+      if (container) container.inert = true;
       documentIntake?.interruptRestoration();
       documentIntake?.stopAccepting();
       if (lastFilterSaveTimer !== null) {
@@ -388,16 +404,18 @@ export async function initializeApplication(modules: ApplicationModules): Promis
       },
     );
     renderRecentFiles(recentDocumentAuthority.snapshot());
-    annotationAuthority = await loadAnnotations(modules.createAnnotationStorage(settingsManager), {
-      onPersistenceError: (error) => {
-        console.error('Annotation persistence failed:', error);
-        showToast('Annotation changes could not be saved. Monight will retry.', 'error');
-      },
-      onChanged: (filePath) => {
-        documentWorkspace?.replaceAnnotations(filePath);
-        sidebarController?.annotationsChanged();
-      },
-    });
+    annotationAuthority = modules.createDocumentSurface
+      ? null
+      : await loadAnnotations(modules.createAnnotationStorage(settingsManager), {
+          onPersistenceError: (error) => {
+            console.error('Annotation persistence failed:', error);
+            showToast('Annotation changes could not be saved. Monight will retry.', 'error');
+          },
+          onChanged: (filePath) => {
+            documentWorkspace?.replaceAnnotations(filePath);
+            sidebarController?.annotationsChanged();
+          },
+        });
     readingSessionStorage = modules.createReadingSessionStorage(settingsManager);
     try {
       restoredReadingSession = await loadReadingSession(readingSessionStorage);
@@ -462,6 +480,7 @@ export async function initializeApplication(modules: ApplicationModules): Promis
       },
       externalLinkAdapter: modules.externalLinkAdapter,
       printAdapter: modules.browserPrintAdapter,
+      pdfSaveAdapter: modules.pdfSaveAdapter,
       reopenDocument: async (filePath) => {
         if (!documentIntake) throw new Error('Document Intake is unavailable');
         await openFiles([filePath], {
@@ -510,6 +529,25 @@ export async function initializeApplication(modules: ApplicationModules): Promis
       void updatePrintMenuState(hasDocument);
     });
     documentWorkspace.project(readerActions.snapshot());
+    if (modules.pdfSaveAdapter) {
+      document.addEventListener(
+        'keydown',
+        (event) => {
+          if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 's') {
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            void dispatchReaderAction({ type: 'saveDocumentAs' });
+          }
+        },
+        true,
+      );
+      window.addEventListener('beforeunload', (event) => {
+        if (readerActions?.hasUnsavedPdfWork()) {
+          event.preventDefault();
+          event.returnValue = '';
+        }
+      });
+    }
 
     searchController = new SearchController(getActiveDocumentAccess);
     sidebarController = new SidebarController({

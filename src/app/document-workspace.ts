@@ -107,6 +107,8 @@ export interface DocumentWorkspace {
 }
 
 interface PresentedDocument {
+  readonly identity: { filePath: string; title: string };
+  readonly runtime: DocumentRuntime;
   readonly id: string;
   readonly title: string;
   readonly rendering: DocumentRendering;
@@ -313,9 +315,18 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
 
       const title = document.createElement('span');
       title.className = 'tab-title';
+      const editing = presented.get(documentState.filePath)?.runtime.editing?.state();
       title.textContent = documentState.title;
       title.title = documentState.title;
       control.append(title);
+      if (editing?.dirty) {
+        const indicator = document.createElement('span');
+        indicator.className = 'tab-dirty-indicator';
+        indicator.textContent = '•';
+        indicator.setAttribute('aria-label', 'Unsaved changes');
+        indicator.title = 'Unsaved changes';
+        control.append(indicator);
+      }
       control.addEventListener('click', () => {
         if (options.acceptsReaderActions?.() === false) return;
         void options.dispatchReaderAction({
@@ -333,12 +344,31 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
       close.addEventListener('click', (event) => {
         event.stopPropagation();
         if (options.acceptsReaderActions?.() === false) return;
-        void options.dispatchReaderAction({
-          type: 'closeDocument',
-          filePath: documentState.filePath,
-        });
+        void options
+          .dispatchReaderAction({
+            type: 'closeDocument',
+            filePath: documentState.filePath,
+          })
+          .then((outcome) => {
+            if (outcome.status === 'failure') options.reportError?.(String(outcome.error));
+          });
       });
       item.append(control, close);
+      if (editing) {
+        const save = document.createElement('button');
+        save.className = 'tab-save-as';
+        save.textContent = 'Save As…';
+        save.title = editing.readOnlyReason ?? 'Save annotations to a new PDF';
+        save.disabled = Boolean(editing.readOnlyReason);
+        save.addEventListener('click', () => {
+          void options
+            .dispatchReaderAction({ type: 'saveDocumentAs', filePath: documentState.filePath })
+            .then((outcome) => {
+              if (outcome.status === 'failure') options.reportError?.(String(outcome.error));
+            });
+        });
+        item.append(save);
+      }
       container.append(item);
     }
   };
@@ -374,10 +404,44 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
   };
 
   const projection: ReaderProjection = {
+    async verifySavedDocument(documentState, bytes, actionOptions) {
+      const surface = await createSurface({
+        filePath: documentState.filePath,
+        title: documentState.title,
+        bytes,
+        callbacks: {
+          readingPositionObserved() {},
+          readingPositionSettled() {},
+          stateChanged() {},
+          pageNavigationRequested: async () => undefined,
+          zoomIntentRequested: async () => undefined,
+        },
+      });
+      try {
+        surface.rendering.setVisible(false);
+        if (actionOptions.isCancelled?.()) throw new Error('Save As preparation cancelled');
+        await projectDocumentState(surface.rendering, documentState, actionOptions);
+        if (actionOptions.isCancelled?.()) throw new Error('Save As preparation cancelled');
+      } finally {
+        await disposeSurface(surface);
+      }
+    },
+    reidentifyDocument(filePath, destination) {
+      const document = presented.get(filePath);
+      if (!document || presented.has(destination.canonicalPath))
+        throw new Error('Save As Document identity is stale');
+      document.identity.filePath = destination.canonicalPath;
+      document.identity.title = destination.title;
+      presented.delete(filePath);
+      presented.set(destination.canonicalPath, document);
+      if (visibleDocumentPath === filePath) visibleDocumentPath = destination.canonicalPath;
+    },
     activateDocument: activate,
     async closeDocument(filePath, nextActiveDocumentPath) {
       const documentState = presented.get(filePath);
       if (!documentState) return;
+      if (documentState.runtime.editing?.state().dirty)
+        throw new Error('This Document has unsaved native annotations');
       documentState.rendering.destroy();
       presented.delete(filePath);
       if (visibleDocumentPath === filePath) {
@@ -438,10 +502,11 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
     },
     async open(request: DocumentRuntimeOpenRequest) {
       const { document, bytes, initialPage, restoredDocument, signal } = request;
+      const identity = { filePath: document.canonicalPath, title: document.title };
       const surfaceId = crypto.randomUUID();
       const isCurrentSurface = (): boolean =>
-        presented.get(document.canonicalPath)?.id === surfaceId &&
-        options.isDocumentOpen(document.canonicalPath);
+        presented.get(identity.filePath)?.id === surfaceId &&
+        options.isDocumentOpen(identity.filePath);
       const dispatchSurfaceAction = async (
         action: ReaderAction,
         actionOptions?: ReaderActionOptions,
@@ -455,43 +520,46 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
       const settleReadingPosition = (readingPosition: ReadingPosition): void => {
         void dispatchSurfaceAction({
           type: 'settleReadingPosition',
-          filePath: document.canonicalPath,
+          filePath: identity.filePath,
           readingPosition,
         });
       };
       const callbacks: DocumentSurfaceCallbacks = {
         stateChanged: () => {
-          if (isCurrentSurface()) options.renderingStateChanged?.();
+          if (isCurrentSurface()) {
+            renderDocumentControls(options.snapshot());
+            options.renderingStateChanged?.();
+          }
         },
         readingPositionObserved: settleReadingPosition,
         readingPositionSettled: settleReadingPosition,
         pageNavigationRequested: (page, actionOptions) =>
           dispatchSurfaceAction(
-            { type: 'goToPage', filePath: document.canonicalPath, page },
+            { type: 'goToPage', filePath: identity.filePath, page },
             actionOptions,
           ),
         zoomIntentRequested: (zoomIntent) =>
           dispatchSurfaceAction({
             type: 'setZoomIntent',
-            filePath: document.canonicalPath,
+            filePath: identity.filePath,
             zoomIntent,
           }),
         rotationRequested: (direction) =>
           dispatchSurfaceAction({
             type: direction === 'clockwise' ? 'rotateClockwise' : 'rotateCounterClockwise',
-            filePath: document.canonicalPath,
+            filePath: identity.filePath,
           }),
         viewModeRequested: (viewMode) =>
           dispatchSurfaceAction({
             type: 'setViewMode',
-            filePath: document.canonicalPath,
+            filePath: identity.filePath,
             viewMode,
           }),
         linkTargetRequested: (target, actionOptions) =>
           dispatchSurfaceAction(
             {
               type: 'activateDocumentTarget',
-              filePath: document.canonicalPath,
+              filePath: identity.filePath,
               target,
             },
             actionOptions,
@@ -514,7 +582,15 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
           }
         },
       });
+      const originalGetState = surface.rendering.getState;
+      surface.rendering.getState = () => ({
+        ...originalGetState.call(surface.rendering),
+        filePath: identity.filePath,
+        fileName: identity.title,
+      });
       presented.set(document.canonicalPath, {
+        identity,
+        runtime: surface.runtime,
         id: surfaceId,
         title: document.title,
         rendering: surface.rendering,

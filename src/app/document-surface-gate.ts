@@ -6,6 +6,7 @@ export type DocumentSurfaceKind = 'pdfjs' | 'embedpdf';
 interface EmbedPdfSurfaceModule {
   createEmbedPdfDocumentSurfaceFactory(options: {
     requestPassword?: PdfPasswordRequester;
+    assessEditing?: (bytes: Uint8Array) => Promise<string | null>;
   }): DocumentSurfaceFactory;
 }
 
@@ -22,6 +23,7 @@ export function resolveDocumentSurfaceKind(value: string | undefined): DocumentS
 export function createDevelopmentDocumentSurfaceProvider(
   value: string | undefined,
   loadEmbedPdf: LoadEmbedPdfSurface = () => import('./embedpdf-document-surface'),
+  assessEditing?: (bytes: Uint8Array) => Promise<string | null>,
 ): DocumentSurfaceProvider | undefined {
   if (resolveDocumentSurfaceKind(value) !== 'embedpdf') return undefined;
 
@@ -29,7 +31,10 @@ export function createDevelopmentDocumentSurfaceProvider(
     let factory: Promise<DocumentSurfaceFactory> | null = null;
     return async (request) => {
       factory ??= loadEmbedPdf().then((module) =>
-        module.createEmbedPdfDocumentSurfaceFactory({ requestPassword }),
+        module.createEmbedPdfDocumentSurfaceFactory({
+          requestPassword,
+          ...(assessEditing ? { assessEditing } : {}),
+        }),
       );
       return (await factory)(request);
     };
