@@ -7,7 +7,7 @@ import '../styles/dialogs.css';
 import { KeybindEditor } from './keybind-editor';
 import { KeybindManager } from './keybind-manager';
 import type { MoonightSettings } from './settings';
-import { type KeybindConfig, SettingsManager } from './settings';
+import { type KeybindConfig, normalizeAnnotationDisplayName, SettingsManager } from './settings';
 
 // Initialize settings manager
 const settingsManager = new SettingsManager('settings');
@@ -72,6 +72,12 @@ async function loadSettings(): Promise<void> {
   ) as HTMLInputElement;
   if (defaultContinuousScroll)
     defaultContinuousScroll.checked = currentSettings.general.defaultViewMode === 'continuous';
+
+  const annotationDisplayName = document.getElementById(
+    'annotationDisplayName',
+  ) as HTMLInputElement;
+  if (annotationDisplayName)
+    annotationDisplayName.value = currentSettings.general.annotationDisplayName;
 
   // Appearance settings
   const defaultDarkMode = document.getElementById('defaultDarkMode') as HTMLSelectElement;
@@ -155,6 +161,17 @@ function setupSettingListeners(): void {
     currentSettings.general.defaultViewMode = defaultContinuousScroll.checked
       ? 'continuous'
       : 'single';
+    await settingsManager.set('general', currentSettings.general);
+    await notifyMainSettingsChanged();
+  });
+
+  const annotationDisplayName = document.getElementById(
+    'annotationDisplayName',
+  ) as HTMLInputElement;
+  annotationDisplayName?.addEventListener('change', async () => {
+    const value = normalizeAnnotationDisplayName(annotationDisplayName.value);
+    annotationDisplayName.value = value;
+    currentSettings.general.annotationDisplayName = value;
     await settingsManager.set('general', currentSettings.general);
     await notifyMainSettingsChanged();
   });

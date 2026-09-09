@@ -53,6 +53,7 @@ import type {
 
 const EMBEDPDF_WASM_URL = '/embedpdf/pdfium.wasm';
 const EMBEDPDF_FONT_BASE_URL = '/embedpdf/fonts';
+const ENABLED_ANNOTATION_TOOL_IDS = ['highlight', 'textComment'] as const;
 
 const DISABLED_CATEGORIES = [
   'annotation',
@@ -113,6 +114,7 @@ async function preloadLocalFonts(): Promise<Map<string, Uint8Array>> {
 export function createEmbedPdfViewerConfig(
   fontLoader?: LocalFontLoader,
   editable = false,
+  annotationDisplayName = 'Guest',
 ): PDFViewerConfig {
   return {
     worker: false,
@@ -155,7 +157,7 @@ export function createEmbedPdfViewerConfig(
     render: { withAnnotations: true, withForms: false },
     annotations: {
       autoOpenLinks: false,
-      annotationAuthor: 'Guest',
+      annotationAuthor: annotationDisplayName,
       autoCommit: false,
       tools: [
         { id: 'highlight', categories: ['monight-native'] },
@@ -178,6 +180,7 @@ interface EmbedPdfOpenRequest {
 
 interface CreateEmbedPdfViewerRequest {
   readonly readOnlyReason?: string | null;
+  readonly annotationDisplayName: string;
   readonly target: HTMLElement;
   readonly callbacks: DocumentSurfaceCallbacks;
   readonly requestPassword?: PdfPasswordRequester;
@@ -610,6 +613,7 @@ async function createProductionViewer({
   callbacks,
   requestPassword,
   readOnlyReason = 'Native editing is disabled in this development surface',
+  annotationDisplayName,
 }: CreateEmbedPdfViewerRequest): Promise<EmbedPdfViewerRuntime> {
   const fonts = await preloadLocalFonts();
   const container = EmbedPDF.init({
@@ -618,6 +622,7 @@ async function createProductionViewer({
     ...createEmbedPdfViewerConfig(
       (fontPath) => fonts.get(fontPath) ?? null,
       readOnlyReason === null,
+      annotationDisplayName,
     ),
   });
   if (!container) throw new Error('EmbedPDF did not create a viewer container');
@@ -700,6 +705,15 @@ async function createProductionViewer({
   let savedRevision = 0;
   unsubscribers.push(
     annotationScope.onAnnotationEvent((event) => {
+      if (
+        event.type === 'update' &&
+        event.patch.author !== undefined &&
+        event.patch.author !== event.annotation.author
+      ) {
+        annotationScope.syncAnnotationObject(event.annotation.id, {
+          author: event.annotation.author,
+        });
+      }
       if (event.type !== 'loaded' && !event.committed) {
         editRevision += 1;
         callbacks.stateChanged();
@@ -789,6 +803,11 @@ async function createProductionViewer({
       editRevision = Math.max(editRevision, revision);
       savedRevision = 0;
       callbacks.stateChanged();
+    },
+    setAnnotationDisplayName(displayName) {
+      for (const toolId of ENABLED_ANNOTATION_TOOL_IDS) {
+        annotations.setToolDefaults(toolId, { author: displayName });
+      }
     },
   };
   const currentPageNumber = () => scrollScope.getCurrentPage();
@@ -1307,6 +1326,7 @@ async function createProductionViewer({
 
 interface CreateEmbedPdfDocumentSurfaceFactoryOptions {
   readonly assessEditing?: (bytes: Uint8Array) => Promise<string | null>;
+  readonly annotationDisplayName?: () => string;
   readonly createViewer?: EmbedPdfViewerFactory;
   readonly requestPassword?: CreateEmbedPdfViewerRequest['requestPassword'];
 }
@@ -1315,6 +1335,7 @@ export function createEmbedPdfDocumentSurfaceFactory({
   createViewer = createProductionViewer,
   requestPassword,
   assessEditing,
+  annotationDisplayName = () => 'Guest',
 }: CreateEmbedPdfDocumentSurfaceFactoryOptions = {}): DocumentSurfaceFactory {
   return async ({ filePath, title, bytes, callbacks, signal }) => {
     if (signal?.aborted) throw new Error('Document Intake interrupted');
@@ -1340,6 +1361,7 @@ export function createEmbedPdfDocumentSurfaceFactory({
         callbacks,
         requestPassword,
         readOnlyReason: readOnlyReason || null,
+        annotationDisplayName: annotationDisplayName(),
       });
       if (assessEditing && readOnlyReason) {
         const status = document.createElement('div');

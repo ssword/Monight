@@ -114,6 +114,7 @@ export interface DocumentWorkspace {
   activeReadingPosition(): { filePath: string; readingPosition: ReadingPosition } | null;
   viewTransform(filePath: string): DocumentViewTransform | null;
   replaceAnnotations(filePath: string | null): void;
+  setAnnotationDisplayName(displayName: string): void;
 }
 
 interface PresentedDocument {
@@ -921,6 +922,11 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
       for (const [path, documentState] of presented) {
         if (filePath !== null && path !== filePath) continue;
         documentState.rendering.setAnnotations(annotationAuthority.snapshot(path));
+      }
+    },
+    setAnnotationDisplayName(displayName) {
+      for (const documentState of presented.values()) {
+        documentState.runtime.editing?.setAnnotationDisplayName?.(displayName);
       }
     },
   };

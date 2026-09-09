@@ -73,6 +73,32 @@ describe('settings storage', () => {
     store.reset();
   });
 
+  it('defaults annotation attribution to Guest and restores an explicit display name', async () => {
+    const defaults = await new SettingsManager('main').load();
+
+    expect(defaults.general.annotationDisplayName).toBe('Guest');
+
+    store.reset({
+      storageSchemaVersion: SETTINGS_SCHEMA_VERSION,
+      general: { ...DEFAULT_SETTINGS.general, annotationDisplayName: 'Ada Lovelace' },
+    });
+
+    const persisted = await new SettingsManager('main').load();
+
+    expect(persisted.general.annotationDisplayName).toBe('Ada Lovelace');
+  });
+
+  it('normalizes an empty annotation display name to Guest', async () => {
+    store.reset({
+      storageSchemaVersion: SETTINGS_SCHEMA_VERSION,
+      general: { ...DEFAULT_SETTINGS.general, annotationDisplayName: '   ' },
+    });
+
+    const settings = await new SettingsManager('main').load();
+
+    expect(settings.general.annotationDisplayName).toBe('Guest');
+  });
+
   it('migrates the legacy blob once into independently versioned concern keys', async () => {
     const legacy = {
       version: '1.0.6',

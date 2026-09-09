@@ -476,7 +476,10 @@ export async function initializeApplication(modules: ApplicationModules): Promis
       viewMode: getInitialViewMode(),
     });
     const initialReadingSession = restoredReadingSession ?? EMPTY_READING_SESSION;
-    const createSurface = modules.createDocumentSurface?.({ requestPassword: requestPdfPassword });
+    const createSurface = modules.createDocumentSurface?.({
+      requestPassword: requestPdfPassword,
+      annotationDisplayName: () => currentSettings?.general.annotationDisplayName ?? 'Guest',
+    });
     documentWorkspace = modules.createDocumentWorkspace({
       dispatchReaderAction: dispatchReaderActionOutcome,
       dispatchAcceptedIntakeAction: async (action, options) => {
@@ -712,6 +715,7 @@ export async function initializeApplication(modules: ApplicationModules): Promis
           updated.keybinds.Settings.binds = ['Cmd+,'];
         }
         currentSettings = updated;
+        documentWorkspace?.setAnnotationDisplayName(updated.general.annotationDisplayName);
         sidebarController?.setThumbnailsEnabled(updated.general.displayThumbs);
         if (!updated.general.rememberLastFilter && lastFilterSaveTimer !== null) {
           clearTimeout(lastFilterSaveTimer);

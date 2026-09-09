@@ -8,6 +8,7 @@ export interface NativePdfEditing {
   exportPdf(): Promise<Uint8Array>;
   markSaved(revision: number): void;
   markRecovered?(revision: number): void;
+  setAnnotationDisplayName?(displayName: string): void;
 }
 
 export interface PdfSaveDestination {

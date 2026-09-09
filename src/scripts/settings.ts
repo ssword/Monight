@@ -48,12 +48,17 @@ export interface MoonightSettings {
     rememberLastFilter: boolean;
     restorePreviousSession: boolean;
     defaultViewMode: ViewMode;
+    annotationDisplayName: string;
   };
   keybinds: Record<string, KeybindConfig>;
   lastFilter?: FilterSettings;
 }
 
 export const SETTINGS_SCHEMA_VERSION = 1;
+
+export function normalizeAnnotationDisplayName(value: unknown): string {
+  return typeof value === 'string' && value.trim() ? value.trim() : 'Guest';
+}
 
 export type SettingsOwner = 'main' | 'settings';
 type SettingsWindowKey = 'general' | 'keybinds';
@@ -80,6 +85,7 @@ export const DEFAULT_SETTINGS: MoonightSettings = {
     rememberLastFilter: true,
     restorePreviousSession: true,
     defaultViewMode: 'continuous',
+    annotationDisplayName: 'Guest',
   },
   keybinds: {
     OpenFile: {
@@ -345,8 +351,14 @@ export class SettingsManager<Owner extends SettingsOwner = 'main'> {
         store.get<MoonightSettings['keybinds']>('keybinds'),
         store.get<FilterSettings | null>('lastFilter'),
       ]);
+      const mergedGeneral = { ...DEFAULT_SETTINGS.general, ...general };
       this.settings = {
-        general: { ...DEFAULT_SETTINGS.general, ...general },
+        general: {
+          ...mergedGeneral,
+          annotationDisplayName: normalizeAnnotationDisplayName(
+            mergedGeneral.annotationDisplayName,
+          ),
+        },
         keybinds: { ...DEFAULT_SETTINGS.keybinds, ...keybinds },
         ...(lastFilter ? { lastFilter } : {}),
       };

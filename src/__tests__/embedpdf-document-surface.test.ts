@@ -268,7 +268,10 @@ describe('EmbedPDF Document surface', () => {
       callbacks = request.callbacks;
       return runtime;
     });
-    const factory = createEmbedPdfDocumentSurfaceFactory({ createViewer });
+    const factory = createEmbedPdfDocumentSurfaceFactory({
+      createViewer,
+      annotationDisplayName: () => 'Ada Lovelace',
+    });
     const bytes = new Uint8Array([1, 2, 3]);
 
     const surface = await factory({
@@ -294,6 +297,7 @@ describe('EmbedPDF Document surface', () => {
       expect.objectContaining({
         target: expect.any(HTMLElement),
         callbacks: expect.any(Object),
+        annotationDisplayName: 'Ada Lovelace',
       }),
     );
     await surface.rendering.goToPage(2);
@@ -350,6 +354,12 @@ describe('EmbedPDF Document surface', () => {
 
     const fontLoader = vi.fn(() => null);
     expect(createEmbedPdfViewerConfig(fontLoader).fontFallback).toMatchObject({ fontLoader });
+  });
+
+  it('configures newly authored annotations with the selected display name', () => {
+    const config = createEmbedPdfViewerConfig(undefined, true, 'Ada Lovelace');
+
+    expect(config.annotations).toMatchObject({ annotationAuthor: 'Ada Lovelace' });
   });
 
   it('keeps Document Intake provisional until the EmbedPDF surface opens', async () => {

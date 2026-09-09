@@ -167,6 +167,21 @@
             border-color: #007acc;
         }
 
+        input[type="text"] {
+            min-width: 220px;
+            padding: 8px 10px;
+            border: 1px solid #3d3d3d;
+            border-radius: 4px;
+            background: #1e1e1e;
+            color: #e0e0e0;
+            font: inherit;
+        }
+
+        input[type="text"]:focus {
+            outline: none;
+            border-color: #007acc;
+        }
+
         /* Buttons */
         .btn {
             padding: 8px 16px;
@@ -455,6 +470,14 @@
                             <input type="checkbox" id="defaultContinuousScroll">
                             <span class="toggle-slider"></span>
                         </label>
+                    </div>
+                </div>
+                <div class="setting-item">
+                    <div class="setting-label">
+                        <h3 id="annotationDisplayNameLabel">Annotation Display Name</h3>
+                    </div>
+                    <div class="setting-control">
+                        <input type="text" id="annotationDisplayName" maxlength="80" autocomplete="off" aria-labelledby="annotationDisplayNameLabel">
                     </div>
                 </div>
             </div>

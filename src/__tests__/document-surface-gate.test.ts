@@ -15,8 +15,9 @@ describe('Document surface development gate', () => {
   it('loads EmbedPDF only when the explicit development gate selects it', async () => {
     const surface = { rendering: {}, runtime: {} } as DocumentSurface;
     const factory = vi.fn(async () => surface);
+    const createEmbedPdfDocumentSurfaceFactory = vi.fn(() => factory);
     const loadEmbedPdf = vi.fn(async () => ({
-      createEmbedPdfDocumentSurfaceFactory: vi.fn(() => factory),
+      createEmbedPdfDocumentSurfaceFactory,
     }));
     const provider = createDevelopmentDocumentSurfaceProvider('embedpdf', loadEmbedPdf);
 
@@ -24,11 +25,17 @@ describe('Document surface development gate', () => {
     expect(provider).toBeDefined();
     expect(loadEmbedPdf).not.toHaveBeenCalled();
 
-    const selectedFactory = provider?.({ requestPassword: vi.fn() });
+    const requestPassword = vi.fn();
+    const annotationDisplayName = vi.fn(() => 'Ada Lovelace');
+    const selectedFactory = provider?.({ requestPassword, annotationDisplayName });
     expect(loadEmbedPdf).not.toHaveBeenCalled();
     await selectedFactory?.({} as never);
 
     expect(loadEmbedPdf).toHaveBeenCalledOnce();
+    expect(createEmbedPdfDocumentSurfaceFactory).toHaveBeenCalledWith({
+      requestPassword,
+      annotationDisplayName,
+    });
     expect(factory).toHaveBeenCalledOnce();
   });
 });

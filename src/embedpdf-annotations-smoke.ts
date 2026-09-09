@@ -169,6 +169,17 @@ async function run() {
     rect: { origin: { x: 260, y: 100 }, size: { width: 24, height: 24 } },
     contents: 'Native comment',
   });
+  surface.runtime.editing?.setAnnotationDisplayName?.('Ada Lovelace');
+  const commentDefaults = annotations.getTool('textComment')?.defaults;
+  if (!commentDefaults) throw new Error('Missing native comment tool defaults');
+  annotations.createAnnotation(0, {
+    ...commentDefaults,
+    id: 'attributed-comment-native',
+    type: PdfAnnotationSubtype.TEXT,
+    pageIndex: 0,
+    rect: { origin: { x: 300, y: 140 }, size: { width: 24, height: 24 } },
+    contents: 'Attributed comment',
+  });
   check(surface.runtime.editing?.state().dirty, 'Native edits did not mark Document dirty');
   history.undo();
   history.redo();
@@ -178,19 +189,32 @@ async function run() {
   ({ surface, annotations, history } = await open(annotated));
   const objects = annotations.getAnnotations().map((annotation) => annotation.object);
   const highlight = objects.find((object) => object.type === PdfAnnotationSubtype.HIGHLIGHT);
-  const comment = objects.find((object) => object.type === PdfAnnotationSubtype.TEXT);
+  const comment = objects.find((object) => object.contents === 'Native comment');
+  const attributedComment = objects.find((object) => object.contents === 'Attributed comment');
   check(highlight?.contents === 'Native highlight', 'Native highlight did not survive reopen');
   check(comment?.contents === 'Native comment', 'Native comment did not survive reopen');
   check(
     highlight?.author === 'Guest' && comment?.author === 'Guest',
-    'Default attribution must be Guest',
+    'Changing attribution rewrote an existing author',
   );
-  if (!highlight || !comment) throw new Error('Missing native annotations');
+  check(
+    attributedComment?.author === 'Ada Lovelace',
+    'Changed attribution was not applied to a newly authored annotation',
+  );
+  if (!highlight || !comment || !attributedComment) throw new Error('Missing native annotations');
   annotations.selectAnnotation(0, comment.id);
   check(annotations.getSelectedAnnotations().length === 1, 'Reopened comment is not selectable');
   annotations.updateAnnotation(0, comment.id, { contents: 'Edited after reopen' });
+  annotations.updateAnnotation(0, attributedComment.id, {
+    contents: 'Edited attributed comment',
+  });
+  check(
+    annotations.getAnnotationById(attributedComment.id)?.object.author === 'Ada Lovelace',
+    'Editing an existing annotation rewrote its author',
+  );
   annotations.deleteAnnotation(0, highlight.id);
   annotations.deleteAnnotation(0, comment.id);
+  annotations.deleteAnnotation(0, attributedComment.id);
   const deleted = await surface.runtime.editing?.exportPdf();
   if (!deleted) throw new Error('Missing deletion export');
   await surface.runtime.destroy();

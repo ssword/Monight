@@ -92,6 +92,47 @@ describe('Document workspace adapter', () => {
     `;
   });
 
+  it('applies a changed annotation display name to future edits in every live Document', async () => {
+    const authorUpdates: Array<ReturnType<typeof vi.fn>> = [];
+    const workspace = createDocumentWorkspace({
+      dispatchReaderAction: vi.fn(async () => ({ status: 'committed' as const, revision: 1 })),
+      snapshot: () => snapshot([], null),
+      isDocumentOpen: () => false,
+      defaultVisualState: () => ({
+        filterSettings: PRESETS.default,
+        zoomIntent: { kind: 'fit-width' },
+        rotation: 0,
+        viewMode: 'single',
+      }),
+      createSurface: async ({ filePath }) => {
+        const surface = createControllableSurface(filePath);
+        const setAnnotationDisplayName = vi.fn();
+        authorUpdates.push(setAnnotationDisplayName);
+        surface.runtime.editing = {
+          state: () => ({ revision: 0, dirty: false, readOnlyReason: null }),
+          exportPdf: async () => new Uint8Array([1]),
+          markSaved: vi.fn(),
+          setAnnotationDisplayName,
+        };
+        return surface;
+      },
+    });
+    for (const filePath of ['/first.pdf', '/second.pdf']) {
+      await workspace.intakeRuntime.open({
+        document: { canonicalPath: filePath, title: filePath.slice(1) },
+        bytes: new Uint8Array([1]),
+        activate: false,
+      });
+    }
+
+    workspace.setAnnotationDisplayName('Ada Lovelace');
+
+    expect(authorUpdates).toHaveLength(2);
+    expect(authorUpdates.every((update) => update.mock.calls[0]?.[0] === 'Ada Lovelace')).toBe(
+      true,
+    );
+  });
+
   it('routes edited tab close through Cancel and Discard and retires viewer callbacks on reopen', async () => {
     let reader: ReaderActions;
     let choice: 'cancel' | 'discard' = 'cancel';
