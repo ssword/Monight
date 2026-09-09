@@ -215,50 +215,35 @@ describe('Reader Actions', () => {
     expect(reader.snapshot().documents[0].filePath).toBe('/docs/first.pdf');
   });
 
-  it.each([
-    'conflict',
-    'failure',
-    'uncertain',
-    'protected',
-    'cancelled',
-  ] as const)('Save retains unsaved work after %s without changing Document identity', async (stage) => {
+  it('captures overlapping Recovery Draft revisions and reports persistence failures', async () => {
+    let revision = 1;
+    let releaseFirstWrite!: () => void;
     const runtime = createDocumentRuntime();
-    let saved = false;
-    let cancelled = false;
-    let writes = 0;
+    runtime.recovery = { sourceVersion: 'source-v1' };
     runtime.editing = {
-      state: () => ({
-        revision: 1,
-        dirty: !saved,
-        readOnlyReason: stage === 'protected' ? 'Signed PDF is read-only' : null,
-      }),
-      exportPdf: async () => new Uint8Array([1]),
-      markSaved: () => {
-        saved = true;
-      },
+      state: () => ({ revision, dirty: true, readOnlyReason: null }),
+      exportPdf: async () => new Uint8Array([revision]),
+      markSaved: vi.fn(),
     };
+    const writes: number[] = [];
     const reader = createReaderActions({
       initialSession: INITIAL_SESSION,
       projection: {
         activateDocument: async () => undefined,
         goToReadingPosition: async () => undefined,
-        verifySavedDocument: async () => undefined,
       },
-      pdfSaveAdapter: {
-        chooseDestination: async () => null,
-        releaseDestination: async () => undefined,
-        writeDestination: async () => {
-          throw new Error('Unexpected destination write');
-        },
-        writeOriginal: async () => {
-          writes += 1;
-          if (stage === 'cancelled') {
-            cancelled = true;
-            return new Uint8Array([1]);
+      recoveryDraftAdapter: {
+        inspect: vi.fn(),
+        write: vi.fn(async (draft) => {
+          writes.push(draft.editedRevision);
+          if (draft.editedRevision === 1) {
+            await new Promise<void>((resolve) => {
+              releaseFirstWrite = resolve;
+            });
           }
-          if (stage === 'uncertain') return new Uint8Array([9]);
-          throw new Error(stage === 'conflict' ? 'File conflict: source replaced' : 'Disk full');
-        },
+        }),
+        reconcile: vi.fn(),
+        remove: vi.fn(),
       },
       persist: async () => undefined,
     });
@@ -267,15 +252,302 @@ describe('Reader Actions', () => {
       document: INITIAL_SESSION.documents[0],
       runtime,
     });
-    const before = reader.snapshot();
-    expect(
-      (await reader.dispatch({ type: 'saveDocument' }, { isCancelled: () => cancelled })).status,
-    ).toBe(stage === 'cancelled' ? 'superseded' : 'failure');
-    expect(reader.snapshot()).toEqual(before);
-    expect(reader.hasUnsavedPdfWork()).toBe(true);
-    expect(saved).toBe(false);
-    expect(writes).toBe(stage === 'protected' ? 0 : 1);
+
+    const first = reader.captureRecoveryDraft('/docs/first.pdf');
+    await vi.waitFor(() => expect(writes).toEqual([1]));
+    revision = 2;
+    const second = reader.captureRecoveryDraft('/docs/first.pdf');
+    releaseFirstWrite();
+
+    await expect(first).resolves.toMatchObject({ status: 'performed' });
+    await expect(second).resolves.toMatchObject({ status: 'performed' });
+    expect(writes).toEqual([1, 2]);
+
+    const failing = createReaderActions({
+      initialSession: INITIAL_SESSION,
+      projection: {
+        activateDocument: async () => undefined,
+        goToReadingPosition: async () => undefined,
+      },
+      recoveryDraftAdapter: {
+        inspect: vi.fn(),
+        write: vi.fn(async () => {
+          throw new Error('draft disk full');
+        }),
+        reconcile: vi.fn(),
+        remove: vi.fn(),
+      },
+      persist: async () => undefined,
+    });
+    await failing.dispatch({
+      type: 'registerDocument',
+      document: INITIAL_SESSION.documents[0],
+      runtime,
+    });
+    await expect(failing.captureRecoveryDraft('/docs/first.pdf')).resolves.toMatchObject({
+      status: 'failure',
+      error: expect.objectContaining({ message: 'draft disk full' }),
+    });
+    expect(runtime.editing.state().dirty).toBe(true);
   });
+
+  it('reconciles only the saved Recovery Draft revision and rebases newer work', async () => {
+    let revision = 1;
+    let saved = 0;
+    let finishWrite!: (bytes: Uint8Array) => void;
+    const runtime = createDocumentRuntime();
+    runtime.recovery = { sourceVersion: 'source-v1' };
+    runtime.editing = {
+      state: () => ({ revision, dirty: revision !== saved, readOnlyReason: null }),
+      exportPdf: async () => new Uint8Array([revision]),
+      markSaved: (value) => {
+        saved = value;
+      },
+    };
+    const reconcile = vi.fn(async () => ({ sourceVersion: 'source-v2' }));
+    const reader = createReaderActions({
+      initialSession: INITIAL_SESSION,
+      projection: {
+        activateDocument: async () => undefined,
+        goToReadingPosition: async () => undefined,
+        verifySavedDocument: async () => undefined,
+      },
+      pdfSaveAdapter: {
+        writeOriginal: async () =>
+          new Promise<Uint8Array>((resolve) => {
+            finishWrite = resolve;
+          }),
+        chooseDestination: vi.fn(),
+        writeDestination: vi.fn(),
+        releaseDestination: vi.fn(),
+      },
+      recoveryDraftAdapter: {
+        inspect: vi.fn(),
+        write: vi.fn(),
+        reconcile,
+        remove: vi.fn(),
+      },
+      persist: async () => undefined,
+    });
+    await reader.dispatch({
+      type: 'registerDocument',
+      document: INITIAL_SESSION.documents[0],
+      runtime,
+    });
+
+    const saving = reader.dispatch({ type: 'saveDocument', filePath: '/docs/first.pdf' });
+    await vi.waitFor(() => expect(finishWrite).toBeTypeOf('function'));
+    revision = 2;
+    finishWrite(new Uint8Array([1]));
+
+    await expect(saving).resolves.toMatchObject({ status: 'performed' });
+    expect(reconcile).toHaveBeenCalledWith({
+      previousDocumentPath: '/docs/first.pdf',
+      documentPath: '/docs/first.pdf',
+      persistedRevision: 1,
+      sourceBytes: new Uint8Array([1]),
+    });
+    expect(runtime.recovery).toEqual({ sourceVersion: 'source-v2' });
+    expect(runtime.editing.state().dirty).toBe(true);
+  });
+
+  it('refreshes the newest Recovery Draft when reconciliation fails after writing', async () => {
+    let revision = 1;
+    const runtime = createDocumentRuntime();
+    runtime.recovery = { sourceVersion: 'source-v1' };
+    runtime.editing = {
+      state: () => ({ revision, dirty: true, readOnlyReason: null }),
+      exportPdf: async () => new Uint8Array([revision]),
+      markSaved: vi.fn(),
+    };
+    const repairAfterWrite = vi.fn(async () => ({ sourceVersion: 'source-v2' }));
+    const reader = createReaderActions({
+      initialSession: INITIAL_SESSION,
+      projection: {
+        activateDocument: async () => undefined,
+        goToReadingPosition: async () => undefined,
+        verifySavedDocument: async () => undefined,
+      },
+      pdfSaveAdapter: {
+        writeOriginal: async (_source, bytes) => {
+          revision = 2;
+          return bytes;
+        },
+        chooseDestination: vi.fn(),
+        writeDestination: vi.fn(),
+        releaseDestination: vi.fn(),
+      },
+      recoveryDraftAdapter: {
+        inspect: vi.fn(),
+        write: vi.fn(),
+        repairAfterWrite,
+        reconcile: vi.fn(async () => {
+          throw new Error('draft reconciliation failed');
+        }),
+        remove: vi.fn(),
+      },
+      persist: async () => undefined,
+    });
+    await reader.dispatch({
+      type: 'registerDocument',
+      document: INITIAL_SESSION.documents[0],
+      runtime,
+    });
+
+    await expect(reader.dispatch({ type: 'saveDocument' })).resolves.toMatchObject({
+      status: 'failure',
+      error: expect.objectContaining({ message: 'draft reconciliation failed' }),
+    });
+    expect(repairAfterWrite).toHaveBeenCalledWith({
+      documentPath: '/docs/first.pdf',
+      sourceBytes: new Uint8Array([1]),
+      editedRevision: 2,
+      draftBytes: new Uint8Array([2]),
+    });
+    expect(runtime.recovery).toEqual({ sourceVersion: 'source-v2' });
+    expect(runtime.editing.markSaved).not.toHaveBeenCalled();
+  });
+
+  it('removes the associated Recovery Draft before accepting explicit Discard', async () => {
+    const runtime = createDocumentRuntime();
+    runtime.editing = {
+      state: () => ({ revision: 3, dirty: true, readOnlyReason: null }),
+      exportPdf: vi.fn(),
+      markSaved: vi.fn(),
+    };
+    const remove = vi.fn(async () => undefined);
+    const reader = createReaderActions({
+      initialSession: INITIAL_SESSION,
+      projection: {
+        activateDocument: async () => undefined,
+        goToReadingPosition: async () => undefined,
+        closeDocument: async () => undefined,
+      },
+      chooseUnsavedDocument: async () => 'discard',
+      recoveryDraftAdapter: {
+        inspect: vi.fn(),
+        write: vi.fn(),
+        reconcile: vi.fn(),
+        remove,
+      },
+      persist: async () => undefined,
+    });
+    await reader.dispatch({
+      type: 'registerDocument',
+      document: INITIAL_SESSION.documents[0],
+      runtime,
+    });
+
+    await expect(
+      reader.dispatch({ type: 'closeDocument', filePath: '/docs/first.pdf' }),
+    ).resolves.toMatchObject({ status: 'committed' });
+    expect(remove).toHaveBeenCalledWith('/docs/first.pdf');
+    expect(runtime.editing.exportPdf).not.toHaveBeenCalled();
+  });
+
+  it('retains the persisted Recovery Draft when Save fails', async () => {
+    const runtime = createDocumentRuntime();
+    runtime.recovery = { sourceVersion: 'source-v1' };
+    runtime.editing = {
+      state: () => ({ revision: 2, dirty: true, readOnlyReason: null }),
+      exportPdf: async () => new Uint8Array([2]),
+      markSaved: vi.fn(),
+    };
+    const reconcile = vi.fn();
+    const remove = vi.fn();
+    const write = vi.fn(async () => undefined);
+    const reader = createReaderActions({
+      initialSession: INITIAL_SESSION,
+      projection: {
+        activateDocument: async () => undefined,
+        goToReadingPosition: async () => undefined,
+        verifySavedDocument: async () => undefined,
+      },
+      pdfSaveAdapter: {
+        writeOriginal: async () => {
+          throw new Error('disk full');
+        },
+        chooseDestination: vi.fn(),
+        writeDestination: vi.fn(),
+        releaseDestination: vi.fn(),
+      },
+      recoveryDraftAdapter: { inspect: vi.fn(), write, reconcile, remove },
+      persist: async () => undefined,
+    });
+    await reader.dispatch({
+      type: 'registerDocument',
+      document: INITIAL_SESSION.documents[0],
+      runtime,
+    });
+    await reader.captureRecoveryDraft('/docs/first.pdf');
+
+    await expect(reader.dispatch({ type: 'saveDocument' })).resolves.toMatchObject({
+      status: 'failure',
+    });
+    expect(write).toHaveBeenCalledOnce();
+    expect(reconcile).not.toHaveBeenCalled();
+    expect(remove).not.toHaveBeenCalled();
+    expect(runtime.editing.state().dirty).toBe(true);
+  });
+
+  it.each(['conflict', 'failure', 'uncertain', 'protected', 'cancelled'] as const)(
+    'Save retains unsaved work after %s without changing Document identity',
+    async (stage) => {
+      const runtime = createDocumentRuntime();
+      let saved = false;
+      let cancelled = false;
+      let writes = 0;
+      runtime.editing = {
+        state: () => ({
+          revision: 1,
+          dirty: !saved,
+          readOnlyReason: stage === 'protected' ? 'Signed PDF is read-only' : null,
+        }),
+        exportPdf: async () => new Uint8Array([1]),
+        markSaved: () => {
+          saved = true;
+        },
+      };
+      const reader = createReaderActions({
+        initialSession: INITIAL_SESSION,
+        projection: {
+          activateDocument: async () => undefined,
+          goToReadingPosition: async () => undefined,
+          verifySavedDocument: async () => undefined,
+        },
+        pdfSaveAdapter: {
+          chooseDestination: async () => null,
+          releaseDestination: async () => undefined,
+          writeDestination: async () => {
+            throw new Error('Unexpected destination write');
+          },
+          writeOriginal: async () => {
+            writes += 1;
+            if (stage === 'cancelled') {
+              cancelled = true;
+              return new Uint8Array([1]);
+            }
+            if (stage === 'uncertain') return new Uint8Array([9]);
+            throw new Error(stage === 'conflict' ? 'File conflict: source replaced' : 'Disk full');
+          },
+        },
+        persist: async () => undefined,
+      });
+      await reader.dispatch({
+        type: 'registerDocument',
+        document: INITIAL_SESSION.documents[0],
+        runtime,
+      });
+      const before = reader.snapshot();
+      expect(
+        (await reader.dispatch({ type: 'saveDocument' }, { isCancelled: () => cancelled })).status,
+      ).toBe(stage === 'cancelled' ? 'superseded' : 'failure');
+      expect(reader.snapshot()).toEqual(before);
+      expect(reader.hasUnsavedPdfWork()).toBe(true);
+      expect(saved).toBe(false);
+      expect(writes).toBe(stage === 'protected' ? 0 : 1);
+    },
+  );
 
   it('reload waits for preceding navigation before projecting Reading Session state', async () => {
     let release!: () => void;
@@ -379,6 +651,8 @@ describe('Reader Actions', () => {
         savedRevision = revision;
       },
     };
+    runtime.recovery = { sourceVersion: 'source-v1' };
+    const reconcile = vi.fn(async () => ({ sourceVersion: 'copy-source-v1' }));
     const reader = createReaderActions({
       initialSession: INITIAL_SESSION,
       projection: {
@@ -388,6 +662,7 @@ describe('Reader Actions', () => {
         reidentifyDocument: () => undefined,
       },
       pdfSaveAdapter: {
+        captureSource: async () => 'copy-source-token',
         chooseDestination: async () => {
           await dialog;
           return { token: 'selected', canonicalPath: '/docs/copy.pdf', title: 'copy.pdf' };
@@ -397,6 +672,12 @@ describe('Reader Actions', () => {
           return bytes;
         },
         releaseDestination: async () => undefined,
+      },
+      recoveryDraftAdapter: {
+        inspect: vi.fn(),
+        write: vi.fn(),
+        reconcile,
+        remove: vi.fn(),
       },
       persist: async () => undefined,
     });
@@ -418,6 +699,13 @@ describe('Reader Actions', () => {
     expect(runtime.editing.state().dirty).toBe(true);
     expect(reader.query('/docs/first.pdf')).toBeNull();
     expect(reader.query('/docs/copy.pdf')?.isCurrent()).toBe(true);
+    expect(reconcile).toHaveBeenCalledWith({
+      previousDocumentPath: '/docs/first.pdf',
+      documentPath: '/docs/copy.pdf',
+      persistedRevision: 1,
+      sourceBytes: new Uint8Array([37, 80, 68, 70]),
+    });
+    expect(runtime.recovery).toEqual({ sourceVersion: 'copy-source-v1' });
   });
 
   it.each([

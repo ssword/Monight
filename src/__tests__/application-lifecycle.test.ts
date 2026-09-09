@@ -197,6 +197,7 @@ vi.mock('../app/dialogs', () => ({
   requestAnnotationNote: vi.fn(async () => null),
   requestConfirmation: vi.fn(async () => mocks.takeConfirmationChoice()),
   requestPdfPassword: vi.fn(async () => null),
+  requestRecoveryDraft: vi.fn(async () => 'discard'),
   showToast: vi.fn(),
 }));
 vi.mock('../app/dom-events', () => ({ setupEventListeners: vi.fn() }));
@@ -368,6 +369,7 @@ function createModules(
         throw new Error('session store unavailable');
       }
     }),
+    captureRecoveryDraft: vi.fn(async () => ({ status: 'no-op' as const, revision: 0 })),
     hasUnsavedPdfWork: vi.fn(() => false),
     prepareShutdown: vi.fn(async () => true),
     isShutdownPrepared: vi.fn(() => true),

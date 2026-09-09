@@ -10,6 +10,7 @@ import {
 import { createDocumentWorkspace } from './app/document-workspace';
 import { createReadingSessionStorage } from './app/reading-session-storage';
 import { createRecentDocumentStorage } from './app/recent-document-storage';
+import { nativeRecoveryDraftAdapter } from './app/recovery-draft-adapter';
 import { createTauriExternalLinkAdapter } from './app/tauri-external-link-adapter';
 import { initializeApplication } from './application';
 import { createReaderActions } from './reader/reader-actions';
@@ -22,10 +23,11 @@ import './styles/tabs.css';
 
 const documentSurfaceKind = resolveDocumentSurfaceKind(import.meta.env.VITE_PDF_SURFACE);
 document.documentElement.dataset.pdfSurface = documentSurfaceKind;
+const nativePdfEditingEnabled = import.meta.env.VITE_NATIVE_PDF_EDITING === '1';
 const createDocumentSurface = createDevelopmentDocumentSurfaceProvider(
   import.meta.env.VITE_PDF_SURFACE,
   undefined,
-  import.meta.env.VITE_NATIVE_PDF_EDITING === '1' ? inspectNativePdfEditing : undefined,
+  nativePdfEditingEnabled ? inspectNativePdfEditing : undefined,
 );
 
 const startApplication = () =>
@@ -33,6 +35,9 @@ const startApplication = () =>
     createAnnotationStorage,
     browserPrintAdapter,
     ...(createDocumentSurface ? { pdfSaveAdapter: nativePdfSaveAdapter } : {}),
+    ...(createDocumentSurface && nativePdfEditingEnabled
+      ? { recoveryDraftAdapter: nativeRecoveryDraftAdapter }
+      : {}),
     createDocumentIntakeRuntime,
     createDocumentWorkspace,
     ...(createDocumentSurface ? { createDocumentSurface } : {}),

@@ -785,6 +785,11 @@ async function createProductionViewer({
       savedRevision = revision;
       callbacks.stateChanged();
     },
+    markRecovered(revision) {
+      editRevision = Math.max(editRevision, revision);
+      savedRevision = 0;
+      callbacks.stateChanged();
+    },
   };
   const currentPageNumber = () => scrollScope.getCurrentPage();
   const currentReadingPosition = (

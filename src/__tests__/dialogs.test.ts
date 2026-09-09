@@ -5,6 +5,7 @@ import {
   requestConfirmation,
   requestPdfPassword,
   requestPdfSaveFailure,
+  requestRecoveryDraft,
   requestUnsavedDocument,
 } from '../app/dialogs';
 
@@ -127,5 +128,37 @@ describe('PDF close decisions', () => {
     document.querySelector<HTMLButtonElement>('button:last-child')?.click();
     expect(await saveFailure).toBe('cancel');
     expect(document.querySelectorAll('dialog')).toHaveLength(0);
+  });
+});
+
+describe('Recovery Draft decisions', () => {
+  it('offers recovery without implying that it saves the original PDF', async () => {
+    document.body.replaceChildren();
+    const decision = requestRecoveryDraft({
+      documentPath: '/docs/report.pdf',
+      title: 'report.pdf',
+      editedRevision: 3,
+    });
+
+    await vi.waitFor(() => expect(document.querySelector('dialog[open]')).not.toBeNull());
+    expect(document.querySelector('h2')?.textContent).toContain('report.pdf');
+    expect(document.querySelector('p')?.textContent).toContain('will not save');
+    document.querySelector<HTMLButtonElement>('.dialog-primary')?.click();
+
+    await expect(decision).resolves.toBe('recover');
+  });
+
+  it('keeps the draft when the recovery prompt is dismissed', async () => {
+    document.body.replaceChildren();
+    const decision = requestRecoveryDraft({
+      documentPath: '/docs/report.pdf',
+      title: 'report.pdf',
+      editedRevision: 3,
+    });
+    await vi.waitFor(() => expect(document.querySelector('dialog[open]')).not.toBeNull());
+
+    document.querySelector('dialog')?.dispatchEvent(new Event('cancel', { cancelable: true }));
+
+    await expect(decision).resolves.toBe('cancel');
   });
 });

@@ -13,6 +13,97 @@ use crate::{
     PendingExternalOpenPayloads,
 };
 
+fn recovery_draft_root(app: &AppHandle) -> Result<PathBuf, String> {
+    app.path()
+        .app_local_data_dir()
+        .map(|path| path.join("recovery-drafts"))
+        .map_err(|error| error.to_string())
+}
+
+fn require_main_reader(window: &tauri::WebviewWindow) -> Result<(), String> {
+    if window.label() == "main" {
+        Ok(())
+    } else {
+        Err("Only the main reader can access Recovery Drafts".into())
+    }
+}
+
+#[command]
+pub fn inspect_recovery_draft(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+    drafts: State<'_, crate::recovery_drafts::RecoveryDrafts>,
+    document_path: String,
+    source_bytes: Vec<u8>,
+) -> Result<crate::recovery_drafts::DraftInspection, String> {
+    require_main_reader(&window)?;
+    drafts.inspect(&recovery_draft_root(&app)?, &document_path, &source_bytes)
+}
+
+#[command]
+pub fn read_recovery_draft(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+    drafts: State<'_, crate::recovery_drafts::RecoveryDrafts>,
+    document_path: String,
+    source_version: String,
+    edited_revision: u64,
+) -> Result<tauri::ipc::Response, String> {
+    require_main_reader(&window)?;
+    drafts
+        .read(
+            &recovery_draft_root(&app)?,
+            &document_path,
+            &source_version,
+            edited_revision,
+        )
+        .map(tauri::ipc::Response::new)
+}
+
+#[command]
+pub fn write_recovery_draft(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+    drafts: State<'_, crate::recovery_drafts::RecoveryDrafts>,
+    draft: crate::recovery_drafts::RecoveryDraftInput,
+) -> Result<(), String> {
+    require_main_reader(&window)?;
+    drafts.write(&recovery_draft_root(&app)?, draft)
+}
+
+#[command]
+pub fn repair_recovery_draft_after_write(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+    drafts: State<'_, crate::recovery_drafts::RecoveryDrafts>,
+    repair: crate::recovery_drafts::RecoveryDraftRepair,
+) -> Result<crate::recovery_drafts::ReconciledSource, String> {
+    require_main_reader(&window)?;
+    drafts.repair_after_write(&recovery_draft_root(&app)?, repair)
+}
+
+#[command]
+pub fn reconcile_recovery_draft(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+    drafts: State<'_, crate::recovery_drafts::RecoveryDrafts>,
+    reconciliation: crate::recovery_drafts::RecoveryDraftReconciliation,
+) -> Result<crate::recovery_drafts::ReconciledSource, String> {
+    require_main_reader(&window)?;
+    drafts.reconcile(&recovery_draft_root(&app)?, reconciliation)
+}
+
+#[command]
+pub fn remove_recovery_draft(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+    drafts: State<'_, crate::recovery_drafts::RecoveryDrafts>,
+    document_path: String,
+) -> Result<(), String> {
+    require_main_reader(&window)?;
+    drafts.remove(&recovery_draft_root(&app)?, &document_path)
+}
+
 const PDF_VIEW_MIN_WIDTH: f64 = 1000.0;
 const PDF_VIEW_MAX_WIDTH: f64 = 1320.0;
 const PDF_VIEW_MIN_HEIGHT: f64 = 650.0;

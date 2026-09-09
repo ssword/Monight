@@ -153,6 +153,251 @@ describe('Document workspace adapter', () => {
     expect(document.querySelector('[aria-label="Unsaved changes"]')).not.toBeNull();
   });
 
+  it.each([
+    ['recover', [9], true],
+    ['discard', [1], false],
+  ] as const)(
+    '%s a matching Recovery Draft when reopening after termination',
+    async (choice, expectedBytes, expectedDirty) => {
+      const openedBytes: number[][] = [];
+      const remove = vi.fn(async () => undefined);
+      let reader: ReaderActions;
+      let editRevision = 0;
+      let savedRevision = 0;
+      const initialSession = { schemaVersion: 2 as const, documents: [], activeDocumentPath: null };
+      const workspace = createDocumentWorkspace({
+        dispatchReaderAction: (action, options) => reader.dispatch(action, options),
+        captureRecoveryDraft: (filePath) => reader.captureRecoveryDraft(filePath),
+        snapshot: () => reader?.snapshot() ?? { ...initialSession, revision: 0 },
+        isDocumentOpen: (path) => reader?.isDocumentOpen(path) ?? false,
+        defaultVisualState: () => ({
+          filterSettings: PRESETS.default,
+          zoomIntent: { kind: 'fit-width' },
+          rotation: 0,
+          viewMode: 'single',
+        }),
+        recoveryDraftAdapter: {
+          inspect: async () => ({
+            status: 'available',
+            sourceVersion: 'source-v1',
+            draft: {
+              documentPath: '/first.pdf',
+              sourceVersion: 'source-v1',
+              editedRevision: 4,
+              bytes: new Uint8Array([9]),
+            },
+          }),
+          write: vi.fn(),
+          reconcile: vi.fn(),
+          remove,
+        },
+        chooseRecoveryDraft: async () => choice,
+        createSurface: async ({ filePath, bytes }) => {
+          openedBytes.push([...bytes]);
+          const surface = createControllableSurface(filePath);
+          surface.runtime.editing = {
+            state: () => ({
+              revision: editRevision,
+              dirty: editRevision !== savedRevision,
+              readOnlyReason: null,
+            }),
+            exportPdf: async () => bytes,
+            markSaved: (revision) => {
+              savedRevision = revision;
+            },
+            markRecovered: (revision) => {
+              editRevision = revision;
+            },
+          };
+          return surface;
+        },
+      });
+      const recoveryDraftAdapter = {
+        inspect: vi.fn(),
+        write: vi.fn(),
+        reconcile: vi.fn(),
+        remove,
+      };
+      reader = createReaderActions({
+        initialSession,
+        projection: workspace.projection,
+        recoveryDraftAdapter,
+        persist: async () => undefined,
+      });
+      reader.observe(workspace.project);
+
+      await workspace.intakeRuntime.open({
+        document: { canonicalPath: '/first.pdf', title: 'first.pdf' },
+        bytes: new Uint8Array([1]),
+        activate: true,
+      });
+
+      expect(openedBytes).toEqual([expectedBytes]);
+      expect(reader.query('/first.pdf')).not.toBeNull();
+      expect(reader.hasUnsavedPdfWork()).toBe(expectedDirty);
+      expect(remove).toHaveBeenCalledTimes(choice === 'discard' ? 1 : 0);
+    },
+  );
+
+  it('isolates a stale Recovery Draft from a changed source Document', async () => {
+    const openedBytes: number[][] = [];
+    const reportError = vi.fn();
+    const choice = vi.fn(async () => 'recover' as const);
+    const initialSession = { schemaVersion: 2 as const, documents: [], activeDocumentPath: null };
+    let reader: ReaderActions;
+    const workspace = createDocumentWorkspace({
+      dispatchReaderAction: (action, options) => reader.dispatch(action, options),
+      snapshot: () => reader?.snapshot() ?? { ...initialSession, revision: 0 },
+      isDocumentOpen: (path) => reader?.isDocumentOpen(path) ?? false,
+      defaultVisualState: () => ({
+        filterSettings: PRESETS.default,
+        zoomIntent: { kind: 'fit-width' },
+        rotation: 0,
+        viewMode: 'single',
+      }),
+      recoveryDraftAdapter: {
+        inspect: async () => ({ status: 'stale', sourceVersion: 'source-v2' }),
+        write: vi.fn(),
+        reconcile: vi.fn(),
+        remove: vi.fn(),
+      },
+      chooseRecoveryDraft: choice,
+      reportError,
+      createSurface: async ({ filePath, bytes }) => {
+        openedBytes.push([...bytes]);
+        return createControllableSurface(filePath);
+      },
+    });
+    reader = createReaderActions({
+      initialSession,
+      projection: workspace.projection,
+      persist: async () => undefined,
+    });
+
+    await workspace.intakeRuntime.open({
+      document: { canonicalPath: '/first.pdf', title: 'first.pdf' },
+      bytes: new Uint8Array([2]),
+      activate: true,
+    });
+
+    expect(openedBytes).toEqual([[2]]);
+    expect(choice).not.toHaveBeenCalled();
+    expect(reportError).toHaveBeenCalledWith(expect.stringContaining('changed'));
+  });
+
+  it('keeps a Recovery Draft isolated when the reader postpones the decision', async () => {
+    const remove = vi.fn();
+    const workspace = createDocumentWorkspace({
+      dispatchReaderAction: vi.fn(),
+      snapshot: () => snapshot([], null),
+      isDocumentOpen: () => false,
+      defaultVisualState: () => ({
+        filterSettings: PRESETS.default,
+        zoomIntent: { kind: 'fit-width' },
+        rotation: 0,
+        viewMode: 'single',
+      }),
+      recoveryDraftAdapter: {
+        inspect: async () => ({
+          status: 'available',
+          sourceVersion: 'source-v1',
+          draft: {
+            documentPath: '/first.pdf',
+            sourceVersion: 'source-v1',
+            editedRevision: 4,
+            bytes: new Uint8Array([9]),
+          },
+        }),
+        write: vi.fn(),
+        reconcile: vi.fn(),
+        remove,
+      },
+      chooseRecoveryDraft: async () => 'cancel',
+      createSurface: vi.fn(),
+    });
+
+    await expect(
+      workspace.intakeRuntime.open({
+        document: { canonicalPath: '/first.pdf', title: 'first.pdf' },
+        bytes: new Uint8Array([1]),
+        activate: true,
+      }),
+    ).rejects.toThrow('Recovery Draft decision cancelled');
+    expect(remove).not.toHaveBeenCalled();
+  });
+
+  it('captures a Recovery Draft while annotation editing is live', async () => {
+    const callbacks: DocumentSurfaceCallbacks[] = [];
+    let revision = 0;
+    let reader: ReaderActions;
+    const initialSession = { schemaVersion: 2 as const, documents: [], activeDocumentPath: null };
+    const write = vi.fn(async () => undefined);
+    const reportError = vi.fn();
+    const recoveryDraftAdapter = {
+      inspect: vi.fn(async () => ({ status: 'none' as const, sourceVersion: 'source-v1' })),
+      write,
+      reconcile: vi.fn(async () => ({ sourceVersion: 'source-v2' })),
+      remove: vi.fn(async () => undefined),
+    };
+    const workspace = createDocumentWorkspace({
+      dispatchReaderAction: (action, options) => reader.dispatch(action, options),
+      captureRecoveryDraft: (filePath) => reader.captureRecoveryDraft(filePath),
+      snapshot: () => reader?.snapshot() ?? { ...initialSession, revision: 0 },
+      isDocumentOpen: (path) => reader?.isDocumentOpen(path) ?? false,
+      defaultVisualState: () => ({
+        filterSettings: PRESETS.default,
+        zoomIntent: { kind: 'fit-width' },
+        rotation: 0,
+        viewMode: 'single',
+      }),
+      recoveryDraftAdapter,
+      reportError,
+      createSurface: async ({ filePath, callbacks: events }) => {
+        callbacks.push(events);
+        const surface = createControllableSurface(filePath);
+        surface.runtime.editing = {
+          state: () => ({ revision, dirty: revision > 0, readOnlyReason: null }),
+          exportPdf: async () => new Uint8Array([revision]),
+          markSaved: vi.fn(),
+        };
+        return surface;
+      },
+    });
+    reader = createReaderActions({
+      initialSession,
+      projection: workspace.projection,
+      recoveryDraftAdapter,
+      persist: async () => undefined,
+    });
+    reader.observe(workspace.project);
+    await workspace.intakeRuntime.open({
+      document: { canonicalPath: '/first.pdf', title: 'first.pdf' },
+      bytes: new Uint8Array([1]),
+      activate: true,
+    });
+
+    revision = 1;
+    callbacks[0].stateChanged();
+
+    await vi.waitFor(() => expect(write).toHaveBeenCalledTimes(1));
+    expect(write).toHaveBeenCalledWith({
+      documentPath: '/first.pdf',
+      sourceVersion: 'source-v1',
+      editedRevision: 1,
+      bytes: new Uint8Array([1]),
+    });
+    await reader.quiesce();
+
+    write.mockRejectedValueOnce(new Error('draft disk full'));
+    revision = 2;
+    callbacks[0].stateChanged();
+
+    await vi.waitFor(() =>
+      expect(reportError).toHaveBeenCalledWith(expect.stringContaining('draft disk full')),
+    );
+    expect(reader.hasUnsavedPdfWork()).toBe(true);
+  });
+
   it('projects tab controls from Reading Session snapshots and dispatches semantic actions', async () => {
     const dispatch = vi.fn(async (_action: ReaderAction) => ({
       status: 'committed' as const,

@@ -8,6 +8,7 @@ import {
   type DocumentPathReconciliation,
   type PersistenceUrgency,
 } from './reading-session';
+import type { RecoveryDraftAdapter } from './recovery-drafts';
 
 export interface ReadingPosition {
   readonly page: number;
@@ -207,6 +208,7 @@ interface CreateReaderActionsOptions {
   externalLinkAdapter?: ExternalLinkAdapter;
   printAdapter?: PrintAdapter;
   pdfSaveAdapter?: NativePdfSaveAdapter;
+  recoveryDraftAdapter?: RecoveryDraftAdapter;
   reopenDocument?: (filePath: string) => Promise<void>;
   persist: (snapshot: ReadingSessionSnapshot) => Promise<void>;
   persistenceDebounceMs?: number;
@@ -224,6 +226,7 @@ export interface ReaderActions {
   observe(observer: (snapshot: ReadingSessionSnapshot) => void): () => void;
   quiesce(): Promise<void>;
   flush(): Promise<void>;
+  captureRecoveryDraft(filePath: string): Promise<ReaderActionOutcome>;
   hasDirtySession(): boolean;
   hasUnsavedPdfWork(): boolean;
   prepareShutdown(): Promise<boolean>;
@@ -388,6 +391,7 @@ export function createReaderActions({
   externalLinkAdapter,
   printAdapter,
   pdfSaveAdapter,
+  recoveryDraftAdapter,
   chooseUnsavedDocument,
   reopenDocument,
   persist,
@@ -415,10 +419,39 @@ export function createReaderActions({
   const runtimes = new Map<string, RegisteredDocumentRuntime>();
   const runtimeGenerations = new Map<string, number>();
   const pendingSaves = new Map<string, Promise<ReaderActionOutcome>>();
+  const pendingDraftCaptures = new Map<DocumentRuntime, Promise<ReaderActionOutcome>>();
   const pendingReloads = new Set<string>();
   const recentlyClosedDocumentPaths: string[] = [];
   let globalTail = Promise.resolve();
+  let recoveryTail = Promise.resolve();
   let activeReopenReservation: GlobalLaneReservation | null = null;
+
+  const enqueueRecovery = <T>(work: () => Promise<T>): Promise<T> => {
+    const result = recoveryTail.catch(() => undefined).then(work);
+    recoveryTail = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
+  };
+
+  const exportTails = new WeakMap<DocumentRuntime, Promise<void>>();
+  const exportPdf = (
+    runtime: DocumentRuntime,
+    editing: NonNullable<DocumentRuntime['editing']>,
+  ): Promise<Uint8Array> => {
+    const result = (exportTails.get(runtime) ?? Promise.resolve())
+      .catch(() => undefined)
+      .then(() => editing.exportPdf());
+    exportTails.set(
+      runtime,
+      result.then(
+        () => undefined,
+        () => undefined,
+      ),
+    );
+    return result;
+  };
 
   const revision = (): number => session.snapshot().revision;
   const generation = (filePath: string): number => lanes.get(filePath)?.generation ?? 0;
@@ -809,16 +842,19 @@ export function createReaderActions({
   const quiesce = async (): Promise<void> => {
     while (true) {
       const capturedGlobalTail = globalTail;
+      const capturedRecoveryTail = recoveryTail;
       const capturedDocumentTails = Array.from(
         lanes,
         ([filePath, lane]) => [filePath, lane.tail] as const,
       );
       await Promise.allSettled([
         capturedGlobalTail,
+        capturedRecoveryTail,
         ...capturedDocumentTails.map(([, tail]) => tail),
       ]);
       const unchanged =
         capturedGlobalTail === globalTail &&
+        capturedRecoveryTail === recoveryTail &&
         capturedDocumentTails.length === lanes.size &&
         capturedDocumentTails.every(([filePath, tail]) => lanes.get(filePath)?.tail === tail);
       if (unchanged) return;
@@ -911,6 +947,111 @@ export function createReaderActions({
   const runtimePath = (runtime: DocumentRuntime): string | undefined =>
     [...runtimes].find(([, registered]) => registered.runtime === runtime)?.[0];
 
+  const persistRecoveryDraft = async (
+    runtime: DocumentRuntime,
+    documentPath: string,
+    sourceVersion: string,
+  ): Promise<boolean> => {
+    if (!recoveryDraftAdapter) return false;
+    while (true) {
+      const editing = runtime.editing;
+      if (!editing) return false;
+      const state = editing.state();
+      if (!state.dirty || state.readOnlyReason) return false;
+      const bytes = await exportPdf(runtime, editing);
+      if (editing.state().revision !== state.revision) continue;
+      await recoveryDraftAdapter.write({
+        documentPath,
+        sourceVersion,
+        editedRevision: state.revision,
+        bytes,
+      });
+      if (editing.state().revision === state.revision) return true;
+    }
+  };
+
+  const captureRecoveryDraft = (filePath: string): Promise<ReaderActionOutcome> => {
+    const registered = runtimes.get(filePath);
+    if (!registered || !recoveryDraftAdapter)
+      return Promise.resolve({ status: 'no-op', revision: revision() });
+    const runtime = registered.runtime;
+    const pending = pendingDraftCaptures.get(runtime);
+    if (pending) return pending;
+    const capture = enqueueRecovery(async (): Promise<ReaderActionOutcome> => {
+      try {
+        const currentPath = runtimePath(runtime);
+        const sourceVersion = runtime.recovery?.sourceVersion;
+        if (!currentPath || !sourceVersion) return { status: 'no-op', revision: revision() };
+        const document = session.snapshot().documents.find((item) => item.filePath === currentPath);
+        if (!document) return { status: 'no-op', revision: revision() };
+        const persisted = await persistRecoveryDraft(runtime, currentPath, sourceVersion);
+        return { status: persisted ? 'performed' : 'no-op', revision: revision() };
+      } catch (error) {
+        return { status: 'failure', error, revision: revision() };
+      }
+    });
+    pendingDraftCaptures.set(runtime, capture);
+    void capture.finally(() => {
+      if (pendingDraftCaptures.get(runtime) === capture) pendingDraftCaptures.delete(runtime);
+    });
+    return capture;
+  };
+
+  const reconcileRecoveryDraft = async (
+    runtime: DocumentRuntime,
+    previousDocumentPath: string,
+    documentPath: string,
+    persistedRevision: number,
+    sourceBytes: Uint8Array,
+  ): Promise<void> => {
+    if (!recoveryDraftAdapter || !runtime.recovery) return;
+    const result = await enqueueRecovery(() =>
+      recoveryDraftAdapter.reconcile({
+        previousDocumentPath,
+        documentPath,
+        persistedRevision,
+        sourceBytes,
+      }),
+    );
+    runtime.recovery = { sourceVersion: result.sourceVersion };
+  };
+
+  const refreshRecoveryDraftAfterOriginalWrite = async (
+    runtime: DocumentRuntime,
+    documentPath: string,
+    sourceBytes: Uint8Array,
+  ): Promise<void> => {
+    if (!recoveryDraftAdapter || !runtime.recovery) return;
+    const repairAfterWrite = recoveryDraftAdapter.repairAfterWrite;
+    if (!repairAfterWrite) throw new Error('Recovery Draft repair is unavailable');
+    await enqueueRecovery(async () => {
+      while (true) {
+        const editing = runtime.editing;
+        if (!editing) return;
+        const state = editing.state();
+        if (!state.dirty || state.readOnlyReason) {
+          await recoveryDraftAdapter.remove(documentPath);
+          return;
+        }
+        const draftBytes = await exportPdf(runtime, editing);
+        if (editing.state().revision !== state.revision) continue;
+        const result = await repairAfterWrite({
+          documentPath,
+          sourceBytes,
+          editedRevision: state.revision,
+          draftBytes,
+        });
+        runtime.recovery = { sourceVersion: result.sourceVersion };
+        if (editing.state().revision === state.revision) return;
+      }
+    });
+  };
+
+  const removeRecoveryDraft = (documentPath: string): Promise<void> =>
+    recoveryDraftAdapter
+      ? enqueueRecovery(() => recoveryDraftAdapter.remove(documentPath))
+      : Promise.resolve();
+
   const saveDocument = async (
     action: Extract<ReaderAction, { type: 'saveDocumentAs' | 'saveDocument' }>,
     options?: ReaderActionOptions,
@@ -973,7 +1114,7 @@ export function createReaderActions({
           }
         }
         const exportedRevision = editing.state().revision;
-        const bytes = await editing.exportPdf();
+        const bytes = await exportPdf(registered.runtime, editing);
         if (editing.state().revision !== exportedRevision)
           throw new Error('Annotations changed during export; retry Save');
         if (isCancelled()) return { status: 'superseded', revision: revision() };
@@ -985,18 +1126,44 @@ export function createReaderActions({
         else if (pdfSaveAdapter.writeOriginal)
           reopened = await pdfSaveAdapter.writeOriginal(sourceToken, bytes);
         else throw new Error('Original PDF saving is unavailable');
+        if (!saveAs) {
+          try {
+            if (isCancelled()) throw new Error('Save was superseded after writing the PDF');
+            if (
+              bytes.length !== reopened.length ||
+              bytes.some((value, index) => value !== reopened[index])
+            )
+              throw new Error('Written PDF verification failed');
+            await reconcileRecoveryDraft(
+              registered.runtime,
+              filePath,
+              filePath,
+              exportedRevision,
+              reopened,
+            );
+            await projection.verifySavedDocument?.(document, reopened, { isCancelled });
+            if (isCancelled()) throw new Error('Save was superseded after writing the PDF');
+            editing.markSaved(exportedRevision);
+            return { status: 'performed', revision: revision() };
+          } catch (error) {
+            try {
+              await refreshRecoveryDraftAfterOriginalWrite(registered.runtime, filePath, reopened);
+            } catch (recoveryError) {
+              throw new AggregateError(
+                [error, recoveryError],
+                'The PDF was written, but its Recovery Draft could not be refreshed. Keep Monight open and retry Save.',
+              );
+            }
+            if (isCancelled()) return { status: 'superseded', revision: revision() };
+            throw error;
+          }
+        }
         if (isCancelled()) return { status: 'superseded', revision: revision() };
         if (
           bytes.length !== reopened.length ||
           bytes.some((value, index) => value !== reopened[index])
         )
           throw new Error('Written PDF verification failed');
-        if (!saveAs) {
-          await projection.verifySavedDocument?.(document, reopened, { isCancelled });
-          if (isCancelled()) return { status: 'superseded', revision: revision() };
-          editing.markSaved(exportedRevision);
-          return { status: 'performed', revision: revision() };
-        }
         if (!destination) throw new Error('Missing Save As destination');
         replacementSource = await pdfSaveAdapter.captureSource?.(
           destination.canonicalPath,
@@ -1017,6 +1184,13 @@ export function createReaderActions({
           };
           await projection.verifySavedDocument?.(replacement, reopened, { isCancelled });
           if (isCancelled()) return { status: 'superseded', revision: revision() };
+          await reconcileRecoveryDraft(
+            registered.runtime,
+            filePath,
+            selected.canonicalPath,
+            exportedRevision,
+            reopened,
+          );
           projection.reidentifyDocument?.(filePath, selected);
           invalidateRuntime(filePath);
           runtimes.delete(filePath);
@@ -1096,8 +1270,14 @@ export function createReaderActions({
       if (choice === 'cancel') return false;
       if (runtime.editing?.state().revision !== editRevision) continue;
       if (choice === 'discard') {
-        if (editRevision !== undefined) discards.set(runtime, editRevision);
-        return true;
+        try {
+          await removeRecoveryDraft(filePath);
+          if (editRevision !== undefined) discards.set(runtime, editRevision);
+          return true;
+        } catch (removeError) {
+          error = removeError;
+          continue;
+        }
       }
       const result = await saveDocument(
         {
@@ -1163,6 +1343,8 @@ export function createReaderActions({
             | Awaited<ReturnType<NonNullable<ReaderProjection['prepareReloadDocument']>>>
             | undefined;
           try {
+            await removeRecoveryDraft(filePath);
+            if (isCancelled()) return { status: 'superseded', revision: revision() };
             prepared = await projection.prepareReloadDocument(document, { isCancelled });
             if (isCancelled()) return { status: 'superseded', revision: revision() };
             prepared.commit();
@@ -1774,6 +1956,7 @@ export function createReaderActions({
     },
     isShutdownPrepared,
     cancelShutdown,
+    captureRecoveryDraft,
     canonicalizeDocumentPaths,
     query(filePath) {
       const targetPath = filePath ?? session.snapshot().activeDocumentPath;

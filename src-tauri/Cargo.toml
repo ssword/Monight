@@ -26,6 +26,7 @@ url = "2"
 tempfile = "3"
 same-file = "1"
 lopdf = { version = "0.34.0", default-features = false, features = ["nom_parser"] }
+sha2 = "0.10"
 
 [target.'cfg(any(target_os = "windows", target_os = "linux"))'.dependencies]
 tauri-plugin-single-instance = "~2.3.0"

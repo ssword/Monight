@@ -1,4 +1,5 @@
 import type { UnsavedDocumentChoice, UnsavedDocumentRequest } from '../reader/reader-actions';
+import type { RecoveryDraftChoice, RecoveryDraftRequest } from '../reader/recovery-drafts';
 
 export type PasswordRequestReason = 'required' | 'incorrect';
 
@@ -196,6 +197,7 @@ function requestPdfDecision<T extends string>(
   choices: ReadonlyArray<readonly [T, string]>,
   cancelValue: T,
   isCurrent: () => boolean = () => true,
+  signal?: AbortSignal,
 ): Promise<T> {
   const result = pdfDecisionTail.then(() => {
     if (!isCurrent()) return cancelValue;
@@ -212,14 +214,17 @@ function requestPdfDecision<T extends string>(
     dialog.append(heading, description, actions);
     return new Promise<T>((resolve) => {
       const finish = (choice: T) => {
+        signal?.removeEventListener('abort', handleAbort);
         dialog.close();
         dialog.remove();
         resolve(choice);
       };
+      const handleAbort = () => finish(cancelValue);
       for (const [choice, label] of choices) {
         const button = document.createElement('button');
         button.type = 'button';
-        button.className = choice === 'save' ? 'dialog-primary' : 'dialog-secondary';
+        button.className =
+          choice === 'save' || choice === 'recover' ? 'dialog-primary' : 'dialog-secondary';
         button.textContent = label;
         button.addEventListener('click', () => finish(choice));
         actions.append(button);
@@ -228,6 +233,11 @@ function requestPdfDecision<T extends string>(
         event.preventDefault();
         finish(cancelValue);
       });
+      if (signal?.aborted) {
+        finish(cancelValue);
+        return;
+      }
+      signal?.addEventListener('abort', handleAbort, { once: true });
       document.body.append(dialog);
       dialog.showModal();
       actions.querySelector<HTMLButtonElement>('button:last-child')?.focus();
@@ -275,5 +285,23 @@ export function requestUnsavedDocument({
       ['cancel', 'Cancel'],
     ],
     'cancel',
+  );
+}
+
+export function requestRecoveryDraft({
+  title,
+  signal,
+}: RecoveryDraftRequest): Promise<RecoveryDraftChoice> {
+  return requestPdfDecision<RecoveryDraftChoice>(
+    `Recover changes to ${title}?`,
+    'Monight found annotation work from an interrupted app run. Recovering it will not save the PDF.',
+    [
+      ['recover', 'Recover'],
+      ['discard', 'Discard'],
+      ['cancel', 'Not Now'],
+    ],
+    'cancel',
+    () => !signal?.aborted,
+    signal,
   );
 }

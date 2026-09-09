@@ -24,6 +24,12 @@ import type {
   RestorableReadingPosition,
   ZoomIntent,
 } from '../reader/reader-actions';
+import type {
+  RecoveryDraftAdapter,
+  RecoveryDraftChoice,
+  RecoveryDraftInspection,
+  RecoveryDraftRequest,
+} from '../reader/recovery-drafts';
 import { buildFilterCSS } from '../scripts/filters';
 import {
   type AnnotationNoteRequester,
@@ -65,6 +71,9 @@ export type DocumentSurfaceFactory = (
 
 interface DocumentWorkspaceOptions {
   pdfSaveAdapter?: import('../reader/native-pdf-editing').NativePdfSaveAdapter;
+  recoveryDraftAdapter?: RecoveryDraftAdapter;
+  chooseRecoveryDraft?: (request: RecoveryDraftRequest) => Promise<RecoveryDraftChoice>;
+  captureRecoveryDraft?: (filePath: string) => Promise<ReaderActionOutcome>;
   dispatchReaderAction(
     action: ReaderAction,
     options?: ReaderActionOptions,
@@ -116,6 +125,16 @@ interface PresentedDocument {
   readonly presentation: DocumentPresentation;
 }
 
+type PreparedRecoveryDraft =
+  | { readonly status: 'unavailable'; readonly bytes: Uint8Array }
+  | { readonly status: 'ready'; readonly bytes: Uint8Array; readonly sourceVersion: string }
+  | {
+      readonly status: 'recovered';
+      readonly bytes: Uint8Array;
+      readonly sourceVersion: string;
+      readonly recoveredRevision: number;
+    };
+
 const cloneZoomIntent = (zoomIntent: ZoomIntent): ZoomIntent =>
   zoomIntent.kind === 'manual'
     ? { kind: 'manual', scale: zoomIntent.scale }
@@ -140,6 +159,7 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
   const presented = new Map<string, PresentedDocument>();
   let visibleDocumentPath: string | null = null;
   const disposedSurfaces = new WeakSet<DocumentSurface>();
+  const reportedRecoveryFailures = new Map<string, number>();
 
   const interruptionError = (): Error => new Error('Document Intake interrupted');
 
@@ -255,13 +275,72 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
     };
   };
   const baseCreateSurface = options.createSurface ?? createPdfSurface;
+  const prepareRecoveryDraft = async (
+    request: DocumentSurfaceFactoryRequest,
+  ): Promise<PreparedRecoveryDraft> => {
+    const adapter = options.recoveryDraftAdapter;
+    if (!adapter) return { status: 'unavailable', bytes: request.bytes };
+    let inspection: RecoveryDraftInspection;
+    try {
+      inspection = await adapter.inspect(request.filePath, request.bytes);
+    } catch (error) {
+      if (request.signal?.aborted) throw interruptionError();
+      options.reportError?.(
+        `Recovery Drafts are unavailable for ${request.title}: ${String(error)}`,
+      );
+      return { status: 'unavailable', bytes: request.bytes };
+    }
+    if (inspection.status === 'protected') {
+      return { status: 'unavailable', bytes: request.bytes };
+    }
+    if (inspection.status === 'stale') {
+      options.reportError?.(
+        `Recovery Draft for ${request.title} was rejected because the source Document changed.`,
+      );
+      return { status: 'ready', bytes: request.bytes, sourceVersion: inspection.sourceVersion };
+    }
+    if (inspection.status === 'none') {
+      return { status: 'ready', bytes: request.bytes, sourceVersion: inspection.sourceVersion };
+    }
+    const choice = await options.chooseRecoveryDraft?.({
+      documentPath: request.filePath,
+      title: request.title,
+      editedRevision: inspection.draft.editedRevision,
+      ...(request.signal ? { signal: request.signal } : {}),
+    });
+    if (request.signal?.aborted) throw interruptionError();
+    if (choice === 'recover') {
+      return {
+        status: 'recovered',
+        bytes: inspection.draft.bytes,
+        sourceVersion: inspection.sourceVersion,
+        recoveredRevision: inspection.draft.editedRevision,
+      };
+    }
+    if (choice === 'discard') {
+      await adapter.remove(request.filePath);
+      return { status: 'ready', bytes: request.bytes, sourceVersion: inspection.sourceVersion };
+    }
+    throw new Error('Recovery Draft decision cancelled');
+  };
   const createSurface: DocumentSurfaceFactory = async (request) => {
+    const prepared = await prepareRecoveryDraft(request);
     const saveSource = await options.pdfSaveAdapter?.captureSource?.(
       request.filePath,
       request.bytes,
     );
     try {
-      const surface = await baseCreateSurface(request);
+      const surface = await baseCreateSurface({ ...request, bytes: prepared.bytes });
+      if (prepared.status !== 'unavailable') {
+        surface.runtime.recovery = { sourceVersion: prepared.sourceVersion };
+      }
+      if (prepared.status === 'recovered') {
+        if (!surface.runtime.editing?.markRecovered) {
+          await disposeSurface(surface);
+          throw new Error('This viewer cannot restore Recovery Drafts safely');
+        }
+        surface.runtime.editing.markRecovered(prepared.recoveredRevision);
+      }
       if (!saveSource) return surface;
       surface.runtime.saveSource = saveSource;
       const destroy = surface.runtime.destroy.bind(surface.runtime);
@@ -459,11 +538,28 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
         readingPosition,
       });
     };
+    const captureRecoveryDraft = (): void => {
+      const presentedDocument = presented.get(identity.filePath);
+      const editRevision = presentedDocument?.runtime.editing?.state().revision;
+      if (!presentedDocument || editRevision === undefined || !options.captureRecoveryDraft) return;
+      void options.captureRecoveryDraft(identity.filePath).then((outcome) => {
+        if (outcome.status === 'failure') {
+          if (reportedRecoveryFailures.get(identity.filePath) === editRevision) return;
+          reportedRecoveryFailures.set(identity.filePath, editRevision);
+          options.reportError?.(
+            `Recovery Draft could not be saved for ${identity.title}: ${String(outcome.error)}. Your live edits are retained.`,
+          );
+        } else if (outcome.status === 'performed') {
+          reportedRecoveryFailures.delete(identity.filePath);
+        }
+      });
+    };
     return {
       stateChanged: () => {
         if (isCurrentSurface()) {
           renderDocumentControls(options.snapshot());
           options.renderingStateChanged?.();
+          captureRecoveryDraft();
         }
       },
       readingPositionObserved: settleReadingPosition,

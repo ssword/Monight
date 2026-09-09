@@ -7,6 +7,7 @@ import {
   requestConfirmation,
   requestPdfPassword,
   requestPdfSaveFailure,
+  requestRecoveryDraft,
   requestUnsavedDocument,
   showToast,
 } from './app/dialogs';
@@ -74,6 +75,7 @@ interface AppInfo {
 
 export interface ApplicationModules {
   pdfSaveAdapter?: import('./reader/native-pdf-editing').NativePdfSaveAdapter;
+  recoveryDraftAdapter?: import('./reader/recovery-drafts').RecoveryDraftAdapter;
   createAnnotationStorage: typeof import('./app/annotation-storage').createAnnotationStorage;
   browserPrintAdapter: typeof import('./app/browser-print-adapter').browserPrintAdapter;
   externalLinkAdapter: import('./reader/reader-actions').ExternalLinkAdapter;
@@ -482,11 +484,18 @@ export async function initializeApplication(modules: ApplicationModules): Promis
         return readerActions.dispatch(action, options);
       },
       acceptsReaderActions: acceptsReaderWork,
+      captureRecoveryDraft: async (filePath) =>
+        (await readerActions?.captureRecoveryDraft(filePath)) ?? {
+          status: 'no-op',
+          revision: 0,
+        },
       snapshot: () => readerActions?.snapshot() ?? { ...initialReadingSession, revision: 0 },
       isDocumentOpen: (filePath) => readerActions?.isDocumentOpen(filePath) ?? false,
       defaultVisualState,
       ...(createSurface ? { createSurface } : {}),
       pdfSaveAdapter: modules.pdfSaveAdapter,
+      recoveryDraftAdapter: modules.recoveryDraftAdapter,
+      chooseRecoveryDraft: requestRecoveryDraft,
       ...(annotationAuthority ? { annotationAuthority } : {}),
       requestPassword: requestPdfPassword,
       requestAnnotationNote,
@@ -517,6 +526,7 @@ export async function initializeApplication(modules: ApplicationModules): Promis
       externalLinkAdapter: modules.externalLinkAdapter,
       printAdapter: modules.browserPrintAdapter,
       pdfSaveAdapter: modules.pdfSaveAdapter,
+      recoveryDraftAdapter: modules.recoveryDraftAdapter,
       chooseUnsavedDocument: requestUnsavedDocument,
       reopenDocument: async (filePath) => {
         if (!documentIntake) throw new Error('Document Intake is unavailable');

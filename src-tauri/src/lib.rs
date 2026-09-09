@@ -14,6 +14,7 @@ mod document_intake;
 mod menu;
 mod pdf_replace;
 mod pdf_save;
+mod recovery_drafts;
 #[cfg(test)]
 mod test_support;
 
@@ -306,7 +307,14 @@ pub fn run() {
         .manage(FrontendLifecycleState::default())
         .manage(document_intake::DocumentIntake::default())
         .manage(pdf_save::PdfSave::default())
+        .manage(recovery_drafts::RecoveryDrafts::default())
         .invoke_handler(tauri::generate_handler![
+            commands::inspect_recovery_draft,
+            commands::read_recovery_draft,
+            commands::write_recovery_draft,
+            commands::repair_recovery_draft_after_write,
+            commands::reconcile_recovery_draft,
+            commands::remove_recovery_draft,
             commands::inspect_pdf_editing,
             commands::choose_pdf_save_destination,
             commands::release_pdf_save_destination,
