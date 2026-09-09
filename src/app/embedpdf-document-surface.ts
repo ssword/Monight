@@ -38,6 +38,7 @@ import type { DocumentRuntime } from '../reader/document-queries';
 import type { DocumentRendering, DocumentRenderingState } from '../reader/document-rendering';
 import { createInternalDocumentPage } from '../reader/internal-document-page';
 import type {
+  ReaderActionOptions,
   ReadingPosition,
   RestorableReadingPosition,
   ZoomIntent,
@@ -51,7 +52,7 @@ import type {
 const EMBEDPDF_WASM_URL = '/embedpdf/pdfium.wasm';
 const EMBEDPDF_FONT_BASE_URL = '/embedpdf/fonts';
 
-const READ_ONLY_CATEGORIES = [
+const DISABLED_CATEGORIES = [
   'annotation',
   'redaction',
   'insert',
@@ -61,6 +62,8 @@ const READ_ONLY_CATEGORIES = [
   'document-export',
   'document-protect',
   'document-capture',
+  // Reading Session supports single, continuous, and odd-page spreads.
+  'spread-even',
 ] as const;
 
 const localFontFallback = {
@@ -119,7 +122,7 @@ export function createEmbedPdfViewerConfig(fontLoader?: LocalFontLoader): PDFVie
       ui: { family: 'system-ui, sans-serif', stylesheetUrl: null },
       signature: null,
     },
-    disabledCategories: [...READ_ONLY_CATEGORIES],
+    disabledCategories: [...DISABLED_CATEGORIES],
     permissions: {
       enforceDocumentPermissions: true,
       overrides: {
@@ -451,6 +454,7 @@ export function captureEmbedPdfReadingPosition(
   page: number,
   metrics: EmbedPdfScrollMetrics,
   layout: EmbedPdfScrollLayout,
+  pageInset = 0,
 ): ReadingPosition {
   const visibility = metrics.pageVisibilityMetrics.find((item) => item.pageNumber === page);
   const pageLayout = layout.virtualItems
@@ -458,7 +462,7 @@ export function captureEmbedPdfReadingPosition(
     .find((item) => item.pageNumber === page);
   const location =
     visibility && pageLayout && pageLayout.rotatedHeight > 0
-      ? Math.min(1, Math.max(0, visibility.original.pageY / pageLayout.rotatedHeight))
+      ? Math.min(1, Math.max(0, (visibility.original.pageY - pageInset) / pageLayout.rotatedHeight))
       : 0;
   return { page, location };
 }
@@ -536,7 +540,24 @@ async function createProductionViewer({
     'document-manager',
   );
   const commands = requireCapability<CommandsCapability>(registry, 'commands');
-  removeEmbedPdfCommandShortcuts(commands, 'panel:toggle-search', ['Ctrl+F', 'Meta+F']);
+  const configuredCommands = new Set<string>();
+  for (const [shortcut, commandId] of [...commands.getAllShortcuts()]) {
+    if (configuredCommands.has(commandId)) continue;
+    configuredCommands.add(commandId);
+    if (/^(zoom:|rotate:|scroll:|document:|panel:toggle-search$)/.test(commandId)) {
+      removeEmbedPdfCommandShortcuts(commands, commandId, [shortcut]);
+    } else {
+      const original = commands.getCommandByShortcut(shortcut);
+      if (!original) continue;
+      commands.unregisterCommand(original.id);
+      commands.registerCommand({
+        ...original,
+        action: (context) => {
+          if (target.dataset.visible === 'true') original.action(context);
+        },
+      });
+    }
+  }
   const annotations = requireCapability<AnnotationCapability>(registry, 'annotation');
   const scroll = requireCapability<ScrollCapability>(registry, 'scroll');
   const zoom = requireCapability<ZoomCapability>(registry, 'zoom');
@@ -573,6 +594,10 @@ async function createProductionViewer({
   let selectedSpreadMode = SpreadMode.None;
   let destroyed = false;
   let pendingObservedPosition: ReadingPosition | null = null;
+  let readingAnchor: ReadingPosition | null = null;
+  let selectedZoomIntent: ZoomIntent | null = null;
+  let layoutEpoch = 0;
+  let observationEpoch = 0;
   const projectionDepth = { page: 0, zoom: 0, rotation: 0, viewMode: 0 };
   let initialLayoutReady = false;
   let resolveInitialLayout!: () => void;
@@ -586,13 +611,21 @@ async function createProductionViewer({
   const currentReadingPosition = (
     metrics: EmbedPdfScrollMetrics = scrollScope.getMetrics(),
   ): ReadingPosition =>
-    captureEmbedPdfReadingPosition(currentPageNumber(), metrics, scrollScope.getLayout());
-  const publishViewModeFromLayout = (): void => {
-    const nextViewMode = viewModeForEmbedPdfLayout(selectedScrollStrategy, selectedSpreadMode);
+    captureEmbedPdfReadingPosition(
+      currentPageNumber(),
+      metrics,
+      scrollScope.getLayout(),
+      viewport.getViewportGap() / zoom.forDocument(documentId).getState().currentZoomLevel,
+    );
+  const publishViewModeFromLayout = (
+    nextViewMode = viewModeForEmbedPdfLayout(selectedScrollStrategy, selectedSpreadMode),
+  ): void => {
     const changed = nextViewMode !== selectedViewMode;
     selectedViewMode = nextViewMode;
     callbacks.stateChanged();
-    if (projectionDepth.viewMode === 0 && changed) {
+    // Projection sets selectedViewMode before emitting layout changes, so only
+    // a distinct viewer choice reaches this path, even during a previous render.
+    if (changed) {
       void callbacks.viewModeRequested?.(nextViewMode);
     }
   };
@@ -657,6 +690,15 @@ async function createProductionViewer({
   };
   const shadowRoot = container.shadowRoot;
   if (!shadowRoot) throw new Error('EmbedPDF viewer shadow root is unavailable');
+  // The pinned ready-made viewer's viewport owns the page layers. Filtering its
+  // contents keeps text/annotations aligned and leaves toolbars and panels alone.
+  const readingStyle = document.createElement('style');
+  readingStyle.textContent = `
+    .bg-bg-app[style*="overflow: auto"] > div {
+      filter: var(--monight-reading-filter, none);
+    }
+  `;
+  shadowRoot.append(readingStyle);
   shadowRoot.addEventListener('pointerdown', interceptEmbedPdfLink, { capture: true });
   shadowRoot.addEventListener('click', interceptEmbedPdfLink, { capture: true });
   unsubscribers.push(
@@ -673,10 +715,24 @@ async function createProductionViewer({
       // requesting another page jump here would reset the within-page location.
     }),
     scrollScope.onScroll((metrics) => {
+      if (destroyed) return;
       callbacks.stateChanged();
-      if (projectionDepth.page > 0) return;
-      pendingObservedPosition = currentReadingPosition(metrics);
-      callbacks.readingPositionObserved(pendingObservedPosition);
+      if (Object.values(projectionDepth).some((depth) => depth > 0)) return;
+      const epoch = ++observationEpoch;
+      const position = currentReadingPosition(metrics);
+      // Layout changes emit intermediate metrics synchronously, before the zoom
+      // or rotate notification. Give that notification time to cancel the sample.
+      void waitForPresentationFrames().then(() => {
+        if (
+          destroyed ||
+          epoch !== observationEpoch ||
+          Object.values(projectionDepth).some((depth) => depth > 0)
+        )
+          return;
+        pendingObservedPosition = position;
+        readingAnchor = position;
+        callbacks.readingPositionObserved(position);
+      });
     }),
     scroll.onLayoutReady((event) => {
       if (event.documentId !== documentId || !event.isInitial || initialLayoutReady) return;
@@ -686,7 +742,11 @@ async function createProductionViewer({
     scroll.onStateChange((state) => {
       if (state.strategy === selectedScrollStrategy) return;
       selectedScrollStrategy = state.strategy;
-      publishViewModeFromLayout();
+      publishViewModeFromLayout(
+        state.strategy === ScrollStrategy.Vertical
+          ? 'continuous'
+          : viewModeForEmbedPdfLayout(state.strategy, selectedSpreadMode),
+      );
     }),
     viewport.onScrollActivity((event) => {
       if (
@@ -700,10 +760,22 @@ async function createProductionViewer({
       }
     }),
     zoom.onZoomChange((event) => {
-      if (event.documentId !== documentId) return;
+      if (destroyed || event.documentId !== documentId) return;
       callbacks.stateChanged();
-      if (projectionDepth.zoom === 0)
-        void callbacks.zoomIntentRequested(zoomIntentFromLevel(event.level));
+      // Relative zoom events carry the old numeric level plus the resulting
+      // actual scale. Fit modes keep their symbolic intent across recalculation.
+      const intent = zoomIntentFromLevel(
+        typeof event.level === 'number' ? event.newZoom : event.level,
+      );
+      const changed = JSON.stringify(intent) !== JSON.stringify(selectedZoomIntent);
+      selectedZoomIntent = intent;
+      if (projectionDepth.zoom === 0 && changed) void callbacks.zoomIntentRequested(intent);
+      else if (projectionDepth.zoom === 0 && intent.kind !== 'manual' && readingAnchor) {
+        // EmbedPDF recalculates fit asynchronously after a resize. Its pixel
+        // anchor can drift across page gaps; restore Monight's normalized anchor.
+        const anchor = { ...readingAnchor };
+        void withProjection('page', () => scrollToPosition(anchor));
+      }
     }),
     rotate.onRotateChange((event) => {
       if (event.documentId !== documentId) return;
@@ -711,9 +783,11 @@ async function createProductionViewer({
       const delta = (nextRotation - selectedRotation + 360) % 360;
       selectedRotation = nextRotation;
       callbacks.stateChanged();
-      if (projectionDepth.rotation === 0 && delta === 90) {
+      // setRotation records its target before calling the viewer, making its own
+      // event delta zero. A distinct user turn must survive an in-flight render.
+      if (delta === 90) {
         void callbacks.rotationRequested?.('clockwise');
-      } else if (projectionDepth.rotation === 0 && delta === 270) {
+      } else if (delta === 270) {
         void callbacks.rotationRequested?.('counter-clockwise');
       }
     }),
@@ -729,19 +803,49 @@ async function createProductionViewer({
     if (!documentObject) throw new Error('EmbedPDF Document Content is not loaded');
     return documentObject;
   };
+  const scrollToPosition = (position: RestorableReadingPosition): void => {
+    if (destroyed) return;
+    readingAnchor = 'location' in position ? { ...position } : { page: position.page, location: 0 };
+    const page = currentDocument().pages[position.page - 1];
+    const rotation = (((page?.rotation ?? 0) + rotate.forDocument(documentId).getRotation()) %
+      4) as Rotation;
+    scrollScope.scrollToPage({
+      pageNumber: position.page,
+      pageCoordinates:
+        page && 'location' in position
+          ? restoreEmbedPdfReadingPositionCoordinates(page.size, rotation, position)
+          : undefined,
+      behavior: 'instant',
+    });
+  };
   const withProjection = async (
     kind: keyof typeof projectionDepth,
     work: () => void,
   ): Promise<void> => {
-    if (kind === 'page') pendingObservedPosition = null;
+    if (destroyed) return;
+    const epoch = ++layoutEpoch;
+    observationEpoch += 1;
+    const anchor = readingAnchor ?? currentReadingPosition();
+    pendingObservedPosition = null;
     projectionDepth[kind] += 1;
     try {
       work();
       await waitForPresentationFrames();
+      if (kind !== 'page' && !destroyed && epoch === layoutEpoch) {
+        scrollToPosition(anchor);
+        await waitForPresentationFrames();
+      }
     } finally {
       projectionDepth[kind] -= 1;
     }
   };
+  unsubscribers.push(
+    viewport.onViewportResize((event) => {
+      if (destroyed || !documentObject || event.documentId !== documentId || !readingAnchor) return;
+      const anchor = { ...readingAnchor };
+      void withProjection('page', () => scrollToPosition(anchor));
+    }),
+  );
 
   const openDocument = async (password?: string) => {
     const response = await documentManager
@@ -860,30 +964,20 @@ async function createProductionViewer({
     viewMode: () => selectedViewMode,
     readingPosition: currentReadingPosition,
     goToPage: (pageNumber) =>
-      withProjection('page', () =>
-        scroll.forDocument(documentId).scrollToPage({ pageNumber, behavior: 'instant' }),
-      ),
-    goToReadingPosition: (position) =>
-      withProjection('page', () => {
-        if ('legacyOffset' in position) {
-          scrollScope.scrollToPage({ pageNumber: position.page, behavior: 'instant' });
-          return;
-        }
-        const page = currentDocument().pages[position.page - 1];
-        const rotation = (((page?.rotation ?? 0) + rotate.forDocument(documentId).getRotation()) %
-          4) as Rotation;
-        scrollScope.scrollToPage({
-          pageNumber: position.page,
-          pageCoordinates: page
-            ? restoreEmbedPdfReadingPositionCoordinates(page.size, rotation, position)
-            : undefined,
-          behavior: 'instant',
-        });
-      }),
-    setZoomIntent: (intent) =>
-      withProjection('zoom', () =>
+      withProjection('page', () => scrollToPosition({ page: pageNumber, location: 0 })),
+    goToReadingPosition: (position) => withProjection('page', () => scrollToPosition(position)),
+    setZoomIntent: (intent) => {
+      // A viewer interaction has already applied its zoom (including its gesture
+      // focal point). Committing that intent must not execute the zoom a second time.
+      if (
+        JSON.stringify(intent) ===
+        JSON.stringify(zoomIntentFromLevel(zoom.forDocument(documentId).getState().zoomLevel))
+      )
+        return Promise.resolve();
+      return withProjection('zoom', () =>
         zoom.forDocument(documentId).requestZoom(zoomLevelFromIntent(intent)),
-      ),
+      );
+    },
     zoomIn: () => withProjection('zoom', () => zoom.forDocument(documentId).zoomIn()),
     zoomOut: () => withProjection('zoom', () => zoom.forDocument(documentId).zoomOut()),
     setRotation: (rotation) =>
@@ -903,7 +997,7 @@ async function createProductionViewer({
     fitToPage: () =>
       withProjection('zoom', () => zoom.forDocument(documentId).requestZoom(ZoomMode.FitPage)),
     applyFilter(filterCss) {
-      container.style.filter = filterCss;
+      container.style.setProperty('--monight-reading-filter', filterCss);
     },
     setVisible(visible) {
       target.dataset.visible = String(visible);
@@ -1080,6 +1174,8 @@ export function createEmbedPdfDocumentSurfaceFactory({
       resolveLinkTarget: (target, options) => openedViewer.resolveLinkTarget(target, options),
       destroy,
     };
+    const project = (work: () => Promise<void>, options?: ReaderActionOptions): Promise<void> =>
+      destroyPromise || options?.isCancelled?.() ? Promise.resolve() : work();
     const rendering: DocumentRendering = {
       getState(): DocumentRenderingState {
         return {
@@ -1096,15 +1192,21 @@ export function createEmbedPdfDocumentSurfaceFactory({
       openSearch: () => openedViewer.openSearch(),
       getScrollPosition: () => 0,
       getReadingPosition: () => openedViewer.readingPosition(),
-      goToPage: (pageNumber) => openedViewer.goToPage(pageNumber),
-      goToReadingPosition: (position) => openedViewer.goToReadingPosition(position),
-      setZoomIntent: (intent) => openedViewer.setZoomIntent(intent),
-      zoomIn: () => openedViewer.zoomIn(),
-      zoomOut: () => openedViewer.zoomOut(),
-      setRotation: (rotation) => openedViewer.setRotation(rotation),
-      setViewMode: (viewMode) => openedViewer.setViewMode(viewMode),
-      fitToPage: () => openedViewer.fitToPage(),
-      applyFilter: (filterCss) => openedViewer.applyFilter(filterCss),
+      goToPage: (pageNumber, options) => project(() => openedViewer.goToPage(pageNumber), options),
+      goToReadingPosition: (position, options) =>
+        project(() => openedViewer.goToReadingPosition(position), options),
+      setZoomIntent: (intent, options) =>
+        project(() => openedViewer.setZoomIntent(intent), options),
+      zoomIn: (options) => project(() => openedViewer.zoomIn(), options),
+      zoomOut: (options) => project(() => openedViewer.zoomOut(), options),
+      setRotation: (rotation, options) =>
+        project(() => openedViewer.setRotation(rotation), options),
+      setViewMode: (viewMode, options) =>
+        project(() => openedViewer.setViewMode(viewMode), options),
+      fitToPage: (options) => project(() => openedViewer.fitToPage(), options),
+      applyFilter: (filterCss, options) => {
+        if (!destroyPromise && !options?.isCancelled?.()) openedViewer.applyFilter(filterCss);
+      },
       setVisible: (visible) => openedViewer.setVisible(visible),
       revealSearchMatch: (match) => openedViewer.revealSearchMatch(match),
       setSearchQuery: (query) => openedViewer.setSearchQuery(query),

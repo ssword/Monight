@@ -22,6 +22,17 @@ export interface DocumentRenderingState {
   readonly viewMode: ViewMode;
 }
 
+/** Live presentation only. PDF-authored page orientation belongs to Document
+ * Content and is never included in viewingRotation. Save and print must use
+ * Document Content, without applying this transform to PDF bytes. */
+export interface DocumentViewTransform {
+  readonly scale: number;
+  readonly zoomIntent: ZoomIntent;
+  readonly viewingRotation: number;
+  readonly viewMode: ViewMode;
+  readonly filterCss: string;
+}
+
 export interface DocumentRendering {
   getState(): DocumentRenderingState;
   openSearch?(): void;

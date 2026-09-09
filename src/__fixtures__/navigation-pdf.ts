@@ -1,9 +1,9 @@
 /** Small authored PDF with repeated text, nested bookmarks, metadata, and link actions. */
-export function navigationPdf(title = 'Navigation fixture'): Uint8Array {
+export function navigationPdf(title = 'Navigation fixture', nativeRotation = 0): Uint8Array {
   const stream = (text: string) => `<< /Length ${text.length} >>\nstream\n${text}\nendstream`;
   const objects = [
     '<< /Type /Catalog /Pages 2 0 R /Outlines 10 0 R >>',
-    '<< /Type /Pages /Kids [3 0 R 4 0 R 5 0 R] /Count 3 >>',
+    `<< /Type /Pages /Kids [3 0 R 4 0 R 5 0 R] /Count 3${nativeRotation ? ` /Rotate ${nativeRotation}` : ''} >>`,
     '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 6 0 R /Resources << /Font << /F1 9 0 R >> >> /Annots [17 0 R 18 0 R] >>',
     '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 7 0 R /Resources << /Font << /F1 9 0 R >> >> >>',
     '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 8 0 R /Resources << /Font << /F1 9 0 R >> >> >>',

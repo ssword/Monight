@@ -175,17 +175,26 @@ export function setupEventListeners({
 
   // Keyboard shortcuts - use KeybindManager for dynamic keybind handling
   const handleKeyDown = async (e: KeyboardEvent) => {
-    if (!keybindManager) return;
+    if (!keybindManager || e.defaultPrevented) return;
+    // Tab controls own their arrow-key focus navigation. Other configurable
+    // reader shortcuts must be claimed before the ready-made viewer's listeners.
+    if (
+      ['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key) &&
+      e
+        .composedPath()
+        .some((target) => target instanceof Element && target.getAttribute('role') === 'tab')
+    )
+      return;
 
     const actionId = keybindManager.matchEvent(e);
     if (actionId) {
       debugLog(`Keybind matched: ${actionId}`);
       e.preventDefault();
-      e.stopPropagation();
+      e.stopImmediatePropagation();
       await keybindManager.handleEvent(e);
     }
   };
 
-  document.addEventListener('keydown', handleKeyDown);
+  document.addEventListener('keydown', handleKeyDown, true);
   debugLog('Keyboard event listeners attached');
 }

@@ -592,6 +592,9 @@ describe('EmbedPDF Document surface', () => {
     await callbacks[0].linkTargetRequested?.({ readingPosition: { page: 2, location: 0.5 } });
     await callbacks[0].pageNavigationRequested(2);
     callbacks[0].readingPositionSettled({ page: 2, location: 0.8 });
+    await callbacks[0].zoomIntentRequested({ kind: 'manual', scale: 4 });
+    await callbacks[0].rotationRequested?.('clockwise');
+    await callbacks[0].viewModeRequested?.('spread');
     finishSearch([{ pageNumber: 2, pageOccurrence: 0, index: 0, excerpt: 'moon' }]);
     await expect(pendingSearch).resolves.toEqual([]);
     expect(query?.isCurrent()).toBe(false);
@@ -692,5 +695,38 @@ describe('EmbedPDF Document surface', () => {
     expect(() => surface.rendering.updateAnnotation('annotation-1', {})).toThrow(/read-only/);
     expect(() => surface.rendering.removeAnnotation('annotation-1')).toThrow(/read-only/);
     expect(PRESETS.default).toBeDefined();
+  });
+
+  it('ignores cancelled and disposed visual projections through the rendering contract', async () => {
+    let scale = 1;
+    const runtime = createViewerRuntime({
+      currentZoom: () => scale,
+      zoomIntent: () => ({ kind: 'manual', scale }),
+      setZoomIntent: async (intent) => {
+        if (intent.kind === 'manual') scale = intent.scale;
+      },
+    });
+    const surface = await createEmbedPdfDocumentSurfaceFactory({
+      createViewer: async () => runtime,
+    })({
+      filePath: '/docs/report.pdf',
+      title: 'report.pdf',
+      bytes: new Uint8Array([1]),
+      callbacks: {
+        readingPositionObserved: vi.fn(),
+        readingPositionSettled: vi.fn(),
+        stateChanged: vi.fn(),
+        pageNavigationRequested: async () => {},
+        zoomIntentRequested: async () => {},
+      },
+    });
+    await surface.rendering.setZoomIntent(
+      { kind: 'manual', scale: 2 },
+      { isCancelled: () => true },
+    );
+    expect(surface.rendering.getState().zoom).toBe(1);
+    await surface.runtime.destroy();
+    await surface.rendering.setZoomIntent({ kind: 'manual', scale: 3 });
+    expect(surface.rendering.getState().zoom).toBe(1);
   });
 });

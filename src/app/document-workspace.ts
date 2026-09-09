@@ -10,7 +10,7 @@ import type {
 } from '../reader/document-content';
 import type { DocumentRuntimeIntake, DocumentRuntimeOpenRequest } from '../reader/document-intake';
 import type { DocumentQuery, DocumentRuntime } from '../reader/document-queries';
-import type { DocumentRendering } from '../reader/document-rendering';
+import type { DocumentRendering, DocumentViewTransform } from '../reader/document-rendering';
 import { createPdfDocumentContent } from '../reader/pdf-document-content';
 import type {
   ReaderAction,
@@ -102,6 +102,7 @@ export interface DocumentWorkspace {
   activePresentation(): PresentationSurface | null;
   activeRenderingState(): ReturnType<DocumentRendering['getState']> | null;
   activeReadingPosition(): { filePath: string; readingPosition: ReadingPosition } | null;
+  viewTransform(filePath: string): DocumentViewTransform | null;
   replaceAnnotations(filePath: string | null): void;
 }
 
@@ -648,6 +649,20 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
       return filePath && rendering
         ? { filePath, readingPosition: rendering.getReadingPosition() }
         : null;
+    },
+    viewTransform(filePath) {
+      const state = presented.get(filePath)?.rendering.getState();
+      const visualState = options
+        .snapshot()
+        .documents.find((item) => item.filePath === filePath)?.visualState;
+      if (!state || !visualState) return null;
+      return {
+        scale: state.zoom,
+        zoomIntent: cloneZoomIntent(state.zoomIntent),
+        viewingRotation: state.rotation,
+        viewMode: state.viewMode,
+        filterCss: buildFilterCSS(visualState.filterSettings),
+      };
     },
     replaceAnnotations(filePath) {
       for (const [path, documentState] of presented) {

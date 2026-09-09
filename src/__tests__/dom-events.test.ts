@@ -33,6 +33,15 @@ describe('setupEventListeners', () => {
 
     expect(handleEvent).toHaveBeenCalledOnce();
     expect(windowAddEventListener).not.toHaveBeenCalledWith('keydown', expect.any(Function));
+
+    document.body.innerHTML = '<button role="tab">report.pdf</button>';
+    const tab = document.querySelector<HTMLButtonElement>('[role="tab"]');
+    tab?.focus();
+    tab?.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'o', metaKey: true, bubbles: true, cancelable: true }),
+    );
+    await Promise.resolve();
+    expect(handleEvent).toHaveBeenCalledTimes(2);
   });
 
   it('switches and focuses Documents with arrow keys', async () => {
