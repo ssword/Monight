@@ -40,6 +40,12 @@ jobs:
         run: npm run build
       - name: Test frontend
         run: npm test
+      - name: Install Chromium for EmbedPDF runtime contracts
+        if: runner.os == 'Linux'
+        run: npx playwright install --with-deps chromium
+      - name: Verify EmbedPDF offline reading and navigation
+        if: runner.os == 'Linux'
+        run: npm run test:embedpdf-offline
 
   rust:
     name: Rust (${{ matrix.os }})

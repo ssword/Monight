@@ -45,7 +45,10 @@ export interface DocumentSurfaceCallbacks {
   readonly zoomIntentRequested: (zoomIntent: ZoomIntent) => Promise<void>;
   readonly rotationRequested?: (direction: 'clockwise' | 'counter-clockwise') => Promise<void>;
   readonly viewModeRequested?: (viewMode: ViewMode) => Promise<void>;
-  readonly linkTargetRequested?: (target: PdfLinkTarget) => Promise<void>;
+  readonly linkTargetRequested?: (
+    target: PdfLinkTarget,
+    options?: ReaderActionOptions,
+  ) => Promise<void>;
 }
 
 export interface DocumentSurfaceFactoryRequest {
@@ -434,45 +437,64 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
     },
     async open(request: DocumentRuntimeOpenRequest) {
       const { document, bytes, initialPage, restoredDocument, signal } = request;
+      const surfaceId = crypto.randomUUID();
+      const isCurrentSurface = (): boolean =>
+        presented.get(document.canonicalPath)?.id === surfaceId &&
+        options.isDocumentOpen(document.canonicalPath);
+      const dispatchSurfaceAction = async (
+        action: ReaderAction,
+        actionOptions?: ReaderActionOptions,
+      ): Promise<void> => {
+        if (!isCurrentSurface()) return;
+        await dispatchReaderActionOrThrow(action, {
+          ...actionOptions,
+          isCancelled: () => !isCurrentSurface() || Boolean(actionOptions?.isCancelled?.()),
+        });
+      };
       const settleReadingPosition = (readingPosition: ReadingPosition): void => {
-        void options.dispatchReaderAction({
+        void dispatchSurfaceAction({
           type: 'settleReadingPosition',
           filePath: document.canonicalPath,
           readingPosition,
         });
       };
       const callbacks: DocumentSurfaceCallbacks = {
-        stateChanged: () => options.renderingStateChanged?.(),
+        stateChanged: () => {
+          if (isCurrentSurface()) options.renderingStateChanged?.();
+        },
         readingPositionObserved: settleReadingPosition,
         readingPositionSettled: settleReadingPosition,
         pageNavigationRequested: (page, actionOptions) =>
-          dispatchReaderActionOrThrow(
+          dispatchSurfaceAction(
             { type: 'goToPage', filePath: document.canonicalPath, page },
             actionOptions,
           ),
         zoomIntentRequested: (zoomIntent) =>
-          dispatchReaderActionOrThrow({
+          dispatchSurfaceAction({
             type: 'setZoomIntent',
             filePath: document.canonicalPath,
             zoomIntent,
           }),
         rotationRequested: (direction) =>
-          dispatchReaderActionOrThrow({
+          dispatchSurfaceAction({
             type: direction === 'clockwise' ? 'rotateClockwise' : 'rotateCounterClockwise',
             filePath: document.canonicalPath,
           }),
         viewModeRequested: (viewMode) =>
-          dispatchReaderActionOrThrow({
+          dispatchSurfaceAction({
             type: 'setViewMode',
             filePath: document.canonicalPath,
             viewMode,
           }),
-        linkTargetRequested: (target) =>
-          dispatchReaderActionOrThrow({
-            type: 'activateDocumentTarget',
-            filePath: document.canonicalPath,
-            target,
-          }),
+        linkTargetRequested: (target, actionOptions) =>
+          dispatchSurfaceAction(
+            {
+              type: 'activateDocumentTarget',
+              filePath: document.canonicalPath,
+              target,
+            },
+            actionOptions,
+          ),
       };
       const surfaceWork = createSurface({
         filePath: document.canonicalPath,
@@ -492,7 +514,7 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
         },
       });
       presented.set(document.canonicalPath, {
-        id: crypto.randomUUID(),
+        id: surfaceId,
         title: document.title,
         rendering: surface.rendering,
         presentation: {

@@ -151,6 +151,9 @@ interface CreateEmbedPdfViewerRequest {
 export interface EmbedPdfViewerRuntime {
   open(request: EmbedPdfOpenRequest): Promise<void>;
   openSearch(): void;
+  setSearchQuery(query: string): void;
+  clearSearch(): void;
+  revealSearchMatch(match: PdfSearchMatch): Promise<void>;
   pageCount(): number;
   currentPage(): number;
   currentZoom(): number;
@@ -344,6 +347,27 @@ const embedPdfLinkGeometries = (path: readonly EventTarget[]): EmbedPdfLinkGeome
     return Object.values(geometry).every(Number.isFinite) ? [geometry] : [];
   });
 
+// Snippet 2.15 has no bookmark activation hook. Capture its ready-made rows,
+// preserving tree indices (titles need not be unique) and leaving expand buttons
+// alone. Actual-runtime contracts guard this pinned DOM integration.
+const embedPdfOutlinePath = (event: Event): number[] | null => {
+  const path = event.composedPath();
+  const origin = path[0];
+  if (!(origin instanceof Element) || origin.closest('button')) return null;
+  const tree = origin.closest('.outline-tree');
+  let item = origin.closest('.select-none');
+  if (!tree || !item || !tree.contains(item)) return null;
+  const indices: number[] = [];
+  while (item && tree.contains(item)) {
+    const parent: HTMLElement | null = item.parentElement;
+    if (!parent) return null;
+    indices.unshift([...parent.children].indexOf(item));
+    if (parent === tree) return indices;
+    item = parent.closest('.select-none');
+  }
+  return null;
+};
+
 const zoomIntentFromLevel = (level: ZoomLevel): ZoomIntent => {
   if (typeof level === 'number') return { kind: 'manual', scale: level };
   return level === ZoomMode.FitWidth ? { kind: 'fit-width' } : { kind: 'fit-page' };
@@ -518,12 +542,28 @@ async function createProductionViewer({
   const zoom = requireCapability<ZoomCapability>(registry, 'zoom');
   const rotate = requireCapability<RotateCapability>(registry, 'rotate');
   const spread = requireCapability<SpreadCapability>(registry, 'spread');
-  const search = requireCapability<SearchCapability>(registry, 'search');
   const thumbnails = requireCapability<ThumbnailCapability>(registry, 'thumbnail');
   const viewport = requireCapability<ViewportCapability>(registry, 'viewport');
   const engine = registry.getEngine();
   const unsubscribers: Array<() => void> = [];
   const documentId = `monight-${crypto.randomUUID()}`;
+  const searchScope = requireCapability<SearchCapability>(registry, 'search').forDocument(
+    documentId,
+  );
+  let searchEpoch = 0;
+  let searchCompletion = Promise.resolve();
+  let searchSession = '';
+  unsubscribers.push(
+    searchScope.onStateChange((state) => {
+      // The ready-made panel calls the capability directly, bypassing Monight's
+      // presentation methods. Its query/flags/session changes also cancel reveals.
+      const nextSession = JSON.stringify([state.query, state.flags, state.active]);
+      if (nextSession !== searchSession) {
+        searchSession = nextSession;
+        searchEpoch += 1;
+      }
+    }),
+  );
   let sourceBytes = new Uint8Array();
   let fileName = '';
   let documentObject: ReturnType<DocumentManagerCapability['getDocument']> = null;
@@ -532,6 +572,7 @@ async function createProductionViewer({
   let selectedScrollStrategy = ScrollStrategy.Vertical;
   let selectedSpreadMode = SpreadMode.None;
   let destroyed = false;
+  let pendingObservedPosition: ReadingPosition | null = null;
   const projectionDepth = { page: 0, zoom: 0, rotation: 0, viewMode: 0 };
   let initialLayoutReady = false;
   let resolveInitialLayout!: () => void;
@@ -573,12 +614,8 @@ async function createProductionViewer({
       pageNumber,
     );
   };
-  const interceptEmbedPdfLink = (event: Event): void => {
-    const target = linkTargetForEvent(event);
-    if (!target) return;
-    event.stopImmediatePropagation();
-    if (event.type !== 'click') return;
-    event.preventDefault();
+  const requestLinkTarget = async (target: EmbedPdfLinkTarget): Promise<void> => {
+    if (destroyed) return;
     const monightTarget = embedPdfLinkTarget(target, (destination) => {
       const page = currentDocument().pages[destination.pageIndex];
       return embedPdfDestinationReadingPosition(
@@ -588,7 +625,33 @@ async function createProductionViewer({
       );
     });
     if (!monightTarget || !callbacks.linkTargetRequested) return;
-    void callbacks.linkTargetRequested(monightTarget).catch((error) => {
+    await callbacks.linkTargetRequested(monightTarget);
+  };
+  const requestOutlineTarget = async (indices: number[]): Promise<void> => {
+    const result = await engine.getBookmarks(currentDocument()).toPromise();
+    let bookmarks = result.bookmarks;
+    for (const [depth, index] of indices.entries()) {
+      const bookmark = bookmarks[index];
+      if (!bookmark) return;
+      if (depth === indices.length - 1 && bookmark.target) {
+        await requestLinkTarget(bookmark.target);
+      }
+      bookmarks = bookmark.children ?? [];
+    }
+  };
+  const interceptEmbedPdfLink = (event: Event): void => {
+    const outlinePath = embedPdfOutlinePath(event);
+    const target = outlinePath ? null : linkTargetForEvent(event);
+    if (!outlinePath && !target) return;
+    event.stopImmediatePropagation();
+    if (event.type !== 'click') return;
+    event.preventDefault();
+    const activation = outlinePath
+      ? requestOutlineTarget(outlinePath)
+      : target
+        ? requestLinkTarget(target)
+        : Promise.resolve();
+    void activation.catch((error) => {
       console.error('Failed to activate EmbedPDF link:', error);
     });
   };
@@ -605,11 +668,15 @@ async function createProductionViewer({
     scroll.onPageChange((event) => {
       if (event.documentId !== documentId) return;
       callbacks.stateChanged();
-      if (projectionDepth.page === 0) void callbacks.pageNavigationRequested(event.pageNumber);
+      // This reports movement that already happened (including search/thumbnails
+      // and ordinary scrolling). onScroll settles its precise Reading Position;
+      // requesting another page jump here would reset the within-page location.
     }),
     scrollScope.onScroll((metrics) => {
       callbacks.stateChanged();
-      callbacks.readingPositionObserved(currentReadingPosition(metrics));
+      if (projectionDepth.page > 0) return;
+      pendingObservedPosition = currentReadingPosition(metrics);
+      callbacks.readingPositionObserved(pendingObservedPosition);
     }),
     scroll.onLayoutReady((event) => {
       if (event.documentId !== documentId || !event.isInitial || initialLayoutReady) return;
@@ -625,9 +692,11 @@ async function createProductionViewer({
       if (
         event.documentId === documentId &&
         !event.activity.isScrolling &&
-        !event.activity.isSmoothScrolling
+        !event.activity.isSmoothScrolling &&
+        pendingObservedPosition
       ) {
-        callbacks.readingPositionSettled(currentReadingPosition());
+        callbacks.readingPositionSettled(pendingObservedPosition);
+        pendingObservedPosition = null;
       }
     }),
     zoom.onZoomChange((event) => {
@@ -664,6 +733,7 @@ async function createProductionViewer({
     kind: keyof typeof projectionDepth,
     work: () => void,
   ): Promise<void> => {
+    if (kind === 'page') pendingObservedPosition = null;
     projectionDepth[kind] += 1;
     try {
       work();
@@ -738,6 +808,50 @@ async function createProductionViewer({
     openSearch() {
       commands.forDocument(documentId).execute('panel:toggle-search', 'api');
     },
+    setSearchQuery(query) {
+      if (destroyed) return;
+      searchEpoch += 1;
+      searchCompletion = searchScope
+        .searchAllPages(query)
+        .toPromise()
+        .then(
+          () => undefined,
+          () => undefined,
+        );
+    },
+    clearSearch() {
+      searchEpoch += 1;
+      if (!destroyed) searchScope.stopSearch();
+    },
+    async revealSearchMatch(match) {
+      const epoch = searchEpoch;
+      const isCancelled = () => destroyed || epoch !== searchEpoch;
+      await searchCompletion;
+      if (isCancelled()) return;
+      const state = searchScope.getState();
+      const index = state.results.findIndex(
+        (result) => result.pageIndex + 1 === match.pageNumber && result.charIndex === match.index,
+      );
+      const result = state.results[index];
+      if (!result) return;
+      const page = currentDocument().pages[result.pageIndex];
+      const y = Math.min(...result.rects.map((rect) => rect.origin.y));
+      if (callbacks.linkTargetRequested) {
+        await callbacks.linkTargetRequested(
+          {
+            readingPosition: {
+              page: match.pageNumber,
+              location:
+                page && Number.isFinite(y) ? Math.min(1, Math.max(0, y / page.size.height)) : 0,
+            },
+          },
+          { isCancelled },
+        );
+      } else {
+        await callbacks.pageNavigationRequested(match.pageNumber, { isCancelled });
+      }
+      if (!isCancelled()) searchScope.goToResult(index);
+    },
     pageCount: () => documentObject?.pageCount ?? 0,
     currentPage: currentPageNumber,
     currentZoom: () => zoom.forDocument(documentId).getState().currentZoomLevel,
@@ -796,7 +910,9 @@ async function createProductionViewer({
     },
     async search(query, options) {
       if (options.isCancelled() || !query.trim()) return [];
-      const task = search.forDocument(documentId).searchAllPages(query);
+      // Document Queries must not activate search, select a result, or cancel the
+      // reader's interactive search. The engine query has no viewer state effects.
+      const task = engine.searchAllPages(currentDocument(), query);
       const progressMatches: PdfSearchMatch[] = [];
       const pageOccurrences = new Map<number, number>();
       task.onProgress(({ page, results }) => {
@@ -990,9 +1106,9 @@ export function createEmbedPdfDocumentSurfaceFactory({
       fitToPage: () => openedViewer.fitToPage(),
       applyFilter: (filterCss) => openedViewer.applyFilter(filterCss),
       setVisible: (visible) => openedViewer.setVisible(visible),
-      revealSearchMatch: (match) => openedViewer.goToPage(match.pageNumber),
-      setSearchQuery: () => undefined,
-      clearSearch: () => undefined,
+      revealSearchMatch: (match) => openedViewer.revealSearchMatch(match),
+      setSearchQuery: (query) => openedViewer.setSearchQuery(query),
+      clearSearch: () => openedViewer.clearSearch(),
       setAnnotations() {
         throw new Error('EmbedPDF development surface is read-only');
       },

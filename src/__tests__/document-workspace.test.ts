@@ -230,7 +230,7 @@ describe('Document workspace adapter', () => {
     const workspace = createDocumentWorkspace({
       dispatchReaderAction: dispatch,
       snapshot: () => snapshot([], null),
-      isDocumentOpen: () => false,
+      isDocumentOpen: () => true,
       defaultVisualState: () => ({
         filterSettings: PRESETS.default,
         zoomIntent: { kind: 'manual', scale: 1 },
@@ -256,7 +256,7 @@ describe('Document workspace adapter', () => {
         filePath: '/docs/report.pdf',
         target: { url: 'https://example.com/report' },
       },
-      undefined,
+      { isCancelled: expect.any(Function) },
     );
   });
 

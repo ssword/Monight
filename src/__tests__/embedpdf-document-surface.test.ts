@@ -24,6 +24,9 @@ const createViewerRuntime = (
 ): EmbedPdfViewerRuntime => ({
   open: vi.fn(async () => undefined),
   openSearch: vi.fn(),
+  setSearchQuery: vi.fn(),
+  clearSearch: vi.fn(),
+  revealSearchMatch: vi.fn(async () => undefined),
   pageCount: () => 2,
   currentPage: () => 1,
   currentZoom: () => 1,
@@ -520,6 +523,79 @@ describe('EmbedPDF Document surface', () => {
 
     expect(destroyViewer).toHaveBeenCalledOnce();
     expect(document.querySelector('.embedpdf-document-surface')).toBeNull();
+  });
+
+  it('captures originating Documents and rejects callbacks and Queries from a closed generation', async () => {
+    const callbacks: DocumentSurfaceCallbacks[] = [];
+    let finishSearch!: (
+      matches: { pageNumber: number; pageOccurrence: number; index: number; excerpt: string }[],
+    ) => void;
+    const initialSession = { schemaVersion: 2 as const, activeDocumentPath: null, documents: [] };
+    let reader: ReaderActions;
+    const workspace = createDocumentWorkspace({
+      dispatchReaderAction: (action, options) => reader.dispatch(action, options),
+      snapshot: () => reader?.snapshot() ?? { ...initialSession, revision: 0 },
+      isDocumentOpen: (path) => reader?.isDocumentOpen(path) ?? false,
+      defaultVisualState: () => ({
+        filterSettings: PRESETS.default,
+        zoomIntent: { kind: 'manual', scale: 1 },
+        rotation: 0,
+        viewMode: 'continuous',
+      }),
+      createSurface: createEmbedPdfDocumentSurfaceFactory({
+        createViewer: async (request) => {
+          callbacks.push(request.callbacks);
+          return createViewerRuntime({
+            search: async () =>
+              new Promise((resolve) => {
+                finishSearch = resolve;
+              }),
+            resolveLinkTarget: async (target) =>
+              target.readingPosition
+                ? {
+                    kind: 'page',
+                    pageNumber: target.readingPosition.page,
+                    location: target.readingPosition.location,
+                  }
+                : null,
+          });
+        },
+      }),
+    });
+    reader = createReaderActions({
+      initialSession,
+      projection: workspace.projection,
+      persist: async () => undefined,
+    });
+    const open = (path: string) =>
+      workspace.intakeRuntime.open({
+        document: { canonicalPath: path, title: path },
+        bytes: new Uint8Array([1]),
+        activate: true,
+      });
+    await open('/docs/first.pdf');
+    const query = reader.query('/docs/first.pdf');
+    const pendingSearch = query?.search('moon');
+    await open('/docs/second.pdf');
+    await callbacks[0].linkTargetRequested?.({ readingPosition: { page: 2, location: 0.5 } });
+    expect(reader.snapshot()).toMatchObject({
+      activeDocumentPath: '/docs/second.pdf',
+      documents: [
+        { filePath: '/docs/first.pdf', readingPosition: { page: 2, location: 0.5 } },
+        { filePath: '/docs/second.pdf', readingPosition: { page: 1, location: 0 } },
+      ],
+    });
+
+    await reader.dispatch({ type: 'closeDocument', filePath: '/docs/first.pdf' });
+    await open('/docs/first.pdf');
+    const reopened = reader.snapshot();
+    await callbacks[0].linkTargetRequested?.({ readingPosition: { page: 2, location: 0.5 } });
+    await callbacks[0].pageNavigationRequested(2);
+    callbacks[0].readingPositionSettled({ page: 2, location: 0.8 });
+    finishSearch([{ pageNumber: 2, pageOccurrence: 0, index: 0, excerpt: 'moon' }]);
+    await expect(pendingSearch).resolves.toEqual([]);
+    expect(query?.isCurrent()).toBe(false);
+    expect(reader.snapshot()).toEqual(reopened);
   });
 
   it('disposes a provisional viewer when opening the PDF fails', async () => {

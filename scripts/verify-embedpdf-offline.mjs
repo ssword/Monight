@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import { chromium } from 'playwright';
+import { verifyNavigation } from './verify-embedpdf-navigation.mjs';
 
 const port = 4178;
 const origin = `http://127.0.0.1:${port}`;
@@ -196,6 +197,7 @@ try {
   console.log(
     `EmbedPDF offline smoke passed: ${result.state.pageCount} page(s), zoom ${result.state.zoom}`,
   );
+  await verifyNavigation(browser, origin);
 } finally {
   await browser?.close();
   server.kill('SIGTERM');
