@@ -24,6 +24,29 @@ Monight is a cross-platform PDF reader built with Tauri and TypeScript. It combi
 - PDF.js for rendering
 - NoUISlider for the filter configurator
 
+### PDF engine migration
+
+PDF.js remains the default reader. An opt-in, read-only EmbedPDF viewer is implemented behind
+`VITE_PDF_SURFACE=embedpdf`; the switch to EmbedPDF as the default is still pending.
+The feature list and local annotation storage described here apply to the default reader.
+Native PDF annotation editing, explicit Save/Save As, and recovery are planned work, not
+available features of the gated viewer. See [ADR 0002](docs/adr/0002-adopt-embedpdf-and-pdf-native-annotations.md)
+and the [engine migration review](docs/pdf-engine-review-2026-09-09.md).
+
+To exercise the gated desktop reader:
+
+```bash
+VITE_PDF_SURFACE=embedpdf npm run tauri:dev
+```
+
+In PowerShell, set `$env:VITE_PDF_SURFACE = 'embedpdf'` before running `npm run tauri:dev`.
+The variable is selected at build time; set it before `npm run tauri:build` for a gated package.
+
+`npm test` covers the default reader and substitute EmbedPDF adapters. Run
+`npm run test:embedpdf-offline` separately for the actual EmbedPDF runtime in Chromium
+(install its browser with `npx playwright install chromium` if needed). This browser check
+does not establish packaged Tauri behavior or native annotation interoperability.
+
 ## Project Structure
 - `src/` - UI code, PDF viewer logic, and settings UI
 - `src/app/` - App orchestration modules (events, UI, file actions)
@@ -85,12 +108,21 @@ or power loss cannot be guaranteed, so ordinary debounced persistence remains th
 protection.
 
 ## Iconography
-The app icon is designed to follow Apple UI icon principles: minimal, bold silhouettes, and soft depth. The high-resolution source lives at `src-tauri/icons/icon-source.svg` and is used to generate the platform icon set.
+The app uses the “A Page of Moonlight” icon, created in Icon Composer. The editable native
+source is `design/app-icon-2026/Monight.icon`; its exported default appearance is
+`design/app-icon-2026/monight-native-default-1024.png`.
 
-To regenerate icons:
+After editing the native document, export its Default appearance at 1024px to that PNG,
+then regenerate the platform icon set:
 ```bash
-npx tauri icon src-tauri/icons/icon-source.svg
+npm run icons:generate
 ```
+
+PNG and ICO assets use the exported artwork. The macOS ICNS fallback includes a transparent
+inset so it matches other Dock icons. `src-tauri/tauri.macos.conf.json` also includes the
+native `.icon` source: Tauri compiles it for Liquid Glass when Xcode 26+ provides `actool`.
+With Command Line Tools alone, Tauri skips the native asset catalog and uses the new ICNS
+icon. See [the icon design notes](design/app-icon-2026/README.md).
 
 ## Future Work (AI)
 - Smart classification of PDFs

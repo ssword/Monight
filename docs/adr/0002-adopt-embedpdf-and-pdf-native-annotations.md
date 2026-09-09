@@ -44,7 +44,9 @@ The current Tauri backend has no PDF-writing bridge. Native file persistence nee
 
 Implementation must verify a pinned production-supported EmbedPDF release rather than assume APIs from the development branch or unversioned documentation are available. Check native annotation round trips with Preview and Acrobat, preservation of existing PDF content, offline assets, view-only transforms, save failure and external-conflict behavior, recovery, and close/Quit cancellation. Preserve the existing macOS, Windows, and Linux CI and packaged-app verification gates in `docs/desktop-adapter-verification.md`. These checks are required work, not completed evidence.
 
-The individual decisions and consolidated design were confirmed during the design interview on 2026-09-08. No interview decisions remain open. Implementation has not started, and the verification requirements above remain unproven.
+The individual decisions and consolidated design were confirmed during the design interview on 2026-09-08. No interview decisions remain open.
+
+Implementation status, reviewed 2026-09-09 at `aa9a095`: the first development-gated, read-only EmbedPDF surface is implemented, while PDF.js remains the default. Local Chromium offline rendering has been exercised; native annotations, file writing, recovery, interoperability, and the final desktop switch are not complete. Temporary engine coexistence is the migration strategy specified by issue #56, not a replacement for this decision. See the [engine migration review](../pdf-engine-review-2026-09-09.md) for current defects and verification limits.
 
 ## References
 

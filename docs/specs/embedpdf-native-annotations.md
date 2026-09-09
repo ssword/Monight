@@ -158,7 +158,7 @@ The user confirmed the following boundaries: primary workflow tests through the 
 
 ## Further Notes
 
-- This specification synthesizes the design confirmed on 2026-09-08. Product decisions and test boundaries are confirmed; implementation and compatibility verification have not been performed.
+- This specification synthesizes the design confirmed on 2026-09-08. Product decisions and test boundaries are confirmed. As reviewed on 2026-09-09 at `aa9a095`, a development-gated, read-only EmbedPDF slice is implemented and its local Chromium offline smoke passes. The default reader remains PDF.js; native annotation, save, recovery, cross-reader compatibility, and packaged desktop acceptance remain incomplete. See the [engine migration review](../pdf-engine-review-2026-09-09.md).
 - The tracker label is `ready-for-agent`. Readiness means the work is specified, not that every upstream capability has already been demonstrated.
 - First validate the selected production-supported EmbedPDF release against real native annotation round trips, offline packaging, document preservation, and the Tauri save boundary. The feature must not be declared complete solely because a ready-made viewer renders a PDF or returns export bytes.
 - Native annotation support, editable cross-reader behavior, and original-file persistence are separate acceptance requirements. Disabling failing optional tools is permitted; removing the core annotation/comment experience is not a substitute for delivering the feature.

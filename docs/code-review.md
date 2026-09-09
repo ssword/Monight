@@ -1,5 +1,8 @@
 # Monight Code Review
 
+Historical review of the revision recorded below. Its defect list and test counts are not
+current. See the [2026-09-09 engine migration review](pdf-engine-review-2026-09-09.md).
+
 - **Date:** 2026-07-30
 - **Version reviewed:** 1.0.6
 - **Branch:** `develop` @ `9542969`
