@@ -3,6 +3,8 @@ import EmbedPDF, {
   type CommandsCapability,
   type DocumentManagerCapability,
   type PDFViewerConfig,
+  PdfAnnotationSubtype,
+  type PdfLinkAnnoObject,
   type PluginRegistry,
   type RotateCapability,
   Rotation,
@@ -12,6 +14,7 @@ import EmbedPDF, {
   type SpreadCapability,
   SpreadMode,
   type ThumbnailCapability,
+  type TrackedAnnotation,
   type ViewportCapability,
   type ZoomCapability,
   type ZoomLevel,
@@ -208,28 +211,101 @@ export function removeEmbedPdfCommandShortcuts(
   registry.registerCommand({ ...command, shortcuts: undefined });
 }
 
-interface EmbedPdfNavigateEvent {
-  readonly result: { readonly outcome: string; readonly uri?: string };
-  readonly target:
-    | { readonly type: 'destination'; readonly destination: { readonly pageIndex: number } }
-    | {
-        readonly type: 'action';
-        readonly action: {
-          readonly type: number;
-          readonly uri?: string;
-          readonly destination?: { readonly pageIndex: number };
-        };
-      };
+type EmbedPdfDestination = Extract<PdfLinkTarget['dest'], { readonly pageIndex: number }>;
+
+interface EmbedPdfLinkTarget {
+  readonly type: 'destination' | 'action';
+  readonly destination?: EmbedPdfDestination;
+  readonly action?: {
+    readonly type: number;
+    readonly uri?: string;
+    readonly destination?: EmbedPdfDestination;
+  };
 }
 
-export function embedPdfNavigationTarget(event: EmbedPdfNavigateEvent): PdfLinkTarget | null {
-  if (event.result.outcome === 'uri' && event.result.uri) return { url: event.result.uri };
+interface EmbedPdfLinkGeometry {
+  readonly left: number;
+  readonly top: number;
+  readonly width: number;
+  readonly height: number;
+}
+
+export function embedPdfLinkTarget(target: EmbedPdfLinkTarget): PdfLinkTarget | null {
+  if (target.type === 'action' && target.action?.uri) return { url: target.action.uri };
   const destination =
-    event.target.type === 'destination'
-      ? event.target.destination
-      : event.target.action.destination;
+    target.type === 'destination' ? target.destination : target.action?.destination;
   return destination ? { dest: destination } : null;
 }
+
+export function embedPdfDestinationReadingPosition(
+  destination: EmbedPdfDestination,
+  pageCount: number,
+  pageHeight: number,
+): ReadingPosition {
+  const zoom = destination.zoom;
+  const params = zoom && typeof zoom === 'object' && 'params' in zoom ? zoom.params : undefined;
+  const y =
+    params && typeof params === 'object' && 'y' in params && typeof params.y === 'number'
+      ? params.y
+      : undefined;
+  return {
+    page: Math.max(1, Math.min(destination.pageIndex + 1, pageCount)),
+    location:
+      typeof y === 'number' && pageHeight > 0
+        ? Math.max(0, Math.min(1, (pageHeight - y) / pageHeight))
+        : 0,
+  };
+}
+
+const approximatelyEqual = (left: number, right: number, tolerance = 1.5): boolean =>
+  Math.abs(left - right) <= tolerance;
+
+const isEmbedPdfTrackedLink = (
+  annotation: TrackedAnnotation,
+): annotation is TrackedAnnotation<PdfLinkAnnoObject> =>
+  annotation.object.type === PdfAnnotationSubtype.LINK;
+
+export function embedPdfLinkTargetAtGeometry(
+  annotations: readonly TrackedAnnotation[],
+  geometries: readonly EmbedPdfLinkGeometry[],
+  scale: number,
+  currentPage: number,
+): EmbedPdfLinkTarget | null {
+  const matches = annotations.filter(isEmbedPdfTrackedLink).filter(({ object }) => {
+    if (!object.target) return false;
+    const sizeScale = object.flags?.includes('noZoom') ? 1 : scale;
+    return geometries.some(
+      (geometry) =>
+        approximatelyEqual(geometry.left, object.rect.origin.x * scale) &&
+        approximatelyEqual(geometry.top, object.rect.origin.y * scale) &&
+        approximatelyEqual(geometry.width, object.rect.size.width * sizeScale) &&
+        approximatelyEqual(geometry.height, object.rect.size.height * sizeScale),
+    );
+  });
+  const match = matches.find(({ object }) => object.pageIndex + 1 === currentPage) ?? matches[0];
+  return match?.object.target ?? null;
+}
+
+const isEmbedPdfLinkHitArea = (element: Element): boolean =>
+  (element.tagName.toLowerCase() === 'rect' &&
+    element.getAttribute('fill') === 'transparent' &&
+    element.getAttribute('style')?.includes('cursor: pointer') === true &&
+    element.getAttribute('style')?.includes('pointer-events: visible') === true) ||
+  (element.tagName.toLowerCase() === 'div' &&
+    element.getAttribute('style')?.includes('cursor: pointer') === true &&
+    element.getAttribute('style')?.includes('pointer-events: auto') === true);
+
+const embedPdfLinkGeometries = (path: readonly EventTarget[]): EmbedPdfLinkGeometry[] =>
+  path.flatMap((target) => {
+    if (!(target instanceof HTMLElement)) return [];
+    const geometry = {
+      left: Number.parseFloat(target.style.left),
+      top: Number.parseFloat(target.style.top),
+      width: Number.parseFloat(target.style.width),
+      height: Number.parseFloat(target.style.height),
+    };
+    return Object.values(geometry).every(Number.isFinite) ? [geometry] : [];
+  });
 
 const zoomIntentFromLevel = (level: ZoomLevel): ZoomIntent => {
   if (typeof level === 'number') return { kind: 'manual', scale: level };
@@ -427,6 +503,7 @@ async function createProductionViewer({
   });
 
   const scrollScope = scroll.forDocument(documentId);
+  const annotationScope = annotations.forDocument(documentId);
   const currentPageNumber = () => scrollScope.getCurrentPage();
   const currentReadingPosition = (
     metrics: EmbedPdfScrollMetrics = scrollScope.getMetrics(),
@@ -441,6 +518,38 @@ async function createProductionViewer({
       void callbacks.viewModeRequested?.(nextViewMode);
     }
   };
+  const linkTargetForEvent = (event: Event): EmbedPdfLinkTarget | null => {
+    const path = event.composedPath();
+    if (!path.some((target) => target instanceof Element && isEmbedPdfLinkHitArea(target))) {
+      return null;
+    }
+    return embedPdfLinkTargetAtGeometry(
+      annotationScope.getAnnotations(),
+      embedPdfLinkGeometries(path),
+      zoom.forDocument(documentId).getState().currentZoomLevel,
+      currentPageNumber(),
+    );
+  };
+  const interceptEmbedPdfLink = (event: Event): void => {
+    const target = linkTargetForEvent(event);
+    if (!target) return;
+    event.stopImmediatePropagation();
+    if (event.type !== 'click') return;
+    event.preventDefault();
+    const monightTarget = embedPdfLinkTarget(target);
+    if (!monightTarget || !callbacks.linkTargetRequested) return;
+    void callbacks.linkTargetRequested(monightTarget).catch((error) => {
+      console.error('Failed to activate EmbedPDF link:', error);
+    });
+  };
+  const shadowRoot = container.shadowRoot;
+  if (!shadowRoot) throw new Error('EmbedPDF viewer shadow root is unavailable');
+  shadowRoot.addEventListener('pointerdown', interceptEmbedPdfLink, { capture: true });
+  shadowRoot.addEventListener('click', interceptEmbedPdfLink, { capture: true });
+  unsubscribers.push(
+    () => shadowRoot.removeEventListener('pointerdown', interceptEmbedPdfLink, { capture: true }),
+    () => shadowRoot.removeEventListener('click', interceptEmbedPdfLink, { capture: true }),
+  );
 
   unsubscribers.push(
     scroll.onPageChange((event) => {
@@ -494,13 +603,6 @@ async function createProductionViewer({
       if (event.spreadMode === selectedSpreadMode) return;
       selectedSpreadMode = event.spreadMode;
       publishViewModeFromLayout();
-    }),
-    annotations.forDocument(documentId).onNavigate((event) => {
-      const target = embedPdfNavigationTarget(event);
-      if (!target || !callbacks.linkTargetRequested) return;
-      void callbacks.linkTargetRequested(target).catch((error) => {
-        console.error('Failed to activate EmbedPDF link:', error);
-      });
     }),
   );
 
@@ -727,9 +829,16 @@ async function createProductionViewer({
       if (options.isCancelled()) return null;
       if (target.url) return { kind: 'external', url: target.url };
       if (target.dest && !Array.isArray(target.dest) && typeof target.dest !== 'string') {
+        const page = currentDocument().pages[target.dest.pageIndex];
+        const position = embedPdfDestinationReadingPosition(
+          target.dest,
+          currentDocument().pageCount,
+          page?.size.height ?? 0,
+        );
         return {
           kind: 'page',
-          pageNumber: Math.max(1, Math.min(target.dest.pageIndex + 1, currentDocument().pageCount)),
+          pageNumber: position.page,
+          location: position.location,
         };
       }
       return null;

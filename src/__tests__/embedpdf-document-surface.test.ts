@@ -7,8 +7,10 @@ import {
   createEmbedPdfDocumentSurfaceFactory,
   createEmbedPdfViewerConfig,
   type EmbedPdfViewerRuntime,
+  embedPdfDestinationReadingPosition,
   embedPdfLayoutForViewMode,
-  embedPdfNavigationTarget,
+  embedPdfLinkTarget,
+  embedPdfLinkTargetAtGeometry,
   removeEmbedPdfCommandShortcuts,
   restoreEmbedPdfReadingPositionCoordinates,
 } from '../app/embedpdf-document-surface';
@@ -135,23 +137,57 @@ describe('EmbedPDF Document surface', () => {
     const destination = { pageIndex: 4, zoom: { mode: 0 }, view: [] };
 
     expect(
-      embedPdfNavigationTarget({
-        result: { outcome: 'uri', uri: 'https://example.com/report' },
-        target: { type: 'action', action: { type: 3, uri: 'https://example.com/report' } },
-      }),
+      embedPdfLinkTarget({
+        type: 'action',
+        action: { type: 3, uri: 'https://example.com/report' },
+      } as never),
     ).toEqual({ url: 'https://example.com/report' });
+    expect(embedPdfLinkTarget({ type: 'destination', destination } as never)).toEqual({
+      dest: destination,
+    });
+    expect(embedPdfLinkTarget({ type: 'action', action: { type: 0 } } as never)).toBeNull();
+  });
+
+  it('matches a ready-made link hit area to its loaded annotation target', () => {
+    const firstPageTarget = { type: 'destination', destination: { pageIndex: 1 } };
+    const secondPageTarget = { type: 'destination', destination: { pageIndex: 3 } };
+    const annotation = (pageIndex: number, target: typeof firstPageTarget) =>
+      ({
+        object: {
+          type: 2,
+          pageIndex,
+          flags: [],
+          rect: { origin: { x: 72, y: 62 }, size: { width: 108, height: 50 } },
+          target: target as never,
+        },
+      }) as never;
+
     expect(
-      embedPdfNavigationTarget({
-        result: { outcome: 'navigated' },
-        target: { type: 'destination', destination },
-      }),
-    ).toEqual({ dest: destination });
+      embedPdfLinkTargetAtGeometry(
+        [annotation(0, firstPageTarget), annotation(2, secondPageTarget)],
+        [{ left: 108, top: 93, width: 162, height: 75 }],
+        1.5,
+        3,
+      ),
+    ).toBe(secondPageTarget);
     expect(
-      embedPdfNavigationTarget({
-        result: { outcome: 'unsupported' },
-        target: { type: 'action', action: { type: 0 } },
-      }),
+      embedPdfLinkTargetAtGeometry(
+        [annotation(0, firstPageTarget)],
+        [{ left: 0, top: 0, width: 108, height: 50 }],
+        1,
+        1,
+      ),
     ).toBeNull();
+  });
+
+  it('preserves an EmbedPDF XYZ destination as normalized Reading Position', () => {
+    expect(
+      embedPdfDestinationReadingPosition(
+        { pageIndex: 4, zoom: { mode: 1, params: { x: 20, y: 600, zoom: 1 } }, view: [] },
+        10,
+        800,
+      ),
+    ).toEqual({ page: 5, location: 0.25 });
   });
 
   it('opens intake bytes before exposing page navigation and zoom through Document Rendering', async () => {

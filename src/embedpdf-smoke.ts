@@ -5,7 +5,9 @@ declare global {
     embedPdfSmoke?: {
       currentPage: number;
       initialZoom: number;
+      linkPageIndex: number;
       pageCount: number;
+      pageAfterLinkClick: number;
       zoom: number;
     };
   }
@@ -16,13 +18,14 @@ function createRequiredFontPdf(): Uint8Array {
   const objects = [
     '<< /Type /Catalog /Pages 2 0 R >>',
     '<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >>',
-    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 5 0 R /Resources << /Font << /F1 7 0 R >> >> >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 5 0 R /Resources << /Font << /F1 7 0 R >> >> /Annots [10 0 R] >>',
     '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 6 0 R /Resources << /Font << /F1 7 0 R >> >> >>',
     `<< /Length ${content.length} >>\nstream\n${content}\nendstream`,
     `<< /Length ${content.length} >>\nstream\n${content}\nendstream`,
     '<< /Type /Font /Subtype /Type0 /BaseFont /STSong-Light /Encoding /UniGB-UCS2-H /DescendantFonts [8 0 R] >>',
     '<< /Type /Font /Subtype /CIDFontType0 /BaseFont /STSong-Light /CIDSystemInfo << /Registry (Adobe) /Ordering (GB1) /Supplement 4 >> /FontDescriptor 9 0 R >>',
     '<< /Type /FontDescriptor /FontName /STSong-Light /Flags 4 /FontBBox [0 -200 1000 900] /ItalicAngle 0 /Ascent 880 /Descent -120 /CapHeight 700 /StemV 80 >>',
+    '<< /Type /Annot /Subtype /Link /P 3 0 R /Rect [72 680 180 730] /Border [0 0 1] /A << /S /GoTo /D [4 0 R /XYZ 0 600 1] >> >>',
   ];
   const offsets: number[] = [];
   let pdf = '%PDF-1.4\n';
@@ -39,6 +42,7 @@ function createRequiredFontPdf(): Uint8Array {
 
 async function run(): Promise<void> {
   try {
+    let linkPageIndex: number | null = null;
     const factory = createEmbedPdfDocumentSurfaceFactory();
     const surface = await factory({
       filePath: '/fixtures/required-font.pdf',
@@ -50,11 +54,40 @@ async function run(): Promise<void> {
         stateChanged: () => undefined,
         pageNavigationRequested: async () => undefined,
         zoomIntentRequested: async () => undefined,
+        linkTargetRequested: async (target) => {
+          const destination = target.dest;
+          if (destination && !Array.isArray(destination) && typeof destination !== 'string') {
+            linkPageIndex = destination.pageIndex;
+          }
+        },
       },
     });
     surface.rendering.setVisible(true);
     await surface.rendering.setZoomIntent({ kind: 'manual', scale: 1 });
     const initialZoom = surface.rendering.getState().zoom;
+    let link: Element | null = null;
+    for (let attempt = 0; attempt < 50; attempt += 1) {
+      link =
+        document
+          .querySelector('embedpdf-container')
+          ?.shadowRoot?.querySelector(
+            '[style*="cursor: pointer"]' +
+              '[style*="pointer-events: auto"], ' +
+              '[style*="cursor: pointer"]' +
+              '[style*="pointer-events: visible"]',
+          ) ?? null;
+      if (link) break;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    if (!link) throw new Error('EmbedPDF did not render the internal link annotation');
+    link.dispatchEvent(
+      new MouseEvent('click', { bubbles: true, cancelable: true, composed: true }),
+    );
+    for (let attempt = 0; attempt < 50 && linkPageIndex === null; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    if (linkPageIndex === null) throw new Error('EmbedPDF did not delegate the internal link');
+    const pageAfterLinkClick = surface.rendering.getState().currentPage;
     await surface.rendering.goToPage(2);
     await surface.rendering.zoomIn();
     let state = surface.rendering.getState();
@@ -66,7 +99,9 @@ async function run(): Promise<void> {
     window.embedPdfSmoke = {
       currentPage: state.currentPage,
       initialZoom,
+      linkPageIndex,
       pageCount: state.totalPages,
+      pageAfterLinkClick,
       zoom: state.zoom,
     };
     document.body.dataset.status = 'ready';

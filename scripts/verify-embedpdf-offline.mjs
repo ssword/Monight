@@ -79,7 +79,28 @@ try {
     );
   }
   const renderedPages = page.locator('embedpdf-container img[src^="blob:"]');
-  await renderedPages.first().waitFor({ state: 'visible', timeout: 10_000 });
+  try {
+    await renderedPages.first().waitFor({ state: 'visible', timeout: 10_000 });
+  } catch (error) {
+    const state = await page.evaluate(() => ({
+      status: document.body.dataset.status,
+      error: document.body.dataset.error,
+      smoke: window.embedPdfSmoke,
+      shadowText: document
+        .querySelector('embedpdf-container')
+        ?.shadowRoot?.textContent?.replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, 500),
+      shadowHtml: document
+        .querySelector('embedpdf-container')
+        ?.shadowRoot?.innerHTML.replace(/\s+/g, ' ')
+        .slice(0, 1500),
+    }));
+    throw new Error(
+      `EmbedPDF did not render a page image: ${JSON.stringify(state)}\n${browserDiagnostics.join('\n')}`,
+      { cause: error },
+    );
+  }
   const renderedImages = await renderedPages.evaluateAll((images) =>
     images.filter(
       (image) =>
@@ -114,11 +135,44 @@ try {
     status: document.body.dataset.status,
     error: document.body.dataset.error,
     state: window.embedPdfSmoke,
+    linkCandidates: [
+      ...(document.querySelector('embedpdf-container')?.shadowRoot?.querySelectorAll('*') ?? []),
+    ]
+      .filter(
+        (element) => element.style.cursor === 'pointer' || element.style.pointerEvents === 'auto',
+      )
+      .map((element) => ({
+        style: element.getAttribute('style'),
+        html: element.outerHTML.slice(0, 300),
+        parents: (() => {
+          const parents = [];
+          let parent = element.parentElement;
+          for (let depth = 0; parent && depth < 12; depth += 1) {
+            parents.push({
+              tag: parent.tagName,
+              id: parent.id,
+              className: parent.getAttribute('class'),
+              data: { ...parent.dataset },
+              style: parent.getAttribute('style'),
+            });
+            parent = parent.parentElement;
+          }
+          return parents;
+        })(),
+      }))
+      .slice(0, 20),
   }));
 
-  if (result.status !== 'ready') throw new Error(result.error || 'EmbedPDF smoke failed');
+  if (result.status !== 'ready') {
+    throw new Error(
+      `${result.error || 'EmbedPDF smoke failed'}: ${JSON.stringify(result.linkCandidates)}\n${browserDiagnostics.join('\n')}`,
+    );
+  }
   if (!result.state || result.state.pageCount !== 2 || result.state.currentPage !== 2) {
     throw new Error(`Invalid EmbedPDF state: ${JSON.stringify(result.state)}`);
+  }
+  if (result.state.linkPageIndex !== 1 || result.state.pageAfterLinkClick !== 1) {
+    throw new Error(`EmbedPDF bypassed Monight link routing: ${JSON.stringify(result.state)}`);
   }
   if (result.state.zoom <= result.state.initialZoom) {
     throw new Error(`EmbedPDF zoom did not change: ${JSON.stringify(result.state)}`);

@@ -1063,7 +1063,10 @@ export function createReaderActions({
               };
             }
 
-            const readingPosition = { page: resolved.pageNumber, location: 0 };
+            const readingPosition = {
+              page: resolved.pageNumber,
+              location: resolved.location ?? 0,
+            };
             try {
               await projection.goToReadingPosition(filePath, readingPosition, {
                 isCancelled: () => cancelled(filePath, expectedGeneration, options),

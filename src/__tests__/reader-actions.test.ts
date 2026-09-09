@@ -71,7 +71,9 @@ describe('Reader Actions', () => {
   });
 
   it('activates an internal PDF target against its originating Document after activation changes', async () => {
-    let finishResolution: ((target: { kind: 'page'; pageNumber: number }) => void) | undefined;
+    let finishResolution:
+      | ((target: { kind: 'page'; pageNumber: number; location?: number }) => void)
+      | undefined;
     const firstRuntime = createDocumentRuntime();
     vi.mocked(firstRuntime.content.resolveLinkTarget).mockImplementation(
       () =>
@@ -101,7 +103,7 @@ describe('Reader Actions', () => {
     });
     await vi.waitFor(() => expect(finishResolution).toBeTypeOf('function'));
     await reader.dispatch({ type: 'activateDocument', filePath: '/docs/second.pdf' });
-    finishResolution?.({ kind: 'page', pageNumber: 9 });
+    finishResolution?.({ kind: 'page', pageNumber: 9, location: 0.4 });
 
     await expect(activation).resolves.toMatchObject({ status: 'committed' });
     expect(firstRuntime.content.resolveLinkTarget).toHaveBeenCalledWith(
@@ -110,13 +112,13 @@ describe('Reader Actions', () => {
     );
     expect(projection.goToReadingPosition).toHaveBeenCalledWith(
       '/docs/first.pdf',
-      { page: 9, location: 0 },
+      { page: 9, location: 0.4 },
       expect.objectContaining({ isCancelled: expect.any(Function) }),
     );
     expect(reader.snapshot()).toMatchObject({
       activeDocumentPath: '/docs/second.pdf',
       documents: [
-        { filePath: '/docs/first.pdf', readingPosition: { page: 9, location: 0 } },
+        { filePath: '/docs/first.pdf', readingPosition: { page: 9, location: 0.4 } },
         { filePath: '/docs/second.pdf', readingPosition: { page: 7, location: 0.5 } },
       ],
     });
