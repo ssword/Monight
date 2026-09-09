@@ -19,6 +19,7 @@ export interface DocumentThumbnailOptions {
 
 export interface DocumentRuntime {
   editing?: NativePdfEditing;
+  saveSource?: string;
   readonly content: DocumentContent;
   destroy(): Promise<void>;
   renderThumbnail(

@@ -190,6 +190,7 @@
   margin-left: 6px;
 }
 
+.tab-save,
 .tab-save-as {
   align-self: center;
   flex-shrink: 0;

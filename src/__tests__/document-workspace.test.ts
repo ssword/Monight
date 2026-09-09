@@ -7,6 +7,7 @@ import {
   type DocumentSurfaceCallbacks,
 } from '../app/document-workspace';
 import { createDocumentIntake, type DocumentRuntimeIntake } from '../reader/document-intake';
+import type { DocumentRuntime } from '../reader/document-queries';
 import type { DocumentRendering } from '../reader/document-rendering';
 import {
   createReaderActions,
@@ -24,7 +25,7 @@ const snapshot = (
 
 interface ControllableSurface {
   readonly rendering: DocumentRendering;
-  readonly runtime: { destroy: () => Promise<void> };
+  readonly runtime: DocumentRuntime;
   visible(): boolean;
 }
 
@@ -35,7 +36,23 @@ function createControllableSurface(
   let currentPage = 1;
   let visible = false;
   let readingPositionCalls = 0;
-  const runtime = { destroy: vi.fn(async () => undefined) };
+  const runtime: DocumentRuntime = {
+    destroy: vi.fn(async () => undefined),
+    renderThumbnail: async () => document.createElement('canvas'),
+    getAnnotations: () => [],
+    content: {
+      pageCount: 12,
+      getData: async () => new Uint8Array([1]),
+      getPage: async () => {
+        throw new Error('No page handle needed');
+      },
+      search: async () => [],
+      getOutline: async () => [],
+      getMetadata: async () => null,
+      resolveLinkTarget: async () => null,
+      destroy: async () => undefined,
+    },
+  };
   const rendering = {
     getState: () => ({
       currentPage,
@@ -150,7 +167,23 @@ describe('Document workspace adapter', () => {
       setVisible: vi.fn(),
       destroy: vi.fn(),
     } as unknown as DocumentRendering;
-    const runtime = { destroy: vi.fn(async () => undefined) };
+    const runtime: DocumentRuntime = {
+      destroy: vi.fn(async () => undefined),
+      renderThumbnail: async () => document.createElement('canvas'),
+      getAnnotations: () => [],
+      content: {
+        pageCount: 12,
+        getData: async () => new Uint8Array([1]),
+        getPage: async () => {
+          throw new Error('No page handle needed');
+        },
+        search: async () => [],
+        getOutline: async () => [],
+        getMetadata: async () => null,
+        resolveLinkTarget: async () => null,
+        destroy: async () => undefined,
+      },
+    };
     const dispatched: ReaderAction[] = [];
     const dispatch = vi.fn(async (action: ReaderAction) => {
       dispatched.push(action);
@@ -284,6 +317,7 @@ describe('Document workspace adapter', () => {
         return {
           rendering: substitute.rendering,
           runtime: {
+            saveSource: 'loaded-source',
             destroy: async () => {
               await substitute.runtime.destroy();
             },
@@ -322,7 +356,7 @@ describe('Document workspace adapter', () => {
           canonicalPath: '/docs/new.pdf',
           title: 'new.pdf',
         }),
-        writeNew: async (_destination, bytes) => bytes,
+        writeDestination: async (_destination, bytes) => bytes,
         releaseDestination: async () => undefined,
       },
     });
@@ -357,6 +391,95 @@ describe('Document workspace adapter', () => {
     });
     await originCallbacks?.pageNavigationRequested(5);
     expect(reader.snapshot().documents[0].readingPosition.page).toBe(5);
+  });
+
+  it('Save and deliberate reload use disk bytes, retain reading state, and retire old callbacks', async () => {
+    let reader: ReaderActions;
+    let disk = new Uint8Array([1]);
+    let revision = 1;
+    let saved = 0;
+    const callbacks: DocumentSurfaceCallbacks[] = [];
+    const loaded: number[] = [];
+    const initialSession = { schemaVersion: 2 as const, activeDocumentPath: null, documents: [] };
+    const visualState = {
+      filterSettings: PRESETS.default,
+      zoomIntent: { kind: 'fit-width' as const },
+      rotation: 90,
+      viewMode: 'spread' as const,
+    };
+    const adapter = {
+      captureSource: async () => 'source',
+      releaseSource: async () => undefined,
+      readSource: async () => disk.slice(),
+      chooseDestination: async () => null,
+      releaseDestination: async () => undefined,
+      writeDestination: async () => {
+        throw new Error('Unexpected Save As');
+      },
+      writeOriginal: async (_token: string, bytes: Uint8Array) => {
+        disk = bytes.slice();
+        return disk.slice();
+      },
+    };
+    const workspace = createDocumentWorkspace({
+      dispatchReaderAction: (action, options) => reader.dispatch(action, options),
+      snapshot: () => reader?.snapshot() ?? { ...initialSession, revision: 0 },
+      isDocumentOpen: (path) => reader?.isDocumentOpen(path) ?? false,
+      defaultVisualState: () => visualState,
+      pdfSaveAdapter: adapter,
+      createSurface: async ({ filePath, bytes, callbacks: events }) => {
+        loaded.push(bytes[0]);
+        callbacks.push(events);
+        const surface = createControllableSurface(filePath);
+        surface.runtime.editing =
+          bytes[0] === 1
+            ? {
+                state: () => ({ revision, dirty: revision !== saved, readOnlyReason: null }),
+                exportPdf: async () => new Uint8Array([2]),
+                markSaved: (value) => {
+                  saved = value;
+                  events.stateChanged();
+                },
+              }
+            : undefined;
+        return surface;
+      },
+    });
+    reader = createReaderActions({
+      initialSession,
+      projection: workspace.projection,
+      pdfSaveAdapter: adapter,
+      persist: async () => undefined,
+    });
+    reader.observe(workspace.project);
+    await workspace.intakeRuntime.open({
+      document: { canonicalPath: '/docs/original.pdf', title: 'original.pdf' },
+      bytes: disk,
+      activate: true,
+    });
+    await reader.dispatch({
+      type: 'settleReadingPosition',
+      filePath: '/docs/original.pdf',
+      readingPosition: { page: 4, location: 0.25 },
+    });
+    document.querySelector<HTMLButtonElement>('.tab-save')?.click();
+    await vi.waitFor(() =>
+      expect(document.querySelector('[aria-label="Unsaved changes"]')).toBeNull(),
+    );
+    expect(disk).toEqual(new Uint8Array([2]));
+    expect(loaded).toEqual([1, 2]);
+    revision = 2;
+    disk = new Uint8Array([3]);
+    const before = reader.query();
+    expect((await reader.dispatch({ type: 'discardAndReloadDocument' })).status).toBe('performed');
+    expect(loaded).toEqual([1, 2, 3]);
+    expect(before?.isCurrent()).toBe(false);
+    await callbacks[0].pageNavigationRequested(9);
+    expect(reader.snapshot().documents[0]).toMatchObject({
+      readingPosition: { page: 4, location: 0.25 },
+      visualState,
+    });
+    expect(reader.hasUnsavedPdfWork()).toBe(false);
   });
 
   it('publishes a new Document only after activation succeeds and permits a clean retry', async () => {

@@ -16,12 +16,16 @@ export interface PdfSaveDestination {
 }
 
 export interface NativePdfSaveAdapter {
+  captureSource?(filePath: string, bytes: Uint8Array): Promise<string>;
+  releaseSource?(token: string): Promise<void>;
+  readSource?(filePath: string): Promise<Uint8Array>;
+  writeOriginal?(token: string, bytes: Uint8Array): Promise<Uint8Array>;
   chooseDestination(title: string): Promise<PdfSaveDestination | null>;
-  /** Writes exclusively, syncs, and reads the resulting file back from disk. */
-  writeNew(
+  /** Writes a selected destination with version checks, then reads it back from disk. */
+  writeDestination(
     destination: PdfSaveDestination,
     bytes: Uint8Array,
-    original: Uint8Array,
+    sourceToken: string,
   ): Promise<Uint8Array>;
   releaseDestination(destination: PdfSaveDestination): Promise<void>;
 }

@@ -12,6 +12,7 @@ use tauri_plugin_store::StoreExt;
 mod commands;
 mod document_intake;
 mod menu;
+mod pdf_replace;
 mod pdf_save;
 #[cfg(test)]
 mod test_support;
@@ -309,7 +310,10 @@ pub fn run() {
             commands::inspect_pdf_editing,
             commands::choose_pdf_save_destination,
             commands::release_pdf_save_destination,
-            commands::write_new_pdf,
+            commands::write_pdf_destination,
+            commands::write_original_pdf,
+            commands::capture_pdf_source,
+            commands::release_pdf_source,
             commands::read_pdf_file,
             commands::open_pdf_dialog,
             commands::describe_pdf_file,

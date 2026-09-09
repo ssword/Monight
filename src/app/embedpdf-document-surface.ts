@@ -732,14 +732,14 @@ async function createProductionViewer({
           const native = await engine.getPageAnnotations(doc, page).toPromise();
           const desired = expected.filter((annotation) => annotation.pageIndex === page.index);
           for (const annotation of native) {
-            if (revision !== editRevision) throw new Error('Annotations changed; retry Save As');
+            if (revision !== editRevision) throw new Error('Annotations changed; retry Save');
             if (!desired.some((item) => item.id === annotation.id)) {
               if (!(await engine.removePageAnnotation(doc, page, annotation).toPromise()))
                 throw new Error('Native annotation deletion failed');
             }
           }
           for (const annotation of desired) {
-            if (revision !== editRevision) throw new Error('Annotations changed; retry Save As');
+            if (revision !== editRevision) throw new Error('Annotations changed; retry Save');
             const existing = native.find((item) => item.id === annotation.id);
             if (!existing) await engine.createPageAnnotation(doc, page, annotation).toPromise();
             else if (!nativeAnnotationMatches(annotation, existing)) {
@@ -777,7 +777,7 @@ async function createProductionViewer({
       }
       const bytes = new Uint8Array(buffer);
       if (revision !== editRevision)
-        throw new Error('Annotations changed during export; retry Save As');
+        throw new Error('Annotations changed during export; retry Save');
       retryNativeAnnotations = false;
       return bytes;
     },

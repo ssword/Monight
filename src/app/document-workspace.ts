@@ -64,6 +64,7 @@ export type DocumentSurfaceFactory = (
 ) => Promise<DocumentSurface>;
 
 interface DocumentWorkspaceOptions {
+  pdfSaveAdapter?: import('../reader/native-pdf-editing').NativePdfSaveAdapter;
   dispatchReaderAction(
     action: ReaderAction,
     options?: ReaderActionOptions,
@@ -253,7 +254,32 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
       },
     };
   };
-  const createSurface = options.createSurface ?? createPdfSurface;
+  const baseCreateSurface = options.createSurface ?? createPdfSurface;
+  const createSurface: DocumentSurfaceFactory = async (request) => {
+    const saveSource = await options.pdfSaveAdapter?.captureSource?.(
+      request.filePath,
+      request.bytes,
+    );
+    try {
+      const surface = await baseCreateSurface(request);
+      if (!saveSource) return surface;
+      surface.runtime.saveSource = saveSource;
+      const destroy = surface.runtime.destroy.bind(surface.runtime);
+      surface.runtime.destroy = async () => {
+        try {
+          await destroy();
+        } finally {
+          const token = surface.runtime.saveSource;
+          surface.runtime.saveSource = undefined;
+          if (token) await options.pdfSaveAdapter?.releaseSource?.(token);
+        }
+      };
+      return surface;
+    } catch (error) {
+      if (saveSource) await options.pdfSaveAdapter?.releaseSource?.(saveSource);
+      throw error;
+    }
+  };
 
   const notifyDocumentOpened = async (filePath: string, title: string): Promise<void> => {
     try {
@@ -355,19 +381,25 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
       });
       item.append(control, close);
       if (editing) {
-        const save = document.createElement('button');
-        save.className = 'tab-save-as';
-        save.textContent = 'Save As…';
-        save.title = editing.readOnlyReason ?? 'Save annotations to a new PDF';
-        save.disabled = Boolean(editing.readOnlyReason);
-        save.addEventListener('click', () => {
-          void options
-            .dispatchReaderAction({ type: 'saveDocumentAs', filePath: documentState.filePath })
-            .then((outcome) => {
-              if (outcome.status === 'failure') options.reportError?.(String(outcome.error));
-            });
-        });
-        item.append(save);
+        for (const [label, type] of [
+          ['Save', 'saveDocument'],
+          ['Save As…', 'saveDocumentAs'],
+        ] as const) {
+          const save = document.createElement('button');
+          save.type = 'button';
+          save.className = type === 'saveDocument' ? 'tab-save' : 'tab-save-as';
+          save.textContent = label;
+          save.title = editing.readOnlyReason ?? label;
+          save.disabled = Boolean(editing.readOnlyReason);
+          save.addEventListener('click', () => {
+            void options
+              .dispatchReaderAction({ type, filePath: documentState.filePath })
+              .then((outcome) => {
+                if (outcome.status === 'failure') options.reportError?.(String(outcome.error));
+              });
+          });
+          item.append(save);
+        }
       }
       container.append(item);
     }
@@ -403,7 +435,143 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
     }
   };
 
+  const createCallbacks = (
+    identity: { filePath: string; title: string },
+    surfaceId: string,
+  ): DocumentSurfaceCallbacks => {
+    const isCurrentSurface = (): boolean =>
+      presented.get(identity.filePath)?.id === surfaceId &&
+      options.isDocumentOpen(identity.filePath);
+    const dispatchSurfaceAction = async (
+      action: ReaderAction,
+      actionOptions?: ReaderActionOptions,
+    ): Promise<void> => {
+      if (!isCurrentSurface()) return;
+      await dispatchReaderActionOrThrow(action, {
+        ...actionOptions,
+        isCancelled: () => !isCurrentSurface() || Boolean(actionOptions?.isCancelled?.()),
+      });
+    };
+    const settleReadingPosition = (readingPosition: ReadingPosition): void => {
+      void dispatchSurfaceAction({
+        type: 'settleReadingPosition',
+        filePath: identity.filePath,
+        readingPosition,
+      });
+    };
+    return {
+      stateChanged: () => {
+        if (isCurrentSurface()) {
+          renderDocumentControls(options.snapshot());
+          options.renderingStateChanged?.();
+        }
+      },
+      readingPositionObserved: settleReadingPosition,
+      readingPositionSettled: settleReadingPosition,
+      pageNavigationRequested: (page, actionOptions) =>
+        dispatchSurfaceAction(
+          { type: 'goToPage', filePath: identity.filePath, page },
+          actionOptions,
+        ),
+      zoomIntentRequested: (zoomIntent) =>
+        dispatchSurfaceAction({
+          type: 'setZoomIntent',
+          filePath: identity.filePath,
+          zoomIntent,
+        }),
+      rotationRequested: (direction) =>
+        dispatchSurfaceAction({
+          type: direction === 'clockwise' ? 'rotateClockwise' : 'rotateCounterClockwise',
+          filePath: identity.filePath,
+        }),
+      viewModeRequested: (viewMode) =>
+        dispatchSurfaceAction({
+          type: 'setViewMode',
+          filePath: identity.filePath,
+          viewMode,
+        }),
+      linkTargetRequested: (target, actionOptions) =>
+        dispatchSurfaceAction(
+          {
+            type: 'activateDocumentTarget',
+            filePath: identity.filePath,
+            target,
+          },
+          actionOptions,
+        ),
+    };
+  };
+
+  const presentSurface = (
+    surface: DocumentSurface,
+    identity: { filePath: string; title: string },
+    surfaceId: string,
+  ): PresentedDocument => {
+    const originalGetState = surface.rendering.getState;
+    surface.rendering.getState = () => ({
+      ...originalGetState.call(surface.rendering),
+      filePath: identity.filePath,
+      fileName: identity.title,
+    });
+    return {
+      identity,
+      runtime: surface.runtime,
+      id: surfaceId,
+      title: identity.title,
+      rendering: surface.rendering,
+      presentation: {
+        snapshot: () => surface.rendering.getState(),
+        ...(surface.rendering.openSearch
+          ? { openSearch: () => surface.rendering.openSearch?.() }
+          : {}),
+        setSearchQuery: (query) => surface.rendering.setSearchQuery(query),
+        clearSearch: () => surface.rendering.clearSearch(),
+        revealSearchMatch: (match) => surface.rendering.revealSearchMatch(match),
+        addPageNote: (note) => surface.rendering.addPageNote(note),
+        updateAnnotation: (id, updates) => surface.rendering.updateAnnotation(id, updates),
+        removeAnnotation: (id) => surface.rendering.removeAnnotation(id),
+      },
+    };
+  };
+
   const projection: ReaderProjection = {
+    async prepareReloadDocument(documentState, actionOptions) {
+      const previous = presented.get(documentState.filePath);
+      const read = options.pdfSaveAdapter?.readSource;
+      if (!previous || !read) throw new Error('Document reload is unavailable');
+      const bytes = await read(documentState.filePath);
+      if (actionOptions.isCancelled?.()) throw interruptionError();
+      const identity = { filePath: documentState.filePath, title: documentState.title };
+      const id = crypto.randomUUID();
+      const surface = await createSurface({
+        ...identity,
+        bytes,
+        callbacks: createCallbacks(identity, id),
+      });
+      try {
+        surface.rendering.setVisible(false);
+        await projectDocumentState(surface.rendering, documentState, actionOptions);
+        if (actionOptions.isCancelled?.()) throw interruptionError();
+        const replacement = presentSurface(surface, identity, id);
+        return {
+          runtime: surface.runtime,
+          commit() {
+            if (presented.get(identity.filePath) !== previous) throw interruptionError();
+            surface.rendering.setVisible(visibleDocumentPath === identity.filePath);
+            presented.set(identity.filePath, replacement);
+            previous.rendering.destroy();
+            renderDocumentControls(options.snapshot());
+            options.renderingStateChanged?.();
+          },
+          async dispose() {
+            await disposeSurface(surface);
+          },
+        };
+      } catch (error) {
+        await disposeSurface(surface);
+        throw error;
+      }
+    },
     async verifySavedDocument(documentState, bytes, actionOptions) {
       const surface = await createSurface({
         filePath: documentState.filePath,
@@ -504,67 +672,7 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
       const { document, bytes, initialPage, restoredDocument, signal } = request;
       const identity = { filePath: document.canonicalPath, title: document.title };
       const surfaceId = crypto.randomUUID();
-      const isCurrentSurface = (): boolean =>
-        presented.get(identity.filePath)?.id === surfaceId &&
-        options.isDocumentOpen(identity.filePath);
-      const dispatchSurfaceAction = async (
-        action: ReaderAction,
-        actionOptions?: ReaderActionOptions,
-      ): Promise<void> => {
-        if (!isCurrentSurface()) return;
-        await dispatchReaderActionOrThrow(action, {
-          ...actionOptions,
-          isCancelled: () => !isCurrentSurface() || Boolean(actionOptions?.isCancelled?.()),
-        });
-      };
-      const settleReadingPosition = (readingPosition: ReadingPosition): void => {
-        void dispatchSurfaceAction({
-          type: 'settleReadingPosition',
-          filePath: identity.filePath,
-          readingPosition,
-        });
-      };
-      const callbacks: DocumentSurfaceCallbacks = {
-        stateChanged: () => {
-          if (isCurrentSurface()) {
-            renderDocumentControls(options.snapshot());
-            options.renderingStateChanged?.();
-          }
-        },
-        readingPositionObserved: settleReadingPosition,
-        readingPositionSettled: settleReadingPosition,
-        pageNavigationRequested: (page, actionOptions) =>
-          dispatchSurfaceAction(
-            { type: 'goToPage', filePath: identity.filePath, page },
-            actionOptions,
-          ),
-        zoomIntentRequested: (zoomIntent) =>
-          dispatchSurfaceAction({
-            type: 'setZoomIntent',
-            filePath: identity.filePath,
-            zoomIntent,
-          }),
-        rotationRequested: (direction) =>
-          dispatchSurfaceAction({
-            type: direction === 'clockwise' ? 'rotateClockwise' : 'rotateCounterClockwise',
-            filePath: identity.filePath,
-          }),
-        viewModeRequested: (viewMode) =>
-          dispatchSurfaceAction({
-            type: 'setViewMode',
-            filePath: identity.filePath,
-            viewMode,
-          }),
-        linkTargetRequested: (target, actionOptions) =>
-          dispatchSurfaceAction(
-            {
-              type: 'activateDocumentTarget',
-              filePath: identity.filePath,
-              target,
-            },
-            actionOptions,
-          ),
-      };
+      const callbacks = createCallbacks(identity, surfaceId);
       const surfaceWork = createSurface({
         filePath: document.canonicalPath,
         title: document.title,
@@ -582,32 +690,7 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
           }
         },
       });
-      const originalGetState = surface.rendering.getState;
-      surface.rendering.getState = () => ({
-        ...originalGetState.call(surface.rendering),
-        filePath: identity.filePath,
-        fileName: identity.title,
-      });
-      presented.set(document.canonicalPath, {
-        identity,
-        runtime: surface.runtime,
-        id: surfaceId,
-        title: document.title,
-        rendering: surface.rendering,
-        presentation: {
-          snapshot: () => surface.rendering.getState(),
-          ...(surface.rendering.openSearch
-            ? { openSearch: () => surface.rendering.openSearch?.() }
-            : {}),
-          setSearchQuery: (query) => surface.rendering.setSearchQuery(query),
-          clearSearch: () => surface.rendering.clearSearch(),
-          revealSearchMatch: (match) => surface.rendering.revealSearchMatch(match),
-          addPageNote: (note) => surface.rendering.addPageNote(note),
-          updateAnnotation: (annotationId, updates) =>
-            surface.rendering.updateAnnotation(annotationId, updates),
-          removeAnnotation: (annotationId) => surface.rendering.removeAnnotation(annotationId),
-        },
-      });
+      presented.set(document.canonicalPath, presentSurface(surface, identity, surfaceId));
       surface.rendering.setVisible(false);
 
       const initialDocument: ReadingSessionDocument = restoredDocument

@@ -39,6 +39,7 @@ function createDocumentRuntime(): DocumentRuntime {
     destroy: vi.fn(async () => undefined),
   };
   return {
+    saveSource: 'loaded-source',
     content,
     destroy: vi.fn(async () => content.destroy()),
     renderThumbnail: vi.fn(async () => {
@@ -49,6 +50,212 @@ function createDocumentRuntime(): DocumentRuntime {
 }
 
 describe('Reader Actions', () => {
+  it('Save writes the originating revision and keeps edits arriving during the write dirty', async () => {
+    let revision = 1;
+    let saved = 0;
+    let finish!: (bytes: Uint8Array) => void;
+    const runtime = createDocumentRuntime();
+    runtime.saveSource = 'source-1';
+    runtime.editing = {
+      state: () => ({ revision, dirty: revision !== saved, readOnlyReason: null }),
+      exportPdf: async () => new Uint8Array([1]),
+      markSaved: (value) => {
+        saved = value;
+      },
+    };
+    const persisted: Uint8Array[] = [];
+    const reader = createReaderActions({
+      initialSession: INITIAL_SESSION,
+      projection: {
+        activateDocument: async () => undefined,
+        goToReadingPosition: async () => undefined,
+        verifySavedDocument: async () => undefined,
+      },
+      pdfSaveAdapter: {
+        chooseDestination: async () => {
+          throw new Error('Save must not open a destination dialog');
+        },
+        writeDestination: async () => {
+          throw new Error('Save must not create a copy');
+        },
+        writeOriginal: async (_token, bytes) => {
+          persisted.push(bytes);
+          return new Promise<Uint8Array>((resolve) => {
+            finish = resolve;
+          });
+        },
+        releaseDestination: async () => undefined,
+      },
+      persist: async () => undefined,
+    });
+    await reader.dispatch({
+      type: 'registerDocument',
+      document: INITIAL_SESSION.documents[0],
+      runtime,
+    });
+    const saving = reader.dispatch({ type: 'saveDocument' });
+    await vi.waitFor(() => expect(persisted).toHaveLength(1));
+    const repeated = reader.dispatch({ type: 'saveDocument' });
+    expect(
+      (await reader.dispatch({ type: 'closeDocument', filePath: '/docs/first.pdf' })).status,
+    ).toBe('failure');
+    await reader.dispatch({ type: 'activateDocument', filePath: '/docs/second.pdf' });
+    revision = 2;
+    finish(new Uint8Array([1]));
+    expect((await saving).status).toBe('performed');
+    expect(await repeated).toEqual(await saving);
+    expect(persisted).toHaveLength(1);
+    expect(saved).toBe(1);
+    expect(runtime.editing.state().dirty).toBe(true);
+    expect(reader.snapshot().activeDocumentPath).toBe('/docs/second.pdf');
+    expect(reader.snapshot().documents[0].filePath).toBe('/docs/first.pdf');
+  });
+
+  it.each([
+    'conflict',
+    'failure',
+    'uncertain',
+    'protected',
+    'cancelled',
+  ] as const)('Save retains unsaved work after %s without changing Document identity', async (stage) => {
+    const runtime = createDocumentRuntime();
+    let saved = false;
+    let cancelled = false;
+    let writes = 0;
+    runtime.editing = {
+      state: () => ({
+        revision: 1,
+        dirty: !saved,
+        readOnlyReason: stage === 'protected' ? 'Signed PDF is read-only' : null,
+      }),
+      exportPdf: async () => new Uint8Array([1]),
+      markSaved: () => {
+        saved = true;
+      },
+    };
+    const reader = createReaderActions({
+      initialSession: INITIAL_SESSION,
+      projection: {
+        activateDocument: async () => undefined,
+        goToReadingPosition: async () => undefined,
+        verifySavedDocument: async () => undefined,
+      },
+      pdfSaveAdapter: {
+        chooseDestination: async () => null,
+        releaseDestination: async () => undefined,
+        writeDestination: async () => {
+          throw new Error('Unexpected destination write');
+        },
+        writeOriginal: async () => {
+          writes += 1;
+          if (stage === 'cancelled') {
+            cancelled = true;
+            return new Uint8Array([1]);
+          }
+          if (stage === 'uncertain') return new Uint8Array([9]);
+          throw new Error(stage === 'conflict' ? 'File conflict: source replaced' : 'Disk full');
+        },
+      },
+      persist: async () => undefined,
+    });
+    await reader.dispatch({
+      type: 'registerDocument',
+      document: INITIAL_SESSION.documents[0],
+      runtime,
+    });
+    const before = reader.snapshot();
+    expect(
+      (await reader.dispatch({ type: 'saveDocument' }, { isCancelled: () => cancelled })).status,
+    ).toBe(stage === 'cancelled' ? 'superseded' : 'failure');
+    expect(reader.snapshot()).toEqual(before);
+    expect(reader.hasUnsavedPdfWork()).toBe(true);
+    expect(saved).toBe(false);
+    expect(writes).toBe(stage === 'protected' ? 0 : 1);
+  });
+
+  it('reload waits for preceding navigation before projecting Reading Session state', async () => {
+    let release!: () => void;
+    let entered!: () => void;
+    const started = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const navigation = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const positions: number[] = [];
+    const reader = createReaderActions({
+      initialSession: INITIAL_SESSION,
+      projection: {
+        activateDocument: async () => undefined,
+        goToReadingPosition: async () => {
+          entered();
+          await navigation;
+        },
+        prepareReloadDocument: async (document) => {
+          positions.push(document.readingPosition.page);
+          return {
+            runtime: createDocumentRuntime(),
+            commit: () => undefined,
+            dispose: async () => undefined,
+          };
+        },
+      },
+      persist: async () => undefined,
+    });
+    await reader.dispatch({
+      type: 'registerDocument',
+      document: INITIAL_SESSION.documents[0],
+      runtime: createDocumentRuntime(),
+    });
+    const navigating = reader.dispatch({ type: 'goToPage', page: 9 });
+    await started;
+    const reloading = reader.dispatch({ type: 'discardAndReloadDocument' });
+    await Promise.resolve();
+    release();
+    await navigating;
+    expect((await reloading).status).toBe('performed');
+    expect(positions).toEqual([9]);
+    expect(reader.snapshot().documents[0].readingPosition.page).toBe(9);
+  });
+
+  it('discard-and-reload replaces the live generation only after fresh preparation succeeds', async () => {
+    const oldRuntime = createDocumentRuntime();
+    oldRuntime.editing = {
+      state: () => ({ revision: 1, dirty: true, readOnlyReason: null }),
+      exportPdf: async () => new Uint8Array([1]),
+      markSaved: () => undefined,
+    };
+    const fresh = createDocumentRuntime();
+    let fail = true;
+    const reader = createReaderActions({
+      initialSession: INITIAL_SESSION,
+      projection: {
+        activateDocument: async () => undefined,
+        goToReadingPosition: async () => undefined,
+        prepareReloadDocument: async () => {
+          if (fail) throw new Error('Source disappeared');
+          return { runtime: fresh, commit: () => undefined, dispose: async () => undefined };
+        },
+      },
+      persist: async () => undefined,
+    });
+    await reader.dispatch({
+      type: 'registerDocument',
+      document: INITIAL_SESSION.documents[0],
+      runtime: oldRuntime,
+    });
+    const oldQuery = reader.query();
+    expect((await reader.dispatch({ type: 'discardAndReloadDocument' })).status).toBe('failure');
+    expect(oldQuery?.isCurrent()).toBe(true);
+    expect(reader.hasUnsavedPdfWork()).toBe(true);
+    fail = false;
+    expect((await reader.dispatch({ type: 'discardAndReloadDocument' })).status).toBe('performed');
+    expect(oldQuery?.isCurrent()).toBe(false);
+    expect(reader.query()?.isCurrent()).toBe(true);
+    expect(reader.hasUnsavedPdfWork()).toBe(false);
+    expect(reader.snapshot().documents[0].readingPosition).toEqual({ page: 2, location: 0.25 });
+  });
+
   it('Save As follows its originating Document across a tab switch and preserves newer edits', async () => {
     let releaseDialog!: () => void;
     const dialog = new Promise<void>((resolve) => {
@@ -81,7 +288,7 @@ describe('Reader Actions', () => {
           await dialog;
           return { token: 'selected', canonicalPath: '/docs/copy.pdf', title: 'copy.pdf' };
         },
-        writeNew: async (_destination, bytes) => {
+        writeDestination: async (_destination, bytes) => {
           editedRevision = 2;
           return bytes;
         },
@@ -151,7 +358,7 @@ describe('Reader Actions', () => {
                 canonicalPath: stage === 'already-open' ? '/docs/second.pdf' : '/docs/copy.pdf',
                 title: 'copy.pdf',
               },
-        writeNew: async (_destination, bytes) => {
+        writeDestination: async (_destination, bytes) => {
           if (stage === 'write') throw new Error('disk full');
           return stage === 'changed-bytes' ? new Uint8Array([9]) : bytes;
         },

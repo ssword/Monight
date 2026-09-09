@@ -6,6 +6,7 @@ import {
   requestAnnotationNote,
   requestConfirmation,
   requestPdfPassword,
+  requestPdfSaveFailure,
   showToast,
 } from './app/dialogs';
 import type { DocumentSurfaceProvider } from './app/document-surface-gate';
@@ -125,7 +126,29 @@ const dispatchReaderActionOutcome = async (action: ReaderAction, options?: Reade
   if (!acceptsReaderWork()) {
     return { status: 'no-op' as const, revision: actions.snapshot().revision };
   }
-  return actions.dispatch(action, options);
+  const saving = action.type === 'saveDocument' || action.type === 'saveDocumentAs';
+  const query = saving ? actions.query(action.filePath) : null;
+  const outcome = await actions.dispatch(action, options);
+  if (saving && query?.isCurrent() && outcome.status === 'failure') {
+    const title =
+      actions.snapshot().documents.find((item) => item.filePath === query.filePath)?.title ?? 'PDF';
+    const choice = await requestPdfSaveFailure(title, String(outcome.error));
+    if (!query.isCurrent() || options?.isCancelled?.())
+      return { status: 'superseded' as const, revision: actions.snapshot().revision };
+    if (choice !== 'cancel') {
+      const recovery = await actions.dispatch(
+        {
+          type: choice === 'reload' ? 'discardAndReloadDocument' : 'saveDocumentAs',
+          filePath: query.filePath,
+        },
+        options,
+      );
+      if (recovery.status === 'failure') showToast(String(recovery.error), 'error');
+      return recovery;
+    }
+    return { status: 'no-op' as const, revision: actions.snapshot().revision };
+  }
+  return outcome;
 };
 
 async function getAppInfo(): Promise<AppInfo> {
@@ -211,6 +234,10 @@ const goToRelativePage = async (direction: 'next' | 'previous'): Promise<void> =
 const dispatchReaderAction = async (action: ReaderAction): Promise<void> => {
   const outcome = await dispatchReaderActionOutcome(action);
   if (outcome?.status === 'failure') {
+    if (action.type === 'saveDocument' || action.type === 'saveDocumentAs') {
+      showToast(String(outcome.error), 'error');
+      return;
+    }
     if (action.type === 'printDocument') {
       console.error('Print error:', outcome.error);
       showToast(
@@ -346,10 +373,7 @@ export async function initializeApplication(modules: ApplicationModules): Promis
   const shutdown = createApplicationShutdownCoordinator({
     canShutdown: () => {
       if (!readerActions?.hasUnsavedPdfWork()) return true;
-      showToast(
-        'Save edited development Documents as new PDFs before closing or quitting.',
-        'error',
-      );
+      showToast('Save edited development Documents before closing or quitting.', 'error');
       return false;
     },
     flush: async () => {
@@ -451,6 +475,7 @@ export async function initializeApplication(modules: ApplicationModules): Promis
       isDocumentOpen: (filePath) => readerActions?.isDocumentOpen(filePath) ?? false,
       defaultVisualState,
       ...(createSurface ? { createSurface } : {}),
+      pdfSaveAdapter: modules.pdfSaveAdapter,
       ...(annotationAuthority ? { annotationAuthority } : {}),
       requestPassword: requestPdfPassword,
       requestAnnotationNote,
@@ -536,7 +561,7 @@ export async function initializeApplication(modules: ApplicationModules): Promis
           if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 's') {
             event.preventDefault();
             event.stopImmediatePropagation();
-            void dispatchReaderAction({ type: 'saveDocumentAs' });
+            void dispatchReaderAction({ type: event.shiftKey ? 'saveDocumentAs' : 'saveDocument' });
           }
         },
         true,

@@ -185,3 +185,44 @@ export function showToast(message: string, tone: 'info' | 'error' = 'info'): voi
     window.setTimeout(() => toast.remove(), 180);
   }, 3200);
 }
+
+/** All destructive recovery choices require an explicit button click. */
+export function requestPdfSaveFailure(
+  title: string,
+  message: string,
+): Promise<'save-as' | 'reload' | 'cancel'> {
+  const dialog = document.createElement('dialog');
+  const heading = document.createElement('h2');
+  heading.textContent = `Could not save ${title}`;
+  const description = document.createElement('p');
+  description.textContent = `${message} Your unsaved edits are retained.`;
+  dialog.append(heading, description);
+  return new Promise((resolve) => {
+    const finish = (choice: 'save-as' | 'reload' | 'cancel') => {
+      dialog.close();
+      dialog.remove();
+      resolve(choice);
+    };
+    const choices = [
+      ['save-as', 'Save As…'],
+      ...(/conflict/i.test(message) ? [['reload', 'Discard edits and reload']] : []),
+      ['cancel', 'Keep editing'],
+    ];
+    for (const [choice, label] of choices) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.textContent = label;
+      button.addEventListener('click', () =>
+        finish(choice === 'save-as' ? 'save-as' : choice === 'reload' ? 'reload' : 'cancel'),
+      );
+      dialog.append(button);
+    }
+    dialog.addEventListener('cancel', (event) => {
+      event.preventDefault();
+      finish('cancel');
+    });
+    document.body.append(dialog);
+    dialog.showModal();
+    dialog.querySelector<HTMLButtonElement>('button:last-child')?.focus();
+  });
+}

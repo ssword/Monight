@@ -611,18 +611,62 @@ pub fn release_pdf_save_destination(
 }
 
 #[command]
-pub fn write_new_pdf(
+pub fn write_pdf_destination(
     window: tauri::WebviewWindow,
     writer: State<'_, crate::pdf_save::PdfSave>,
     document_intake: State<'_, DocumentIntake>,
     token: String,
     bytes: Vec<u8>,
-    original: Vec<u8>,
+    source_token: String,
 ) -> Result<tauri::ipc::Response, String> {
     if window.label() != "main" {
         return Err("Only the main reader can save PDFs".into());
     }
-    let (path, reopened) = writer.write_new(&token, &bytes, &original)?;
+    let (path, reopened) = writer.write_destination(&token, &source_token, &bytes)?;
     document_intake.authorize([path]);
     Ok(tauri::ipc::Response::new(reopened))
+}
+
+#[command]
+pub fn capture_pdf_source(
+    window: tauri::WebviewWindow,
+    writer: State<'_, crate::pdf_save::PdfSave>,
+    document_intake: State<'_, DocumentIntake>,
+    path: String,
+    bytes: Vec<u8>,
+) -> Result<String, String> {
+    if window.label() != "main" {
+        return Err("Only the main reader can save PDFs".into());
+    }
+    // Intake authorization is required independently of the bytes supplied by the renderer.
+    document_intake.read(path.clone())?;
+    writer.capture_source(std::path::Path::new(&path), &bytes)
+}
+
+#[command]
+pub fn release_pdf_source(
+    window: tauri::WebviewWindow,
+    writer: State<'_, crate::pdf_save::PdfSave>,
+    token: String,
+) -> Result<(), String> {
+    if window.label() != "main" {
+        return Err("Only the main reader can save PDFs".into());
+    }
+    writer.release_source(&token);
+    Ok(())
+}
+
+#[command]
+pub fn write_original_pdf(
+    window: tauri::WebviewWindow,
+    writer: State<'_, crate::pdf_save::PdfSave>,
+    token: String,
+    bytes: Vec<u8>,
+) -> Result<tauri::ipc::Response, String> {
+    if window.label() != "main" {
+        return Err("Only the main reader can save PDFs".into());
+    }
+    Ok(tauri::ipc::Response::new(
+        writer.write_original(&token, &bytes)?,
+    ))
 }
