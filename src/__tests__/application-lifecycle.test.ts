@@ -193,6 +193,7 @@ vi.mock('@tauri-apps/api/webviewWindow', () => {
   };
 });
 vi.mock('../app/dialogs', () => ({
+  requestUnsavedDocument: vi.fn(async () => 'cancel'),
   requestAnnotationNote: vi.fn(async () => null),
   requestConfirmation: vi.fn(async () => mocks.takeConfirmationChoice()),
   requestPdfPassword: vi.fn(async () => null),
@@ -368,6 +369,9 @@ function createModules(
       }
     }),
     hasUnsavedPdfWork: vi.fn(() => false),
+    prepareShutdown: vi.fn(async () => true),
+    isShutdownPrepared: vi.fn(() => true),
+    cancelShutdown: vi.fn(),
     hasDirtySession: vi.fn(() => false),
   } as ReaderActions;
   const intake = {
@@ -377,6 +381,9 @@ function createModules(
     interruptRestoration: vi.fn(() => {
       mocks.events.push('intake:interrupt-restoration');
       mocks.finishRestoration();
+    }),
+    resumeAccepting: vi.fn(() => {
+      mocks.events.push('intake:resume');
     }),
     stopAccepting: vi.fn(() => {
       mocks.events.push('intake:stop');
@@ -493,6 +500,24 @@ describe('application lifecycle composition', () => {
     vi.clearAllMocks();
     mocks.reset();
     document.body.innerHTML = '<span id="version-info"></span>';
+  });
+
+  it('shows the main window and resumes normal startup when initialization-time Quit is cancelled', async () => {
+    const { initializeApplication } = await import('../application');
+    const modules = createModules();
+    const createActions = modules.createReaderActions;
+    modules.createReaderActions = (options) => {
+      const actions = createActions(options);
+      actions.prepareShutdown = async () => false;
+      return actions;
+    };
+    const initialization = initializeApplication(modules);
+    await vi.waitFor(() => expect(mocks.events).toContain('restoration:foreground'));
+    const quitting = mocks.listeners.get('application-quit-requested')?.();
+    await Promise.all([initialization, quitting]);
+    expect(mocks.events).toContain('window:show');
+    expect(mocks.events).not.toContain('quit');
+    expect(mocks.events).toContain('intake:resume');
   });
 
   it('retains Quit during restoration and flushes every authority before exit', async () => {

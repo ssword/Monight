@@ -608,8 +608,6 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
     async closeDocument(filePath, nextActiveDocumentPath) {
       const documentState = presented.get(filePath);
       if (!documentState) return;
-      if (documentState.runtime.editing?.state().dirty)
-        throw new Error('This Document has unsaved native annotations');
       documentState.rendering.destroy();
       presented.delete(filePath);
       if (visibleDocumentPath === filePath) {

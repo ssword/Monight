@@ -7,6 +7,7 @@ import {
   requestConfirmation,
   requestPdfPassword,
   requestPdfSaveFailure,
+  requestUnsavedDocument,
   showToast,
 } from './app/dialogs';
 import type { DocumentSurfaceProvider } from './app/document-surface-gate';
@@ -132,7 +133,11 @@ const dispatchReaderActionOutcome = async (action: ReaderAction, options?: Reade
   if (saving && query?.isCurrent() && outcome.status === 'failure') {
     const title =
       actions.snapshot().documents.find((item) => item.filePath === query.filePath)?.title ?? 'PDF';
-    const choice = await requestPdfSaveFailure(title, String(outcome.error));
+    const choice = await requestPdfSaveFailure(
+      title,
+      String(outcome.error),
+      () => acceptsReaderWork() && query.isCurrent() && !options?.isCancelled?.(),
+    );
     if (!query.isCurrent() || options?.isCancelled?.())
       return { status: 'superseded' as const, revision: actions.snapshot().revision };
     if (choice !== 'cancel') {
@@ -371,11 +376,16 @@ const restoreStartupReadingSession = async (
 export async function initializeApplication(modules: ApplicationModules): Promise<void> {
   const currentWindow = getCurrentWebviewWindow();
   const shutdown = createApplicationShutdownCoordinator({
-    canShutdown: () => {
-      if (!readerActions?.hasUnsavedPdfWork()) return true;
-      showToast('Save edited development Documents before closing or quitting.', 'error');
-      return false;
+    prepareShutdown: async () => {
+      await documentIntake?.quiesce();
+      if (readerActions?.hasUnsavedPdfWork()) {
+        showViewer();
+        await currentWindow.show();
+        await currentWindow.setFocus();
+      }
+      return (await readerActions?.prepareShutdown()) ?? true;
     },
+    canShutdown: () => readerActions?.isShutdownPrepared() ?? true,
     flush: async () => {
       await documentIntake?.quiesce();
       await persistence.flush();
@@ -386,6 +396,7 @@ export async function initializeApplication(modules: ApplicationModules): Promis
       await invoke('complete_application_quit');
     },
     onShutdownCancelled: () => {
+      readerActions?.cancelShutdown();
       documentIntake?.resumeAccepting();
       const container = document.getElementById('pdf-container');
       if (container) container.inert = false;
@@ -506,6 +517,7 @@ export async function initializeApplication(modules: ApplicationModules): Promis
       externalLinkAdapter: modules.externalLinkAdapter,
       printAdapter: modules.browserPrintAdapter,
       pdfSaveAdapter: modules.pdfSaveAdapter,
+      chooseUnsavedDocument: requestUnsavedDocument,
       reopenDocument: async (filePath) => {
         if (!documentIntake) throw new Error('Document Intake is unavailable');
         await openFiles([filePath], {
@@ -567,7 +579,7 @@ export async function initializeApplication(modules: ApplicationModules): Promis
         true,
       );
       window.addEventListener('beforeunload', (event) => {
-        if (readerActions?.hasUnsavedPdfWork()) {
+        if (readerActions?.hasUnsavedPdfWork() && !readerActions.isShutdownPrepared()) {
           event.preventDefault();
           event.returnValue = '';
         }
@@ -727,7 +739,7 @@ export async function initializeApplication(modules: ApplicationModules): Promis
     shutdown.markReady();
     if (shutdown.isShutdownRequested()) {
       await shutdown.completion();
-      return;
+      if (shutdown.isShutdownRequested()) return;
     }
 
     // Show the correct initial surface after session/CLI restore has run.

@@ -1,3 +1,5 @@
+import type { UnsavedDocumentChoice, UnsavedDocumentRequest } from '../reader/reader-actions';
+
 export type PasswordRequestReason = 'required' | 'incorrect';
 
 export interface ConfirmationRequest {
@@ -186,43 +188,92 @@ export function showToast(message: string, tone: 'info' | 'error' = 'info'): voi
   }, 3200);
 }
 
+let pdfDecisionTail = Promise.resolve();
+
+function requestPdfDecision<T extends string>(
+  title: string,
+  message: string,
+  choices: ReadonlyArray<readonly [T, string]>,
+  cancelValue: T,
+  isCurrent: () => boolean = () => true,
+): Promise<T> {
+  const result = pdfDecisionTail.then(() => {
+    if (!isCurrent()) return cancelValue;
+    const dialog = document.createElement('dialog');
+    dialog.className = 'app-dialog pdf-decision-dialog';
+    const heading = document.createElement('h2');
+    heading.id = 'pdf-decision-title';
+    heading.textContent = title;
+    dialog.setAttribute('aria-labelledby', heading.id);
+    const description = document.createElement('p');
+    description.textContent = message;
+    const actions = document.createElement('div');
+    actions.className = 'dialog-actions';
+    dialog.append(heading, description, actions);
+    return new Promise<T>((resolve) => {
+      const finish = (choice: T) => {
+        dialog.close();
+        dialog.remove();
+        resolve(choice);
+      };
+      for (const [choice, label] of choices) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = choice === 'save' ? 'dialog-primary' : 'dialog-secondary';
+        button.textContent = label;
+        button.addEventListener('click', () => finish(choice));
+        actions.append(button);
+      }
+      dialog.addEventListener('cancel', (event) => {
+        event.preventDefault();
+        finish(cancelValue);
+      });
+      document.body.append(dialog);
+      dialog.showModal();
+      actions.querySelector<HTMLButtonElement>('button:last-child')?.focus();
+    });
+  });
+  pdfDecisionTail = result.then(
+    () => undefined,
+    () => undefined,
+  );
+  return result;
+}
+
 /** All destructive recovery choices require an explicit button click. */
 export function requestPdfSaveFailure(
   title: string,
   message: string,
+  isCurrent?: () => boolean,
 ): Promise<'save-as' | 'reload' | 'cancel'> {
-  const dialog = document.createElement('dialog');
-  const heading = document.createElement('h2');
-  heading.textContent = `Could not save ${title}`;
-  const description = document.createElement('p');
-  description.textContent = `${message} Your unsaved edits are retained.`;
-  dialog.append(heading, description);
-  return new Promise((resolve) => {
-    const finish = (choice: 'save-as' | 'reload' | 'cancel') => {
-      dialog.close();
-      dialog.remove();
-      resolve(choice);
-    };
-    const choices = [
+  return requestPdfDecision<'save-as' | 'reload' | 'cancel'>(
+    `Could not save ${title}`,
+    `${message} Your unsaved edits are retained.`,
+    [
       ['save-as', 'Save As…'],
-      ...(/conflict/i.test(message) ? [['reload', 'Discard edits and reload']] : []),
+      ...(/conflict/i.test(message) ? [['reload', 'Discard edits and reload'] as const] : []),
       ['cancel', 'Keep editing'],
-    ];
-    for (const [choice, label] of choices) {
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.textContent = label;
-      button.addEventListener('click', () =>
-        finish(choice === 'save-as' ? 'save-as' : choice === 'reload' ? 'reload' : 'cancel'),
-      );
-      dialog.append(button);
-    }
-    dialog.addEventListener('cancel', (event) => {
-      event.preventDefault();
-      finish('cancel');
-    });
-    document.body.append(dialog);
-    dialog.showModal();
-    dialog.querySelector<HTMLButtonElement>('button:last-child')?.focus();
-  });
+    ],
+    'cancel',
+    isCurrent,
+  );
+}
+
+export function requestUnsavedDocument({
+  title,
+  error,
+}: UnsavedDocumentRequest): Promise<UnsavedDocumentChoice> {
+  return requestPdfDecision<UnsavedDocumentChoice>(
+    `Save changes to ${title}?`,
+    error
+      ? `${String(error)} Your unsaved changes are retained.`
+      : 'Your annotation changes will be lost if you discard them.',
+    [
+      ['save', error ? 'Retry Save' : 'Save'],
+      ...(error ? [['save-as', 'Save As…'] as const] : []),
+      ['discard', 'Discard'],
+      ['cancel', 'Cancel'],
+    ],
+    'cancel',
+  );
 }

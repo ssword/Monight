@@ -56,25 +56,34 @@ function lifecycleAdapters(options: { pendingQuit?: boolean } = {}) {
 }
 
 describe('application shutdown lifecycle', () => {
-  it('blocks dirty development Documents before teardown starts and remains usable', async () => {
-    let dirty = true;
-    const close = vi.fn(async () => undefined);
-    const started = vi.fn();
+  it('coalesces close and Quit decisions, cancels before persistence, and allows a later retry', async () => {
+    const choice = deferred<boolean>();
+    const teardown: string[] = [];
+    let attempts = 0;
     const coordinator = createApplicationShutdownCoordinator({
-      canShutdown: () => !dirty,
-      flush: async () => undefined,
-      closeMainWindow: close,
-      quitApplication: close,
-      onShutdownStarted: started,
+      prepareShutdown: () => (++attempts === 1 ? choice.promise : Promise.resolve(true)),
+      flush: async () => {
+        teardown.push('flush');
+      },
+      closeMainWindow: async () => {
+        teardown.push('close');
+      },
+      quitApplication: async () => {
+        teardown.push('quit');
+      },
+      onShutdownCancelled: () => {
+        teardown.push('resume');
+      },
     });
     coordinator.markReady();
-    await coordinator.request('quit-application');
-    expect(close).not.toHaveBeenCalled();
-    expect(started).not.toHaveBeenCalled();
+    const close = coordinator.request('close-main-window');
+    const quit = coordinator.request('quit-application');
+    choice.resolve(false);
+    await Promise.all([close, quit]);
+    expect(teardown).toEqual(['resume']);
     expect(coordinator.isShutdownRequested()).toBe(false);
-    dirty = false;
-    await coordinator.request('close-main-window');
-    expect(close).toHaveBeenCalledOnce();
+    await coordinator.request('quit-application');
+    expect(teardown).toEqual(['resume', 'flush', 'quit']);
   });
 
   it('cancels teardown if a pending UI edit becomes dirty during the final flush', async () => {

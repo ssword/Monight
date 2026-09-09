@@ -92,6 +92,67 @@ describe('Document workspace adapter', () => {
     `;
   });
 
+  it('routes edited tab close through Cancel and Discard and retires viewer callbacks on reopen', async () => {
+    let reader: ReaderActions;
+    let choice: 'cancel' | 'discard' = 'cancel';
+    const callbacks: DocumentSurfaceCallbacks[] = [];
+    const initialSession = { schemaVersion: 2 as const, documents: [], activeDocumentPath: null };
+    const workspace = createDocumentWorkspace({
+      dispatchReaderAction: (action, options) => reader.dispatch(action, options),
+      snapshot: () => reader?.snapshot() ?? { ...initialSession, revision: 0 },
+      isDocumentOpen: (path) => reader?.isDocumentOpen(path) ?? false,
+      defaultVisualState: () => ({
+        filterSettings: PRESETS.default,
+        zoomIntent: { kind: 'fit-width' },
+        rotation: 0,
+        viewMode: 'single',
+      }),
+      createSurface: async ({ filePath, callbacks: events }) => {
+        callbacks.push(events);
+        const surface = createControllableSurface(filePath);
+        surface.runtime.editing = {
+          state: () => ({ revision: 1, dirty: true, readOnlyReason: null }),
+          exportPdf: async () => {
+            throw new Error('Close must not silently export');
+          },
+          markSaved: () => {
+            throw new Error('Discard must not mark edits saved');
+          },
+        };
+        return surface;
+      },
+    });
+    reader = createReaderActions({
+      initialSession,
+      projection: workspace.projection,
+      chooseUnsavedDocument: async () => choice,
+      persist: async () => undefined,
+    });
+    reader.observe(workspace.project);
+    const open = () =>
+      workspace.intakeRuntime.open({
+        document: { canonicalPath: '/first.pdf', title: 'first.pdf' },
+        bytes: new Uint8Array([1]),
+        activate: true,
+      });
+    await open();
+    document.querySelector<HTMLButtonElement>('.tab-close')?.click();
+    await vi.waitFor(() => expect(reader.snapshot().documents).toHaveLength(1));
+    // Wait for the semantic close outcome before making the next decision.
+    await reader.dispatch({ type: 'closeDocument', filePath: '/first.pdf' });
+    expect(document.querySelector('[aria-label="Unsaved changes"]')).not.toBeNull();
+    await callbacks[0].pageNavigationRequested(3);
+    expect(reader.snapshot().documents[0].readingPosition.page).toBe(3);
+    choice = 'discard';
+    document.querySelector<HTMLButtonElement>('.tab-close')?.click();
+    await vi.waitFor(() => expect(document.querySelector('.tab-close')).toBeNull());
+    expect(reader.snapshot().documents).toHaveLength(0);
+    await open();
+    await callbacks[0].pageNavigationRequested(9);
+    expect(reader.snapshot().documents[0].readingPosition.page).toBe(1);
+    expect(document.querySelector('[aria-label="Unsaved changes"]')).not.toBeNull();
+  });
+
   it('projects tab controls from Reading Session snapshots and dispatches semantic actions', async () => {
     const dispatch = vi.fn(async (_action: ReaderAction) => ({
       status: 'committed' as const,

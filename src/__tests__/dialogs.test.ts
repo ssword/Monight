@@ -1,7 +1,12 @@
 // @vitest-environment happy-dom
 
-import { beforeEach, describe, expect, it } from 'vitest';
-import { requestConfirmation, requestPdfPassword } from '../app/dialogs';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  requestConfirmation,
+  requestPdfPassword,
+  requestPdfSaveFailure,
+  requestUnsavedDocument,
+} from '../app/dialogs';
 
 const mountConfirmationDialog = (): void => {
   document.body.innerHTML = `
@@ -100,5 +105,27 @@ describe('requestPdfPassword', () => {
 
     await expect(result).resolves.toBeNull();
     expect(dialog.open).toBe(false);
+  });
+});
+
+describe('PDF close decisions', () => {
+  it('offers Save/Discard/Cancel, serializes save failures, and treats Escape as Cancel', async () => {
+    document.body.replaceChildren();
+    const closing = requestUnsavedDocument({ filePath: '/first.pdf', title: 'first.pdf' });
+    const saveFailure = requestPdfSaveFailure('second.pdf', 'Disk full');
+    await vi.waitFor(() => expect(document.querySelectorAll('dialog[open]')).toHaveLength(1));
+    expect([...document.querySelectorAll('button')].map((button) => button.textContent)).toEqual([
+      'Save',
+      'Discard',
+      'Cancel',
+    ]);
+    document.querySelector('dialog')?.dispatchEvent(new Event('cancel', { cancelable: true }));
+    expect(await closing).toBe('cancel');
+    await vi.waitFor(() =>
+      expect(document.querySelector('h2')?.textContent).toContain('second.pdf'),
+    );
+    document.querySelector<HTMLButtonElement>('button:last-child')?.click();
+    expect(await saveFailure).toBe('cancel');
+    expect(document.querySelectorAll('dialog')).toHaveLength(0);
   });
 });

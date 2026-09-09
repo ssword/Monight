@@ -50,6 +50,110 @@ function createDocumentRuntime(): DocumentRuntime {
 }
 
 describe('Reader Actions', () => {
+  it('Quit saves one Document, retains a staged Discard when another cancels, and permits retry', async () => {
+    const choices: Array<'save' | 'discard' | 'cancel'> = ['discard', 'cancel', 'save', 'discard'];
+    const prompts: string[] = [];
+    const writes: string[] = [];
+    const reader = createReaderActions({
+      initialSession: INITIAL_SESSION,
+      chooseUnsavedDocument: async ({ filePath }) => {
+        prompts.push(filePath);
+        return choices.shift() ?? 'cancel';
+      },
+      projection: {
+        activateDocument: async () => undefined,
+        goToReadingPosition: async () => undefined,
+        verifySavedDocument: async () => undefined,
+      },
+      pdfSaveAdapter: {
+        writeOriginal: async (token, bytes) => {
+          writes.push(token);
+          return bytes;
+        },
+        chooseDestination: async () => null,
+        writeDestination: async () => {
+          throw new Error('Unexpected Save As');
+        },
+        releaseDestination: async () => undefined,
+      },
+      persist: async () => undefined,
+    });
+    for (const document of INITIAL_SESSION.documents) {
+      const runtime = createDocumentRuntime();
+      runtime.saveSource = document.filePath;
+      let saved = false;
+      runtime.editing = {
+        state: () => ({ revision: 1, dirty: !saved, readOnlyReason: null }),
+        exportPdf: async () => new Uint8Array([1]),
+        markSaved: () => {
+          saved = true;
+        },
+      };
+      await reader.dispatch({ type: 'registerDocument', document, runtime });
+    }
+    expect(await reader.prepareShutdown()).toBe(false);
+    expect(reader.snapshot().documents).toHaveLength(2);
+    expect(reader.hasUnsavedPdfWork()).toBe(true);
+    expect(writes).toEqual([]);
+    await reader.dispatch({ type: 'goToNextPage' });
+    expect(reader.snapshot().documents[0].readingPosition.page).toBe(3);
+    expect(await reader.prepareShutdown()).toBe(true);
+    expect(reader.isShutdownPrepared()).toBe(true);
+    expect(reader.snapshot().documents).toHaveLength(2);
+    expect(writes).toEqual(['/docs/first.pdf']);
+    expect(prompts).toEqual([
+      '/docs/first.pdf',
+      '/docs/second.pdf',
+      '/docs/first.pdf',
+      '/docs/second.pdf',
+    ]);
+    await reader.flush();
+    expect(writes).toEqual(['/docs/first.pdf']);
+    reader.cancelShutdown();
+    expect(reader.isShutdownPrepared()).toBe(false);
+  });
+
+  it('Cancel keeps edited Documents usable and a later Discard closes without writing', async () => {
+    const runtime = createDocumentRuntime();
+    runtime.editing = {
+      state: () => ({ revision: 1, dirty: true, readOnlyReason: null }),
+      exportPdf: async () => {
+        throw new Error('Discard must not export');
+      },
+      markSaved: () => {
+        throw new Error('Discard is not Save');
+      },
+    };
+    let choice: 'cancel' | 'discard' = 'cancel';
+    const reader = createReaderActions({
+      initialSession: INITIAL_SESSION,
+      projection: {
+        activateDocument: async () => undefined,
+        goToReadingPosition: async () => undefined,
+        closeDocument: async () => undefined,
+      },
+      chooseUnsavedDocument: async () => choice,
+      persist: async () => undefined,
+    });
+    await reader.dispatch({
+      type: 'registerDocument',
+      document: INITIAL_SESSION.documents[0],
+      runtime,
+    });
+    expect(
+      (await reader.dispatch({ type: 'closeDocument', filePath: '/docs/first.pdf' })).status,
+    ).toBe('no-op');
+    expect(reader.isDocumentOpen('/docs/first.pdf')).toBe(true);
+    await reader.dispatch({ type: 'goToNextPage' });
+    expect(reader.snapshot().documents[0].readingPosition.page).toBe(3);
+    choice = 'discard';
+    expect(
+      (await reader.dispatch({ type: 'closeDocument', filePath: '/docs/first.pdf' })).status,
+    ).toBe('committed');
+    expect(reader.isDocumentOpen('/docs/first.pdf')).toBe(false);
+    expect(reader.snapshot().activeDocumentPath).toBe('/docs/second.pdf');
+  });
+
   it('Save writes the originating revision and keeps edits arriving during the write dirty', async () => {
     let revision = 1;
     let saved = 0;
