@@ -158,7 +158,7 @@ describe('EmbedPDF Document surface', () => {
   });
 
   it('matches a ready-made link hit area within the page that was clicked', () => {
-    const firstPageTarget = { type: 'destination', destination: { pageIndex: 1 } };
+    const firstPageTarget = { type: 'destination', destination: { pageIndex: 2 } };
     const secondPageTarget = { type: 'destination', destination: { pageIndex: 3 } };
     const annotation = (pageIndex: number, target: typeof firstPageTarget) =>
       ({
@@ -185,17 +185,22 @@ describe('EmbedPDF Document surface', () => {
     secondPage.append(linkHitArea);
     pagesContainer.append(firstSpread, secondSpread);
     const layout = {
-      virtualItems: [{ pageLayouts: [{ pageNumber: 1 }] }, { pageLayouts: [{ pageNumber: 3 }] }],
+      virtualItems: [
+        { pageLayouts: [{ pageNumber: 1 }] },
+        { pageLayouts: [{ pageNumber: 3 }] },
+        { pageLayouts: [{ pageNumber: 4 }] },
+      ],
     };
     const clickedPage = embedPdfPageNumberForEventPath(
       [linkHitArea, secondPage, secondSpread, pagesContainer],
       layout,
+      [1, 2],
     );
 
-    expect(clickedPage).toBe(3);
+    expect(clickedPage).toBe(4);
     expect(
       embedPdfLinkTargetAtGeometry(
-        [annotation(0, firstPageTarget), annotation(2, secondPageTarget)],
+        [annotation(2, firstPageTarget), annotation(3, secondPageTarget)],
         [{ left: 108, top: 93, width: 162, height: 75 }],
         1.5,
         clickedPage ?? 0,

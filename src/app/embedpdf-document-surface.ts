@@ -302,6 +302,7 @@ interface EmbedPdfPageLookupLayout {
 export function embedPdfPageNumberForEventPath(
   path: readonly EventTarget[],
   layout: EmbedPdfPageLookupLayout,
+  renderedPageIndexes: readonly number[],
 ): number | null {
   const pageWrapper = path.find(
     (target): target is HTMLElement =>
@@ -316,7 +317,10 @@ export function embedPdfPageNumberForEventPath(
   const pageWrappers = [...pagesContainer.children].flatMap((item) => [...item.children]);
   const pageIndex = pageWrappers.indexOf(pageWrapper);
   if (pageIndex < 0) return null;
-  return layout.virtualItems.flatMap((item) => item.pageLayouts)[pageIndex]?.pageNumber ?? null;
+  return (
+    renderedPageIndexes.flatMap((index) => layout.virtualItems[index]?.pageLayouts ?? [])[pageIndex]
+      ?.pageNumber ?? null
+  );
 }
 
 const isEmbedPdfLinkHitArea = (element: Element): boolean =>
@@ -556,7 +560,11 @@ async function createProductionViewer({
     if (!path.some((target) => target instanceof Element && isEmbedPdfLinkHitArea(target))) {
       return null;
     }
-    const pageNumber = embedPdfPageNumberForEventPath(path, scrollScope.getLayout());
+    const pageNumber = embedPdfPageNumberForEventPath(
+      path,
+      scrollScope.getLayout(),
+      scrollScope.getMetrics().renderedPageIndexes,
+    );
     if (pageNumber === null) return null;
     return embedPdfLinkTargetAtGeometry(
       annotationScope.getAnnotations(),
