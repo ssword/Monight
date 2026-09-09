@@ -4,6 +4,8 @@ status: accepted
 
 # Center reader architecture on the Reading Session
 
+The PDF.js choice and separate durable Annotation store below are superseded by [ADR 0002](0002-adopt-embedpdf-and-pdf-native-annotations.md). Reading Session authority and the other decisions remain in effect.
+
 Monight will treat the Reading Session as the sole authority for the ordered Documents, active Document, Reading Position, and Visual State. This replaces the duplicated mutable state and caller choreography spread across `TabData`, `PDFViewer`, session persistence, input adapters, and `main.ts`; the aim is greater depth, locality, and one interface-level test surface for reader behavior.
 
 ## Decision
