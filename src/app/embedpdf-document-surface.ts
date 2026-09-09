@@ -211,7 +211,11 @@ export function removeEmbedPdfCommandShortcuts(
   registry.registerCommand({ ...command, shortcuts: undefined });
 }
 
-type EmbedPdfDestination = Extract<PdfLinkTarget['dest'], { readonly pageIndex: number }>;
+interface EmbedPdfDestination {
+  readonly pageIndex: number;
+  readonly zoom?: unknown;
+  readonly view?: readonly number[];
+}
 
 interface EmbedPdfLinkTarget {
   readonly type: 'destination' | 'action';
@@ -230,11 +234,14 @@ interface EmbedPdfLinkGeometry {
   readonly height: number;
 }
 
-export function embedPdfLinkTarget(target: EmbedPdfLinkTarget): PdfLinkTarget | null {
+export function embedPdfLinkTarget(
+  target: EmbedPdfLinkTarget,
+  resolveDestination: (destination: EmbedPdfDestination) => ReadingPosition,
+): PdfLinkTarget | null {
   if (target.type === 'action' && target.action?.uri) return { url: target.action.uri };
   const destination =
     target.type === 'destination' ? target.destination : target.action?.destination;
-  return destination ? { dest: destination } : null;
+  return destination ? { readingPosition: resolveDestination(destination) } : null;
 }
 
 export function embedPdfDestinationReadingPosition(
@@ -269,7 +276,7 @@ export function embedPdfLinkTargetAtGeometry(
   annotations: readonly TrackedAnnotation[],
   geometries: readonly EmbedPdfLinkGeometry[],
   scale: number,
-  currentPage: number,
+  pageNumber: number,
 ): EmbedPdfLinkTarget | null {
   const matches = annotations.filter(isEmbedPdfTrackedLink).filter(({ object }) => {
     if (!object.target) return false;
@@ -282,8 +289,34 @@ export function embedPdfLinkTargetAtGeometry(
         approximatelyEqual(geometry.height, object.rect.size.height * sizeScale),
     );
   });
-  const match = matches.find(({ object }) => object.pageIndex + 1 === currentPage) ?? matches[0];
+  const match = matches.find(({ object }) => object.pageIndex + 1 === pageNumber);
   return match?.object.target ?? null;
+}
+
+interface EmbedPdfPageLookupLayout {
+  readonly virtualItems: readonly {
+    readonly pageLayouts: readonly { readonly pageNumber: number }[];
+  }[];
+}
+
+export function embedPdfPageNumberForEventPath(
+  path: readonly EventTarget[],
+  layout: EmbedPdfPageLookupLayout,
+): number | null {
+  const pageWrapper = path.find(
+    (target): target is HTMLElement =>
+      target instanceof HTMLElement &&
+      target.style.position === 'relative' &&
+      target.parentElement?.style.display === 'flex' &&
+      target.parentElement.style.justifyContent === 'center' &&
+      target.parentElement.parentElement?.style.position === 'relative',
+  );
+  const pagesContainer = pageWrapper?.parentElement?.parentElement;
+  if (!pageWrapper || !pagesContainer) return null;
+  const pageWrappers = [...pagesContainer.children].flatMap((item) => [...item.children]);
+  const pageIndex = pageWrappers.indexOf(pageWrapper);
+  if (pageIndex < 0) return null;
+  return layout.virtualItems.flatMap((item) => item.pageLayouts)[pageIndex]?.pageNumber ?? null;
 }
 
 const isEmbedPdfLinkHitArea = (element: Element): boolean =>
@@ -523,11 +556,13 @@ async function createProductionViewer({
     if (!path.some((target) => target instanceof Element && isEmbedPdfLinkHitArea(target))) {
       return null;
     }
+    const pageNumber = embedPdfPageNumberForEventPath(path, scrollScope.getLayout());
+    if (pageNumber === null) return null;
     return embedPdfLinkTargetAtGeometry(
       annotationScope.getAnnotations(),
       embedPdfLinkGeometries(path),
       zoom.forDocument(documentId).getState().currentZoomLevel,
-      currentPageNumber(),
+      pageNumber,
     );
   };
   const interceptEmbedPdfLink = (event: Event): void => {
@@ -536,7 +571,14 @@ async function createProductionViewer({
     event.stopImmediatePropagation();
     if (event.type !== 'click') return;
     event.preventDefault();
-    const monightTarget = embedPdfLinkTarget(target);
+    const monightTarget = embedPdfLinkTarget(target, (destination) => {
+      const page = currentDocument().pages[destination.pageIndex];
+      return embedPdfDestinationReadingPosition(
+        destination,
+        currentDocument().pageCount,
+        page?.size.height ?? 0,
+      );
+    });
     if (!monightTarget || !callbacks.linkTargetRequested) return;
     void callbacks.linkTargetRequested(monightTarget).catch((error) => {
       console.error('Failed to activate EmbedPDF link:', error);
@@ -828,17 +870,11 @@ async function createProductionViewer({
     async resolveLinkTarget(target, options) {
       if (options.isCancelled()) return null;
       if (target.url) return { kind: 'external', url: target.url };
-      if (target.dest && !Array.isArray(target.dest) && typeof target.dest !== 'string') {
-        const page = currentDocument().pages[target.dest.pageIndex];
-        const position = embedPdfDestinationReadingPosition(
-          target.dest,
-          currentDocument().pageCount,
-          page?.size.height ?? 0,
-        );
+      if (target.readingPosition) {
         return {
           kind: 'page',
-          pageNumber: position.page,
-          location: position.location,
+          pageNumber: target.readingPosition.page,
+          location: target.readingPosition.location,
         };
       }
       return null;

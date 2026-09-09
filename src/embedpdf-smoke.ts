@@ -5,7 +5,8 @@ declare global {
     embedPdfSmoke?: {
       currentPage: number;
       initialZoom: number;
-      linkPageIndex: number;
+      linkLocation: number;
+      linkPage: number;
       pageCount: number;
       pageAfterLinkClick: number;
       zoom: number;
@@ -42,7 +43,9 @@ function createRequiredFontPdf(): Uint8Array {
 
 async function run(): Promise<void> {
   try {
-    let linkPageIndex: number | null = null;
+    const linkState: { position: { page: number; location: number } | null } = {
+      position: null,
+    };
     const factory = createEmbedPdfDocumentSurfaceFactory();
     const surface = await factory({
       filePath: '/fixtures/required-font.pdf',
@@ -55,10 +58,7 @@ async function run(): Promise<void> {
         pageNavigationRequested: async () => undefined,
         zoomIntentRequested: async () => undefined,
         linkTargetRequested: async (target) => {
-          const destination = target.dest;
-          if (destination && !Array.isArray(destination) && typeof destination !== 'string') {
-            linkPageIndex = destination.pageIndex;
-          }
+          linkState.position = target.readingPosition ?? null;
         },
       },
     });
@@ -83,10 +83,11 @@ async function run(): Promise<void> {
     link.dispatchEvent(
       new MouseEvent('click', { bubbles: true, cancelable: true, composed: true }),
     );
-    for (let attempt = 0; attempt < 50 && linkPageIndex === null; attempt += 1) {
+    for (let attempt = 0; attempt < 50 && linkState.position === null; attempt += 1) {
       await new Promise((resolve) => setTimeout(resolve, 20));
     }
-    if (linkPageIndex === null) throw new Error('EmbedPDF did not delegate the internal link');
+    const linkPosition = linkState.position;
+    if (linkPosition === null) throw new Error('EmbedPDF did not delegate the internal link');
     const pageAfterLinkClick = surface.rendering.getState().currentPage;
     await surface.rendering.goToPage(2);
     await surface.rendering.zoomIn();
@@ -99,7 +100,8 @@ async function run(): Promise<void> {
     window.embedPdfSmoke = {
       currentPage: state.currentPage,
       initialZoom,
-      linkPageIndex,
+      linkLocation: linkPosition.location,
+      linkPage: linkPosition.page,
       pageCount: state.totalPages,
       pageAfterLinkClick,
       zoom: state.zoom,

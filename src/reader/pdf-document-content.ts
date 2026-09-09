@@ -113,11 +113,6 @@ export function createPdfDocumentContent({
     options: DocumentContentQueryOptions,
   ): Promise<number | null> => {
     const document = currentDocument();
-    if (!Array.isArray(destination) && typeof destination !== 'string') {
-      return options.isCancelled()
-        ? null
-        : Math.max(1, Math.min(destination.pageIndex + 1, document.numPages));
-    }
     const explicitDestination = Array.isArray(destination)
       ? destination
       : await document.getDestination(destination);
@@ -286,6 +281,15 @@ export function createPdfDocumentContent({
     async resolveLinkTarget(target: PdfLinkTarget, options) {
       if (target.url) {
         return options.isCancelled() ? null : { kind: 'external', url: target.url };
+      }
+      if (target.readingPosition) {
+        return options.isCancelled()
+          ? null
+          : {
+              kind: 'page',
+              pageNumber: target.readingPosition.page,
+              location: target.readingPosition.location,
+            };
       }
       if (!target.dest) return null;
       const pageNumber = await resolveDestinationPage(target.dest, options);

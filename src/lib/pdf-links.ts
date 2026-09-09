@@ -1,15 +1,12 @@
-export type PdfDestination =
-  | string
-  | unknown[]
-  | {
-      readonly pageIndex: number;
-      readonly zoom?: unknown;
-      readonly view?: readonly number[];
-    };
+export type PdfDestination = string | unknown[];
 
 export interface PdfLinkTarget {
   url?: string;
   dest?: PdfDestination;
+  readingPosition?: {
+    readonly page: number;
+    readonly location: number;
+  };
 }
 
 export interface PdfLinkDomAttributes {

@@ -11,6 +11,7 @@ import {
   embedPdfLayoutForViewMode,
   embedPdfLinkTarget,
   embedPdfLinkTargetAtGeometry,
+  embedPdfPageNumberForEventPath,
   removeEmbedPdfCommandShortcuts,
   restoreEmbedPdfReadingPositionCoordinates,
 } from '../app/embedpdf-document-surface';
@@ -137,18 +138,26 @@ describe('EmbedPDF Document surface', () => {
     const destination = { pageIndex: 4, zoom: { mode: 0 }, view: [] };
 
     expect(
-      embedPdfLinkTarget({
-        type: 'action',
-        action: { type: 3, uri: 'https://example.com/report' },
-      } as never),
+      embedPdfLinkTarget(
+        {
+          type: 'action',
+          action: { type: 3, uri: 'https://example.com/report' },
+        } as never,
+        vi.fn(),
+      ),
     ).toEqual({ url: 'https://example.com/report' });
-    expect(embedPdfLinkTarget({ type: 'destination', destination } as never)).toEqual({
-      dest: destination,
-    });
-    expect(embedPdfLinkTarget({ type: 'action', action: { type: 0 } } as never)).toBeNull();
+    expect(
+      embedPdfLinkTarget({ type: 'destination', destination } as never, () => ({
+        page: 5,
+        location: 0.25,
+      })),
+    ).toEqual({ readingPosition: { page: 5, location: 0.25 } });
+    expect(
+      embedPdfLinkTarget({ type: 'action', action: { type: 0 } } as never, vi.fn()),
+    ).toBeNull();
   });
 
-  it('matches a ready-made link hit area to its loaded annotation target', () => {
+  it('matches a ready-made link hit area within the page that was clicked', () => {
     const firstPageTarget = { type: 'destination', destination: { pageIndex: 1 } };
     const secondPageTarget = { type: 'destination', destination: { pageIndex: 3 } };
     const annotation = (pageIndex: number, target: typeof firstPageTarget) =>
@@ -161,13 +170,35 @@ describe('EmbedPDF Document surface', () => {
           target: target as never,
         },
       }) as never;
+    const pagesContainer = document.createElement('div');
+    pagesContainer.style.position = 'relative';
+    const firstSpread = document.createElement('div');
+    firstSpread.style.display = 'flex';
+    firstSpread.style.justifyContent = 'center';
+    const firstPage = document.createElement('div');
+    firstPage.style.position = 'relative';
+    const secondSpread = firstSpread.cloneNode() as HTMLDivElement;
+    const secondPage = firstPage.cloneNode() as HTMLDivElement;
+    const linkHitArea = document.createElement('rect');
+    firstSpread.append(firstPage);
+    secondSpread.append(secondPage);
+    secondPage.append(linkHitArea);
+    pagesContainer.append(firstSpread, secondSpread);
+    const layout = {
+      virtualItems: [{ pageLayouts: [{ pageNumber: 1 }] }, { pageLayouts: [{ pageNumber: 3 }] }],
+    };
+    const clickedPage = embedPdfPageNumberForEventPath(
+      [linkHitArea, secondPage, secondSpread, pagesContainer],
+      layout,
+    );
 
+    expect(clickedPage).toBe(3);
     expect(
       embedPdfLinkTargetAtGeometry(
         [annotation(0, firstPageTarget), annotation(2, secondPageTarget)],
         [{ left: 108, top: 93, width: 162, height: 75 }],
         1.5,
-        3,
+        clickedPage ?? 0,
       ),
     ).toBe(secondPageTarget);
     expect(

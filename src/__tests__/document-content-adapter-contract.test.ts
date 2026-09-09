@@ -43,6 +43,10 @@ function expectDocumentContentContract(
         { url: 'https://example.com/report' },
         { isCancelled: () => false },
       );
+      const readingPositionTarget = await content.resolveLinkTarget(
+        { readingPosition: { page: 2, location: 0.25 } },
+        { isCancelled: () => false },
+      );
       returnedBytes[0] = 99;
 
       expect(content.pageCount).toBe(2);
@@ -63,6 +67,7 @@ function expectDocumentContentContract(
       expect(returnedMetadata).toEqual(metadata);
       expect(internalTarget).toEqual({ kind: 'page', pageNumber: 2 });
       expect(externalTarget).toEqual({ kind: 'external', url: 'https://example.com/report' });
+      expect(readingPositionTarget).toEqual({ kind: 'page', pageNumber: 2, location: 0.25 });
       await expect(content.search('moon', { isCancelled: () => true })).resolves.toEqual([]);
       await expect(content.getOutline({ isCancelled: () => true })).resolves.toEqual([]);
       await expect(content.getMetadata({ isCancelled: () => true })).resolves.toBeNull();
@@ -120,6 +125,13 @@ function createInMemoryDocumentContent(): LoadableDocumentContent {
     async resolveLinkTarget(target, options): Promise<ResolvedDocumentLinkTarget | null> {
       if (!loaded || options.isCancelled()) return null;
       if (target.url) return { kind: 'external', url: target.url };
+      if (target.readingPosition) {
+        return {
+          kind: 'page',
+          pageNumber: target.readingPosition.page,
+          location: target.readingPosition.location,
+        };
+      }
       return target.dest ? { kind: 'page', pageNumber: 2 } : null;
     },
     destroy() {

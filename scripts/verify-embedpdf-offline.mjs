@@ -171,7 +171,12 @@ try {
   if (!result.state || result.state.pageCount !== 2 || result.state.currentPage !== 2) {
     throw new Error(`Invalid EmbedPDF state: ${JSON.stringify(result.state)}`);
   }
-  if (result.state.linkPageIndex !== 1 || result.state.pageAfterLinkClick !== 1) {
+  if (
+    result.state.linkPage !== 2 ||
+    result.state.linkLocation < 0.2 ||
+    result.state.linkLocation > 0.3 ||
+    result.state.pageAfterLinkClick !== 1
+  ) {
     throw new Error(`EmbedPDF bypassed Monight link routing: ${JSON.stringify(result.state)}`);
   }
   if (result.state.zoom <= result.state.initialZoom) {

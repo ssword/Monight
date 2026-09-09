@@ -65,6 +65,12 @@ describe('PDF Document Content', () => {
     await expect(
       content.resolveLinkTarget({ url: 'https://example.com' }, { isCancelled: () => false }),
     ).resolves.toEqual({ kind: 'external', url: 'https://example.com' });
+    await expect(
+      content.resolveLinkTarget(
+        { readingPosition: { page: 2, location: 0.25 } },
+        { isCancelled: () => false },
+      ),
+    ).resolves.toEqual({ kind: 'page', pageNumber: 2, location: 0.25 });
     await expect(content.getData()).resolves.toEqual(new Uint8Array([4, 5, 6]));
 
     expect(getDocument).toHaveBeenCalledOnce();
