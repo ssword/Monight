@@ -201,6 +201,9 @@ try {
   );
   await verifyReading(browser, origin);
   await verifyAnnotations(page, origin);
+  if (browserDiagnostics.some((entry) => entry.includes('monight-test-password'))) {
+    throw new Error('The protected-document password entered browser diagnostics');
+  }
   await verifyNavigation(browser, origin);
 } finally {
   await browser?.close();

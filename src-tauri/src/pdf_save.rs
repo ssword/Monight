@@ -357,9 +357,11 @@ fn load_editable(bytes: &[u8]) -> Result<lopdf::Document, String> {
         }
         match object {
             Object::Dictionary(dict) | Object::Stream(lopdf::Stream { dict, .. }) => {
-                dict.has(b"ByteRange")
-                    || dict.get(b"Type").and_then(Object::as_name).ok() == Some(b"Sig")
-                    || dict.get(b"FT").and_then(Object::as_name).ok() == Some(b"Sig")
+                (dict.has(b"ByteRange") && dict.has(b"Contents"))
+                    || (dict.get(b"FT").and_then(Object::as_name).ok() == Some(b"Sig")
+                        && dict
+                            .get(b"V")
+                            .is_ok_and(|value| !matches!(value, Object::Null)))
                     || dict
                         .iter()
                         .any(|(_, child)| contains_signature(child, depth + 1))
@@ -570,22 +572,6 @@ mod tests {
         ));
         std::fs::create_dir_all(&path).unwrap();
         path
-    }
-    fn protected_fixtures() -> [(&'static str, &'static [u8]); 3] {
-        [
-            (
-                "restricted",
-                include_bytes!("../tests/fixtures/protected-documents/permission-restricted.pdf"),
-            ),
-            (
-                "encrypted",
-                include_bytes!("../tests/fixtures/protected-documents/password-encrypted.pdf"),
-            ),
-            (
-                "signed",
-                include_bytes!("../tests/fixtures/protected-documents/digitally-signed.pdf"),
-            ),
-        ]
     }
     #[test]
     fn existing_save_checks_loaded_version_and_supports_repeated_native_round_trips() {
@@ -954,18 +940,54 @@ mod tests {
 
     #[test]
     fn protected_fixture_matrix_reports_specific_read_only_reasons() {
-        for ((_, bytes), reason) in protected_fixtures().into_iter().zip([
+        for ((_, bytes), reason) in crate::test_support::protected_pdf_fixtures()
+            .into_iter()
+            .zip([
             "PDF permissions prohibit annotation editing; this Document is read-only",
             "Encrypted PDFs are read-only because Save, Save As, and Recovery Drafts cannot preserve their protection",
             "Digitally signed PDFs are read-only to preserve their signatures",
-        ]) {
+        ])
+        {
             assert_eq!(editing_status(bytes).as_deref(), Some(reason));
         }
     }
 
     #[test]
+    fn empty_signature_field_is_not_treated_as_an_applied_signature() {
+        use lopdf::{dictionary, Object};
+
+        let mut document = lopdf::Document::load_mem(&pdf()).unwrap();
+        let widget = document.add_object(dictionary! {
+            "Type" => "Annot",
+            "Subtype" => "Widget",
+            "FT" => "Sig",
+            "V" => Object::Null,
+        });
+        let form = document.add_object(dictionary! { "Fields" => vec![widget.into()] });
+        let root = document
+            .trailer
+            .get(b"Root")
+            .unwrap()
+            .as_reference()
+            .unwrap();
+        document
+            .get_object_mut(root)
+            .unwrap()
+            .as_dict_mut()
+            .unwrap()
+            .set("AcroForm", Object::Reference(form));
+        let mut bytes = Vec::new();
+        document.save_to(&mut bytes).unwrap();
+
+        assert_eq!(
+            editing_status(&bytes).as_deref(),
+            Some("PDF form preservation has not been verified; this Document is read-only")
+        );
+    }
+
+    #[test]
     fn protected_documents_cannot_use_save_or_save_as() {
-        for (name, bytes) in protected_fixtures() {
+        for (name, bytes) in crate::test_support::protected_pdf_fixtures() {
             let dir = directory();
             let source = dir.join(format!("{name}.pdf"));
             std::fs::write(&source, bytes).unwrap();

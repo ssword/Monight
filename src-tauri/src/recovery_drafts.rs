@@ -105,12 +105,12 @@ fn verify_source_version(document_path: &str, source_version: &str) -> Result<()
         .canonicalize()
         .map_err(|error| format!("Recovery Draft source is unavailable: {error}"))?;
     if canonical.to_str() != Some(document_path) {
-        return Err("Recovery Draft source changed before it could be restored".into());
+        return Err("Recovery Draft source changed since inspection; reopen the Document".into());
     }
     let current = std::fs::read(&canonical)
         .map_err(|error| format!("Recovery Draft source could not be read: {error}"))?;
     if version(&current) != source_version {
-        return Err("Recovery Draft source changed before it could be restored".into());
+        return Err("Recovery Draft source changed since inspection; reopen the Document".into());
     }
     Ok(())
 }
@@ -192,6 +192,14 @@ fn write_atomic(root: &Path, destination: &Path, bytes: &[u8]) -> Result<(), Str
 }
 
 impl RecoveryDrafts {
+    fn revoke(&self, root: &Path, document_path: &str) -> Result<(), String> {
+        self.authorized_sources
+            .lock()
+            .map_err(|error| error.to_string())?
+            .remove(document_path);
+        remove_if_present(&draft_path(root, document_path))
+    }
+
     pub fn inspect(
         &self,
         root: &Path,
@@ -200,11 +208,7 @@ impl RecoveryDrafts {
     ) -> Result<DraftInspection, String> {
         let canonical_path = canonical_source(document_path, source_bytes)?;
         if crate::pdf_save::editing_status(source_bytes).is_some() {
-            self.authorized_sources
-                .lock()
-                .map_err(|error| error.to_string())?
-                .remove(&canonical_path);
-            remove_if_present(&draft_path(root, &canonical_path))?;
+            self.revoke(root, &canonical_path)?;
             return Ok(DraftInspection::Protected);
         }
         let source_version = version(source_bytes);
@@ -251,11 +255,7 @@ impl RecoveryDrafts {
             return Err("Recovery Draft source is not authorized".into());
         }
         if let Err(error) = verify_source_version(&draft.document_path, &draft.source_version) {
-            self.authorized_sources
-                .lock()
-                .map_err(|lock_error| lock_error.to_string())?
-                .remove(&draft.document_path);
-            remove_if_present(&draft_path(root, &draft.document_path))?;
+            self.revoke(root, &draft.document_path)?;
             return Err(error);
         }
         if crate::pdf_save::editing_status(&draft.bytes).is_some() {
@@ -289,11 +289,7 @@ impl RecoveryDrafts {
             return Err("Recovery Draft source is not authorized".into());
         }
         if let Err(error) = verify_source_version(document_path, source_version) {
-            self.authorized_sources
-                .lock()
-                .map_err(|lock_error| lock_error.to_string())?
-                .remove(document_path);
-            remove_if_present(&draft_path(root, document_path))?;
+            self.revoke(root, document_path)?;
             return Err(error);
         }
         let (metadata, bytes) = decode(&draft_path(root, document_path))?;
@@ -441,23 +437,6 @@ mod tests {
     fn changed_pdf(mut bytes: Vec<u8>) -> Vec<u8> {
         bytes.extend_from_slice(b"\n% externally changed\n");
         bytes
-    }
-
-    fn protected_fixtures() -> [(&'static str, &'static [u8]); 3] {
-        [
-            (
-                "restricted",
-                include_bytes!("../tests/fixtures/protected-documents/permission-restricted.pdf"),
-            ),
-            (
-                "encrypted",
-                include_bytes!("../tests/fixtures/protected-documents/password-encrypted.pdf"),
-            ),
-            (
-                "signed",
-                include_bytes!("../tests/fixtures/protected-documents/digitally-signed.pdf"),
-            ),
-        ]
     }
 
     #[test]
@@ -772,7 +751,7 @@ mod tests {
 
     #[test]
     fn protected_fixture_matrix_never_authorizes_recovery_storage() {
-        for (name, bytes) in protected_fixtures() {
+        for (name, bytes) in crate::test_support::protected_pdf_fixtures() {
             let directory = tempfile::tempdir().unwrap();
             let root = directory.path().join("drafts");
             let source = directory.path().join(format!("{name}.pdf"));

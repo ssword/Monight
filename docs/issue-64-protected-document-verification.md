@@ -20,9 +20,10 @@ Save As or another export path that silently invalidates a signature.
 
 Encrypted editing remains intentionally disabled. The selected EmbedPDF/PDFium and
 native adapters do not establish that exported annotations retain encryption, and
-Recovery Drafts deliberately have no encrypted-document storage design. Passwords are
-passed only to the live viewer retry call. They are absent from Reading Session,
-Recent Documents, native save commands, Recovery Draft metadata, and diagnostics.
+Recovery Drafts deliberately have no encrypted-document storage design. The application
+passes passwords from the modal callback directly to the live viewer retry call; no
+password field exists in the Reading Session, Recent Document, native save, or Recovery
+Draft schemas. The browser contract checks storage, rendered output, and diagnostics.
 
 ## Verified matrix
 
@@ -31,7 +32,7 @@ Recent Documents, native save commands, Recovery Draft metadata, and diagnostics
 | Filesystem read-only, editable PDF | Yes | Enabled | Denied with Save As guidance | Allowed to an authorized writable destination | Normal Save/Discard/Cancel behavior if edited | Allowed and source-version bound |
 | PDF permission forbids annotation editing | Yes, without a password for the fixture | Disabled with permission explanation | Denied before write | Denied before file creation | Closes as a clean read-only Document | Never authorized; stale plaintext draft is purged |
 | Digitally signed PDF | Yes | Disabled to preserve signatures | Denied before write | Denied before file creation | Closes as a clean read-only Document | Never authorized; stale plaintext draft is purged |
-| Password-encrypted PDF | Yes, after live password entry | Disabled because protection cannot be preserved | Denied before write | Denied before file creation | Closes as a clean read-only Document | Never authorized; no plaintext draft or intermediate file |
+| Password-encrypted PDF | Yes, after live password entry | Disabled because protection cannot be preserved | Denied before write | Denied before file creation | Closes as a clean read-only Document | Never authorized; no Recovery Draft directory is created |
 
 Recovery inspection, capture, and restore each validate the canonical source and its
 content hash. A source change after inspection invalidates authorization and removes the
@@ -68,13 +69,15 @@ independently checked by extracting its `/ByteRange` and `/Contents` values and 
   purging, and reproduce source changes between inspect/capture and inspect/restore.
 - Reader Actions tests verify that protected Save and Save As stop before export, native
   write, or destination selection; capture creates no Recovery Draft; close needs no
-  unsaved-work decision.
+  unsaved-work decision. A filesystem-read-only Save failure retains edits, then Save As
+  writes the authorized destination, reidentifies the Document, and marks it clean.
 - EmbedPDF surface tests verify that the native reason is visible and remains attached to
   the live editing state while the Document is open for reading.
 - The offline Chromium smoke opens all three real protected fixtures with the pinned
   EmbedPDF/PDFium runtime. It uses live password entry only for the encrypted fixture,
   confirms annotation/export/protection commands remain unavailable, rejects export,
-  and checks that the password does not enter browser storage or visible diagnostics.
+  and checks that the password does not enter local/session storage, rendered output, or
+  captured browser console and page-error diagnostics.
 
 ## Remaining release gates
 
@@ -83,3 +86,6 @@ exercise this matrix in final Tauri packages on macOS, Windows, and Linux, inclu
 native password dialog and Save As chooser. Record tester, date, OS and application
 versions, build artifact, CI run, and outcomes. These external checks do not weaken the
 automated guards above and must not be replaced with mocked permission flags.
+The packaged pass must also inspect native logs, temporary directories, caches, Reading
+Session state, and Recent Documents for the test password before claiming complete
+platform-level password non-persistence.

@@ -618,6 +618,71 @@ describe('Reader Actions', () => {
     expect(closeDocument).toHaveBeenCalledOnce();
   });
 
+  it('falls back from a filesystem-read-only Save to Save As without losing edits', async () => {
+    let savedRevision = 0;
+    const runtime = createDocumentRuntime();
+    runtime.saveSource = 'read-only-source';
+    runtime.editing = {
+      state: () => ({ revision: 3, dirty: savedRevision !== 3, readOnlyReason: null }),
+      exportPdf: async () => new Uint8Array([1, 2, 3]),
+      markSaved: (revision) => {
+        savedRevision = revision;
+      },
+    };
+    const reidentifyDocument = vi.fn();
+    const writeDestination = vi.fn(async (_destination, bytes: Uint8Array) => bytes);
+    const reader = createReaderActions({
+      initialSession: INITIAL_SESSION,
+      projection: {
+        activateDocument: async () => undefined,
+        goToReadingPosition: async () => undefined,
+        verifySavedDocument: async () => undefined,
+        reidentifyDocument,
+      },
+      pdfSaveAdapter: {
+        captureSource: async () => 'writable-copy-source',
+        writeOriginal: async () => {
+          throw new Error('File is read-only; choose Save As');
+        },
+        chooseDestination: async () => ({
+          token: 'writable-copy',
+          canonicalPath: '/docs/copy.pdf',
+          title: 'copy.pdf',
+        }),
+        writeDestination,
+        releaseDestination: async () => undefined,
+      },
+      persist: async () => undefined,
+    });
+    await reader.dispatch({
+      type: 'registerDocument',
+      document: INITIAL_SESSION.documents[0],
+      runtime,
+    });
+
+    await expect(reader.dispatch({ type: 'saveDocument' })).resolves.toMatchObject({
+      status: 'failure',
+      error: expect.objectContaining({ message: 'File is read-only; choose Save As' }),
+    });
+    expect(runtime.editing.state().dirty).toBe(true);
+
+    await expect(reader.dispatch({ type: 'saveDocumentAs' })).resolves.toMatchObject({
+      status: 'committed',
+    });
+    expect(writeDestination).toHaveBeenCalledWith(
+      expect.objectContaining({ canonicalPath: '/docs/copy.pdf' }),
+      new Uint8Array([1, 2, 3]),
+      'read-only-source',
+    );
+    expect(reidentifyDocument).toHaveBeenCalledWith(
+      '/docs/first.pdf',
+      expect.objectContaining({ canonicalPath: '/docs/copy.pdf' }),
+    );
+    expect(reader.snapshot().documents[0].filePath).toBe('/docs/copy.pdf');
+    expect(runtime.saveSource).toBe('writable-copy-source');
+    expect(runtime.editing.state().dirty).toBe(false);
+  });
+
   it('reload waits for preceding navigation before projecting Reading Session state', async () => {
     let release!: () => void;
     let entered!: () => void;

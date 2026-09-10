@@ -33,12 +33,8 @@ BYTE_RANGE_PLACEHOLDER = 9_999_999_999
 SIGNATURE_CAPACITY = 16_384
 
 
-def encrypted_writer() -> PdfWriter:
-    return PdfWriter(clone_from=SOURCE)
-
-
 def write_encrypted_fixtures() -> None:
-    restricted = encrypted_writer()
+    restricted = PdfWriter(clone_from=SOURCE)
     restricted.encrypt(
         user_password="",
         owner_password=PASSWORD,
@@ -47,7 +43,7 @@ def write_encrypted_fixtures() -> None:
     )
     restricted.write(OUTPUT / "permission-restricted.pdf")
 
-    encrypted = encrypted_writer()
+    encrypted = PdfWriter(clone_from=SOURCE)
     encrypted.encrypt(
         user_password=PASSWORD,
         owner_password=PASSWORD,
