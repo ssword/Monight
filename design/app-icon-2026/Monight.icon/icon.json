@@ -1,71 +1,73 @@
 {
-  "fill": {
-    "automatic-gradient": "extended-srgb:0.04706,0.09412,0.17255,1.00000"
+  "fill" : {
+    "automatic-gradient" : "extended-srgb:0.04706,0.09412,0.17255,1.00000"
   },
-  "groups": [
+  "groups" : [
     {
-      "layers": [
+      "layers" : [
         {
-          "image-name": "05-crescent-moon.svg",
-          "name": "05-crescent-moon"
+          "image-name" : "05-crescent-moon.svg",
+          "name" : "05-crescent-moon"
         }
       ],
-      "name": "Moonlight",
-      "shadow": {
-        "kind": "neutral",
-        "opacity": 0.25
+      "name" : "Moonlight",
+      "shadow" : {
+        "kind" : "neutral",
+        "opacity" : 0.25
       },
-      "translucency": {
-        "enabled": true,
-        "value": 0.08
+      "translucency" : {
+        "enabled" : true,
+        "value" : 0.08
       }
     },
     {
-      "layers": [
+      "layers" : [
         {
-          "glass": false,
-          "image-name": "04-reading-marks.svg",
-          "name": "04-reading-marks"
+          "glass" : false,
+          "image-name" : "04-reading-marks.svg",
+          "name" : "04-reading-marks"
         },
         {
-          "image-name": "03-page-fold.svg",
-          "name": "03-page-fold"
+          "image-name" : "03-page-fold.svg",
+          "name" : "03-page-fold"
         },
         {
-          "image-name": "02-front-page.svg",
-          "name": "02-front-page"
+          "image-name" : "02-front-page.svg",
+          "name" : "02-front-page"
         }
       ],
-      "name": "Reading Page",
-      "shadow": {
-        "kind": "neutral",
-        "opacity": 0.35
+      "name" : "Reading Page",
+      "shadow" : {
+        "kind" : "neutral",
+        "opacity" : 0.35
       },
-      "translucency": {
-        "enabled": true,
-        "value": 0.18
+      "translucency" : {
+        "enabled" : true,
+        "value" : 0.18
       }
     },
     {
-      "layers": [
+      "layers" : [
         {
-          "image-name": "01-rear-page.svg",
-          "name": "01-rear-page"
+          "image-name" : "01-rear-page.svg",
+          "name" : "01-rear-page"
         }
       ],
-      "name": "Reading Session",
-      "shadow": {
-        "kind": "neutral",
-        "opacity": 0.22
+      "name" : "Reading Session",
+      "shadow" : {
+        "kind" : "neutral",
+        "opacity" : 0.22
       },
-      "translucency": {
-        "enabled": true,
-        "value": 0.4
+      "translucency" : {
+        "enabled" : true,
+        "value" : 0.4
       }
     }
   ],
-  "supported-platforms": {
-    "circles": ["watchOS"],
-    "squares": "shared"
+  "supported-platforms" : {
+    "circles" : [
+      "watchOS"
+    ],
+    "squares" : "shared"
   }
 }

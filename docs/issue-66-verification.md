@@ -23,7 +23,7 @@ Run from the repository root at the final issue #66 commit:
 | --- | --- |
 | `npm run build` | Pass locally on macOS; 69 modules transformed |
 | Focused migration contract tests | Pass locally on macOS; 77 tests |
-| `npm run lint` | Pass locally on macOS |
+| `npm run lint` | Application files pass; repository check is blocked by pre-existing formatting in `design/app-icon-2026/Monight.icon/icon.json` |
 | `npm test -- --run` | Pass locally on macOS; 345 tests in 40 files |
 | `npm run test:embedpdf-offline` | Pass locally on macOS; rendering, Reading Session, native annotated printing, and navigation contracts |
 | `cargo test --locked --manifest-path src-tauri/Cargo.toml` | Pass locally on macOS; 63 tests |
