@@ -537,6 +537,32 @@ describe('application lifecycle composition', () => {
     expect(setAnnotationDisplayName).toHaveBeenCalledWith('Ada Lovelace');
   });
 
+  it('reveals a persistent startup error when initialization fails before the window is shown', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const modules = createModules();
+    modules.createRecentDocumentStorage = vi.fn(() => {
+      throw new Error('startup storage failed');
+    });
+    const { initializeApplication } = await import('../application');
+
+    try {
+      await initializeApplication(modules);
+
+      expect(mocks.events).toContain('window:show');
+      expect(mocks.events).toContain('window:focus');
+      expect(document.getElementById('version-info')).toMatchObject({
+        textContent: 'Startup failed: startup storage failed',
+      });
+      expect(document.getElementById('version-info')?.getAttribute('role')).toBe('alert');
+      expect(consoleError).toHaveBeenCalledWith(
+        'Initialization error:',
+        expect.objectContaining({ message: 'startup storage failed' }),
+      );
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
   it('shows the main window and resumes normal startup when initialization-time Quit is cancelled', async () => {
     const { initializeApplication } = await import('../application');
     const modules = createModules();

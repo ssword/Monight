@@ -773,5 +773,20 @@ export async function initializeApplication(modules: ApplicationModules): Promis
   } catch (error) {
     shutdown.markReady();
     console.error('Initialization error:', error);
+    const message = error instanceof Error ? error.message : String(error);
+    showSplash();
+    const status = document.getElementById('version-info');
+    if (status) {
+      status.setAttribute('role', 'alert');
+      status.textContent = `Startup failed: ${message}`;
+    }
+    if (!shutdown.isShutdownRequested()) {
+      try {
+        await currentWindow.show();
+        await currentWindow.setFocus();
+      } catch (windowError) {
+        console.error('Failed to reveal initialization error:', windowError);
+      }
+    }
   }
 }

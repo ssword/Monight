@@ -520,6 +520,29 @@ mod tests {
     }
 
     #[test]
+    fn test_main_window_lifecycle_commands_are_explicitly_authorized() {
+        let capability: serde_json::Value =
+            serde_json::from_str(include_str!("../capabilities/default.json"))
+                .expect("valid default capability");
+        let permissions = capability["permissions"]
+            .as_array()
+            .expect("default capability should list permissions");
+
+        for required in [
+            "core:window:allow-show",
+            "core:window:allow-set-focus",
+            "core:window:allow-unminimize",
+            "core:window:allow-set-fullscreen",
+            "core:window:allow-destroy",
+        ] {
+            assert!(
+                permissions.iter().any(|permission| permission == required),
+                "missing frontend window permission: {required}"
+            );
+        }
+    }
+
+    #[test]
     fn test_shipped_artifacts_exclude_shell_and_retain_the_opener() {
         let cargo_manifest = include_str!("../Cargo.toml");
         let cargo_lock = include_str!("../Cargo.lock");
