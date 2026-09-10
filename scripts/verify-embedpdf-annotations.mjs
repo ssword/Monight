@@ -22,5 +22,5 @@ export async function verifyAnnotations(page, origin) {
     for (const name of ['original', 'annotated', 'deleted'])
       await writeFile(`${destination}/${name}.pdf`, new Uint8Array(result[name]));
   }
-  console.log('EmbedPDF protected open/read-only and native annotation round trips: PASS');
+  console.log('EmbedPDF protected printing and native annotated print round trips: PASS');
 }

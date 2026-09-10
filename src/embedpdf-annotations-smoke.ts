@@ -85,6 +85,12 @@ async function verifyProtectedDocuments(): Promise<void> {
       document.querySelector('[role="status"]')?.textContent === fixture.reason,
       'Protected Document explanation is not visible',
     );
+    const printBytes = await surface.runtime.preparePrint?.();
+    check(
+      printBytes && printBytes.length > 0,
+      `Printable protected Document failed: ${fixture.name}`,
+    );
+    check(!surface.runtime.editing?.state().dirty, 'Printing made a protected Document dirty');
     const container = document.querySelector<EmbedPdfContainer>('embedpdf-container');
     if (!container) throw new Error('Missing protected ready-made viewer');
     const registry = await container.registry;
@@ -303,8 +309,28 @@ async function run() {
   check(surface.runtime.editing?.state().dirty, 'Native edits did not mark Document dirty');
   history.undo();
   history.redo();
+  await surface.rendering.setRotation(1);
+  await surface.rendering.setZoomIntent({ kind: 'manual', scale: 1.75 });
+  surface.rendering.applyFilter('invert(1) sepia(1)');
+  const printed = await surface.runtime.preparePrint?.();
+  if (!printed?.length) throw new Error('Missing annotated print output');
+  check(surface.runtime.editing?.state().dirty, 'Printing incorrectly marked annotations saved');
   const annotated = await surface.runtime.editing?.exportPdf();
   if (!annotated) throw new Error('Missing native export');
+  await surface.runtime.destroy();
+  ({ surface, annotations } = await open(printed));
+  check(
+    annotations.getAnnotations().some(({ object }) => object.contents === 'Native highlight'),
+    'Printed bytes omitted the current native highlight',
+  );
+  check(
+    annotations.getAnnotations().some(({ object }) => object.contents === 'Native comment'),
+    'Printed bytes omitted the current native comment',
+  );
+  check(
+    surface.rendering.getState().rotation === 0,
+    'Printed bytes baked in Monight viewing rotation',
+  );
   await surface.runtime.destroy();
   ({ surface, annotations, history } = await open(annotated));
   const objects = annotations.getAnnotations().map((annotation) => annotation.object);

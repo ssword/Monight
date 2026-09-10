@@ -1123,6 +1123,94 @@ describe('Reader Actions', () => {
     expect(reader.snapshot().activeDocumentPath).toBe('/docs/second.pdf');
   });
 
+  it('prints current native annotations without saving or reading stale source bytes', async () => {
+    let savedRevision = 0;
+    const runtime = createDocumentRuntime();
+    runtime.preparePrint = vi.fn(async () => new Uint8Array([9, 8, 7]));
+    runtime.editing = {
+      state: () => ({ revision: 2, dirty: savedRevision !== 2, readOnlyReason: null }),
+      exportPdf: vi.fn(),
+      markSaved: (revision) => {
+        savedRevision = revision;
+      },
+    };
+    const print = vi.fn(async () => undefined);
+    const writeOriginal = vi.fn();
+    const writeDestination = vi.fn();
+    const reader = createReaderActions({
+      initialSession: INITIAL_SESSION,
+      projection: { activateDocument: vi.fn(), goToReadingPosition: vi.fn() },
+      printAdapter: { print },
+      pdfSaveAdapter: {
+        chooseDestination: vi.fn(),
+        writeDestination,
+        writeOriginal,
+        releaseDestination: vi.fn(),
+      },
+      persist: vi.fn(async () => undefined),
+    });
+    await reader.dispatch({
+      type: 'registerDocument',
+      document: INITIAL_SESSION.documents[0],
+      runtime,
+    });
+    const before = reader.snapshot();
+
+    const outcome = await reader.dispatch({ type: 'printDocument' });
+
+    expect(outcome).toEqual({ status: 'performed', revision: 0 });
+    expect(runtime.preparePrint).toHaveBeenCalledOnce();
+    expect(runtime.content.getData).not.toHaveBeenCalled();
+    expect(print).toHaveBeenCalledWith({
+      filePath: '/docs/first.pdf',
+      title: 'first.pdf',
+      bytes: new Uint8Array([9, 8, 7]),
+    });
+    expect(runtime.editing.state()).toEqual({
+      revision: 2,
+      dirty: true,
+      readOnlyReason: null,
+    });
+    expect(writeOriginal).not.toHaveBeenCalled();
+    expect(writeDestination).not.toHaveBeenCalled();
+    expect(reader.snapshot()).toEqual(before);
+  });
+
+  it('does not print bytes from a closed Document generation', async () => {
+    let finishPrintPreparation: ((bytes: Uint8Array) => void) | undefined;
+    const runtime = createDocumentRuntime();
+    runtime.preparePrint = vi.fn(
+      () =>
+        new Promise<Uint8Array>((resolve) => {
+          finishPrintPreparation = resolve;
+        }),
+    );
+    const print = vi.fn(async () => undefined);
+    const reader = createReaderActions({
+      initialSession: INITIAL_SESSION,
+      projection: {
+        activateDocument: vi.fn(),
+        goToReadingPosition: vi.fn(),
+        closeDocument: vi.fn(async () => undefined),
+      },
+      printAdapter: { print },
+      persist: vi.fn(async () => undefined),
+    });
+    await reader.dispatch({
+      type: 'registerDocument',
+      document: INITIAL_SESSION.documents[0],
+      runtime,
+    });
+
+    const printing = reader.dispatch({ type: 'printDocument' });
+    await vi.waitFor(() => expect(finishPrintPreparation).toBeTypeOf('function'));
+    await reader.dispatch({ type: 'closeDocument', filePath: '/docs/first.pdf' });
+    finishPrintPreparation?.(new Uint8Array([4, 5, 6]));
+
+    await expect(printing).resolves.toMatchObject({ status: 'no-op' });
+    expect(print).not.toHaveBeenCalled();
+  });
+
   it('returns a typed failure when the print adapter fails without changing settled state', async () => {
     const runtime = createDocumentRuntime();
     vi.mocked(runtime.content.getData).mockResolvedValue(new Uint8Array([7, 8, 9]));

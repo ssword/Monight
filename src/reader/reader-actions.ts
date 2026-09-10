@@ -1684,7 +1684,7 @@ export function createReaderActions({
               filePath,
               expectedGeneration,
               options,
-              (runtime) => runtime.content.getData(),
+              (runtime) => runtime.preparePrint?.() ?? runtime.content.getData(),
             );
             if (data.status !== 'ready') return data;
             await printAdapter.print({

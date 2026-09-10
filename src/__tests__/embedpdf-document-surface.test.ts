@@ -23,6 +23,7 @@ import { PRESETS } from '../scripts/filters';
 const createViewerRuntime = (
   overrides: Partial<EmbedPdfViewerRuntime> = {},
 ): EmbedPdfViewerRuntime => ({
+  preparePrint: vi.fn(async () => new Uint8Array([1, 2, 3])),
   open: vi.fn(async () => undefined),
   openSearch: vi.fn(),
   setSearchQuery: vi.fn(),
@@ -316,6 +317,37 @@ describe('EmbedPDF Document surface', () => {
     await expect(
       surface.runtime.content.getMetadata({ isCancelled: () => false }),
     ).resolves.toMatchObject({ title: 'Report', pageCount: 2 });
+  });
+
+  it('exposes annotated print bytes without applying viewing transforms', async () => {
+    const printBytes = new Uint8Array([7, 6, 5]);
+    const preparePrint = vi.fn(async () => printBytes);
+    const runtime = createViewerRuntime({
+      preparePrint,
+      currentZoom: () => 1.75,
+      rotation: () => 1,
+    });
+    const factory = createEmbedPdfDocumentSurfaceFactory({
+      createViewer: vi.fn(async () => runtime),
+    });
+    const surface = await factory({
+      filePath: '/docs/annotated.pdf',
+      title: 'annotated.pdf',
+      bytes: new Uint8Array([1, 2, 3]),
+      callbacks: {
+        readingPositionObserved: vi.fn(),
+        readingPositionSettled: vi.fn(),
+        stateChanged: vi.fn(),
+        pageNavigationRequested: vi.fn(async () => undefined),
+        zoomIntentRequested: vi.fn(async () => undefined),
+      },
+    });
+
+    await expect(surface.runtime.preparePrint?.()).resolves.toEqual(printBytes);
+    expect(preparePrint).toHaveBeenCalledOnce();
+    expect(runtime.applyFilter).not.toHaveBeenCalled();
+    expect(runtime.setZoomIntent).not.toHaveBeenCalled();
+    expect(runtime.setRotation).not.toHaveBeenCalled();
   });
 
   it('configures the ready-made viewer as a local, read-only surface', () => {
