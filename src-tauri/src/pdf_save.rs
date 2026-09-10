@@ -346,37 +346,63 @@ fn write_pdf(
 
 const EDITABLE_ANNOTATIONS: &[&[u8]] = &[b"Highlight", b"Text", b"Popup"];
 
+fn visit_pdf_dictionaries(
+    object: &lopdf::Object,
+    depth: usize,
+    visitor: &mut impl FnMut(&lopdf::Dictionary) -> Result<(), String>,
+) -> Result<(), String> {
+    use lopdf::Object;
+
+    if depth > 200 {
+        return Err(
+            "PDF object nesting exceeds the safety inspection limit; this Document is read-only"
+                .into(),
+        );
+    }
+    match object {
+        Object::Dictionary(dictionary)
+        | Object::Stream(lopdf::Stream {
+            dict: dictionary, ..
+        }) => {
+            visitor(dictionary)?;
+            for (_, child) in dictionary.iter() {
+                visit_pdf_dictionaries(child, depth + 1, visitor)?;
+            }
+        }
+        Object::Array(items) => {
+            for child in items {
+                visit_pdf_dictionaries(child, depth + 1, visitor)?;
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+fn visit_document_dictionaries(
+    document: &lopdf::Document,
+    mut visitor: impl FnMut(&lopdf::Dictionary) -> Result<(), String>,
+) -> Result<(), String> {
+    for object in document.objects.values() {
+        visit_pdf_dictionaries(object, 0, &mut visitor)?;
+    }
+    Ok(())
+}
+
 fn load_editable(bytes: &[u8]) -> Result<lopdf::Document, String> {
     let document = lopdf::Document::load_mem(bytes)
         .map_err(|e| format!("PDF safety inspection failed: {e}"))?;
 
-    fn contains_signature(object: &lopdf::Object, depth: usize) -> bool {
-        use lopdf::Object;
-        if depth > 200 {
-            return false;
-        }
-        match object {
-            Object::Dictionary(dict) | Object::Stream(lopdf::Stream { dict, .. }) => {
-                (dict.has(b"ByteRange") && dict.has(b"Contents"))
-                    || (dict.get(b"FT").and_then(Object::as_name).ok() == Some(b"Sig")
-                        && dict
-                            .get(b"V")
-                            .is_ok_and(|value| !matches!(value, Object::Null)))
-                    || dict
-                        .iter()
-                        .any(|(_, child)| contains_signature(child, depth + 1))
-            }
-            Object::Array(items) => items
-                .iter()
-                .any(|child| contains_signature(child, depth + 1)),
-            _ => false,
-        }
-    }
-    if document
-        .objects
-        .values()
-        .any(|object| contains_signature(object, 0))
-    {
+    let mut contains_signature = false;
+    visit_document_dictionaries(&document, |dictionary| {
+        contains_signature |= (dictionary.has(b"ByteRange") && dictionary.has(b"Contents"))
+            || (dictionary.get(b"FT").and_then(lopdf::Object::as_name).ok() == Some(b"Sig")
+                && dictionary
+                    .get(b"V")
+                    .is_ok_and(|value| !matches!(value, lopdf::Object::Null)));
+        Ok(())
+    })?;
+    if contains_signature {
         return Err("Digitally signed PDFs are read-only to preserve their signatures".into());
     }
     if document.trailer.has(b"Encrypt") {
@@ -393,41 +419,28 @@ fn load_editable(bytes: &[u8]) -> Result<lopdf::Document, String> {
         }
         return Err("Encrypted PDFs are read-only because Save, Save As, and Recovery Drafts cannot preserve their protection".into());
     }
-    fn inspect(object: &lopdf::Object) -> Result<(), String> {
-        use lopdf::Object;
-        match object {
-            Object::Dictionary(dict) | Object::Stream(lopdf::Stream { dict, .. }) => {
-                if dict.has(b"AcroForm") || dict.has(b"XFA") {
-                    return Err(
-                        "PDF form preservation has not been verified; this Document is read-only"
-                            .into(),
-                    );
-                }
-                if dict.get(b"Type").and_then(Object::as_name).ok() == Some(b"Annot") {
-                    let subtype = dict
-                        .get(b"Subtype")
-                        .and_then(Object::as_name)
-                        .map_err(|_| "Unknown embedded annotation; saving is blocked")?;
-                    if !EDITABLE_ANNOTATIONS.contains(&subtype) {
-                        return Err("Unsupported embedded annotations cannot yet be safely preserved; this Document is read-only".into());
-                    }
-                }
-                for (_, child) in dict.iter() {
-                    inspect(child)?;
-                }
+    visit_document_dictionaries(&document, |dictionary| {
+        if dictionary.has(b"AcroForm") || dictionary.has(b"XFA") {
+            return Err(
+                "PDF form preservation has not been verified; this Document is read-only".into(),
+            );
+        }
+        if dictionary
+            .get(b"Type")
+            .and_then(lopdf::Object::as_name)
+            .ok()
+            == Some(b"Annot")
+        {
+            let subtype = dictionary
+                .get(b"Subtype")
+                .and_then(lopdf::Object::as_name)
+                .map_err(|_| "Unknown embedded annotation; saving is blocked")?;
+            if !EDITABLE_ANNOTATIONS.contains(&subtype) {
+                return Err("Unsupported embedded annotations cannot yet be safely preserved; this Document is read-only".into());
             }
-            Object::Array(items) => {
-                for child in items {
-                    inspect(child)?;
-                }
-            }
-            _ => {}
         }
         Ok(())
-    }
-    for object in document.objects.values() {
-        inspect(object)?;
-    }
+    })?;
     // Annotation dictionaries are not required to carry /Type /Annot.
     for id in document.get_pages().values() {
         let page = document.get_dictionary(*id).map_err(|e| e.to_string())?;
@@ -982,6 +995,25 @@ mod tests {
         assert_eq!(
             editing_status(&bytes).as_deref(),
             Some("PDF form preservation has not been verified; this Document is read-only")
+        );
+    }
+
+    #[test]
+    fn excessive_object_nesting_fails_safety_inspection_closed() {
+        use lopdf::{dictionary, Object};
+
+        let mut document = lopdf::Document::load_mem(&pdf()).unwrap();
+        let mut nested = Object::Null;
+        for _ in 0..=201 {
+            nested = Object::Dictionary(dictionary! { "Next" => nested });
+        }
+        document.add_object(nested);
+        let mut bytes = Vec::new();
+        document.save_to(&mut bytes).unwrap();
+
+        assert_eq!(
+            editing_status(&bytes).as_deref(),
+            Some("PDF object nesting exceeds the safety inspection limit; this Document is read-only")
         );
     }
 

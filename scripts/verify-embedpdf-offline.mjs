@@ -171,7 +171,7 @@ try {
       `${result.error || 'EmbedPDF smoke failed'}: ${JSON.stringify(result.linkCandidates)}\n${browserDiagnostics.join('\n')}`,
     );
   }
-  if (!result.state || result.state.pageCount !== 2 || result.state.currentPage !== 2) {
+  if (result.state?.pageCount !== 2 || result.state.currentPage !== 2) {
     throw new Error(`Invalid EmbedPDF state: ${JSON.stringify(result.state)}`);
   }
   if (
