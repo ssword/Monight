@@ -41,7 +41,7 @@ unsupported Annotation to be stripped.
 ## Local verification
 
 - `npm test -- src/__tests__/settings-storage.test.ts src/__tests__/document-surface-gate.test.ts src/__tests__/embedpdf-document-surface.test.ts src/__tests__/document-workspace.test.ts`: 43 tests passed.
-- `npm test`: 447 tests in 53 files passed.
+- `npm test`: 448 tests in 53 files passed.
 - `cargo test --locked --manifest-path src-tauri/Cargo.toml`: 53 tests passed.
 - `tsc --noEmit`: passed.
 - `npm run build`: passed; the existing large-chunk warning remains.

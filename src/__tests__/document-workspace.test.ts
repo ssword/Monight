@@ -9,6 +9,7 @@ import {
 import { createDocumentIntake, type DocumentRuntimeIntake } from '../reader/document-intake';
 import type { DocumentRuntime } from '../reader/document-queries';
 import type { DocumentRendering } from '../reader/document-rendering';
+import { normalizeAnnotationDisplayName } from '../reader/native-pdf-editing';
 import {
   createReaderActions,
   type ReaderAction,
@@ -125,7 +126,7 @@ describe('Document workspace adapter', () => {
       });
     }
 
-    workspace.setAnnotationDisplayName('Ada Lovelace');
+    workspace.setAnnotationDisplayName(normalizeAnnotationDisplayName('Ada Lovelace'));
 
     expect(authorUpdates).toHaveLength(2);
     expect(authorUpdates.every((update) => update.mock.calls[0]?.[0] === 'Ada Lovelace')).toBe(

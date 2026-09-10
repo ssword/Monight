@@ -1,5 +1,9 @@
 import { Store } from '@tauri-apps/plugin-store';
 import type { PdfAnnotation, ViewMode } from '../lib/document-features';
+import {
+  type AnnotationDisplayName,
+  normalizeAnnotationDisplayName,
+} from '../reader/native-pdf-editing';
 import type {
   PersistedReadingSession,
   RestorableReadingPosition,
@@ -7,6 +11,8 @@ import type {
 } from '../reader/reader-actions';
 import type { RecentDocument } from '../reader/recent-documents';
 import type { FilterSettings } from './filters';
+
+export { normalizeAnnotationDisplayName } from '../reader/native-pdf-editing';
 
 export interface SavedTabSession {
   filePath: string;
@@ -48,17 +54,13 @@ export interface MoonightSettings {
     rememberLastFilter: boolean;
     restorePreviousSession: boolean;
     defaultViewMode: ViewMode;
-    annotationDisplayName: string;
+    annotationDisplayName: AnnotationDisplayName;
   };
   keybinds: Record<string, KeybindConfig>;
   lastFilter?: FilterSettings;
 }
 
 export const SETTINGS_SCHEMA_VERSION = 1;
-
-export function normalizeAnnotationDisplayName(value: unknown): string {
-  return typeof value === 'string' && value.trim() ? value.trim() : 'Guest';
-}
 
 export type SettingsOwner = 'main' | 'settings';
 type SettingsWindowKey = 'general' | 'keybinds';
@@ -85,7 +87,7 @@ export const DEFAULT_SETTINGS: MoonightSettings = {
     rememberLastFilter: true,
     restorePreviousSession: true,
     defaultViewMode: 'continuous',
-    annotationDisplayName: 'Guest',
+    annotationDisplayName: normalizeAnnotationDisplayName('Guest'),
   },
   keybinds: {
     OpenFile: {

@@ -16,6 +16,7 @@ import {
   restoreEmbedPdfReadingPositionCoordinates,
 } from '../app/embedpdf-document-surface';
 import { createDocumentIntake } from '../reader/document-intake';
+import { normalizeAnnotationDisplayName } from '../reader/native-pdf-editing';
 import { createReaderActions, type ReaderActions } from '../reader/reader-actions';
 import { PRESETS } from '../scripts/filters';
 
@@ -270,7 +271,7 @@ describe('EmbedPDF Document surface', () => {
     });
     const factory = createEmbedPdfDocumentSurfaceFactory({
       createViewer,
-      annotationDisplayName: () => 'Ada Lovelace',
+      getAnnotationDisplayName: () => normalizeAnnotationDisplayName('Ada Lovelace'),
     });
     const bytes = new Uint8Array([1, 2, 3]);
 
@@ -357,7 +358,11 @@ describe('EmbedPDF Document surface', () => {
   });
 
   it('configures newly authored annotations with the selected display name', () => {
-    const config = createEmbedPdfViewerConfig(undefined, true, 'Ada Lovelace');
+    const config = createEmbedPdfViewerConfig(
+      undefined,
+      true,
+      normalizeAnnotationDisplayName('Ada Lovelace'),
+    );
 
     expect(config.annotations).toMatchObject({ annotationAuthor: 'Ada Lovelace' });
   });

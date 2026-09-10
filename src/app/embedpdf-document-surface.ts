@@ -38,7 +38,11 @@ import type {
 import type { DocumentRuntime } from '../reader/document-queries';
 import type { DocumentRendering, DocumentRenderingState } from '../reader/document-rendering';
 import { createInternalDocumentPage } from '../reader/internal-document-page';
-import type { NativePdfEditing } from '../reader/native-pdf-editing';
+import {
+  type AnnotationDisplayName,
+  DEFAULT_ANNOTATION_DISPLAY_NAME,
+  type NativePdfEditing,
+} from '../reader/native-pdf-editing';
 import type {
   ReaderActionOptions,
   ReadingPosition,
@@ -114,7 +118,7 @@ async function preloadLocalFonts(): Promise<Map<string, Uint8Array>> {
 export function createEmbedPdfViewerConfig(
   fontLoader?: LocalFontLoader,
   editable = false,
-  annotationDisplayName = 'Guest',
+  annotationDisplayName: AnnotationDisplayName = DEFAULT_ANNOTATION_DISPLAY_NAME,
 ): PDFViewerConfig {
   return {
     worker: false,
@@ -159,10 +163,10 @@ export function createEmbedPdfViewerConfig(
       autoOpenLinks: false,
       annotationAuthor: annotationDisplayName,
       autoCommit: false,
-      tools: [
-        { id: 'highlight', categories: ['monight-native'] },
-        { id: 'textComment', categories: ['monight-native'] },
-      ],
+      tools: ENABLED_ANNOTATION_TOOL_IDS.map((id) => ({
+        id,
+        categories: ['monight-native'],
+      })),
       locked: editable
         ? { type: LockModeType.Exclude, categories: ['monight-native'] }
         : { type: LockModeType.All },
@@ -180,7 +184,7 @@ interface EmbedPdfOpenRequest {
 
 interface CreateEmbedPdfViewerRequest {
   readonly readOnlyReason?: string | null;
-  readonly annotationDisplayName: string;
+  readonly annotationDisplayName: AnnotationDisplayName;
   readonly target: HTMLElement;
   readonly callbacks: DocumentSurfaceCallbacks;
   readonly requestPassword?: PdfPasswordRequester;
@@ -1326,7 +1330,7 @@ async function createProductionViewer({
 
 interface CreateEmbedPdfDocumentSurfaceFactoryOptions {
   readonly assessEditing?: (bytes: Uint8Array) => Promise<string | null>;
-  readonly annotationDisplayName?: () => string;
+  readonly getAnnotationDisplayName?: () => AnnotationDisplayName;
   readonly createViewer?: EmbedPdfViewerFactory;
   readonly requestPassword?: CreateEmbedPdfViewerRequest['requestPassword'];
 }
@@ -1335,7 +1339,7 @@ export function createEmbedPdfDocumentSurfaceFactory({
   createViewer = createProductionViewer,
   requestPassword,
   assessEditing,
-  annotationDisplayName = () => 'Guest',
+  getAnnotationDisplayName = () => DEFAULT_ANNOTATION_DISPLAY_NAME,
 }: CreateEmbedPdfDocumentSurfaceFactoryOptions = {}): DocumentSurfaceFactory {
   return async ({ filePath, title, bytes, callbacks, signal }) => {
     if (signal?.aborted) throw new Error('Document Intake interrupted');
@@ -1361,7 +1365,7 @@ export function createEmbedPdfDocumentSurfaceFactory({
         callbacks,
         requestPassword,
         readOnlyReason: readOnlyReason || null,
-        annotationDisplayName: annotationDisplayName(),
+        annotationDisplayName: getAnnotationDisplayName(),
       });
       if (assessEditing && readOnlyReason) {
         const status = document.createElement('div');

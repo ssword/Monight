@@ -30,6 +30,7 @@ const mocks = vi.hoisted(() => {
   let requestAuxiliaryClose: (() => Promise<void>) | null = null;
   let pendingQuit = false;
   let restorePreviousSession = true;
+  let annotationDisplayName = 'Guest';
   let confirmationChoices: boolean[] = [];
   let finishRestoration: (() => void) | null = null;
   let restorationBarrier = Promise.resolve();
@@ -64,6 +65,10 @@ const mocks = vi.hoisted(() => {
       restorePreviousSession = value;
     },
     restorePreviousSession: () => restorePreviousSession,
+    setAnnotationDisplayName(value: string) {
+      annotationDisplayName = value;
+    },
+    annotationDisplayName: () => annotationDisplayName,
     setUseRealRestoration(value: boolean) {
       useRealRestoration = value;
     },
@@ -103,6 +108,7 @@ const mocks = vi.hoisted(() => {
       auxiliaryCloseHandler = null;
       pendingQuit = false;
       restorePreviousSession = true;
+      annotationDisplayName = 'Guest';
       confirmationChoices = [];
       useRealRestoration = false;
       savedReadingSession = {
@@ -308,6 +314,7 @@ vi.mock('../scripts/settings', () => ({
           rememberLastFilter: false,
           restorePreviousSession: mocks.restorePreviousSession(),
           defaultViewMode: 'continuous',
+          annotationDisplayName: mocks.annotationDisplayName(),
         },
         keybinds: {},
       };
@@ -334,6 +341,7 @@ function createModules(
         readingPosition: { page: number; location: number };
       };
     };
+    annotationDisplayNameChanged?: (displayName: string) => void;
   } = {},
 ): ApplicationModules {
   let remainingSessionFlushFailures = options.sessionFlushFailures ?? 0;
@@ -439,6 +447,7 @@ function createModules(
             readingPosition: { page: 4, location: 0.5 },
           })),
           replaceAnnotations: vi.fn(),
+          setAnnotationDisplayName: options.annotationDisplayNameChanged ?? vi.fn(),
         };
       },
     ),
@@ -502,6 +511,30 @@ describe('application lifecycle composition', () => {
     vi.clearAllMocks();
     mocks.reset();
     document.body.innerHTML = '<span id="version-info"></span>';
+  });
+
+  it('propagates persisted annotation attribution through the application workspace', async () => {
+    const setAnnotationDisplayName = vi.fn();
+    const modules = createModules({ annotationDisplayNameChanged: setAnnotationDisplayName });
+    const createDocumentSurface = vi.fn((_options: { getAnnotationDisplayName?: () => string }) =>
+      vi.fn(),
+    );
+    modules.createDocumentSurface = createDocumentSurface as never;
+    const { initializeApplication } = await import('../application');
+    const initialization = initializeApplication(modules);
+    await vi.waitFor(() => expect(mocks.events).toContain('restoration:foreground'));
+    mocks.finishRestoration();
+    await initialization;
+    const getAnnotationDisplayName = createDocumentSurface.mock.calls[0]?.[0]
+      .getAnnotationDisplayName as () => string;
+
+    expect(getAnnotationDisplayName()).toBe('Guest');
+
+    mocks.setAnnotationDisplayName('Ada Lovelace');
+    await mocks.listeners.get('settings-changed')?.();
+
+    expect(getAnnotationDisplayName()).toBe('Ada Lovelace');
+    expect(setAnnotationDisplayName).toHaveBeenCalledWith('Ada Lovelace');
   });
 
   it('shows the main window and resumes normal startup when initialization-time Quit is cancelled', async () => {

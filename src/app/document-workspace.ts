@@ -11,6 +11,7 @@ import type {
 import type { DocumentRuntimeIntake, DocumentRuntimeOpenRequest } from '../reader/document-intake';
 import type { DocumentQuery, DocumentRuntime } from '../reader/document-queries';
 import type { DocumentRendering, DocumentViewTransform } from '../reader/document-rendering';
+import type { AnnotationDisplayName } from '../reader/native-pdf-editing';
 import { createPdfDocumentContent } from '../reader/pdf-document-content';
 import type {
   ReaderAction,
@@ -114,7 +115,7 @@ export interface DocumentWorkspace {
   activeReadingPosition(): { filePath: string; readingPosition: ReadingPosition } | null;
   viewTransform(filePath: string): DocumentViewTransform | null;
   replaceAnnotations(filePath: string | null): void;
-  setAnnotationDisplayName(displayName: string): void;
+  setAnnotationDisplayName(displayName: AnnotationDisplayName): void;
 }
 
 interface PresentedDocument {

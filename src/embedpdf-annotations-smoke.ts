@@ -9,6 +9,7 @@ import { PdfAnnotationSubtype } from '@embedpdf/snippet';
 import { navigationPdf } from './__fixtures__/navigation-pdf';
 import type { DocumentSurface } from './app/document-workspace';
 import { createEmbedPdfDocumentSurfaceFactory } from './app/embedpdf-document-surface';
+import { normalizeAnnotationDisplayName } from './reader/native-pdf-editing';
 
 declare global {
   interface Window {
@@ -169,7 +170,9 @@ async function run() {
     rect: { origin: { x: 260, y: 100 }, size: { width: 24, height: 24 } },
     contents: 'Native comment',
   });
-  surface.runtime.editing?.setAnnotationDisplayName?.('Ada Lovelace');
+  surface.runtime.editing?.setAnnotationDisplayName?.(
+    normalizeAnnotationDisplayName('Ada Lovelace'),
+  );
   const commentDefaults = annotations.getTool('textComment')?.defaults;
   if (!commentDefaults) throw new Error('Missing native comment tool defaults');
   annotations.createAnnotation(0, {

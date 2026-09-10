@@ -4,6 +4,7 @@ import {
   resolveDocumentSurfaceKind,
 } from '../app/document-surface-gate';
 import type { DocumentSurface } from '../app/document-workspace';
+import { normalizeAnnotationDisplayName } from '../reader/native-pdf-editing';
 
 describe('Document surface development gate', () => {
   it('keeps the existing reader as the default', () => {
@@ -26,15 +27,15 @@ describe('Document surface development gate', () => {
     expect(loadEmbedPdf).not.toHaveBeenCalled();
 
     const requestPassword = vi.fn();
-    const annotationDisplayName = vi.fn(() => 'Ada Lovelace');
-    const selectedFactory = provider?.({ requestPassword, annotationDisplayName });
+    const getAnnotationDisplayName = vi.fn(() => normalizeAnnotationDisplayName('Ada Lovelace'));
+    const selectedFactory = provider?.({ requestPassword, getAnnotationDisplayName });
     expect(loadEmbedPdf).not.toHaveBeenCalled();
     await selectedFactory?.({} as never);
 
     expect(loadEmbedPdf).toHaveBeenCalledOnce();
     expect(createEmbedPdfDocumentSurfaceFactory).toHaveBeenCalledWith({
       requestPassword,
-      annotationDisplayName,
+      getAnnotationDisplayName,
     });
     expect(factory).toHaveBeenCalledOnce();
   });

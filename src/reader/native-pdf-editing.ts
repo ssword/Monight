@@ -1,3 +1,17 @@
+declare const annotationDisplayNameBrand: unique symbol;
+
+export type AnnotationDisplayName = string & {
+  readonly [annotationDisplayNameBrand]: true;
+};
+
+export const DEFAULT_ANNOTATION_DISPLAY_NAME = 'Guest' as AnnotationDisplayName;
+
+export function normalizeAnnotationDisplayName(value: unknown): AnnotationDisplayName {
+  return (
+    typeof value === 'string' && value.trim() ? value.trim() : DEFAULT_ANNOTATION_DISPLAY_NAME
+  ) as AnnotationDisplayName;
+}
+
 /** Live PDF edits are independent of durable Reading Session persistence. */
 export interface NativePdfEditing {
   state(): {
@@ -8,7 +22,7 @@ export interface NativePdfEditing {
   exportPdf(): Promise<Uint8Array>;
   markSaved(revision: number): void;
   markRecovered?(revision: number): void;
-  setAnnotationDisplayName?(displayName: string): void;
+  setAnnotationDisplayName?(displayName: AnnotationDisplayName): void;
 }
 
 export interface PdfSaveDestination {

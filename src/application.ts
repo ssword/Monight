@@ -49,6 +49,7 @@ import type { ViewMode } from './lib/document-features';
 import type { PdfLinkTarget } from './lib/pdf-links';
 import { type AnnotationAuthority, loadAnnotations } from './reader/annotations';
 import type { DocumentIntake } from './reader/document-intake';
+import { DEFAULT_ANNOTATION_DISPLAY_NAME } from './reader/native-pdf-editing';
 import {
   type PersistedReadingSession,
   type ReaderAction,
@@ -478,7 +479,8 @@ export async function initializeApplication(modules: ApplicationModules): Promis
     const initialReadingSession = restoredReadingSession ?? EMPTY_READING_SESSION;
     const createSurface = modules.createDocumentSurface?.({
       requestPassword: requestPdfPassword,
-      annotationDisplayName: () => currentSettings?.general.annotationDisplayName ?? 'Guest',
+      getAnnotationDisplayName: () =>
+        currentSettings?.general.annotationDisplayName ?? DEFAULT_ANNOTATION_DISPLAY_NAME,
     });
     documentWorkspace = modules.createDocumentWorkspace({
       dispatchReaderAction: dispatchReaderActionOutcome,
