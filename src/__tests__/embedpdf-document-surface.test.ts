@@ -23,7 +23,7 @@ import { PRESETS } from '../scripts/filters';
 const createViewerRuntime = (
   overrides: Partial<EmbedPdfViewerRuntime> = {},
 ): EmbedPdfViewerRuntime => ({
-  preparePrint: vi.fn(async () => new Uint8Array([1, 2, 3])),
+  preparePrintDocument: vi.fn(async () => new Uint8Array([1, 2, 3])),
   open: vi.fn(async () => undefined),
   openSearch: vi.fn(),
   setSearchQuery: vi.fn(),
@@ -321,9 +321,9 @@ describe('EmbedPDF Document surface', () => {
 
   it('exposes annotated print bytes without applying viewing transforms', async () => {
     const printBytes = new Uint8Array([7, 6, 5]);
-    const preparePrint = vi.fn(async () => printBytes);
+    const preparePrintDocument = vi.fn(async () => printBytes);
     const runtime = createViewerRuntime({
-      preparePrint,
+      preparePrintDocument,
       currentZoom: () => 1.75,
       rotation: () => 1,
     });
@@ -343,8 +343,8 @@ describe('EmbedPDF Document surface', () => {
       },
     });
 
-    await expect(surface.runtime.preparePrint?.()).resolves.toEqual(printBytes);
-    expect(preparePrint).toHaveBeenCalledOnce();
+    await expect(surface.runtime.preparePrintDocument?.()).resolves.toEqual(printBytes);
+    expect(preparePrintDocument).toHaveBeenCalledOnce();
     expect(runtime.applyFilter).not.toHaveBeenCalled();
     expect(runtime.setZoomIntent).not.toHaveBeenCalled();
     expect(runtime.setRotation).not.toHaveBeenCalled();

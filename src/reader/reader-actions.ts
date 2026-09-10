@@ -258,7 +258,7 @@ interface RegisteredDocumentRuntime {
   readonly runtime: DocumentRuntime;
 }
 
-type DocumentContentOperationResult<T> =
+type DocumentRuntimeOperationResult<T> =
   | { readonly status: 'ready'; readonly value: T }
   | Extract<ReaderActionOutcome, { status: 'no-op' | 'failure' }>;
 
@@ -435,15 +435,15 @@ export function createReaderActions({
     return result;
   };
 
-  const exportTails = new WeakMap<DocumentRuntime, Promise<void>>();
-  const exportPdf = (
+  const bytePreparationTails = new WeakMap<DocumentRuntime, Promise<void>>();
+  const prepareDocumentBytes = (
     runtime: DocumentRuntime,
-    editing: NonNullable<DocumentRuntime['editing']>,
+    prepare: () => Promise<Uint8Array>,
   ): Promise<Uint8Array> => {
-    const result = (exportTails.get(runtime) ?? Promise.resolve())
+    const result = (bytePreparationTails.get(runtime) ?? Promise.resolve())
       .catch(() => undefined)
-      .then(() => editing.exportPdf());
-    exportTails.set(
+      .then(prepare);
+    bytePreparationTails.set(
       runtime,
       result.then(
         () => undefined,
@@ -452,6 +452,10 @@ export function createReaderActions({
     );
     return result;
   };
+  const exportPdf = (
+    runtime: DocumentRuntime,
+    editing: NonNullable<DocumentRuntime['editing']>,
+  ): Promise<Uint8Array> => prepareDocumentBytes(runtime, () => editing.exportPdf());
 
   const revision = (): number => session.snapshot().revision;
   const generation = (filePath: string): number => lanes.get(filePath)?.generation ?? 0;
@@ -492,12 +496,12 @@ export function createReaderActions({
     !hasSessionDocument(filePath) ||
     Boolean(options?.isCancelled?.());
 
-  const runDocumentContentOperation = async <T>(
+  const runDocumentRuntimeOperation = async <T>(
     filePath: string,
     expectedGeneration: number,
     options: ReaderActionOptions | undefined,
     operation: (runtime: DocumentRuntime, isCancelled: () => boolean) => Promise<T>,
-  ): Promise<DocumentContentOperationResult<T>> => {
+  ): Promise<DocumentRuntimeOperationResult<T>> => {
     if (cancelled(filePath, expectedGeneration, options)) {
       return { status: 'no-op', revision: revision() };
     }
@@ -505,7 +509,7 @@ export function createReaderActions({
     if (!registered) {
       return {
         status: 'failure',
-        error: new Error(`Document Content is unavailable: ${filePath}`),
+        error: new Error(`Document runtime is unavailable: ${filePath}`),
         revision: revision(),
       };
     }
@@ -1612,7 +1616,7 @@ export function createReaderActions({
         return routeRelativeDocumentAction(
           action.filePath,
           async (filePath, expectedGeneration) => {
-            const resolution = await runDocumentContentOperation(
+            const resolution = await runDocumentRuntimeOperation(
               filePath,
               expectedGeneration,
               options,
@@ -1680,11 +1684,14 @@ export function createReaderActions({
                 revision: current.revision,
               };
             }
-            const data = await runDocumentContentOperation(
+            const data = await runDocumentRuntimeOperation(
               filePath,
               expectedGeneration,
               options,
-              (runtime) => runtime.preparePrint?.() ?? runtime.content.getData(),
+              (runtime) =>
+                runtime.preparePrintDocument
+                  ? prepareDocumentBytes(runtime, runtime.preparePrintDocument)
+                  : runtime.content.getData(),
             );
             if (data.status !== 'ready') return data;
             await printAdapter.print({

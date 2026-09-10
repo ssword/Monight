@@ -19,7 +19,7 @@ export interface DocumentThumbnailOptions {
 
 export interface DocumentRuntime {
   editing?: NativePdfEditing;
-  preparePrint?: () => Promise<Uint8Array>;
+  preparePrintDocument?: () => Promise<Uint8Array>;
   saveSource?: string;
   recovery?: { sourceVersion: string };
   readonly content: DocumentContent;

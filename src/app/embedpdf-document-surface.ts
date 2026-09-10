@@ -1,3 +1,4 @@
+import { PdfPermissionFlag } from '@embedpdf/models';
 import EmbedPDF, {
   type AnnotationCapability,
   type CommandsCapability,
@@ -57,7 +58,6 @@ import type {
 
 const EMBEDPDF_WASM_URL = '/embedpdf/pdfium.wasm';
 const EMBEDPDF_FONT_BASE_URL = '/embedpdf/fonts';
-const PDF_PRINT_PERMISSION = 1 << 2;
 const ENABLED_ANNOTATION_TOOL_IDS = ['highlight', 'textComment'] as const;
 
 const DISABLED_CATEGORIES = [
@@ -193,7 +193,7 @@ interface CreateEmbedPdfViewerRequest {
 
 export interface EmbedPdfViewerRuntime {
   readonly editing?: NativePdfEditing;
-  preparePrint(): Promise<Uint8Array>;
+  preparePrintDocument(): Promise<Uint8Array>;
   open(request: EmbedPdfOpenRequest): Promise<void>;
   openSearch(): void;
   setSearchQuery(query: string): void;
@@ -1087,9 +1087,9 @@ async function createProductionViewer({
 
   return {
     editing,
-    async preparePrint() {
+    async preparePrintDocument() {
       const document = currentDocument();
-      if ((document.permissions & PDF_PRINT_PERMISSION) === 0) {
+      if ((document.permissions & PdfPermissionFlag.Print) === 0) {
         throw new Error('Document permissions prohibit printing');
       }
       if (!readOnlyReason) return editing.exportPdf();
@@ -1475,7 +1475,7 @@ export function createEmbedPdfDocumentSurfaceFactory({
     };
     const runtime: DocumentRuntime = {
       ...(assessEditing && openedViewer.editing ? { editing: openedViewer.editing } : {}),
-      preparePrint: () => openedViewer.preparePrint(),
+      preparePrintDocument: () => openedViewer.preparePrintDocument(),
       content,
       renderThumbnail: (pageNumber, options) =>
         openedViewer.renderThumbnail(pageNumber, options?.maxWidth),

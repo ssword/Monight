@@ -19,6 +19,7 @@
     "test:embedpdf-offline": "node scripts/verify-embedpdf-offline.mjs"
   },
   "dependencies": {
+    "@embedpdf/models": "2.15.0",
     "@embedpdf/snippet": "2.15.0",
     "@tauri-apps/api": "~2.11.0",
     "@tauri-apps/plugin-store": "~2.4.0",

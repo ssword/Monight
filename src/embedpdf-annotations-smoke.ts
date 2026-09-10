@@ -85,7 +85,7 @@ async function verifyProtectedDocuments(): Promise<void> {
       document.querySelector('[role="status"]')?.textContent === fixture.reason,
       'Protected Document explanation is not visible',
     );
-    const printBytes = await surface.runtime.preparePrint?.();
+    const printBytes = await surface.runtime.preparePrintDocument?.();
     check(
       printBytes && printBytes.length > 0,
       `Printable protected Document failed: ${fixture.name}`,
@@ -312,7 +312,7 @@ async function run() {
   await surface.rendering.setRotation(1);
   await surface.rendering.setZoomIntent({ kind: 'manual', scale: 1.75 });
   surface.rendering.applyFilter('invert(1) sepia(1)');
-  const printed = await surface.runtime.preparePrint?.();
+  const printed = await surface.runtime.preparePrintDocument?.();
   if (!printed?.length) throw new Error('Missing annotated print output');
   check(surface.runtime.editing?.state().dirty, 'Printing incorrectly marked annotations saved');
   const annotated = await surface.runtime.editing?.exportPdf();
