@@ -324,7 +324,6 @@ export class SettingsManager<Owner extends SettingsOwner = 'main'> {
         (await store.get<PersistedReadingSession>('readingSession')) ??
         migrateLegacyReadingSession(legacy?.lastSession),
       recentFiles: (await store.get<RecentDocument[]>('recentFiles')) ?? legacy?.recentFiles ?? [],
-      annotations: (await store.get<unknown>('annotations')) ?? legacy?.annotations ?? {},
       lastFilter:
         (await store.get<FilterSettings | null>('lastFilter')) ?? legacy?.lastFilter ?? null,
     };
@@ -333,10 +332,9 @@ export class SettingsManager<Owner extends SettingsOwner = 'main'> {
     await store.set('keybinds', values.keybinds);
     await store.set('readingSession', values.readingSession);
     await store.set('recentFiles', values.recentFiles);
-    await store.set('annotations', values.annotations);
     await store.set('lastFilter', values.lastFilter);
     await store.set('storageSchemaVersion', SETTINGS_SCHEMA_VERSION);
-    await store.delete('settings');
+    if (legacy?.annotations === undefined) await store.delete('settings');
     await store.save();
   }
 

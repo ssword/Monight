@@ -4,7 +4,7 @@ Date: 2026-09-10
 
 ## Implemented migration
 
-- Pinned EmbedPDF 2.15.0 is the only production Document Surface. The build-time viewer and
+- Pinned EmbedPDF 2.15.0 is the only production document surface. The build-time viewer and
   native-editing gates are removed.
 - Native PDF safety inspection, Save/Save As, Recovery Drafts, and annotated printing are composed
   for every application start. A failed safety inspection keeps the Document read-only.
@@ -23,8 +23,8 @@ Run from the repository root at the final issue #66 commit:
 | --- | --- |
 | `npm run build` | Pass locally on macOS; 69 modules transformed |
 | Focused migration contract tests | Pass locally on macOS; 77 tests |
-| `npm run lint` | Application files pass; repository check is blocked by pre-existing formatting in `design/app-icon-2026/Monight.icon/icon.json` |
-| `npm test -- --run` | Pass locally on macOS; 341 tests in 40 files |
+| `npm run lint` | Pass locally on macOS |
+| `npm test -- --run` | Pass locally on macOS; 345 tests in 40 files |
 | `npm run test:embedpdf-offline` | Pass locally on macOS; rendering, Reading Session, native annotated printing, and navigation contracts |
 | `cargo test --locked --manifest-path src-tauri/Cargo.toml` | Pass locally on macOS; 63 tests |
 
@@ -41,7 +41,7 @@ release-candidate pass.
 | Workflow | macOS | Windows | Linux |
 | --- | --- | --- | --- |
 | Native intake methods and canonical deduplication | Pending | Pending | Pending |
-| Tabs and Reading Session restoration | Pending | Pending | Pending |
+| Ordered Documents and Reading Session restoration | Pending | Pending | Pending |
 | Search, outline, thumbnails, and links | Pending | Pending | Pending |
 | Reading Position, Visual State, filters, presets, and shortcuts | Pending | Pending | Pending |
 | All enabled annotation tools and undo/redo | Pending | Pending | Pending |

@@ -111,6 +111,92 @@ describe('Recent Documents', () => {
     expect(recentDocuments.isDirty()).toBe(false);
   });
 
+  it('persists a newer mutation that arrives during an older write', async () => {
+    const backing = createStorage();
+    const originalWrite = vi.mocked(backing.storage.write).getMockImplementation();
+    let markStarted: () => void = () => undefined;
+    let releaseWrite: () => void = () => undefined;
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve;
+    });
+    const blocked = new Promise<void>((resolve) => {
+      releaseWrite = resolve;
+    });
+    vi.mocked(backing.storage.write).mockImplementationOnce(async (value) => {
+      markStarted();
+      await blocked;
+      await originalWrite?.(value);
+    });
+    const recentDocuments = await loadRecentDocuments(backing.storage, { debounceMs: 60_000 });
+
+    recentDocuments.record(recentDocument('/docs/one.pdf', 10));
+    const flush = recentDocuments.flush();
+    await started;
+    recentDocuments.record(recentDocument('/docs/two.pdf', 20));
+    releaseWrite();
+    await flush;
+
+    expect(backing.getStored()).toEqual({
+      schemaVersion: 1,
+      documents: [recentDocument('/docs/two.pdf', 20), recentDocument('/docs/one.pdf', 10)],
+    });
+    expect(recentDocuments.isDirty()).toBe(false);
+  });
+
+  it('reconciles an uncertain read without overwriting the durable value', async () => {
+    vi.useFakeTimers();
+    const stored = {
+      schemaVersion: 1 as const,
+      documents: [recentDocument('/docs/one.pdf', 10)],
+    };
+    const backing = createStorage(stored);
+    vi.mocked(backing.storage.read).mockRejectedValueOnce(new Error('temporary read failure'));
+
+    const recentDocuments = await loadRecentDocuments(backing.storage, { retryMs: 50 });
+    expect(recentDocuments.isDirty()).toBe(true);
+
+    await vi.advanceTimersByTimeAsync(50);
+
+    expect(recentDocuments.snapshot()).toEqual(stored.documents);
+    expect(backing.storage.write).not.toHaveBeenCalled();
+    expect(recentDocuments.isDirty()).toBe(false);
+  });
+
+  it('does not let a stale uncertain read replace a newer mutation', async () => {
+    const stored = {
+      schemaVersion: 1 as const,
+      documents: [recentDocument('/docs/one.pdf', 10)],
+    };
+    const backing = createStorage(stored);
+    let markStarted: () => void = () => undefined;
+    let releaseRead: () => void = () => undefined;
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve;
+    });
+    const blocked = new Promise<void>((resolve) => {
+      releaseRead = resolve;
+    });
+    vi.mocked(backing.storage.read)
+      .mockRejectedValueOnce(new Error('temporary read failure'))
+      .mockImplementationOnce(async () => {
+        markStarted();
+        await blocked;
+        return structuredClone(stored);
+      });
+    const recentDocuments = await loadRecentDocuments(backing.storage, { retryMs: 60_000 });
+
+    const flush = recentDocuments.flush();
+    await started;
+    recentDocuments.record(recentDocument('/docs/two.pdf', 20));
+    releaseRead();
+
+    await expect(flush).rejects.toThrow(/could not be reconciled/);
+    expect(recentDocuments.snapshot()).toEqual([recentDocument('/docs/two.pdf', 20)]);
+    expect(backing.getStored()).toEqual(stored);
+    expect(backing.storage.write).not.toHaveBeenCalled();
+    expect(recentDocuments.isDirty()).toBe(true);
+  });
+
   it('migrates, verifies, and only then removes legacy Recent Documents', async () => {
     const legacy = [recentDocument('/docs/one.pdf', 10)];
     const backing = createStorage(undefined, legacy);
@@ -144,6 +230,24 @@ describe('Recent Documents', () => {
     expect(onPersistenceError).toHaveBeenCalledWith(
       expect.objectContaining({ message: expect.stringContaining('could not be verified') }),
     );
+  });
+
+  it('retries failed legacy cleanup after a later change', async () => {
+    const legacy = [recentDocument('/docs/one.pdf', 10)];
+    const backing = createStorage(undefined, legacy);
+    vi.mocked(backing.storage.removeLegacy).mockRejectedValueOnce(new Error('legacy store busy'));
+    const recentDocuments = await loadRecentDocuments(backing.storage, { debounceMs: 60_000 });
+
+    expect(backing.getLegacy()).toEqual(legacy);
+    recentDocuments.record(recentDocument('/docs/two.pdf', 20));
+    await recentDocuments.flush();
+
+    expect(backing.getLegacy()).toBeUndefined();
+    expect(backing.storage.removeLegacy).toHaveBeenCalledTimes(2);
+    expect(backing.getStored()).toEqual({
+      schemaVersion: 1,
+      documents: [recentDocument('/docs/two.pdf', 20), recentDocument('/docs/one.pdf', 10)],
+    });
   });
 
   it('does not overwrite an unsupported dedicated schema with legacy history', async () => {

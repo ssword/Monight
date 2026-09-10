@@ -99,7 +99,7 @@ describe('settings storage', () => {
     expect(settings.general.annotationDisplayName).toBe('Guest');
   });
 
-  it('migrates the legacy blob once into independently versioned concern keys', async () => {
+  it('migrates supported concerns without moving or deleting legacy annotations', async () => {
     const legacy = {
       version: '1.0.6',
       general: { ...DEFAULT_SETTINGS.general, maximizeOnOpen: false },
@@ -128,7 +128,7 @@ describe('settings storage', () => {
     expect(settings).not.toHaveProperty('recentFiles');
     expect(store.values.get('recentFiles')).toEqual(legacy.recentFiles);
     expect(settings).not.toHaveProperty('annotations');
-    expect(store.values.get('annotations')).toEqual(legacy.annotations);
+    expect(store.values.has('annotations')).toBe(false);
     expect(settings.lastFilter).toEqual(legacy.lastFilter);
     expect(store.values.get('readingSession')).toEqual({
       schemaVersion: 2,
@@ -142,7 +142,7 @@ describe('settings storage', () => {
       ],
     });
     expect(store.values.get('storageSchemaVersion')).toBe(SETTINGS_SCHEMA_VERSION);
-    expect(store.values.has('settings')).toBe(false);
+    expect(store.values.get('settings')).toEqual(legacy);
 
     store.writes.length = 0;
     await new SettingsManager('settings').load();
@@ -233,7 +233,7 @@ describe('settings storage', () => {
     expect(store.values.get('recentFiles')).toEqual([
       { filePath: '/books/one.pdf', title: 'one.pdf', openedAt: 42 },
     ]);
-    expect(store.values.get('annotations')).toEqual({});
+    expect(store.values.has('annotations')).toBe(false);
     expect(store.values.get('readingSession')).toEqual({
       schemaVersion: 2,
       activeDocumentPath: null,

@@ -172,7 +172,7 @@ function setupSettingListeners(): void {
   clearHistoryButton?.addEventListener('click', async () => {
     const confirmed = await requestConfirmation({
       title: 'Clear reading history?',
-      message: 'Clear Recent Documents, the saved Reading Session, and all annotations?',
+      message: 'Clear Recent Documents and the saved Reading Session?',
       confirmLabel: 'Clear history',
     });
     if (confirmed) {
