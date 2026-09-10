@@ -70,6 +70,7 @@ describe('shipped code-health invariants', () => {
 
   it('ships EmbedPDF as the only production PDF and Annotation runtime', () => {
     const manifest = readProjectFile('package.json');
+    const buildConfig = readProjectFile('vite.config.ts');
     const entryPoint = readProjectFile('src/main.ts');
     const application = readProjectFile('src/application.ts');
     const removedModules = [
@@ -84,6 +85,7 @@ describe('shipped code-health invariants', () => {
     ];
 
     expect(manifest).not.toContain('pdfjs-dist');
+    expect(buildConfig).not.toMatch(/pdf\.worker|pdfjs/);
     expect(entryPoint).not.toMatch(/VITE_PDF_SURFACE|VITE_NATIVE_PDF_EDITING/);
     expect(entryPoint).not.toContain('createAnnotationStorage');
     expect(application).not.toMatch(/loadAnnotations|AnnotationAuthority|createAnnotationStorage/);
