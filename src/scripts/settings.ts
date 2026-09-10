@@ -2,6 +2,7 @@ import { Store } from '@tauri-apps/plugin-store';
 import type { PdfAnnotation, ViewMode } from '../lib/document-features';
 import {
   type AnnotationDisplayName,
+  DEFAULT_ANNOTATION_DISPLAY_NAME,
   normalizeAnnotationDisplayName,
 } from '../reader/native-pdf-editing';
 import type {
@@ -87,7 +88,7 @@ export const DEFAULT_SETTINGS: MoonightSettings = {
     rememberLastFilter: true,
     restorePreviousSession: true,
     defaultViewMode: 'continuous',
-    annotationDisplayName: normalizeAnnotationDisplayName('Guest'),
+    annotationDisplayName: DEFAULT_ANNOTATION_DISPLAY_NAME,
   },
   keybinds: {
     OpenFile: {
