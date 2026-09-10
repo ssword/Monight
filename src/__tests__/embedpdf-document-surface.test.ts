@@ -357,6 +357,49 @@ describe('EmbedPDF Document surface', () => {
     expect(createEmbedPdfViewerConfig(fontLoader).fontFallback).toMatchObject({ fontLoader });
   });
 
+  it('opens a protected Document for reading and exposes its read-only explanation', async () => {
+    const reason =
+      'Encrypted PDFs are read-only because Save, Save As, and Recovery Drafts cannot preserve their protection';
+    const exportPdf = vi.fn(async () => {
+      throw new Error(reason);
+    });
+    const createViewer = vi.fn(async ({ readOnlyReason }) =>
+      createViewerRuntime({
+        editing: {
+          state: () => ({ revision: 0, dirty: false, readOnlyReason: readOnlyReason ?? null }),
+          exportPdf,
+          markSaved: vi.fn(),
+        },
+      }),
+    );
+    const assessEditing = vi.fn(async () => reason);
+    const factory = createEmbedPdfDocumentSurfaceFactory({ createViewer, assessEditing });
+
+    const surface = await factory({
+      filePath: '/docs/protected.pdf',
+      title: 'protected.pdf',
+      bytes: new Uint8Array([1, 2, 3]),
+      callbacks: {
+        readingPositionObserved: vi.fn(),
+        readingPositionSettled: vi.fn(),
+        stateChanged: vi.fn(),
+        pageNavigationRequested: vi.fn(async () => undefined),
+        zoomIntentRequested: vi.fn(async () => undefined),
+      },
+    });
+
+    expect(assessEditing).toHaveBeenCalledWith(new Uint8Array([1, 2, 3]));
+    expect(createViewer).toHaveBeenCalledWith(expect.objectContaining({ readOnlyReason: reason }));
+    expect(document.querySelector('[role="status"]')?.textContent).toBe(reason);
+    expect(surface.runtime.editing?.state()).toEqual({
+      revision: 0,
+      dirty: false,
+      readOnlyReason: reason,
+    });
+    await expect(surface.runtime.editing?.exportPdf()).rejects.toThrow(reason);
+    expect(exportPdf).toHaveBeenCalledOnce();
+  });
+
   it('configures newly authored annotations with the selected display name', () => {
     const config = createEmbedPdfViewerConfig(
       undefined,

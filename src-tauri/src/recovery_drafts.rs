@@ -100,6 +100,21 @@ fn canonical_source(document_path: &str, source_bytes: &[u8]) -> Result<String, 
         .ok_or_else(|| "Recovery Draft source path is invalid".into())
 }
 
+fn verify_source_version(document_path: &str, source_version: &str) -> Result<(), String> {
+    let canonical = Path::new(document_path)
+        .canonicalize()
+        .map_err(|error| format!("Recovery Draft source is unavailable: {error}"))?;
+    if canonical.to_str() != Some(document_path) {
+        return Err("Recovery Draft source changed before it could be restored".into());
+    }
+    let current = std::fs::read(&canonical)
+        .map_err(|error| format!("Recovery Draft source could not be read: {error}"))?;
+    if version(&current) != source_version {
+        return Err("Recovery Draft source changed before it could be restored".into());
+    }
+    Ok(())
+}
+
 fn encode(metadata: &DraftMetadata, bytes: &[u8]) -> Result<Vec<u8>, String> {
     let header = serde_json::to_vec(metadata).map_err(|error| error.to_string())?;
     let mut encoded = Vec::with_capacity(MAGIC.len() + 8 + header.len() + bytes.len());
@@ -183,13 +198,15 @@ impl RecoveryDrafts {
         document_path: &str,
         source_bytes: &[u8],
     ) -> Result<DraftInspection, String> {
+        let canonical_path = canonical_source(document_path, source_bytes)?;
         if crate::pdf_save::editing_status(source_bytes).is_some() {
-            if let Ok(mut sources) = self.authorized_sources.lock() {
-                sources.remove(document_path);
-            }
+            self.authorized_sources
+                .lock()
+                .map_err(|error| error.to_string())?
+                .remove(&canonical_path);
+            remove_if_present(&draft_path(root, &canonical_path))?;
             return Ok(DraftInspection::Protected);
         }
-        let canonical_path = canonical_source(document_path, source_bytes)?;
         let source_version = version(source_bytes);
         self.authorized_sources
             .lock()
@@ -233,6 +250,14 @@ impl RecoveryDrafts {
         if !authorized {
             return Err("Recovery Draft source is not authorized".into());
         }
+        if let Err(error) = verify_source_version(&draft.document_path, &draft.source_version) {
+            self.authorized_sources
+                .lock()
+                .map_err(|lock_error| lock_error.to_string())?
+                .remove(&draft.document_path);
+            remove_if_present(&draft_path(root, &draft.document_path))?;
+            return Err(error);
+        }
         if crate::pdf_save::editing_status(&draft.bytes).is_some() {
             return Err(
                 "Protected or unsafe PDF content cannot be stored as a Recovery Draft".into(),
@@ -263,10 +288,19 @@ impl RecoveryDrafts {
         if !authorized {
             return Err("Recovery Draft source is not authorized".into());
         }
+        if let Err(error) = verify_source_version(document_path, source_version) {
+            self.authorized_sources
+                .lock()
+                .map_err(|lock_error| lock_error.to_string())?
+                .remove(document_path);
+            remove_if_present(&draft_path(root, document_path))?;
+            return Err(error);
+        }
         let (metadata, bytes) = decode(&draft_path(root, document_path))?;
         if metadata.document_path != document_path
             || metadata.source_version != source_version
             || metadata.edited_revision != edited_revision
+            || crate::pdf_save::editing_status(&bytes).is_some()
         {
             return Err("Recovery Draft changed before it could be restored".into());
         }
@@ -409,6 +443,23 @@ mod tests {
         bytes
     }
 
+    fn protected_fixtures() -> [(&'static str, &'static [u8]); 3] {
+        [
+            (
+                "restricted",
+                include_bytes!("../tests/fixtures/protected-documents/permission-restricted.pdf"),
+            ),
+            (
+                "encrypted",
+                include_bytes!("../tests/fixtures/protected-documents/password-encrypted.pdf"),
+            ),
+            (
+                "signed",
+                include_bytes!("../tests/fixtures/protected-documents/digitally-signed.pdf"),
+            ),
+        ]
+    }
+
     #[test]
     fn draft_survives_restart_and_requires_the_same_source_version() {
         let directory = tempfile::tempdir().unwrap();
@@ -462,6 +513,42 @@ mod tests {
             DraftInspection::Stale { .. }
         ));
         assert!(!draft_path(&root, &path).exists());
+    }
+
+    #[test]
+    fn restore_rechecks_the_source_version_after_inspection() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("drafts");
+        let (source, bytes) = source_fixture(directory.path(), "source.pdf");
+        let path = source.to_string_lossy().to_string();
+        let first_run = RecoveryDrafts::default();
+        let source_version = match first_run.inspect(&root, &path, &bytes).unwrap() {
+            DraftInspection::None { source_version } => source_version,
+            result => panic!("unexpected inspection: {result:?}"),
+        };
+        first_run
+            .write(
+                &root,
+                RecoveryDraftInput {
+                    document_path: path.clone(),
+                    source_version: source_version.clone(),
+                    edited_revision: 4,
+                    bytes: bytes.clone(),
+                },
+            )
+            .unwrap();
+
+        let restarted = RecoveryDrafts::default();
+        assert!(matches!(
+            restarted.inspect(&root, &path, &bytes).unwrap(),
+            DraftInspection::Available { .. }
+        ));
+        std::fs::write(&source, changed_pdf(bytes)).unwrap();
+
+        assert!(restarted
+            .read(&root, &path, &source_version, 4)
+            .unwrap_err()
+            .contains("source changed"));
     }
 
     #[test]
@@ -605,21 +692,112 @@ mod tests {
             .contains("not authorized"));
         assert!(!root.exists());
 
-        let mut protected = lopdf::Document::load_mem(&pdf()).unwrap();
-        protected.trailer.set(
-            "Encrypt",
-            lopdf::dictionary! { "Filter" => "Standard", "V" => 1, "R" => 2, "P" => -64 },
-        );
-        let mut protected_bytes = Vec::new();
-        protected.save_to(&mut protected_bytes).unwrap();
+        let protected_bytes =
+            include_bytes!("../tests/fixtures/protected-documents/password-encrypted.pdf");
         std::fs::write(&source, &protected_bytes).unwrap();
         assert_eq!(
             RecoveryDrafts::default()
-                .inspect(&root, &source.to_string_lossy(), &protected_bytes)
+                .inspect(&root, &source.to_string_lossy(), protected_bytes)
                 .unwrap(),
             DraftInspection::Protected
         );
         assert!(!root.exists());
+    }
+
+    #[test]
+    fn protected_source_transition_purges_an_existing_plaintext_draft() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("drafts");
+        let (source, bytes) = source_fixture(directory.path(), "source.pdf");
+        let path = source.to_string_lossy().to_string();
+        let drafts = RecoveryDrafts::default();
+        let source_version = match drafts.inspect(&root, &path, &bytes).unwrap() {
+            DraftInspection::None { source_version } => source_version,
+            result => panic!("unexpected inspection: {result:?}"),
+        };
+        drafts
+            .write(
+                &root,
+                RecoveryDraftInput {
+                    document_path: path.clone(),
+                    source_version,
+                    edited_revision: 1,
+                    bytes,
+                },
+            )
+            .unwrap();
+        assert!(draft_path(&root, &path).exists());
+
+        let protected_bytes =
+            include_bytes!("../tests/fixtures/protected-documents/permission-restricted.pdf");
+        std::fs::write(&source, &protected_bytes).unwrap();
+
+        assert_eq!(
+            drafts.inspect(&root, &path, protected_bytes).unwrap(),
+            DraftInspection::Protected
+        );
+        assert!(!draft_path(&root, &path).exists());
+    }
+
+    #[test]
+    fn draft_capture_rechecks_source_protection_after_authorization() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("drafts");
+        let (source, bytes) = source_fixture(directory.path(), "source.pdf");
+        let path = source.to_string_lossy().to_string();
+        let drafts = RecoveryDrafts::default();
+        let source_version = match drafts.inspect(&root, &path, &bytes).unwrap() {
+            DraftInspection::None { source_version } => source_version,
+            result => panic!("unexpected inspection: {result:?}"),
+        };
+
+        let protected_bytes =
+            include_bytes!("../tests/fixtures/protected-documents/permission-restricted.pdf");
+        std::fs::write(&source, protected_bytes).unwrap();
+
+        assert!(drafts
+            .write(
+                &root,
+                RecoveryDraftInput {
+                    document_path: path.clone(),
+                    source_version,
+                    edited_revision: 1,
+                    bytes,
+                },
+            )
+            .unwrap_err()
+            .contains("source changed"));
+        assert!(!draft_path(&root, &path).exists());
+    }
+
+    #[test]
+    fn protected_fixture_matrix_never_authorizes_recovery_storage() {
+        for (name, bytes) in protected_fixtures() {
+            let directory = tempfile::tempdir().unwrap();
+            let root = directory.path().join("drafts");
+            let source = directory.path().join(format!("{name}.pdf"));
+            std::fs::write(&source, bytes).unwrap();
+            let path = source.canonicalize().unwrap().to_string_lossy().to_string();
+            let drafts = RecoveryDrafts::default();
+
+            assert_eq!(
+                drafts.inspect(&root, &path, bytes).unwrap(),
+                DraftInspection::Protected
+            );
+            assert!(drafts
+                .write(
+                    &root,
+                    RecoveryDraftInput {
+                        document_path: path,
+                        source_version: version(bytes),
+                        edited_revision: 1,
+                        bytes: bytes.to_vec(),
+                    },
+                )
+                .unwrap_err()
+                .contains("not authorized"));
+            assert!(!root.exists());
+        }
     }
 
     #[test]

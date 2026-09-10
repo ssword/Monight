@@ -25,6 +25,122 @@ const check = (value: unknown, message: string) => {
   if (!value) throw new Error(message);
 };
 
+const protectedFixtures = [
+  {
+    name: 'permission-restricted.pdf',
+    url: new URL(
+      '../src-tauri/tests/fixtures/protected-documents/permission-restricted.pdf',
+      import.meta.url,
+    ),
+    reason: 'PDF permissions prohibit annotation editing; this Document is read-only',
+  },
+  {
+    name: 'digitally-signed.pdf',
+    url: new URL(
+      '../src-tauri/tests/fixtures/protected-documents/digitally-signed.pdf',
+      import.meta.url,
+    ),
+    reason: 'Digitally signed PDFs are read-only to preserve their signatures',
+  },
+  {
+    name: 'password-encrypted.pdf',
+    url: new URL(
+      '../src-tauri/tests/fixtures/protected-documents/password-encrypted.pdf',
+      import.meta.url,
+    ),
+    reason:
+      'Encrypted PDFs are read-only because Save, Save As, and Recovery Drafts cannot preserve their protection',
+    password: 'monight-test-password',
+  },
+] as const;
+
+async function verifyProtectedDocuments(): Promise<void> {
+  for (const fixture of protectedFixtures) {
+    const response = await fetch(fixture.url);
+    check(response.ok, `Protected fixture could not be loaded: ${fixture.name}`);
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    let passwordRequests = 0;
+    const surface = await createEmbedPdfDocumentSurfaceFactory({
+      assessEditing: async () => fixture.reason,
+      requestPassword: async () => {
+        passwordRequests += 1;
+        return 'password' in fixture ? fixture.password : null;
+      },
+    })({
+      filePath: `/protected/${fixture.name}`,
+      title: fixture.name,
+      bytes,
+      callbacks: {
+        readingPositionObserved() {},
+        readingPositionSettled() {},
+        stateChanged() {},
+        pageNavigationRequested: async () => undefined,
+        zoomIntentRequested: async () => undefined,
+      },
+    });
+    surface.rendering.setVisible(true);
+    check(surface.runtime.editing?.state().readOnlyReason === fixture.reason, 'Missing reason');
+    check(!surface.runtime.editing?.state().dirty, 'Protected Document became dirty');
+    check(
+      document.querySelector('[role="status"]')?.textContent === fixture.reason,
+      'Protected Document explanation is not visible',
+    );
+    const container = document.querySelector<EmbedPdfContainer>('embedpdf-container');
+    if (!container) throw new Error('Missing protected ready-made viewer');
+    const registry = await container.registry;
+    const commands = registry
+      .getPlugin<import('@embedpdf/snippet').CommandsPlugin>('commands')
+      ?.provides();
+    if (!commands) throw new Error('Missing protected viewer commands');
+    for (const id of [
+      'annotation:add-highlight',
+      'annotation:add-comment',
+      'document:export',
+      'document:protect',
+      'annotation:add-stamp',
+    ]) {
+      let command: ReturnType<typeof commands.resolve>;
+      try {
+        command = commands.resolve(id);
+      } catch {
+        continue;
+      }
+      check(
+        !command.visible || command.disabled,
+        `Protected Document exposed an unsafe command: ${id}`,
+      );
+    }
+    let exportRejected = false;
+    try {
+      await surface.runtime.editing?.exportPdf();
+    } catch {
+      exportRejected = true;
+    }
+    check(exportRejected, 'Protected Document export was allowed');
+    check(
+      passwordRequests === ('password' in fixture ? 1 : 0),
+      `Unexpected password flow for ${fixture.name}`,
+    );
+    await surface.runtime.destroy();
+  }
+  const storedValues = [localStorage, sessionStorage]
+    .flatMap((storage) =>
+      Array.from({ length: storage.length }, (_, index) => {
+        const key = storage.key(index);
+        return key ? `${key}:${storage.getItem(key)}` : '';
+      }),
+    )
+    .join('\n');
+  check(
+    !storedValues.includes('monight-test-password'),
+    'Document password entered browser storage',
+  );
+  check(
+    !document.documentElement.textContent?.includes('monight-test-password'),
+    'Document password entered visible diagnostics',
+  );
+}
+
 async function open(bytes: Uint8Array): Promise<{
   surface: DocumentSurface;
   annotations: AnnotationCapability;
@@ -80,6 +196,7 @@ async function open(bytes: Uint8Array): Promise<{
 }
 
 async function run() {
+  await verifyProtectedDocuments();
   const original = navigationPdf('Native annotations', 0, false);
   const failed = await open(original);
   const createNativeAnnotation = failed.engine.createPageAnnotation;

@@ -349,19 +349,52 @@ const EDITABLE_ANNOTATIONS: &[&[u8]] = &[b"Highlight", b"Text", b"Popup"];
 fn load_editable(bytes: &[u8]) -> Result<lopdf::Document, String> {
     let document = lopdf::Document::load_mem(bytes)
         .map_err(|e| format!("PDF safety inspection failed: {e}"))?;
+
+    fn contains_signature(object: &lopdf::Object, depth: usize) -> bool {
+        use lopdf::Object;
+        if depth > 200 {
+            return false;
+        }
+        match object {
+            Object::Dictionary(dict) | Object::Stream(lopdf::Stream { dict, .. }) => {
+                dict.has(b"ByteRange")
+                    || dict.get(b"Type").and_then(Object::as_name).ok() == Some(b"Sig")
+                    || dict.get(b"FT").and_then(Object::as_name).ok() == Some(b"Sig")
+                    || dict
+                        .iter()
+                        .any(|(_, child)| contains_signature(child, depth + 1))
+            }
+            Object::Array(items) => items
+                .iter()
+                .any(|child| contains_signature(child, depth + 1)),
+            _ => false,
+        }
+    }
+    if document
+        .objects
+        .values()
+        .any(|object| contains_signature(object, 0))
+    {
+        return Err("Digitally signed PDFs are read-only to preserve their signatures".into());
+    }
     if document.trailer.has(b"Encrypt") {
-        return Err("Encrypted or permission-restricted PDFs are read-only".into());
+        let annotation_editing_allowed = document
+            .get_encrypted()
+            .ok()
+            .and_then(|encryption| encryption.get(b"P").ok())
+            .and_then(|permissions| permissions.as_i64().ok())
+            .is_some_and(|permissions| permissions as u32 & 0x20 != 0);
+        if !annotation_editing_allowed {
+            return Err(
+                "PDF permissions prohibit annotation editing; this Document is read-only".into(),
+            );
+        }
+        return Err("Encrypted PDFs are read-only because Save, Save As, and Recovery Drafts cannot preserve their protection".into());
     }
     fn inspect(object: &lopdf::Object) -> Result<(), String> {
         use lopdf::Object;
         match object {
             Object::Dictionary(dict) | Object::Stream(lopdf::Stream { dict, .. }) => {
-                if dict.has(b"ByteRange")
-                    || dict.get(b"Type").and_then(Object::as_name).ok() == Some(b"Sig")
-                    || dict.get(b"FT").and_then(Object::as_name).ok() == Some(b"Sig")
-                {
-                    return Err("Digitally signed PDFs are read-only".into());
-                }
                 if dict.has(b"AcroForm") || dict.has(b"XFA") {
                     return Err(
                         "PDF form preservation has not been verified; this Document is read-only"
@@ -537,6 +570,22 @@ mod tests {
         ));
         std::fs::create_dir_all(&path).unwrap();
         path
+    }
+    fn protected_fixtures() -> [(&'static str, &'static [u8]); 3] {
+        [
+            (
+                "restricted",
+                include_bytes!("../tests/fixtures/protected-documents/permission-restricted.pdf"),
+            ),
+            (
+                "encrypted",
+                include_bytes!("../tests/fixtures/protected-documents/password-encrypted.pdf"),
+            ),
+            (
+                "signed",
+                include_bytes!("../tests/fixtures/protected-documents/digitally-signed.pdf"),
+            ),
+        ]
     }
     #[test]
     fn existing_save_checks_loaded_version_and_supports_repeated_native_round_trips() {
@@ -901,6 +950,67 @@ mod tests {
         let mut bytes = Vec::new();
         doc.save_to(&mut bytes).unwrap();
         assert!(editing_status(&bytes).is_some());
+    }
+
+    #[test]
+    fn protected_fixture_matrix_reports_specific_read_only_reasons() {
+        for ((_, bytes), reason) in protected_fixtures().into_iter().zip([
+            "PDF permissions prohibit annotation editing; this Document is read-only",
+            "Encrypted PDFs are read-only because Save, Save As, and Recovery Drafts cannot preserve their protection",
+            "Digitally signed PDFs are read-only to preserve their signatures",
+        ]) {
+            assert_eq!(editing_status(bytes).as_deref(), Some(reason));
+        }
+    }
+
+    #[test]
+    fn protected_documents_cannot_use_save_or_save_as() {
+        for (name, bytes) in protected_fixtures() {
+            let dir = directory();
+            let source = dir.join(format!("{name}.pdf"));
+            std::fs::write(&source, bytes).unwrap();
+            let writer = PdfSave::default();
+            let source_token = writer.capture_source(&source, bytes).unwrap();
+
+            assert!(writer.write_original(&source_token, bytes).is_err());
+            assert_eq!(std::fs::read(&source).unwrap(), bytes);
+
+            let destination_path = dir.join(format!("{name}-copy.pdf"));
+            let destination = writer.authorize(&destination_path).unwrap();
+            assert!(writer
+                .write_destination(&destination.token, &source_token, bytes)
+                .is_err());
+            assert!(!destination_path.exists());
+            std::fs::remove_dir_all(dir).unwrap();
+        }
+    }
+
+    #[test]
+    fn filesystem_read_only_source_can_save_as_when_pdf_policy_allows_editing() {
+        let dir = directory();
+        let source = dir.join("read-only.pdf");
+        let bytes = include_bytes!("../tests/fixtures/native-annotations/original.pdf");
+        std::fs::write(&source, bytes).unwrap();
+        let mut permissions = std::fs::metadata(&source).unwrap().permissions();
+        permissions.set_readonly(true);
+        std::fs::set_permissions(&source, permissions).unwrap();
+        let writer = PdfSave::default();
+        let source_token = writer.capture_source(&source, bytes).unwrap();
+
+        assert!(writer.write_original(&source_token, bytes).is_err());
+        let destination_path = dir.join("editable-copy.pdf");
+        let destination = writer.authorize(&destination_path).unwrap();
+        writer
+            .write_destination(&destination.token, &source_token, bytes)
+            .unwrap();
+        assert_eq!(std::fs::read(&destination_path).unwrap(), bytes);
+        assert_eq!(std::fs::read(&source).unwrap(), bytes);
+
+        let mut permissions = std::fs::metadata(&source).unwrap().permissions();
+        #[allow(clippy::permissions_set_readonly_false)]
+        permissions.set_readonly(false);
+        std::fs::set_permissions(&source, permissions).unwrap();
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[cfg(unix)]

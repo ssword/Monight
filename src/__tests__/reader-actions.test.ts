@@ -549,6 +549,75 @@ describe('Reader Actions', () => {
     },
   );
 
+  it('keeps a protected Document read-only across save, close, and recovery actions', async () => {
+    const reason = 'Digitally signed PDFs are read-only to preserve their signatures';
+    const runtime = createDocumentRuntime();
+    runtime.saveSource = 'protected-source';
+    runtime.recovery = { sourceVersion: 'protected-version' };
+    const exportPdf = vi.fn(async () => new Uint8Array([2]));
+    runtime.editing = {
+      state: () => ({ revision: 0, dirty: false, readOnlyReason: reason }),
+      exportPdf,
+      markSaved: vi.fn(),
+    };
+    const chooseDestination = vi.fn();
+    const writeOriginal = vi.fn();
+    const writeDestination = vi.fn();
+    const writeDraft = vi.fn();
+    const chooseUnsavedDocument = vi.fn();
+    const closeDocument = vi.fn(async () => undefined);
+    const reader = createReaderActions({
+      initialSession: INITIAL_SESSION,
+      projection: {
+        activateDocument: async () => undefined,
+        goToReadingPosition: async () => undefined,
+        verifySavedDocument: async () => undefined,
+        reidentifyDocument: vi.fn(),
+        closeDocument,
+      },
+      pdfSaveAdapter: {
+        chooseDestination,
+        writeOriginal,
+        writeDestination,
+        releaseDestination: vi.fn(),
+      },
+      recoveryDraftAdapter: {
+        inspect: vi.fn(),
+        write: writeDraft,
+        reconcile: vi.fn(),
+        remove: vi.fn(),
+      },
+      chooseUnsavedDocument,
+      persist: async () => undefined,
+    });
+    await reader.dispatch({
+      type: 'registerDocument',
+      document: INITIAL_SESSION.documents[0],
+      runtime,
+    });
+
+    for (const type of ['saveDocument', 'saveDocumentAs'] as const) {
+      await expect(reader.dispatch({ type })).resolves.toMatchObject({
+        status: 'failure',
+        error: expect.objectContaining({ message: reason }),
+      });
+    }
+    await expect(reader.captureRecoveryDraft('/docs/first.pdf')).resolves.toMatchObject({
+      status: 'no-op',
+    });
+    await expect(
+      reader.dispatch({ type: 'closeDocument', filePath: '/docs/first.pdf' }),
+    ).resolves.toMatchObject({ status: 'committed' });
+
+    expect(exportPdf).not.toHaveBeenCalled();
+    expect(chooseDestination).not.toHaveBeenCalled();
+    expect(writeOriginal).not.toHaveBeenCalled();
+    expect(writeDestination).not.toHaveBeenCalled();
+    expect(writeDraft).not.toHaveBeenCalled();
+    expect(chooseUnsavedDocument).not.toHaveBeenCalled();
+    expect(closeDocument).toHaveBeenCalledOnce();
+  });
+
   it('reload waits for preceding navigation before projecting Reading Session state', async () => {
     let release!: () => void;
     let entered!: () => void;
