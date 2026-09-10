@@ -1,6 +1,5 @@
 import { getName, getTauriVersion, getVersion } from '@tauri-apps/api/app';
 import { emit, listen } from '@tauri-apps/api/event';
-import { version as pdfjsVersion } from 'pdfjs-dist';
 import { requestConfirmation } from '../app/dialogs';
 import { debugLog } from '../lib/debug-log';
 import '../styles/dialogs.css';
@@ -55,9 +54,6 @@ async function loadSettings(): Promise<void> {
   const maximizeOnOpen = document.getElementById('maximizeOnOpen') as HTMLInputElement;
   if (maximizeOnOpen) maximizeOnOpen.checked = currentSettings.general.maximizeOnOpen;
 
-  const displayThumbs = document.getElementById('displayThumbs') as HTMLInputElement;
-  if (displayThumbs) displayThumbs.checked = currentSettings.general.displayThumbs;
-
   const rememberLastFilter = document.getElementById('rememberLastFilter') as HTMLInputElement;
   if (rememberLastFilter) rememberLastFilter.checked = currentSettings.general.rememberLastFilter;
 
@@ -94,7 +90,6 @@ async function updateAboutPanel(): Promise<void> {
   const appName = document.getElementById('app-name');
   const appVersion = document.getElementById('app-version');
   const tauriVersion = document.getElementById('tauri-version');
-  const pdfjsVersionEl = document.getElementById('pdfjs-version');
 
   try {
     const [name, version, tauri] = await Promise.all([getName(), getVersion(), getTauriVersion()]);
@@ -104,10 +99,6 @@ async function updateAboutPanel(): Promise<void> {
     if (tauriVersion) tauriVersion.textContent = tauri;
   } catch (error) {
     console.error('Failed to update About panel info:', error);
-  }
-
-  if (pdfjsVersionEl) {
-    pdfjsVersionEl.textContent = pdfjsVersion;
   }
 }
 
@@ -127,13 +118,6 @@ function setupSettingListeners(): void {
   const maximizeOnOpen = document.getElementById('maximizeOnOpen') as HTMLInputElement;
   maximizeOnOpen?.addEventListener('change', async () => {
     currentSettings.general.maximizeOnOpen = maximizeOnOpen.checked;
-    await settingsManager.set('general', currentSettings.general);
-    await notifyMainSettingsChanged();
-  });
-
-  const displayThumbs = document.getElementById('displayThumbs') as HTMLInputElement;
-  displayThumbs?.addEventListener('change', async () => {
-    currentSettings.general.displayThumbs = displayThumbs.checked;
     await settingsManager.set('general', currentSettings.general);
     await notifyMainSettingsChanged();
   });

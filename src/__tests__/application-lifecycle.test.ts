@@ -200,7 +200,6 @@ vi.mock('@tauri-apps/api/webviewWindow', () => {
 });
 vi.mock('../app/dialogs', () => ({
   requestUnsavedDocument: vi.fn(async () => 'cancel'),
-  requestAnnotationNote: vi.fn(async () => null),
   requestConfirmation: vi.fn(async () => mocks.takeConfirmationChoice()),
   requestPdfPassword: vi.fn(async () => null),
   requestRecoveryDraft: vi.fn(async () => 'discard'),
@@ -220,20 +219,6 @@ vi.mock('../app/presentation-controller', () => ({
   PresentationController: class {
     exit = vi.fn(async () => undefined);
     toggle = vi.fn(async () => undefined);
-  },
-}));
-vi.mock('../app/search-controller', () => ({
-  SearchController: class {
-    open = vi.fn();
-    activeDocumentChanged = vi.fn();
-  },
-}));
-vi.mock('../app/sidebar-controller', () => ({
-  SidebarController: class {
-    annotationsChanged = vi.fn();
-    presentationStateChanged = vi.fn();
-    activeDocumentChanged = vi.fn();
-    setThumbnailsEnabled = vi.fn();
   },
 }));
 vi.mock('../app/startup-restoration', async (importOriginal) => {
@@ -271,17 +256,6 @@ vi.mock('../app/ui', () => ({
   updateUI: vi.fn(),
 }));
 vi.mock('../lib/debug-log', () => ({ debugLog: vi.fn() }));
-vi.mock('../reader/annotations', () => ({
-  loadAnnotations: vi.fn(async () => ({
-    snapshot: vi.fn(() => []),
-    replace: vi.fn(),
-    clear: vi.fn(),
-    isDirty: vi.fn(() => false),
-    flush: vi.fn(async () => {
-      mocks.events.push('flush:annotations');
-    }),
-  })),
-}));
 vi.mock('../reader/reading-session-store', () => ({
   EMPTY_READING_SESSION: { schemaVersion: 2, activeDocumentPath: null, documents: [] },
   loadReadingSession: vi.fn(async () => mocks.savedReadingSession()),
@@ -309,7 +283,6 @@ vi.mock('../scripts/settings', () => ({
       return {
         general: {
           maximizeOnOpen: false,
-          displayThumbs: false,
           defaultDarkMode: 'default',
           rememberLastFilter: false,
           restorePreviousSession: mocks.restorePreviousSession(),
@@ -404,8 +377,8 @@ function createModules(
     }),
   } as unknown as DocumentIntake;
   return {
-    createAnnotationStorage: vi.fn(() => ({}) as never),
     browserPrintAdapter: { print: vi.fn(async () => undefined) },
+    createDocumentSurface: vi.fn(() => options.realRestoration?.createSurface ?? vi.fn()),
     externalLinkAdapter: { open: vi.fn(async () => undefined) },
     createDocumentIntakeRuntime: vi.fn(({ runtime, canonicalizeDocumentPaths }) =>
       options.realRestoration
@@ -446,7 +419,7 @@ function createModules(
             filePath: '/docs/report.pdf',
             readingPosition: { page: 4, location: 0.5 },
           })),
-          replaceAnnotations: vi.fn(),
+          openActiveSearch: vi.fn(),
           setAnnotationDisplayName: options.annotationDisplayNameChanged ?? vi.fn(),
         };
       },
@@ -612,7 +585,6 @@ describe('application lifecycle composition', () => {
       'flush:actions-quiesce',
       'flush:settle',
       'flush:session',
-      'flush:annotations',
       'flush:recent',
       'invoke:complete_application_quit',
     ];
@@ -792,7 +764,6 @@ describe('application lifecycle composition', () => {
     expect(mocks.events).toContain('flush:actions-quiesce');
     expect(mocks.events).not.toContain('flush:settle');
     expect(mocks.events).not.toContain('flush:session');
-    expect(mocks.events).toContain('flush:annotations');
     expect(mocks.events).toContain('flush:recent');
     expect(mocks.events).toContain('window:destroy');
   });

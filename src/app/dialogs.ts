@@ -116,29 +116,6 @@ export function requestPdfPassword(
   });
 }
 
-export function requestAnnotationNote(initialValue = ''): Promise<string | null> {
-  const dialog = requireDialog('annotation-dialog');
-  const form = dialog.querySelector<HTMLFormElement>('form');
-  const input = dialog.querySelector<HTMLTextAreaElement>('textarea[name="note"]');
-  const cancelButton = dialog.querySelector<HTMLButtonElement>('[data-dialog-cancel]');
-
-  if (!form || !input || !cancelButton) {
-    throw new Error('Annotation dialog is incomplete');
-  }
-
-  input.value = initialValue;
-
-  return requestDialogValue({
-    dialog,
-    form,
-    cancelButton,
-    cancelValue: null,
-    submitValue: () => input.value.trim(),
-    focusTarget: input,
-    afterFocus: () => input.select(),
-  });
-}
-
 export function requestConfirmation({
   title,
   message,

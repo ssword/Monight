@@ -1,4 +1,3 @@
-import { viewModeIcon as getViewModeIcon, viewModeLabel } from '../lib/document-features';
 import type { DocumentRenderingState } from '../reader/document-rendering';
 import type { ReadingSessionSnapshot } from '../reader/reader-actions';
 import type { RecentDocument } from '../reader/recent-documents';
@@ -93,47 +92,10 @@ export function updateUI(
   );
   if (!activeDocument || !state) return;
 
-  // Update page info
-  const pageInput = document.getElementById('page-input') as HTMLInputElement;
-  const pageCount = document.getElementById('page-count');
-  if (pageInput) {
-    pageInput.value = state.currentPage.toString();
-    pageInput.max = state.totalPages.toString();
-  }
-  if (pageCount) {
-    pageCount.textContent = state.totalPages.toString();
-  }
-
-  // Update zoom info
-  const zoomInfo = document.getElementById('zoom-info');
-  if (zoomInfo) {
-    zoomInfo.textContent = `${Math.round(state.zoom * 100)}%`;
-  }
-
   // Update file name
   const fileName = document.getElementById('file-name');
   if (fileName) {
     fileName.textContent = activeDocument.title || 'No file loaded';
-  }
-
-  // Update view mode icon
-  const viewModeIcon = document.getElementById('view-mode-icon');
-  if (viewModeIcon) {
-    viewModeIcon.textContent = getViewModeIcon(state.viewMode);
-    viewModeIcon.parentElement?.setAttribute(
-      'title',
-      `${viewModeLabel(state.viewMode)} (click to change view)`,
-    );
-  }
-
-  // Update button states
-  const prevBtn = document.getElementById('prev-page') as HTMLButtonElement;
-  const nextBtn = document.getElementById('next-page') as HTMLButtonElement;
-  if (prevBtn) {
-    prevBtn.disabled = state.currentPage <= 1;
-  }
-  if (nextBtn) {
-    nextBtn.disabled = state.currentPage >= state.totalPages;
   }
 }
 
@@ -147,12 +109,6 @@ export function updateKeyboardHints(isMac: boolean): void {
 
   const printBtn = document.getElementById('print-file');
   if (printBtn) printBtn.title = `Print (${modKey}+P)`;
-
-  const zoomInBtn = document.getElementById('zoom-in');
-  if (zoomInBtn) zoomInBtn.title = `Zoom In (${modKey}++)`;
-
-  const zoomOutBtn = document.getElementById('zoom-out');
-  if (zoomOutBtn) zoomOutBtn.title = `Zoom Out (${modKey}+-)`;
 
   // Update hint text
   const hintText = document.querySelector('.hint-text');

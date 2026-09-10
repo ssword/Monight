@@ -9,7 +9,7 @@ Monight is a cross-platform PDF reader built with Tauri and TypeScript. It combi
 - Adjustable zoom, fit-to-page/width, rotation, and cursor-anchored pinch/wheel zoom
 - Full-document text search (`Cmd/Ctrl+F`)
 - Table of contents and lazy-rendered page thumbnails
-- Persistent highlights and notes
+- PDF-native highlights and comments with explicit Save and Save As
 - Exact page and scroll-position restoration
 - Recent Documents on the launch screen
 - Password prompts for encrypted PDFs
@@ -21,28 +21,18 @@ Monight is a cross-platform PDF reader built with Tauri and TypeScript. It combi
 ## Tech Stack
 - Tauri 2 (Rust backend + WebView)
 - TypeScript + Vite
-- PDF.js for rendering
+- EmbedPDF 2.15.0 for rendering and native annotations
 - NoUISlider for the filter configurator
 
-### PDF engine migration
+### PDF runtime verification
 
-PDF.js remains the default reader. An opt-in, read-only EmbedPDF viewer is implemented behind
-`VITE_PDF_SURFACE=embedpdf`; the switch to EmbedPDF as the default is still pending.
-The feature list and local annotation storage described here apply to the default reader.
-Native PDF annotation editing, explicit Save/Save As, and recovery are planned work, not
-available features of the gated viewer. See [ADR 0002](docs/adr/0002-adopt-embedpdf-and-pdf-native-annotations.md)
-and the [engine migration review](docs/pdf-engine-review-2026-09-09.md).
+EmbedPDF is the only production viewer. Native PDF editing is enabled only after the desktop
+safety adapter confirms that the Document can be saved without violating its protection state.
+Read-only, signed, encrypted, or otherwise unsafe Documents remain readable and explain why
+editing is unavailable. See [ADR 0002](docs/adr/0002-adopt-embedpdf-and-pdf-native-annotations.md)
+and the [issue 66 verification record](docs/issue-66-verification.md).
 
-To exercise the gated desktop reader:
-
-```bash
-VITE_PDF_SURFACE=embedpdf npm run tauri:dev
-```
-
-In PowerShell, set `$env:VITE_PDF_SURFACE = 'embedpdf'` before running `npm run tauri:dev`.
-The variable is selected at build time; set it before `npm run tauri:build` for a gated package.
-
-`npm test` covers the default reader and substitute EmbedPDF adapters. Run
+`npm test` covers the reader and substitute EmbedPDF adapters. Run
 `npm run test:embedpdf-offline` separately for the actual EmbedPDF runtime in Chromium
 (install its browser with `npx playwright install chromium` if needed). This browser check
 does not establish packaged Tauri behavior or native annotation interoperability.
@@ -96,9 +86,9 @@ npm run dev
 
 ## Settings
 Settings are stored using the Tauri Store plugin and can be edited in the in-app Settings
-window. Reading sessions, Recent Documents, highlights, and notes are saved locally. Options include
-default dark mode presets, thumbnail visibility, session restoration, remembering the last
-filter, and keybind customization.
+window. Reading Sessions and Recent Documents are saved locally; saved Annotations belong to the
+PDF, while unsaved edits use separate Recovery Drafts. Options include default dark mode presets,
+session restoration, annotation attribution, remembering the last filter, and keybind customization.
 
 Reading Position and Visual State changes are saved after a short debounce, while opening,
 closing, reordering, or activating a Document requests an immediate save. Normal window close and

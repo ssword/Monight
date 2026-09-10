@@ -2,17 +2,12 @@ import { awaitAbortableWork } from '../lib/abortable-work';
 import { debugLog } from '../lib/debug-log';
 import type { ViewMode } from '../lib/document-features';
 import type { PdfLinkTarget } from '../lib/pdf-links';
-import { type AnnotationAccess, createTransientAnnotationAccess } from '../reader/annotations';
 import type { DocumentAccess, DocumentPresentation } from '../reader/document-access';
-import type {
-  LoadableDocumentContent,
-  ResolvedDocumentLinkTarget,
-} from '../reader/document-content';
+import type { PdfPasswordRequester } from '../reader/document-content';
 import type { DocumentRuntimeIntake, DocumentRuntimeOpenRequest } from '../reader/document-intake';
 import type { DocumentQuery, DocumentRuntime } from '../reader/document-queries';
 import type { DocumentRendering, DocumentViewTransform } from '../reader/document-rendering';
 import type { AnnotationDisplayName } from '../reader/native-pdf-editing';
-import { createPdfDocumentContent } from '../reader/pdf-document-content';
 import type {
   ReaderAction,
   ReaderActionOptions,
@@ -32,11 +27,6 @@ import type {
   RecoveryDraftRequest,
 } from '../reader/recovery-drafts';
 import { buildFilterCSS } from '../scripts/filters';
-import {
-  type AnnotationNoteRequester,
-  PDFViewer,
-  type PdfPasswordRequester,
-} from '../scripts/pdf-viewer';
 import type { PresentationSurface } from './presentation-controller';
 
 export interface DocumentSurface {
@@ -70,6 +60,11 @@ export type DocumentSurfaceFactory = (
   request: DocumentSurfaceFactoryRequest,
 ) => Promise<DocumentSurface>;
 
+export type DocumentSurfaceProvider = (options: {
+  requestPassword?: PdfPasswordRequester;
+  getAnnotationDisplayName?: () => AnnotationDisplayName;
+}) => DocumentSurfaceFactory;
+
 interface DocumentWorkspaceOptions {
   pdfSaveAdapter?: import('../reader/native-pdf-editing').NativePdfSaveAdapter;
   recoveryDraftAdapter?: RecoveryDraftAdapter;
@@ -87,19 +82,8 @@ interface DocumentWorkspaceOptions {
   snapshot(): ReadingSessionSnapshot;
   isDocumentOpen(filePath: string): boolean;
   defaultVisualState(): ReadingSessionVisualState;
-  createSurface?: DocumentSurfaceFactory;
-  createDocumentContent?: (options: {
-    readonly requestPassword?: PdfPasswordRequester;
-  }) => LoadableDocumentContent;
-  annotationAuthority?: AnnotationAccess;
-  requestPassword?: PdfPasswordRequester;
-  requestAnnotationNote?: AnnotationNoteRequester;
+  createSurface: DocumentSurfaceFactory;
   reportError?: (message: string) => void;
-  resolveLinkTarget?: (
-    filePath: string,
-    target: PdfLinkTarget,
-  ) => Promise<ResolvedDocumentLinkTarget | null>;
-  activateLinkTarget?: (filePath: string, target: PdfLinkTarget) => Promise<void>;
   documentOpened?: (filePath: string, title: string) => void | Promise<void>;
   activeDocumentChanged?: () => void | Promise<void>;
   renderingStateChanged?: () => void;
@@ -114,7 +98,7 @@ export interface DocumentWorkspace {
   activeRenderingState(): ReturnType<DocumentRendering['getState']> | null;
   activeReadingPosition(): { filePath: string; readingPosition: ReadingPosition } | null;
   viewTransform(filePath: string): DocumentViewTransform | null;
-  replaceAnnotations(filePath: string | null): void;
+  openActiveSearch(): void;
   setAnnotationDisplayName(displayName: AnnotationDisplayName): void;
 }
 
@@ -157,7 +141,6 @@ async function projectDocumentState(
 }
 
 export function createDocumentWorkspace(options: DocumentWorkspaceOptions): DocumentWorkspace {
-  const annotationAuthority = options.annotationAuthority ?? createTransientAnnotationAccess();
   const presented = new Map<string, PresentedDocument>();
   let visibleDocumentPath: string | null = null;
   const disposedSurfaces = new WeakSet<DocumentSurface>();
@@ -188,95 +171,7 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
     return rendering;
   };
 
-  const createPdfSurface: DocumentSurfaceFactory = async ({
-    filePath,
-    title,
-    bytes,
-    callbacks,
-    signal,
-  }) => {
-    const requestPassword = options.requestPassword;
-    const requestDocumentPassword = requestPassword
-      ? (fileName: string, reason: 'required' | 'incorrect') =>
-          requestPassword(fileName, reason, signal)
-      : undefined;
-    const content: LoadableDocumentContent = options.createDocumentContent
-      ? options.createDocumentContent({ requestPassword: requestDocumentPassword })
-      : createPdfDocumentContent({ requestPassword: requestDocumentPassword });
-    const resolveLinkTarget = options.resolveLinkTarget;
-    const activateLinkTarget = options.activateLinkTarget;
-    const rendering = new PDFViewer('pdf-container', `pdf-canvas-${crypto.randomUUID()}`, {
-      content,
-      requestAnnotationNote: options.requestAnnotationNote,
-      reportError: options.reportError,
-      ...(resolveLinkTarget
-        ? { resolveLinkTarget: (target) => resolveLinkTarget(filePath, target) }
-        : {}),
-      ...(activateLinkTarget
-        ? {
-            activateLinkTarget: (target) => activateLinkTarget(filePath, target),
-          }
-        : {}),
-    });
-    rendering.setOnPageChange(callbacks.stateChanged);
-    rendering.setOnScrollChange(() =>
-      callbacks.readingPositionObserved(rendering.getReadingPosition()),
-    );
-    rendering.setOnScrollSettled(() =>
-      callbacks.readingPositionSettled(rendering.getReadingPosition()),
-    );
-    rendering.setOnPageNavigationRequest(callbacks.pageNavigationRequested);
-    rendering.setOnZoomIntentRequest(callbacks.zoomIntentRequested);
-    rendering.setAnnotations(annotationAuthority.snapshot(filePath));
-    rendering.setOnAnnotationsChange((annotations) => {
-      if (options.acceptsReaderActions?.() === false) return;
-      annotationAuthority.replace(filePath, annotations);
-      callbacks.stateChanged();
-    });
-    let loadDisposed = false;
-    const disposeLoad = async (): Promise<void> => {
-      if (loadDisposed) return;
-      loadDisposed = true;
-      rendering.destroy();
-      await content.destroy();
-    };
-    const cancelLoad = (): void => {
-      void disposeLoad();
-    };
-    if (signal?.aborted) {
-      await disposeLoad();
-      throw interruptionError();
-    }
-    signal?.addEventListener('abort', cancelLoad, { once: true });
-    try {
-      await rendering.loadPDF(bytes, title, filePath);
-    } catch (error) {
-      await disposeLoad();
-      throw error;
-    } finally {
-      signal?.removeEventListener('abort', cancelLoad);
-    }
-    if (signal?.aborted) {
-      await disposeLoad();
-      throw interruptionError();
-    }
-    let destroyed = false;
-    return {
-      rendering,
-      runtime: {
-        content,
-        renderThumbnail: (pageNumber, thumbnailOptions) =>
-          rendering.renderThumbnail(pageNumber, thumbnailOptions),
-        getAnnotations: () => annotationAuthority.snapshot(filePath),
-        async destroy() {
-          if (destroyed) return;
-          destroyed = true;
-          await content.destroy();
-        },
-      },
-    };
-  };
-  const baseCreateSurface = options.createSurface ?? createPdfSurface;
+  const baseCreateSurface = options.createSurface;
   const prepareRecoveryDraft = async (
     request: DocumentSurfaceFactoryRequest,
   ): Promise<PreparedRecoveryDraft> => {
@@ -622,12 +517,6 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
         ...(surface.rendering.openSearch
           ? { openSearch: () => surface.rendering.openSearch?.() }
           : {}),
-        setSearchQuery: (query) => surface.rendering.setSearchQuery(query),
-        clearSearch: () => surface.rendering.clearSearch(),
-        revealSearchMatch: (match) => surface.rendering.revealSearchMatch(match),
-        addPageNote: (note) => surface.rendering.addPageNote(note),
-        updateAnnotation: (id, updates) => surface.rendering.updateAnnotation(id, updates),
-        removeAnnotation: (id) => surface.rendering.removeAnnotation(id),
       },
     };
   };
@@ -919,11 +808,9 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
         filterCss: buildFilterCSS(visualState.filterSettings),
       };
     },
-    replaceAnnotations(filePath) {
-      for (const [path, documentState] of presented) {
-        if (filePath !== null && path !== filePath) continue;
-        documentState.rendering.setAnnotations(annotationAuthority.snapshot(path));
-      }
+    openActiveSearch() {
+      const filePath = options.snapshot().activeDocumentPath;
+      if (filePath) presented.get(filePath)?.rendering.openSearch?.();
     },
     setAnnotationDisplayName(displayName) {
       for (const documentState of presented.values()) {

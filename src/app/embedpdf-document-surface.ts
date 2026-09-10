@@ -12,18 +12,17 @@ import EmbedPDF, {
   Rotation,
   type ScrollCapability,
   ScrollStrategy,
-  type SearchCapability,
   type SpreadCapability,
   SpreadMode,
   type ThumbnailCapability,
   type TrackedAnnotation,
+  type UICapability,
   type ViewportCapability,
   type ZoomCapability,
   type ZoomLevel,
   ZoomMode,
 } from '@embedpdf/snippet';
 import type {
-  PdfAnnotation,
   PdfOutlineItem,
   PdfSearchMatch,
   SearchProgress,
@@ -196,9 +195,6 @@ export interface EmbedPdfViewerRuntime {
   preparePrintDocument(): Promise<Uint8Array>;
   open(request: EmbedPdfOpenRequest): Promise<void>;
   openSearch(): void;
-  setSearchQuery(query: string): void;
-  clearSearch(): void;
-  revealSearchMatch(match: PdfSearchMatch): Promise<void>;
   pageCount(): number;
   currentPage(): number;
   currentZoom(): number;
@@ -618,7 +614,7 @@ async function createProductionViewer({
   target,
   callbacks,
   requestPassword,
-  readOnlyReason = 'Native editing is disabled in this development surface',
+  readOnlyReason = 'Native editing safety inspection is unavailable',
   annotationDisplayName,
 }: CreateEmbedPdfViewerRequest): Promise<EmbedPdfViewerRuntime> {
   const fonts = await preloadLocalFonts();
@@ -664,27 +660,12 @@ async function createProductionViewer({
   const rotate = requireCapability<RotateCapability>(registry, 'rotate');
   const spread = requireCapability<SpreadCapability>(registry, 'spread');
   const thumbnails = requireCapability<ThumbnailCapability>(registry, 'thumbnail');
+  const ui = requireCapability<UICapability>(registry, 'ui');
   const viewport = requireCapability<ViewportCapability>(registry, 'viewport');
   const engine = registry.getEngine();
   const unsubscribers: Array<() => void> = [];
   const documentId = `monight-${crypto.randomUUID()}`;
-  const searchScope = requireCapability<SearchCapability>(registry, 'search').forDocument(
-    documentId,
-  );
-  let searchEpoch = 0;
-  let searchCompletion = Promise.resolve();
-  let searchSession = '';
-  unsubscribers.push(
-    searchScope.onStateChange((state) => {
-      // The ready-made panel calls the capability directly, bypassing Monight's
-      // presentation methods. Its query/flags/session changes also cancel reveals.
-      const nextSession = JSON.stringify([state.query, state.flags, state.active]);
-      if (nextSession !== searchSession) {
-        searchSession = nextSession;
-        searchEpoch += 1;
-      }
-    }),
-  );
+  const uiScope = ui.forDocument(documentId);
   let sourceBytes = new Uint8Array();
   let fileName = '';
   let documentObject: ReturnType<DocumentManagerCapability['getDocument']> = null;
@@ -1131,51 +1112,9 @@ async function createProductionViewer({
       if (request.signal?.aborted) throw new Error('Document Intake interrupted');
     },
     openSearch() {
-      commands.forDocument(documentId).execute('panel:toggle-search', 'api');
-    },
-    setSearchQuery(query) {
-      if (destroyed) return;
-      searchEpoch += 1;
-      searchCompletion = searchScope
-        .searchAllPages(query)
-        .toPromise()
-        .then(
-          () => undefined,
-          () => undefined,
-        );
-    },
-    clearSearch() {
-      searchEpoch += 1;
-      if (!destroyed) searchScope.stopSearch();
-    },
-    async revealSearchMatch(match) {
-      const epoch = searchEpoch;
-      const isCancelled = () => destroyed || epoch !== searchEpoch;
-      await searchCompletion;
-      if (isCancelled()) return;
-      const state = searchScope.getState();
-      const index = state.results.findIndex(
-        (result) => result.pageIndex + 1 === match.pageNumber && result.charIndex === match.index,
-      );
-      const result = state.results[index];
-      if (!result) return;
-      const page = currentDocument().pages[result.pageIndex];
-      const y = Math.min(...result.rects.map((rect) => rect.origin.y));
-      if (callbacks.linkTargetRequested) {
-        await callbacks.linkTargetRequested(
-          {
-            readingPosition: {
-              page: match.pageNumber,
-              location:
-                page && Number.isFinite(y) ? Math.min(1, Math.max(0, y / page.size.height)) : 0,
-            },
-          },
-          { isCancelled },
-        );
-      } else {
-        await callbacks.pageNavigationRequested(match.pageNumber, { isCancelled });
+      if (!uiScope.isSidebarOpen('right', 'main', 'search-panel')) {
+        uiScope.setActiveSidebar('right', 'main', 'search-panel');
       }
-      if (!isCancelled()) searchScope.goToResult(index);
     },
     pageCount: () => documentObject?.pageCount ?? 0,
     currentPage: currentPageNumber,
@@ -1365,7 +1304,7 @@ export function createEmbedPdfDocumentSurfaceFactory({
     let viewer: EmbedPdfViewerRuntime | null = null;
     const sourceBytes = bytes.slice();
     try {
-      let readOnlyReason = 'Native editing is disabled in this development surface';
+      let readOnlyReason = 'Native editing safety inspection is unavailable';
       if (assessEditing) {
         try {
           readOnlyReason = (await assessEditing(sourceBytes)) ?? '';
@@ -1454,21 +1393,6 @@ export function createEmbedPdfDocumentSurfaceFactory({
         if (!destroyPromise && !options?.isCancelled?.()) openedViewer.applyFilter(filterCss);
       },
       setVisible: (visible) => openedViewer.setVisible(visible),
-      revealSearchMatch: (match) => openedViewer.revealSearchMatch(match),
-      setSearchQuery: (query) => openedViewer.setSearchQuery(query),
-      clearSearch: () => openedViewer.clearSearch(),
-      setAnnotations() {
-        throw new Error('EmbedPDF development surface is read-only');
-      },
-      async addPageNote() {
-        throw new Error('EmbedPDF development surface is read-only');
-      },
-      updateAnnotation() {
-        throw new Error('EmbedPDF development surface is read-only');
-      },
-      removeAnnotation() {
-        throw new Error('EmbedPDF development surface is read-only');
-      },
       destroy() {
         void destroy();
       },
@@ -1479,7 +1403,6 @@ export function createEmbedPdfDocumentSurfaceFactory({
       content,
       renderThumbnail: (pageNumber, options) =>
         openedViewer.renderThumbnail(pageNumber, options?.maxWidth),
-      getAnnotations: (): readonly PdfAnnotation[] => [],
       destroy,
     };
     return { rendering, runtime } satisfies DocumentSurface;

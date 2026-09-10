@@ -6,8 +6,8 @@ Issue #7 is the consolidation step for the performance work. Final before/after
 numbers are still pending human collection and review, and this document should
 not be treated as the regression baseline until every result row is filled.
 
-Migration note (2026-09-09): this scaffold describes the PDF.js implementation. The gated
-EmbedPDF implementation runs PDFium directly on the main thread (`worker: false`), preloads
+Migration note: this scaffold's historical measurements describe the retired PDF.js implementation.
+The production EmbedPDF implementation runs PDFium directly on the main thread (`worker: false`), preloads
 local fallback fonts, and creates a viewer registry per open Document. Existing geometry,
 canvas-cap, and report-formatting tests do not establish its performance. Collect a separate
 EmbedPDF baseline for the same scenarios, including input responsiveness during render/search,

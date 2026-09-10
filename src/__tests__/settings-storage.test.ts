@@ -102,7 +102,7 @@ describe('settings storage', () => {
   it('migrates the legacy blob once into independently versioned concern keys', async () => {
     const legacy = {
       version: '1.0.6',
-      general: { ...DEFAULT_SETTINGS.general, displayThumbs: false },
+      general: { ...DEFAULT_SETTINGS.general, maximizeOnOpen: false },
       keybinds: {
         ...DEFAULT_SETTINGS.keybinds,
         OpenFile: { ...DEFAULT_SETTINGS.keybinds.OpenFile, binds: ['Ctrl+Shift+O'] },
@@ -123,7 +123,7 @@ describe('settings storage', () => {
 
     const settings = await new SettingsManager('main').load();
 
-    expect(settings.general.displayThumbs).toBe(false);
+    expect(settings.general.maximizeOnOpen).toBe(false);
     expect(settings.keybinds.OpenFile.binds).toEqual(['Ctrl+Shift+O']);
     expect(settings).not.toHaveProperty('recentFiles');
     expect(store.values.get('recentFiles')).toEqual(legacy.recentFiles);
@@ -156,7 +156,7 @@ describe('settings storage', () => {
 
     await settingsWindow.set('general', {
       ...DEFAULT_SETTINGS.general,
-      displayThumbs: false,
+      maximizeOnOpen: false,
     });
 
     expect(store.writes).toEqual(['general']);
@@ -259,22 +259,5 @@ describe('settings storage', () => {
 
     expect(store.values.has('recentFiles')).toBe(false);
     expect(store.writes).toContain('delete:recentFiles');
-  });
-
-  it('exposes legacy Annotations only for verified dedicated-store migration', async () => {
-    const legacy = { '/books/one.pdf': [legacyAnnotation] };
-    store.reset({
-      storageSchemaVersion: SETTINGS_SCHEMA_VERSION,
-      annotations: legacy,
-    });
-    const mainWindow = new SettingsManager('main');
-
-    await expect(mainWindow.readLegacyAnnotations()).resolves.toEqual(legacy);
-    expect(store.values.get('annotations')).toEqual(legacy);
-
-    await mainWindow.removeLegacyAnnotations();
-
-    expect(store.values.has('annotations')).toBe(false);
-    expect(store.writes).toContain('delete:annotations');
   });
 });

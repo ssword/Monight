@@ -7,21 +7,20 @@ remain in the adapters listed below; it must not enter those domain modules.
 The focused repair evidence and pending native matrix for issue #52 are recorded in
 [`issue-52-verification.md`](issue-52-verification.md).
 
-## EmbedPDF migration gate
+## EmbedPDF migration
 
-The earlier evidence applies to the PDF.js reader at its recorded revision. It must not be
-carried forward as proof of the replacement engine. At `aa9a095`, EmbedPDF is selected with
-`VITE_PDF_SURFACE=embedpdf` at development/build time and remains read-only. Record the selected
-engine with the exact revision and artifact for every new verification pass.
+The earlier evidence applies to the retired PDF.js reader at its recorded revision and is not
+proof for the replacement engine. Issue #66 makes pinned EmbedPDF 2.15.0 the only production
+viewer and removes the build-time engine/editing gates. Record the exact revision and artifact
+for every new verification pass.
 
-The current CI matrix does not run `npm run test:embedpdf-offline`. That separate Chromium
-check exercises local WASM/fonts, rendering, navigation, zoom, and page-link interception;
-it does not run the full desktop application or the composed Reader Actions feedback path.
-Add an explicit real-runtime CI job and composed reading-workflow checks before treating
-green unit tests as replacement-engine coverage.
+The Linux frontend CI job runs `npm run test:embedpdf-offline` after installing Chromium. That
+check exercises local WASM/fonts, rendering, navigation, zoom, page-link interception, annotations,
+saving, recovery, and print preparation. It does not replace packaged desktop or cross-reader
+evidence.
 
-Re-run the platform smoke matrix using gated artifacts. Extend it as the relevant slices land
-to cover native annotation Save/Save As and reopen, failed/conflicting writes, Save/Discard/Cancel
+Re-run the platform smoke matrix using release-candidate artifacts. It must cover native
+annotation Save/Save As and reopen, failed/conflicting writes, Save/Discard/Cancel
 on close and Quit, crash recovery, protected PDFs, unsaved-annotation printing, and offline
 operation. Native annotation round trips with Preview and Acrobat are separate acceptance
 evidence. All of these migration-specific packaged checks remain pending; see the

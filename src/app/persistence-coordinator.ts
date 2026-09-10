@@ -1,10 +1,8 @@
-import type { AnnotationAuthority } from '../reader/annotations';
 import type { ReaderActions, ReadingPosition } from '../reader/reader-actions';
 import type { RecentDocumentAuthority } from '../reader/recent-documents';
 
 interface PersistenceCoordinatorOptions {
   readerActions: () => ReaderActions | null;
-  annotations: () => AnnotationAuthority | null;
   recentDocuments: () => RecentDocumentAuthority | null;
   activeReadingPosition: () => { filePath: string; readingPosition: ReadingPosition } | null;
   shouldPersistReadingSession: () => boolean;
@@ -34,11 +32,6 @@ export function createPersistenceCoordinator(
         failures.push(error);
       }
 
-      try {
-        await options.annotations()?.flush();
-      } catch (error) {
-        failures.push(error);
-      }
       try {
         await options.recentDocuments()?.flush();
       } catch (error) {

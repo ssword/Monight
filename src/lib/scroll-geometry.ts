@@ -5,7 +5,7 @@
  * O(1) lookups and O(log n) binary searches using a precomputed
  * cumulative page-offset array (prefix sum).
  *
- * All page indices are 1-based to match PDF.js conventions.
+ * All page indices are 1-based to match the reader's document APIs.
  * The offset array has a sentinel at index 0 (= 0),
  * so offsets[pageNum] gives the y-position of page pageNum's top edge.
  * offsets[pageCount + 1] gives the total scroll height.

@@ -20,7 +20,7 @@ preparation completes suppresses the stale print operation.
 
 ## Packaged macOS check
 
-A development-gated debug DMG built successfully with:
+A debug DMG built successfully before the final issue #66 switch with:
 
 ```sh
 VITE_PDF_SURFACE=embedpdf VITE_NATIVE_PDF_EDITING=1 npm run tauri:build -- --debug

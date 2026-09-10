@@ -1,8 +1,8 @@
 # EmbedPDF Reading Session verification — issue #58
 
-The development-gated EmbedPDF surface retains Reading Session as the authority for
-ordered Documents, the active Document, Reading Position, and Visual State. Select it
-with `VITE_PDF_SURFACE=embedpdf`; PDF.js remains the default during the migration.
+The EmbedPDF surface retains Reading Session as the authority for ordered Documents, the active
+Document, Reading Position, and Visual State. Issue #66 made it the only production viewer; no
+build-time engine selection is required.
 
 ## Integration contract
 
@@ -30,8 +30,8 @@ with `VITE_PDF_SURFACE=embedpdf`; PDF.js remains the default during the migratio
 `DocumentViewTransform`: actual scale, Zoom Intent, viewing rotation, view mode, and
 filter CSS. It describes presentation only. `viewingRotation` excludes PDF-authored
 page orientation. Save and print must consume Document Content rather than apply this
-transform to PDF bytes. This slice does not implement native annotation saving or the
-new print pipeline.
+transform to PDF bytes. Native annotation saving and annotated printing were implemented by later
+slices and are composed by default in issue #66.
 
 ## Runtime evidence
 
@@ -64,8 +64,8 @@ Verified locally in Chromium on macOS:
 
 Focused unit contracts additionally verify stale-generation callbacks and cancelled or
 disposed projections, plus configured shortcuts while a Document tab has focus.
-Existing Reading Session, Reading Position, Zoom Intent,
-presentation, rendering-adapter, and desktop/menu tests remain in place.
+Existing Reading Session, Reading Position, Zoom Intent, presentation, EmbedPDF surface, and
+desktop/menu tests remain in place.
 
 The complete local suite passed: 51 frontend test files / 390 tests and 34 Rust
 tests. TypeScript/Vite build and Biome lint passed. Vite retains its existing

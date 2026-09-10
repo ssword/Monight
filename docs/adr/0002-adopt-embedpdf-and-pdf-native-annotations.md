@@ -46,7 +46,7 @@ Implementation must verify a pinned production-supported EmbedPDF release rather
 
 The individual decisions and consolidated design were confirmed during the design interview on 2026-09-08. No interview decisions remain open.
 
-Implementation status, reviewed 2026-09-09 at `aa9a095`: the first development-gated, read-only EmbedPDF surface is implemented, while PDF.js remains the default. Local Chromium offline rendering has been exercised; native annotations, file writing, recovery, interoperability, and the final desktop switch are not complete. Temporary engine coexistence is the migration strategy specified by issue #56, not a replacement for this decision. See the [engine migration review](../pdf-engine-review-2026-09-09.md) for current defects and verification limits.
+Implementation status, updated for issue #66: EmbedPDF 2.15.0 is the only production viewer, the PDF.js runtime and permanent annotation store have been removed, and native Save, Save As, Recovery Draft, and annotated-print paths are composed by default. Automated verification is recorded in the [issue #66 verification record](../issue-66-verification.md); packaged desktop and Preview/Acrobat interoperability evidence remains pending and must not be inferred from automated tests.
 
 ## References
 

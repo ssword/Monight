@@ -148,67 +148,30 @@ export async function verifyNavigation(browser, origin) {
     () => window.navigationSmoke.reader.snapshot().documents[0].readingPosition.page === 3,
   );
   await viewer.getByRole('button', { name: 'Sidebar', exact: true }).click();
-  await viewer.getByRole('button', { name: 'Search', exact: true }).click();
-  const revealed = await page.evaluate(async () => {
-    const access = window.navigationSmoke.access();
-    const matches = await access.query.search('moon');
-    access.presentation.setSearchQuery('moon');
-    await access.presentation.revealSearchMatch(matches[1]);
-    return window.navigationSmoke.reader.snapshot();
-  });
-  assert.equal(revealed.documents[0].readingPosition.page, 1);
-  assert.ok(
-    revealed.documents[0].readingPosition.location > 0.43 &&
-      revealed.documents[0].readingPosition.location < 0.49,
-    'The second occurrence is roughly halfway down page 1, not at the first occurrence',
-  );
   await page.evaluate(() => window.navigationSmoke.access().presentation.openSearch());
+  const reopenedInput = viewer.locator('input[type="text"]').last();
+  await reopenedInput.fill('');
+  await reopenedInput.fill('moon');
   const repeatedResults = viewer.getByRole('button', { name: 'moon first page moon lower match' });
   await repeatedResults.nth(1).waitFor({ state: 'visible' });
+  await repeatedResults.nth(1).click();
+  await page.waitForFunction(
+    () => window.navigationSmoke.reader.snapshot().documents[0].readingPosition.page === 1,
+  );
+  await page.waitForTimeout(600);
+  const repeatedPosition = await page.evaluate(
+    () => window.navigationSmoke.reader.snapshot().documents[0].readingPosition,
+  );
+  assert.ok(
+    repeatedPosition.location > 0.1 && repeatedPosition.location < 0.3,
+    `The lower occurrence must settle beyond the first page-1 match: ${JSON.stringify(repeatedPosition)}`,
+  );
   assert.ok(
     await repeatedResults.nth(1).evaluate((button) => button.classList.contains('bg-accent-light')),
     'The ready-made viewer must visibly select the second same-page occurrence',
   );
-  const cancelledNavigation = await page.evaluate(async () => {
-    const access = window.navigationSmoke.access();
-    const matches = await access.query.search('moon');
-    const before = window.navigationSmoke.reader.snapshot();
-    access.presentation.setSearchQuery('moon');
-    const navigation = access.presentation.revealSearchMatch(matches[2]);
-    access.presentation.clearSearch();
-    await navigation;
-    return { before, after: window.navigationSmoke.reader.snapshot() };
-  });
-  assert.deepEqual(
-    cancelledNavigation.after,
-    cancelledNavigation.before,
-    'Clearing search must cancel navigation before it reaches Reader Actions',
-  );
-  await input.fill('moon');
-  await viewer.getByRole('button', { name: 'moon second page' }).waitFor();
-  await page.evaluate(async () => {
-    const access = window.navigationSmoke.access();
-    const matches = await access.query.search('moon');
-    window.navigationSmoke.pauseNavigation();
-    window.pendingReveal = access.presentation.revealSearchMatch(matches[2]);
-  });
-  await page.waitForFunction(() => window.navigationSmoke.navigationWaiting());
-  await input.fill('absent');
-  await page.waitForTimeout(500);
-  const beforeRelease = await page.evaluate(() => window.navigationSmoke.reader.snapshot());
-  const afterRelease = await page.evaluate(async () => {
-    window.navigationSmoke.resumeNavigation();
-    await window.pendingReveal;
-    return window.navigationSmoke.reader.snapshot();
-  });
-  assert.deepEqual(
-    afterRelease,
-    beforeRelease,
-    'Changing the ready-made search must cancel an older queued match navigation',
-  );
   await viewer.getByRole('button', { name: 'Search', exact: true }).click();
   await page.evaluate(async () => {
-    window.navigationSmoke.access().presentation.clearSearch();
     await window.navigationSmoke.reader.dispatch({ type: 'goToPage', page: 1 });
   });
   await viewer.getByRole('button', { name: 'Toggle Pointer Mode' }).click();

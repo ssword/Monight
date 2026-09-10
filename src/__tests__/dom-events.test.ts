@@ -17,12 +17,9 @@ describe('setupEventListeners', () => {
       sliderManager: null,
       keybindManager,
       openPdfAndRefresh: vi.fn(async () => undefined),
-      updateUI: vi.fn(),
       activateDocument: vi.fn(async () => undefined),
       openRecentFile: vi.fn(async () => undefined),
       clearRecentFiles: vi.fn(async () => undefined),
-      goToPage: vi.fn(async () => undefined),
-      goToRelativePage: vi.fn(async () => undefined),
       dispatchReaderAction: vi.fn(async () => undefined),
     });
 
@@ -57,12 +54,9 @@ describe('setupEventListeners', () => {
       sliderManager: null,
       keybindManager: null,
       openPdfAndRefresh: vi.fn(async () => undefined),
-      updateUI: vi.fn(),
       activateDocument,
       openRecentFile: vi.fn(async () => undefined),
       clearRecentFiles: vi.fn(async () => undefined),
-      goToPage: vi.fn(async () => undefined),
-      goToRelativePage: vi.fn(async () => undefined),
       dispatchReaderAction: vi.fn(async () => undefined),
     });
 
@@ -74,13 +68,8 @@ describe('setupEventListeners', () => {
     expect(document.activeElement?.getAttribute('data-tab-id')).toBe('one');
   });
 
-  it('dispatches toolbar visual choices as typed Reader Actions', async () => {
+  it('dispatches retained toolbar choices as typed Reader Actions', async () => {
     document.body.innerHTML = `
-      <button id="zoom-in"></button>
-      <button id="zoom-out"></button>
-      <button id="fit-width"></button>
-      <button id="fit-page"></button>
-      <button id="toggle-view-mode"></button>
       <button id="print-file"></button>
       <button id="preset-original" class="preset-btn"></button>
     `;
@@ -90,34 +79,18 @@ describe('setupEventListeners', () => {
       sliderManager: null,
       keybindManager: null,
       openPdfAndRefresh: vi.fn(async () => undefined),
-      updateUI: vi.fn(),
       activateDocument: vi.fn(async () => undefined),
       openRecentFile: vi.fn(async () => undefined),
       clearRecentFiles: vi.fn(async () => undefined),
-      goToPage: vi.fn(async () => undefined),
-      goToRelativePage: vi.fn(async () => undefined),
       dispatchReaderAction,
     });
 
-    for (const id of [
-      'zoom-in',
-      'zoom-out',
-      'fit-width',
-      'fit-page',
-      'toggle-view-mode',
-      'print-file',
-      'preset-original',
-    ]) {
+    for (const id of ['print-file', 'preset-original']) {
       document.getElementById(id)?.click();
     }
-    await vi.waitFor(() => expect(dispatchReaderAction).toHaveBeenCalledTimes(7));
+    await vi.waitFor(() => expect(dispatchReaderAction).toHaveBeenCalledTimes(2));
 
     expect(dispatchReaderAction.mock.calls.map(([action]) => action)).toEqual([
-      { type: 'zoomIn' },
-      { type: 'zoomOut' },
-      { type: 'setZoomIntent', zoomIntent: { kind: 'fit-width' } },
-      { type: 'setZoomIntent', zoomIntent: { kind: 'fit-page' } },
-      { type: 'cycleViewMode' },
       { type: 'printDocument' },
       {
         type: 'setFilterSettings',

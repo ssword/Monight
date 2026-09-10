@@ -78,7 +78,6 @@ async function workflow(options: {
       renderThumbnail: async () => {
         throw new Error('No thumbnail in this viewer substitute');
       },
-      getAnnotations: () => [],
       destroy: async () => {
         destroyed = true;
       },

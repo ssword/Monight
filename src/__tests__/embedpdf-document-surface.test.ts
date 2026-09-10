@@ -26,9 +26,6 @@ const createViewerRuntime = (
   preparePrintDocument: vi.fn(async () => new Uint8Array([1, 2, 3])),
   open: vi.fn(async () => undefined),
   openSearch: vi.fn(),
-  setSearchQuery: vi.fn(),
-  clearSearch: vi.fn(),
-  revealSearchMatch: vi.fn(async () => undefined),
   pageCount: () => 2,
   currentPage: () => 1,
   currentZoom: () => 1,
@@ -781,9 +778,6 @@ describe('EmbedPDF Document surface', () => {
     expect(runtime.setViewMode).toHaveBeenCalledWith('continuous');
     expect(runtime.setRotation).toHaveBeenCalledWith(90);
     expect(runtime.setZoomIntent).toHaveBeenCalledWith({ kind: 'fit-width' });
-    expect(() => surface.rendering.setAnnotations([])).toThrow(/read-only/);
-    expect(() => surface.rendering.updateAnnotation('annotation-1', {})).toThrow(/read-only/);
-    expect(() => surface.rendering.removeAnnotation('annotation-1')).toThrow(/read-only/);
     expect(PRESETS.default).toBeDefined();
   });
 

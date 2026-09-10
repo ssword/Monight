@@ -15,7 +15,8 @@ import { EMPTY_READING_SESSION } from './reader/reading-session-store';
 import { PRESETS } from './scripts/filters';
 import { KeybindManager } from './scripts/keybind-manager';
 import { DEFAULT_SETTINGS } from './scripts/settings';
-import './styles/document-features.css';
+import './styles/document-workspace.css';
+import './styles/reader-shell.css';
 
 async function run() {
   const saved =
@@ -82,7 +83,7 @@ async function run() {
     openSettings: async () => {},
     updateTabBarVisibility: () => {},
     updateUI: () => {},
-    openSearch: () => workspace.access(reader.query())?.presentation.openSearch?.(),
+    openSearch: () => workspace.openActiveSearch(),
     togglePresentationMode: async () => {},
     goToPage,
     goToRelativePage,
@@ -94,14 +95,11 @@ async function run() {
     sliderManager: null,
     keybindManager: manager,
     openPdfAndRefresh: async () => {},
-    updateUI: () => {},
     activateDocument: async (filePath) => {
       await dispatch({ type: 'activateDocument', filePath });
     },
     openRecentFile: async () => {},
     clearRecentFiles: async () => {},
-    goToPage,
-    goToRelativePage,
     dispatchReaderAction: async (action) => {
       await dispatch(action);
     },

@@ -1,9 +1,4 @@
-import type {
-  PdfAnnotation,
-  PdfAnnotationColor,
-  PdfSearchMatch,
-  ViewMode,
-} from '../lib/document-features';
+import type { ViewMode } from '../lib/document-features';
 import type {
   ReaderActionOptions,
   ReadingPosition,
@@ -51,15 +46,5 @@ export interface DocumentRendering {
   fitToPage(options?: ReaderActionOptions): Promise<void>;
   applyFilter(filterCss: string, options?: ReaderActionOptions): void;
   setVisible(visible: boolean): void;
-  revealSearchMatch(match: PdfSearchMatch): Promise<void>;
-  setSearchQuery(query: string): void;
-  clearSearch(): void;
-  setAnnotations(annotations: readonly PdfAnnotation[]): void;
-  addPageNote(note: string): Promise<void>;
-  updateAnnotation(
-    annotationId: string,
-    updates: { note?: string; color?: PdfAnnotationColor },
-  ): void;
-  removeAnnotation(annotationId: string): void;
   destroy(): void;
 }

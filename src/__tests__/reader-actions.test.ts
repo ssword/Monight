@@ -45,7 +45,6 @@ function createDocumentRuntime(): DocumentRuntime {
     renderThumbnail: vi.fn(async () => {
       throw new Error('Thumbnail unavailable in Reader Actions test');
     }),
-    getAnnotations: vi.fn(() => []),
   };
 }
 
@@ -490,64 +489,67 @@ describe('Reader Actions', () => {
     expect(runtime.editing.state().dirty).toBe(true);
   });
 
-  it.each(['conflict', 'failure', 'uncertain', 'protected', 'cancelled'] as const)(
-    'Save retains unsaved work after %s without changing Document identity',
-    async (stage) => {
-      const runtime = createDocumentRuntime();
-      let saved = false;
-      let cancelled = false;
-      let writes = 0;
-      runtime.editing = {
-        state: () => ({
-          revision: 1,
-          dirty: !saved,
-          readOnlyReason: stage === 'protected' ? 'Signed PDF is read-only' : null,
-        }),
-        exportPdf: async () => new Uint8Array([1]),
-        markSaved: () => {
-          saved = true;
+  it.each([
+    'conflict',
+    'failure',
+    'uncertain',
+    'protected',
+    'cancelled',
+  ] as const)('Save retains unsaved work after %s without changing Document identity', async (stage) => {
+    const runtime = createDocumentRuntime();
+    let saved = false;
+    let cancelled = false;
+    let writes = 0;
+    runtime.editing = {
+      state: () => ({
+        revision: 1,
+        dirty: !saved,
+        readOnlyReason: stage === 'protected' ? 'Signed PDF is read-only' : null,
+      }),
+      exportPdf: async () => new Uint8Array([1]),
+      markSaved: () => {
+        saved = true;
+      },
+    };
+    const reader = createReaderActions({
+      initialSession: INITIAL_SESSION,
+      projection: {
+        activateDocument: async () => undefined,
+        goToReadingPosition: async () => undefined,
+        verifySavedDocument: async () => undefined,
+      },
+      pdfSaveAdapter: {
+        chooseDestination: async () => null,
+        releaseDestination: async () => undefined,
+        writeDestination: async () => {
+          throw new Error('Unexpected destination write');
         },
-      };
-      const reader = createReaderActions({
-        initialSession: INITIAL_SESSION,
-        projection: {
-          activateDocument: async () => undefined,
-          goToReadingPosition: async () => undefined,
-          verifySavedDocument: async () => undefined,
+        writeOriginal: async () => {
+          writes += 1;
+          if (stage === 'cancelled') {
+            cancelled = true;
+            return new Uint8Array([1]);
+          }
+          if (stage === 'uncertain') return new Uint8Array([9]);
+          throw new Error(stage === 'conflict' ? 'File conflict: source replaced' : 'Disk full');
         },
-        pdfSaveAdapter: {
-          chooseDestination: async () => null,
-          releaseDestination: async () => undefined,
-          writeDestination: async () => {
-            throw new Error('Unexpected destination write');
-          },
-          writeOriginal: async () => {
-            writes += 1;
-            if (stage === 'cancelled') {
-              cancelled = true;
-              return new Uint8Array([1]);
-            }
-            if (stage === 'uncertain') return new Uint8Array([9]);
-            throw new Error(stage === 'conflict' ? 'File conflict: source replaced' : 'Disk full');
-          },
-        },
-        persist: async () => undefined,
-      });
-      await reader.dispatch({
-        type: 'registerDocument',
-        document: INITIAL_SESSION.documents[0],
-        runtime,
-      });
-      const before = reader.snapshot();
-      expect(
-        (await reader.dispatch({ type: 'saveDocument' }, { isCancelled: () => cancelled })).status,
-      ).toBe(stage === 'cancelled' ? 'superseded' : 'failure');
-      expect(reader.snapshot()).toEqual(before);
-      expect(reader.hasUnsavedPdfWork()).toBe(true);
-      expect(saved).toBe(false);
-      expect(writes).toBe(stage === 'protected' ? 0 : 1);
-    },
-  );
+      },
+      persist: async () => undefined,
+    });
+    await reader.dispatch({
+      type: 'registerDocument',
+      document: INITIAL_SESSION.documents[0],
+      runtime,
+    });
+    const before = reader.snapshot();
+    expect(
+      (await reader.dispatch({ type: 'saveDocument' }, { isCancelled: () => cancelled })).status,
+    ).toBe(stage === 'cancelled' ? 'superseded' : 'failure');
+    expect(reader.snapshot()).toEqual(before);
+    expect(reader.hasUnsavedPdfWork()).toBe(true);
+    expect(saved).toBe(false);
+    expect(writes).toBe(stage === 'protected' ? 0 : 1);
+  });
 
   it('keeps a protected Document read-only across save, close, and recovery actions', async () => {
     const reason = 'Digitally signed PDFs are read-only to preserve their signatures';

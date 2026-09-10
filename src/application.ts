@@ -3,7 +3,6 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 import {
-  requestAnnotationNote,
   requestConfirmation,
   requestPdfPassword,
   requestPdfSaveFailure,
@@ -11,8 +10,7 @@ import {
   requestUnsavedDocument,
   showToast,
 } from './app/dialogs';
-import type { DocumentSurfaceProvider } from './app/document-surface-gate';
-import type { DocumentWorkspace } from './app/document-workspace';
+import type { DocumentSurfaceProvider, DocumentWorkspace } from './app/document-workspace';
 import { setupEventListeners } from './app/dom-events';
 import {
   ensureMinimumViewingSize,
@@ -25,8 +23,6 @@ import {
 import { registerKeybindActions } from './app/keybinds';
 import { createPersistenceCoordinator } from './app/persistence-coordinator';
 import { PresentationController } from './app/presentation-controller';
-import { SearchController } from './app/search-controller';
-import { SidebarController } from './app/sidebar-controller';
 import { restoreReadingSessionAtStartup } from './app/startup-restoration';
 import { type ExternalOpenPayload, setupTauriListeners } from './app/tauri-events';
 import {
@@ -46,8 +42,6 @@ import {
 } from './app/window-lifecycle';
 import { debugLog } from './lib/debug-log';
 import type { ViewMode } from './lib/document-features';
-import type { PdfLinkTarget } from './lib/pdf-links';
-import { type AnnotationAuthority, loadAnnotations } from './reader/annotations';
 import type { DocumentIntake } from './reader/document-intake';
 import { DEFAULT_ANNOTATION_DISPLAY_NAME } from './reader/native-pdf-editing';
 import {
@@ -77,12 +71,11 @@ interface AppInfo {
 export interface ApplicationModules {
   pdfSaveAdapter?: import('./reader/native-pdf-editing').NativePdfSaveAdapter;
   recoveryDraftAdapter?: import('./reader/recovery-drafts').RecoveryDraftAdapter;
-  createAnnotationStorage: typeof import('./app/annotation-storage').createAnnotationStorage;
   browserPrintAdapter: typeof import('./app/browser-print-adapter').browserPrintAdapter;
   externalLinkAdapter: import('./reader/reader-actions').ExternalLinkAdapter;
   createDocumentIntakeRuntime: typeof import('./app/document-intake-runtime').createDocumentIntakeRuntime;
   createDocumentWorkspace: typeof import('./app/document-workspace').createDocumentWorkspace;
-  createDocumentSurface?: DocumentSurfaceProvider;
+  createDocumentSurface: DocumentSurfaceProvider;
   createReadingSessionStorage: typeof import('./app/reading-session-storage').createReadingSessionStorage;
   createRecentDocumentStorage: typeof import('./app/recent-document-storage').createRecentDocumentStorage;
   createReaderActions: typeof import('./reader/reader-actions').createReaderActions;
@@ -102,13 +95,10 @@ let currentSettings: MoonightSettings | null = null;
 let readerActions: ReaderActions | null = null;
 let readingSessionStorage: ReadingSessionStorage | null = null;
 let restoredReadingSession: PersistedReadingSession | null = null;
-let annotationAuthority: AnnotationAuthority | null = null;
 let recentDocumentAuthority: RecentDocumentAuthority | null = null;
 
 // Global keybind manager instance
 let keybindManager: KeybindManager | null = null;
-let searchController: SearchController | null = null;
-let sidebarController: SidebarController | null = null;
 let presentationController: PresentationController | null = null;
 
 // Detect if we're on macOS
@@ -219,14 +209,6 @@ let lastFilterSaveTimer: number | null = null;
 
 const getActivePresentation = () => documentWorkspace?.activePresentation() ?? null;
 
-const getActiveDocumentAccess = () => {
-  const query = readerActions?.query();
-  const access = documentWorkspace?.access(query ?? null);
-  return access
-    ? { ...access, navigateToPage: (pageNumber: number) => goToPage(pageNumber) }
-    : null;
-};
-
 const goToPage = async (page: number, options?: ReaderActionOptions): Promise<void> => {
   const outcome = await dispatchReaderActionOutcome({ type: 'goToPage', page }, options);
   if (outcome?.status === 'failure') throw outcome.error;
@@ -262,10 +244,6 @@ const dispatchReaderAction = async (action: ReaderAction): Promise<void> => {
   if (action.type === 'setFilterSettings' && outcome?.status === 'committed') {
     scheduleLastFilterSave(action.filterSettings);
   }
-};
-
-const resolveDocumentLinkTarget = async (filePath: string, target: PdfLinkTarget) => {
-  return (await readerActions?.query(filePath)?.resolveLinkTarget(target)) ?? null;
 };
 
 const rememberRecentDocument = (filePath: string, title: string): void => {
@@ -317,7 +295,6 @@ const scheduleLastFilterSave = (settings: FilterSettings): void => {
 
 const persistence = createPersistenceCoordinator({
   readerActions: () => readerActions,
-  annotations: () => annotationAuthority,
   recentDocuments: () => recentDocumentAuthority,
   activeReadingPosition: () => documentWorkspace?.activeReadingPosition() ?? null,
   shouldPersistReadingSession: () =>
@@ -327,7 +304,7 @@ const persistence = createPersistenceCoordinator({
 const chooseAfterFinalSaveFailure = async (): Promise<FinalSaveFailureChoice> =>
   (await requestConfirmation({
     title: 'Changes not saved',
-    message: 'Monight could not save the latest Reading Session, Recent Documents, or Annotations.',
+    message: 'Monight could not save the latest Reading Session or Recent Documents.',
     confirmLabel: 'Retry save',
     cancelLabel: 'Quit without saving',
     dismissible: false,
@@ -442,18 +419,6 @@ export async function initializeApplication(modules: ApplicationModules): Promis
       },
     );
     renderRecentFiles(recentDocumentAuthority.snapshot());
-    annotationAuthority = modules.createDocumentSurface
-      ? null
-      : await loadAnnotations(modules.createAnnotationStorage(settingsManager), {
-          onPersistenceError: (error) => {
-            console.error('Annotation persistence failed:', error);
-            showToast('Annotation changes could not be saved. Monight will retry.', 'error');
-          },
-          onChanged: (filePath) => {
-            documentWorkspace?.replaceAnnotations(filePath);
-            sidebarController?.annotationsChanged();
-          },
-        });
     readingSessionStorage = modules.createReadingSessionStorage(settingsManager);
     try {
       restoredReadingSession = await loadReadingSession(readingSessionStorage);
@@ -477,7 +442,7 @@ export async function initializeApplication(modules: ApplicationModules): Promis
       viewMode: getInitialViewMode(),
     });
     const initialReadingSession = restoredReadingSession ?? EMPTY_READING_SESSION;
-    const createSurface = modules.createDocumentSurface?.({
+    const createSurface = modules.createDocumentSurface({
       requestPassword: requestPdfPassword,
       getAnnotationDisplayName: () =>
         currentSettings?.general.annotationDisplayName ?? DEFAULT_ANNOTATION_DISPLAY_NAME,
@@ -497,18 +462,11 @@ export async function initializeApplication(modules: ApplicationModules): Promis
       snapshot: () => readerActions?.snapshot() ?? { ...initialReadingSession, revision: 0 },
       isDocumentOpen: (filePath) => readerActions?.isDocumentOpen(filePath) ?? false,
       defaultVisualState,
-      ...(createSurface ? { createSurface } : {}),
+      createSurface,
       pdfSaveAdapter: modules.pdfSaveAdapter,
       recoveryDraftAdapter: modules.recoveryDraftAdapter,
       chooseRecoveryDraft: requestRecoveryDraft,
-      ...(annotationAuthority ? { annotationAuthority } : {}),
-      requestPassword: requestPdfPassword,
-      requestAnnotationNote,
       reportError: (message) => showToast(message, 'error'),
-      resolveLinkTarget: resolveDocumentLinkTarget,
-      activateLinkTarget: async (filePath, target) => {
-        await dispatchReaderAction({ type: 'activateDocumentTarget', filePath, target });
-      },
       documentOpened: rememberRecentDocument,
       activeDocumentChanged: async () => {
         showViewer();
@@ -516,7 +474,6 @@ export async function initializeApplication(modules: ApplicationModules): Promis
       renderingStateChanged: () => {
         if (!readerActions || !documentWorkspace) return;
         updateUI(readerActions.snapshot(), documentWorkspace.activeRenderingState());
-        sidebarController?.presentationStateChanged();
       },
     });
 
@@ -560,7 +517,6 @@ export async function initializeApplication(modules: ApplicationModules): Promis
       documentIntake.interruptRestoration();
       documentIntake.stopAccepting();
     }
-    let observedActiveDocumentPath = readerActions.snapshot().activeDocumentPath;
     readerActions.observe((snapshot) => {
       documentWorkspace?.project(snapshot);
       updateUI(snapshot, documentWorkspace?.activeRenderingState() ?? null);
@@ -570,11 +526,6 @@ export async function initializeApplication(modules: ApplicationModules): Promis
       if (activeDocument?.visualState) {
         sliderManager?.setPreset(activeDocument.visualState.filterSettings);
         updateActivePresetButton(activeDocument.visualState.filterSettings);
-      }
-      if (snapshot.activeDocumentPath !== observedActiveDocumentPath) {
-        observedActiveDocumentPath = snapshot.activeDocumentPath;
-        searchController?.activeDocumentChanged();
-        sidebarController?.activeDocumentChanged();
       }
       const hasDocument = snapshot.documents.length > 0;
       updateTabBarVisibility(hasDocument);
@@ -601,28 +552,12 @@ export async function initializeApplication(modules: ApplicationModules): Promis
       });
     }
 
-    searchController = new SearchController(getActiveDocumentAccess);
-    sidebarController = new SidebarController({
-      getActiveDocument: getActiveDocumentAccess,
-      requestAnnotationNote,
-      openExternalUrl: async (url) => {
-        const filePath = readerActions?.snapshot().activeDocumentPath;
-        if (!filePath) return;
-        await dispatchReaderAction({
-          type: 'activateDocumentTarget',
-          filePath,
-          target: { url },
-        });
-      },
-    });
-    sidebarController.setThumbnailsEnabled(settings.general.displayThumbs);
     presentationController = new PresentationController({
       getActivePresentation,
-      onStateChanged: (active) => {
+      onStateChanged: () => {
         if (readerActions && documentWorkspace) {
           updateUI(readerActions.snapshot(), documentWorkspace.activeRenderingState());
         }
-        if (!active) sidebarController?.presentationStateChanged();
       },
     });
 
@@ -654,7 +589,7 @@ export async function initializeApplication(modules: ApplicationModules): Promis
       openSettings,
       updateTabBarVisibility: updateTabBar,
       updateUI: updateReaderUI,
-      openSearch: () => searchController?.open(),
+      openSearch: () => documentWorkspace?.openActiveSearch(),
       togglePresentationMode: async () => {
         await presentationController?.toggle();
       },
@@ -685,14 +620,11 @@ export async function initializeApplication(modules: ApplicationModules): Promis
       sliderManager,
       keybindManager,
       openPdfAndRefresh,
-      updateUI: updateReaderUI,
       activateDocument: async (filePath) => {
         await dispatchReaderActionOutcome({ type: 'activateDocument', filePath });
       },
       openRecentFile,
       clearRecentFiles,
-      goToPage,
-      goToRelativePage,
       dispatchReaderAction,
     });
 
@@ -718,7 +650,6 @@ export async function initializeApplication(modules: ApplicationModules): Promis
         }
         currentSettings = updated;
         documentWorkspace?.setAnnotationDisplayName(updated.general.annotationDisplayName);
-        sidebarController?.setThumbnailsEnabled(updated.general.displayThumbs);
         if (!updated.general.rememberLastFilter && lastFilterSaveTimer !== null) {
           clearTimeout(lastFilterSaveTimer);
           lastFilterSaveTimer = null;
@@ -742,8 +673,6 @@ export async function initializeApplication(modules: ApplicationModules): Promis
         };
         recentDocumentAuthority?.clear();
         await recentDocumentAuthority?.flush();
-        annotationAuthority?.clear();
-        await annotationAuthority?.flush();
       },
       applyWindowAfterOpen,
       updateTabBarVisibility: updateTabBar,

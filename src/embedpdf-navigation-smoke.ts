@@ -12,7 +12,8 @@ import {
 import { PRESETS } from './scripts/filters';
 import { KeybindManager } from './scripts/keybind-manager';
 import { DEFAULT_SETTINGS } from './scripts/settings';
-import './styles/document-features.css';
+import './styles/document-workspace.css';
+import './styles/reader-shell.css';
 
 async function run() {
   const actions: ReaderAction[] = [];
@@ -20,16 +21,9 @@ async function run() {
   const errors: string[] = [];
   const initialSession = { schemaVersion: 2 as const, activeDocumentPath: null, documents: [] };
   let reader: ReaderActions;
-  let navigationBarrier: Promise<void> | null = null;
-  let releaseNavigation: (() => void) | null = null;
-  let navigationWaiting = false;
   const workspace = createDocumentWorkspace({
     dispatchReaderAction: async (action, options) => {
       actions.push(action);
-      if (action.type === 'activateDocumentTarget' && navigationBarrier) {
-        navigationWaiting = true;
-        await navigationBarrier;
-      }
       return reader.dispatch(action, options);
     },
     snapshot: () => reader?.snapshot() ?? { ...initialSession, revision: 0 },
@@ -84,18 +78,6 @@ async function run() {
     errors,
     shortcuts,
     access: () => workspace.access(reader.query()),
-    pauseNavigation() {
-      navigationWaiting = false;
-      navigationBarrier = new Promise((resolve) => {
-        releaseNavigation = resolve;
-      });
-    },
-    navigationWaiting: () => navigationWaiting,
-    resumeNavigation() {
-      releaseNavigation?.();
-      navigationBarrier = null;
-      releaseNavigation = null;
-    },
     async failNextSearch() {
       const container = document.querySelector<EmbedPdfContainer>(
         '.embedpdf-document-surface[data-visible="true"] embedpdf-container',
