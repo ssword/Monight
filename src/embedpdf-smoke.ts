@@ -62,6 +62,9 @@ async function run(): Promise<void> {
         },
       },
     });
+    const host = document.getElementById('surface-host');
+    if (!host) throw new Error('Missing hidden surface host');
+    host.style.visibility = 'visible';
     surface.rendering.setVisible(true);
     await surface.rendering.setZoomIntent({ kind: 'manual', scale: 1 });
     const initialZoom = surface.rendering.getState().zoom;

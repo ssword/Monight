@@ -7,6 +7,7 @@
     <style>
       html,
       body,
+      #surface-host,
       #pdf-container,
       .embedpdf-document-surface,
       embedpdf-container {
@@ -22,10 +23,14 @@
       body {
         overflow: hidden;
       }
+
+      #surface-host {
+        visibility: hidden;
+      }
     </style>
   </head>
   <body data-status="loading">
-    <div id="pdf-container"></div>
+    <div id="surface-host"><div id="pdf-container"></div></div>
     <script type="module" src="/src/embedpdf-smoke.ts"></script>
   </body>
 </html>

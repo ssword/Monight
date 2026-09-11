@@ -6,6 +6,15 @@
   overflow: hidden;
 }
 
+/* EmbedPDF needs non-zero geometry before it can publish its initial layout. */
+#viewer-container.hidden {
+  position: absolute;
+  inset: 0;
+  display: flex !important;
+  visibility: hidden;
+  pointer-events: none;
+}
+
 #toolbar {
   display: flex;
   align-items: center;

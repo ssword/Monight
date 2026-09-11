@@ -361,6 +361,10 @@ function createModules(
     begin: vi.fn(),
     open: vi.fn(),
     restore: vi.fn(),
+    interrupt: vi.fn(() => {
+      mocks.events.push('intake:interrupt');
+      mocks.finishRestoration();
+    }),
     interruptRestoration: vi.fn(() => {
       mocks.events.push('intake:interrupt-restoration');
       mocks.finishRestoration();
@@ -568,18 +572,21 @@ describe('application lifecycle composition', () => {
     expect(mocks.events.indexOf('invoke:complete_frontend_lifecycle_registration')).toBeLessThan(
       mocks.events.indexOf('restoration:start'),
     );
+    expect(mocks.events.indexOf('window:show')).toBeLessThan(
+      mocks.events.indexOf('restoration:start'),
+    );
 
     const quitting = mocks.listeners.get('application-quit-requested')?.();
     await Promise.resolve();
     expect(mocks.events).toContain('intake:stop');
-    expect(mocks.events).toContain('intake:interrupt-restoration');
+    expect(mocks.events).toContain('intake:interrupt');
     expect(mocks.events).not.toContain('flush:intake-quiesce');
     expect(mocks.events).not.toContain('invoke:complete_application_quit');
 
     await Promise.all([initialization, quitting]);
 
     const ordered = [
-      'intake:interrupt-restoration',
+      'intake:interrupt',
       'restoration:done',
       'flush:intake-quiesce',
       'flush:actions-quiesce',
@@ -602,7 +609,7 @@ describe('application lifecycle composition', () => {
     expect(mocks.events).not.toContain('window:show');
     await initialization;
 
-    expect(mocks.events).toContain('intake:interrupt-restoration');
+    expect(mocks.events).toContain('intake:interrupt');
     expect(mocks.events).toContain('flush:intake-quiesce');
     expect(mocks.events).toContain('invoke:complete_application_quit');
     expect(mocks.events).not.toContain('window:destroy');
@@ -734,7 +741,7 @@ describe('application lifecycle composition', () => {
     const closing = mocks.getCloseHandler()?.({ preventDefault: vi.fn() });
     await Promise.all([initialization, closing]);
 
-    expect(mocks.events).toContain('intake:interrupt-restoration');
+    expect(mocks.events).toContain('intake:interrupt');
     expect(mocks.events.filter((event) => event === 'flush:session')).toHaveLength(2);
     expect(mocks.events).toContain('confirmation:true');
     expect(mocks.events).toContain('window:destroy');
@@ -748,7 +755,7 @@ describe('application lifecycle composition', () => {
     const closing = mocks.getCloseHandler()?.({ preventDefault: vi.fn() });
     await Promise.all([initialization, closing]);
 
-    expect(mocks.events).toContain('intake:interrupt-restoration');
+    expect(mocks.events).toContain('intake:interrupt');
     expect(mocks.events.filter((event) => event === 'flush:session')).toHaveLength(1);
     expect(mocks.events).toContain('confirmation:false');
     expect(mocks.events).toContain('window:destroy');

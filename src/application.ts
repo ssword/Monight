@@ -384,7 +384,7 @@ export async function initializeApplication(modules: ApplicationModules): Promis
     onShutdownStarted: () => {
       const container = document.getElementById('pdf-container');
       if (container) container.inert = true;
-      documentIntake?.interruptRestoration();
+      documentIntake?.interrupt();
       documentIntake?.stopAccepting();
       if (lastFilterSaveTimer !== null) {
         clearTimeout(lastFilterSaveTimer);
@@ -514,7 +514,7 @@ export async function initializeApplication(modules: ApplicationModules): Promis
     });
     documentIntake = startupDocumentIntake;
     if (shutdown.isShutdownRequested()) {
-      documentIntake.interruptRestoration();
+      documentIntake.interrupt();
       documentIntake.stopAccepting();
     }
     readerActions.observe((snapshot) => {
@@ -630,6 +630,13 @@ export async function initializeApplication(modules: ApplicationModules): Promis
 
     // Update keyboard hints for platform
     updateKeyboardHints(isMac);
+
+    // A visible WebView is required for EmbedPDF to publish layout frames during
+    // Reading Session restoration. The splash remains interactive while it runs.
+    if (!shutdown.isShutdownRequested()) {
+      await currentWindow.show();
+      await currentWindow.setFocus();
+    }
 
     // Listen before restoration so an explicit startup Document wins foreground precedence.
     await setupTauriListeners({

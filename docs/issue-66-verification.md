@@ -74,3 +74,6 @@ non-flattened annotations and unrelated unsupported content.
 
 These records identify earlier automated and native observations. Issue #66 remains incomplete until
 the final packaged matrix and Preview/Acrobat matrix above contain actual evidence.
+
+The [2026-09-11 migration completion review](embedpdf-migration-review-2026-09-11.md) checks the
+#56–#66 diff against #55 and lists what remains before #66 can be accepted.
