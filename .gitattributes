@@ -9,3 +9,6 @@
 
 *.bat text eol=crlf
 *.cmd text eol=crlf
+
+# Preserve PDF fixture bytes and fixed-width cross-reference entries.
+*.pdf binary

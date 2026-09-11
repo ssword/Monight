@@ -53,8 +53,6 @@ describe('shipped code-health invariants', () => {
       'src/app/file-actions.ts',
       'src/app/keybinds.ts',
       'src/app/presentation-controller.ts',
-      'src/app/search-controller.ts',
-      'src/app/sidebar-controller.ts',
       'src/app/tauri-events.ts',
       'src/app/window-lifecycle.ts',
       'src/reader/document-access.ts',
@@ -68,5 +66,31 @@ describe('shipped code-health invariants', () => {
     expect(entryPoint).not.toMatch(
       /restoreStartupReadingSession|flushPersistentAuthorities|getActiveRendering|dispatchReaderAction/,
     );
+  });
+
+  it('ships EmbedPDF as the only production PDF and Annotation runtime', () => {
+    const manifest = readProjectFile('package.json');
+    const buildConfig = readProjectFile('vite.config.ts');
+    const entryPoint = readProjectFile('src/main.ts');
+    const application = readProjectFile('src/application.ts');
+    const removedModules = [
+      'src/lib/pdf-engine.ts',
+      'src/reader/pdf-document-content.ts',
+      'src/scripts/pdf-viewer.ts',
+      'src/app/annotation-storage.ts',
+      'src/app/document-surface-gate.ts',
+      'src/app/search-controller.ts',
+      'src/app/sidebar-controller.ts',
+      'src/reader/annotations.ts',
+    ];
+
+    expect(manifest).not.toContain('pdfjs-dist');
+    expect(buildConfig).not.toMatch(/pdf\.worker|pdfjs/);
+    expect(entryPoint).not.toMatch(/VITE_PDF_SURFACE|VITE_NATIVE_PDF_EDITING/);
+    expect(entryPoint).not.toContain('createAnnotationStorage');
+    expect(application).not.toMatch(/loadAnnotations|AnnotationAuthority|createAnnotationStorage/);
+    for (const path of removedModules) {
+      expect(existsSync(new URL(`../../${path}`, import.meta.url))).toBe(false);
+    }
   });
 });

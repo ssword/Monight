@@ -1,9 +1,4 @@
-import type {
-  PdfAnnotation,
-  PdfAnnotationColor,
-  PdfSearchMatch,
-  ViewMode,
-} from '../lib/document-features';
+import type { ViewMode } from '../lib/document-features';
 import type {
   ReaderActionOptions,
   ReadingPosition,
@@ -22,8 +17,20 @@ export interface DocumentRenderingState {
   readonly viewMode: ViewMode;
 }
 
+/** Live presentation only. PDF-authored page orientation belongs to Document
+ * Content and is never included in viewingRotation. Save and print must use
+ * Document Content, without applying this transform to PDF bytes. */
+export interface DocumentViewTransform {
+  readonly scale: number;
+  readonly zoomIntent: ZoomIntent;
+  readonly viewingRotation: number;
+  readonly viewMode: ViewMode;
+  readonly filterCss: string;
+}
+
 export interface DocumentRendering {
   getState(): DocumentRenderingState;
+  openSearch?(): void;
   getScrollPosition(): number;
   getReadingPosition(): ReadingPosition;
   goToPage(pageNumber: number, options?: ReaderActionOptions): Promise<void>;
@@ -39,15 +46,5 @@ export interface DocumentRendering {
   fitToPage(options?: ReaderActionOptions): Promise<void>;
   applyFilter(filterCss: string, options?: ReaderActionOptions): void;
   setVisible(visible: boolean): void;
-  revealSearchMatch(match: PdfSearchMatch): Promise<void>;
-  setSearchQuery(query: string): void;
-  clearSearch(): void;
-  setAnnotations(annotations: readonly PdfAnnotation[]): void;
-  addPageNote(note: string): Promise<void>;
-  updateAnnotation(
-    annotationId: string,
-    updates: { note?: string; color?: PdfAnnotationColor },
-  ): void;
-  removeAnnotation(annotationId: string): void;
   destroy(): void;
 }

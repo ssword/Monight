@@ -136,6 +136,9 @@ export async function setupTauriListeners({
     await openPdfAndRefresh();
   });
 
+  await listen('menu-save', async () => dispatchReaderAction({ type: 'saveDocument' }));
+  await listen('menu-save-as', async () => dispatchReaderAction({ type: 'saveDocumentAs' }));
+
   await listen('menu-print', async () => {
     debugLog('Menu print event received');
     await dispatchReaderAction({ type: 'printDocument' });

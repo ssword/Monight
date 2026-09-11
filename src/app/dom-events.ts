@@ -8,12 +8,9 @@ interface DomEventContext {
   sliderManager: SliderManager | null;
   keybindManager: KeybindManager | null;
   openPdfAndRefresh: () => Promise<void>;
-  updateUI: () => void;
   activateDocument: (filePath: string) => Promise<void>;
   openRecentFile: (filePath: string) => Promise<void>;
   clearRecentFiles: () => Promise<void>;
-  goToPage: (page: number) => Promise<void>;
-  goToRelativePage: (direction: 'next' | 'previous') => Promise<void>;
   dispatchReaderAction: DispatchReaderAction;
 }
 
@@ -22,12 +19,9 @@ export function setupEventListeners({
   sliderManager,
   keybindManager,
   openPdfAndRefresh,
-  updateUI,
   activateDocument,
   openRecentFile,
   clearRecentFiles,
-  goToPage,
-  goToRelativePage,
   dispatchReaderAction,
 }: DomEventContext): void {
   debugLog('Setting up event listeners...');
@@ -67,57 +61,6 @@ export function setupEventListeners({
   printBtn?.addEventListener('click', () => {
     debugLog('Print button clicked');
     void dispatchReaderAction({ type: 'printDocument' });
-  });
-
-  // Navigation buttons
-  const prevBtn = document.getElementById('prev-page');
-  const nextBtn = document.getElementById('next-page');
-  prevBtn?.addEventListener('click', () => {
-    void goToRelativePage('previous').then(() => {
-      updateUI();
-    });
-  });
-  nextBtn?.addEventListener('click', () => {
-    void goToRelativePage('next').then(() => {
-      updateUI();
-    });
-  });
-
-  // Page input
-  const pageInput = document.getElementById('page-input') as HTMLInputElement | null;
-  pageInput?.addEventListener('change', () => {
-    const pageNum = Number.parseInt(pageInput.value, 10);
-    const pageCount = Number.parseInt(pageInput.max, 10);
-    if (pageNum >= 1 && pageNum <= pageCount) {
-      void goToPage(pageNum).then(updateUI);
-    } else {
-      updateUI();
-    }
-  });
-
-  // Zoom buttons
-  const zoomInBtn = document.getElementById('zoom-in');
-  const zoomOutBtn = document.getElementById('zoom-out');
-  const fitWidthBtn = document.getElementById('fit-width');
-  const fitPageBtn = document.getElementById('fit-page');
-
-  zoomInBtn?.addEventListener('click', () => {
-    void dispatchReaderAction(readerAction.zoomIn());
-  });
-  zoomOutBtn?.addEventListener('click', () => {
-    void dispatchReaderAction(readerAction.zoomOut());
-  });
-  fitWidthBtn?.addEventListener('click', () => {
-    void dispatchReaderAction(readerAction.setZoomIntent({ kind: 'fit-width' }));
-  });
-  fitPageBtn?.addEventListener('click', () => {
-    void dispatchReaderAction(readerAction.setZoomIntent({ kind: 'fit-page' }));
-  });
-
-  // View mode toggle button
-  const toggleViewModeBtn = document.getElementById('toggle-view-mode');
-  toggleViewModeBtn?.addEventListener('click', () => {
-    void dispatchReaderAction(readerAction.cycleViewMode());
   });
 
   // Setup preset buttons
@@ -175,17 +118,26 @@ export function setupEventListeners({
 
   // Keyboard shortcuts - use KeybindManager for dynamic keybind handling
   const handleKeyDown = async (e: KeyboardEvent) => {
-    if (!keybindManager) return;
+    if (!keybindManager || e.defaultPrevented) return;
+    // Tab controls own their arrow-key focus navigation. Other configurable
+    // reader shortcuts must be claimed before the ready-made viewer's listeners.
+    if (
+      ['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key) &&
+      e
+        .composedPath()
+        .some((target) => target instanceof Element && target.getAttribute('role') === 'tab')
+    )
+      return;
 
     const actionId = keybindManager.matchEvent(e);
     if (actionId) {
       debugLog(`Keybind matched: ${actionId}`);
       e.preventDefault();
-      e.stopPropagation();
+      e.stopImmediatePropagation();
       await keybindManager.handleEvent(e);
     }
   };
 
-  document.addEventListener('keydown', handleKeyDown);
+  document.addEventListener('keydown', handleKeyDown, true);
   debugLog('Keyboard event listeners attached');
 }

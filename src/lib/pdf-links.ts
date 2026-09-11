@@ -3,6 +3,10 @@ export type PdfDestination = string | unknown[];
 export interface PdfLinkTarget {
   url?: string;
   dest?: PdfDestination;
+  readingPosition?: {
+    readonly page: number;
+    readonly location: number;
+  };
 }
 
 export interface PdfLinkDomAttributes {

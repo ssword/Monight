@@ -23,8 +23,12 @@ describe('Document Intake', () => {
     ]);
     expect(source.read).not.toHaveBeenCalled();
     expect(runtime.open).not.toHaveBeenCalled();
-    expect(runtime.activate).toHaveBeenCalledWith('/docs/report.pdf');
-    expect(runtime.goToPage).toHaveBeenCalledWith('/docs/report.pdf', 8);
+    expect(runtime.activate).toHaveBeenCalledWith('/docs/report.pdf', {
+      signal: expect.any(AbortSignal),
+    });
+    expect(runtime.goToPage).toHaveBeenCalledWith('/docs/report.pdf', 8, {
+      signal: expect.any(AbortSignal),
+    });
   });
 
   it('reports independent outcomes for every requested path', async () => {
@@ -74,6 +78,7 @@ describe('Document Intake', () => {
       bytes: expect.any(Uint8Array),
       activate: true,
       notifyOpened: true,
+      signal: expect.any(AbortSignal),
     });
   });
 
@@ -95,7 +100,9 @@ describe('Document Intake', () => {
     await intake.open(['/docs/first.pdf', '/docs/second.pdf']);
 
     expect(runtime.activate).toHaveBeenCalledTimes(1);
-    expect(runtime.activate).toHaveBeenCalledWith('/docs/first.pdf');
+    expect(runtime.activate).toHaveBeenCalledWith('/docs/first.pdf', {
+      signal: expect.any(AbortSignal),
+    });
     expect(runtime.open).toHaveBeenCalledWith(
       expect.objectContaining({
         document: expect.objectContaining({ canonicalPath: '/docs/second.pdf' }),
@@ -127,6 +134,7 @@ describe('Document Intake', () => {
       activate: true,
       initialPage: 12,
       notifyOpened: true,
+      signal: expect.any(AbortSignal),
     });
     expect(runtime.goToPage).not.toHaveBeenCalled();
   });
@@ -287,8 +295,12 @@ describe('Document Intake', () => {
     await expect(secondResult).resolves.toMatchObject({ opened: 0, activated: 1, failed: 0 });
     expect(source.read).toHaveBeenCalledOnce();
     expect(runtime.open).toHaveBeenCalledOnce();
-    expect(runtime.activate).toHaveBeenCalledWith('/docs/report.pdf');
-    expect(runtime.goToPage).toHaveBeenCalledWith('/docs/report.pdf', 9);
+    expect(runtime.activate).toHaveBeenCalledWith('/docs/report.pdf', {
+      signal: expect.any(AbortSignal),
+    });
+    expect(runtime.goToPage).toHaveBeenCalledWith('/docs/report.pdf', 9, {
+      signal: expect.any(AbortSignal),
+    });
   });
 
   it('shares a failed preparation outcome but permits a later retry', async () => {
@@ -398,5 +410,35 @@ describe('Document Intake', () => {
     await Promise.all([accepted.completion, quiescence]);
 
     expect(quiesced).toBe(true);
+  });
+
+  it('interrupts accepted explicit intake so shutdown can quiesce', async () => {
+    let openSignal: AbortSignal | undefined;
+    const intake = createDocumentIntake({
+      source: {
+        describe: async (path) => ({ canonicalPath: path, title: 'stalled.pdf' }),
+        read: async () => new Uint8Array([1]),
+      },
+      runtime: {
+        isOpen: () => false,
+        activate: vi.fn(async () => undefined),
+        open: vi.fn(
+          async ({ signal }) =>
+            new Promise<void>(() => {
+              openSignal = signal;
+            }),
+        ),
+        goToPage: vi.fn(async () => undefined),
+      },
+    });
+
+    const accepted = intake.begin(['/docs/stalled.pdf']);
+    await vi.waitFor(() => expect(openSignal).toBeInstanceOf(AbortSignal));
+    intake.stopAccepting();
+    intake.interrupt();
+
+    await expect(accepted.completion).resolves.toMatchObject({ opened: 0, failed: 1 });
+    await expect(intake.quiesce()).resolves.toBeUndefined();
+    expect(openSignal?.aborted).toBe(true);
   });
 });

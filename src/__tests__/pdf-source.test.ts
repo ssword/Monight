@@ -1,3 +1,4 @@
+import { runInNewContext } from 'node:vm';
 import { describe, expect, it, vi } from 'vitest';
 import { createTauriPdfSource } from '../app/pdf-source';
 import { createInMemoryPdfSource, type PdfSource } from '../reader/pdf-source';
@@ -40,6 +41,41 @@ describe('PDF source adapters', () => {
       'describe_pdf_file',
       'read_pdf_file',
     ]);
+  });
+
+  it('accepts the typed byte view returned by packaged Tauri IPC', async () => {
+    const source = createTauriPdfSource(async (command: string) => {
+      if (command === 'describe_pdf_file') {
+        return { canonicalPath: '/docs/report.pdf', title: 'report.pdf' };
+      }
+      return new Uint8Array([1, 2, 3]);
+    });
+
+    await expectPdfSourceContract(source);
+  });
+
+  it('accepts an ArrayBuffer returned from Tauri isolation', async () => {
+    const isolatedBuffer = runInNewContext('new Uint8Array([1, 2, 3]).buffer') as ArrayBuffer;
+    expect(isolatedBuffer).not.toBeInstanceOf(ArrayBuffer);
+    const source = createTauriPdfSource(async (command: string) => {
+      if (command === 'describe_pdf_file') {
+        return { canonicalPath: '/docs/report.pdf', title: 'report.pdf' };
+      }
+      return isolatedBuffer;
+    });
+
+    await expectPdfSourceContract(source);
+  });
+
+  it('accepts the numeric byte array fallback returned by packaged Tauri IPC', async () => {
+    const source = createTauriPdfSource(async (command: string) => {
+      if (command === 'describe_pdf_file') {
+        return { canonicalPath: '/docs/report.pdf', title: 'report.pdf' };
+      }
+      return [1, 2, 3];
+    });
+
+    await expectPdfSourceContract(source);
   });
 
   it('returns owned bytes from the production adapter instead of an IPC-backed view', async () => {

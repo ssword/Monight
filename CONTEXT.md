@@ -9,7 +9,7 @@ An opened PDF identified by its canonical absolute file path; opening that path 
 _Avoid_: Tab, viewer
 
 **Document Content**:
-The PDF-authored pages, text, outline, metadata, and link targets of a Document. It excludes reader-authored Annotations and transient rendering details.
+The PDF-authored pages, text, outline, metadata, and link targets of a Document. It excludes Annotations and transient rendering details.
 _Avoid_: PDF.js document, document feature
 
 **Document Query**:
@@ -41,8 +41,12 @@ The process by which one or more PDF paths become active Documents in the Readin
 _Avoid_: File-open flow, PDF intake, open handler
 
 **Annotation**:
-A reader-authored highlight or note that belongs to a Document independently of whether that Document is in the Reading Session.
-_Avoid_: Session note, viewer annotation
+A comment or markup attached to a Document, including text markups, notes, free text, drawings, shapes, and stamps. Saved Annotations belong to the PDF file and travel with it between readers, independently of the Reading Session.
+_Avoid_: Session note, viewer-only annotation
+
+**Recovery Draft**:
+A local recoverable copy of a Document's unsaved annotation edits, kept separately from the original PDF in case Monight terminates unexpectedly. Restoring it requires the reader's choice and does not itself save changes to the original PDF.
+_Avoid_: Autosaved PDF, annotation store
 
 **Recent Document**:
 A Document explicitly opened or reactivated by the reader. Automatic Reading Session restoration does not make a Document recent.

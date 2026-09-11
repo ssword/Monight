@@ -1,5 +1,9 @@
 # NightPDF Tauri Reimplementation Plan
 
+Historical planning document. It is not the current architecture or dependency inventory.
+Use `CONTEXT.md`, `docs/adr/`, and `docs/specs/embedpdf-native-annotations.md` for the accepted
+direction; see `docs/pdf-engine-review-2026-09-09.md` for migration status.
+
 This document outlines a phased approach to reimplementing NightPDF using Tauri instead of Electron.
 
 ## Table of Contents

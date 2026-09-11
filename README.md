@@ -9,7 +9,7 @@ Monight is a cross-platform PDF reader built with Tauri and TypeScript. It combi
 - Adjustable zoom, fit-to-page/width, rotation, and cursor-anchored pinch/wheel zoom
 - Full-document text search (`Cmd/Ctrl+F`)
 - Table of contents and lazy-rendered page thumbnails
-- Persistent highlights and notes
+- PDF-native highlights and comments with explicit Save and Save As
 - Exact page and scroll-position restoration
 - Recent Documents on the launch screen
 - Password prompts for encrypted PDFs
@@ -21,8 +21,21 @@ Monight is a cross-platform PDF reader built with Tauri and TypeScript. It combi
 ## Tech Stack
 - Tauri 2 (Rust backend + WebView)
 - TypeScript + Vite
-- PDF.js for rendering
+- EmbedPDF 2.15.0 for rendering and native annotations
 - NoUISlider for the filter configurator
+
+### PDF runtime verification
+
+EmbedPDF is the only production viewer. Native PDF editing is enabled only after the desktop
+safety adapter confirms that the Document can be saved without violating its protection state.
+Read-only, signed, encrypted, or otherwise unsafe Documents remain readable and explain why
+editing is unavailable. See [ADR 0002](docs/adr/0002-adopt-embedpdf-and-pdf-native-annotations.md)
+and the [issue 66 verification record](docs/issue-66-verification.md).
+
+`npm test` covers the reader and substitute EmbedPDF adapters. Run
+`npm run test:embedpdf-offline` separately for the actual EmbedPDF runtime in Chromium
+(install its browser with `npx playwright install chromium` if needed). This browser check
+does not establish packaged Tauri behavior or native annotation interoperability.
 
 ## Project Structure
 - `src/` - UI code, PDF viewer logic, and settings UI
@@ -73,9 +86,9 @@ npm run dev
 
 ## Settings
 Settings are stored using the Tauri Store plugin and can be edited in the in-app Settings
-window. Reading sessions, Recent Documents, highlights, and notes are saved locally. Options include
-default dark mode presets, thumbnail visibility, session restoration, remembering the last
-filter, and keybind customization.
+window. Reading Sessions and Recent Documents are saved locally; saved Annotations belong to the
+PDF, while unsaved edits use separate Recovery Drafts. Options include default dark mode presets,
+session restoration, annotation attribution, remembering the last filter, and keybind customization.
 
 Reading Position and Visual State changes are saved after a short debounce, while opening,
 closing, reordering, or activating a Document requests an immediate save. Normal window close and
@@ -85,12 +98,21 @@ or power loss cannot be guaranteed, so ordinary debounced persistence remains th
 protection.
 
 ## Iconography
-The app icon is designed to follow Apple UI icon principles: minimal, bold silhouettes, and soft depth. The high-resolution source lives at `src-tauri/icons/icon-source.svg` and is used to generate the platform icon set.
+The app uses the “A Page of Moonlight” icon, created in Icon Composer. The editable native
+source is `design/app-icon-2026/Monight.icon`; its exported default appearance is
+`design/app-icon-2026/monight-native-default-1024.png`.
 
-To regenerate icons:
+After editing the native document, export its Default appearance at 1024px to that PNG,
+then regenerate the platform icon set:
 ```bash
-npx tauri icon src-tauri/icons/icon-source.svg
+npm run icons:generate
 ```
+
+PNG and ICO assets use the exported artwork. The macOS ICNS fallback includes a transparent
+inset so it matches other Dock icons. `src-tauri/tauri.macos.conf.json` also includes the
+native `.icon` source: Tauri compiles it for Liquid Glass when Xcode 26+ provides `actool`.
+With Command Line Tools alone, Tauri skips the native asset catalog and uses the new ICNS
+icon. See [the icon design notes](design/app-icon-2026/README.md).
 
 ## Future Work (AI)
 - Smart classification of PDFs

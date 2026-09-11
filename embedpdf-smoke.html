@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>EmbedPDF Offline Smoke</title>
+    <style>
+      html,
+      body,
+      #surface-host,
+      #pdf-container,
+      .embedpdf-document-surface,
+      embedpdf-container {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+      }
+
+      embedpdf-container {
+        display: block;
+      }
+
+      body {
+        overflow: hidden;
+      }
+
+      #surface-host {
+        visibility: hidden;
+      }
+    </style>
+  </head>
+  <body data-status="loading">
+    <div id="surface-host"><div id="pdf-container"></div></div>
+    <script type="module" src="/src/embedpdf-smoke.ts"></script>
+  </body>
+</html>

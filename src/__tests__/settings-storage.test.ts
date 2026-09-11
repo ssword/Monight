@@ -73,10 +73,36 @@ describe('settings storage', () => {
     store.reset();
   });
 
-  it('migrates the legacy blob once into independently versioned concern keys', async () => {
+  it('defaults annotation attribution to Guest and restores an explicit display name', async () => {
+    const defaults = await new SettingsManager('main').load();
+
+    expect(defaults.general.annotationDisplayName).toBe('Guest');
+
+    store.reset({
+      storageSchemaVersion: SETTINGS_SCHEMA_VERSION,
+      general: { ...DEFAULT_SETTINGS.general, annotationDisplayName: 'Ada Lovelace' },
+    });
+
+    const persisted = await new SettingsManager('main').load();
+
+    expect(persisted.general.annotationDisplayName).toBe('Ada Lovelace');
+  });
+
+  it('normalizes an empty annotation display name to Guest', async () => {
+    store.reset({
+      storageSchemaVersion: SETTINGS_SCHEMA_VERSION,
+      general: { ...DEFAULT_SETTINGS.general, annotationDisplayName: '   ' },
+    });
+
+    const settings = await new SettingsManager('main').load();
+
+    expect(settings.general.annotationDisplayName).toBe('Guest');
+  });
+
+  it('migrates supported concerns without moving or deleting legacy annotations', async () => {
     const legacy = {
       version: '1.0.6',
-      general: { ...DEFAULT_SETTINGS.general, displayThumbs: false },
+      general: { ...DEFAULT_SETTINGS.general, maximizeOnOpen: false },
       keybinds: {
         ...DEFAULT_SETTINGS.keybinds,
         OpenFile: { ...DEFAULT_SETTINGS.keybinds.OpenFile, binds: ['Ctrl+Shift+O'] },
@@ -97,12 +123,12 @@ describe('settings storage', () => {
 
     const settings = await new SettingsManager('main').load();
 
-    expect(settings.general.displayThumbs).toBe(false);
+    expect(settings.general.maximizeOnOpen).toBe(false);
     expect(settings.keybinds.OpenFile.binds).toEqual(['Ctrl+Shift+O']);
     expect(settings).not.toHaveProperty('recentFiles');
     expect(store.values.get('recentFiles')).toEqual(legacy.recentFiles);
     expect(settings).not.toHaveProperty('annotations');
-    expect(store.values.get('annotations')).toEqual(legacy.annotations);
+    expect(store.values.has('annotations')).toBe(false);
     expect(settings.lastFilter).toEqual(legacy.lastFilter);
     expect(store.values.get('readingSession')).toEqual({
       schemaVersion: 2,
@@ -116,7 +142,7 @@ describe('settings storage', () => {
       ],
     });
     expect(store.values.get('storageSchemaVersion')).toBe(SETTINGS_SCHEMA_VERSION);
-    expect(store.values.has('settings')).toBe(false);
+    expect(store.values.get('settings')).toEqual(legacy);
 
     store.writes.length = 0;
     await new SettingsManager('settings').load();
@@ -130,7 +156,7 @@ describe('settings storage', () => {
 
     await settingsWindow.set('general', {
       ...DEFAULT_SETTINGS.general,
-      displayThumbs: false,
+      maximizeOnOpen: false,
     });
 
     expect(store.writes).toEqual(['general']);
@@ -207,7 +233,7 @@ describe('settings storage', () => {
     expect(store.values.get('recentFiles')).toEqual([
       { filePath: '/books/one.pdf', title: 'one.pdf', openedAt: 42 },
     ]);
-    expect(store.values.get('annotations')).toEqual({});
+    expect(store.values.has('annotations')).toBe(false);
     expect(store.values.get('readingSession')).toEqual({
       schemaVersion: 2,
       activeDocumentPath: null,
@@ -233,22 +259,5 @@ describe('settings storage', () => {
 
     expect(store.values.has('recentFiles')).toBe(false);
     expect(store.writes).toContain('delete:recentFiles');
-  });
-
-  it('exposes legacy Annotations only for verified dedicated-store migration', async () => {
-    const legacy = { '/books/one.pdf': [legacyAnnotation] };
-    store.reset({
-      storageSchemaVersion: SETTINGS_SCHEMA_VERSION,
-      annotations: legacy,
-    });
-    const mainWindow = new SettingsManager('main');
-
-    await expect(mainWindow.readLegacyAnnotations()).resolves.toEqual(legacy);
-    expect(store.values.get('annotations')).toEqual(legacy);
-
-    await mainWindow.removeLegacyAnnotations();
-
-    expect(store.values.has('annotations')).toBe(false);
-    expect(store.writes).toContain('delete:annotations');
   });
 });

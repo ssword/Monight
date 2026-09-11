@@ -12,6 +12,9 @@ use tauri_plugin_store::StoreExt;
 mod commands;
 mod document_intake;
 mod menu;
+mod pdf_replace;
+mod pdf_save;
+mod recovery_drafts;
 #[cfg(test)]
 mod test_support;
 
@@ -303,7 +306,22 @@ pub fn run() {
         .manage(PendingApplicationQuit::default())
         .manage(FrontendLifecycleState::default())
         .manage(document_intake::DocumentIntake::default())
+        .manage(pdf_save::PdfSave::default())
+        .manage(recovery_drafts::RecoveryDrafts::default())
         .invoke_handler(tauri::generate_handler![
+            commands::inspect_recovery_draft,
+            commands::read_recovery_draft,
+            commands::write_recovery_draft,
+            commands::repair_recovery_draft_after_write,
+            commands::reconcile_recovery_draft,
+            commands::remove_recovery_draft,
+            commands::inspect_pdf_editing,
+            commands::choose_pdf_save_destination,
+            commands::release_pdf_save_destination,
+            commands::write_pdf_destination,
+            commands::write_original_pdf,
+            commands::capture_pdf_source,
+            commands::release_pdf_source,
             commands::read_pdf_file,
             commands::open_pdf_dialog,
             commands::describe_pdf_file,
@@ -499,6 +517,29 @@ mod tests {
             serde_json::from_str(include_str!("../tauri.conf.json")).expect("valid Tauri config");
 
         assert_eq!(config["app"]["withGlobalTauri"].as_bool(), Some(false));
+    }
+
+    #[test]
+    fn test_main_window_lifecycle_commands_are_explicitly_authorized() {
+        let capability: serde_json::Value =
+            serde_json::from_str(include_str!("../capabilities/default.json"))
+                .expect("valid default capability");
+        let permissions = capability["permissions"]
+            .as_array()
+            .expect("default capability should list permissions");
+
+        for required in [
+            "core:window:allow-show",
+            "core:window:allow-set-focus",
+            "core:window:allow-unminimize",
+            "core:window:allow-set-fullscreen",
+            "core:window:allow-destroy",
+        ] {
+            assert!(
+                permissions.iter().any(|permission| permission == required),
+                "missing frontend window permission: {required}"
+            );
+        }
     }
 
     #[test]
