@@ -105,4 +105,25 @@ describe('shipped code-health invariants', () => {
       expect(source, path).not.toMatch(/(?:from\s+|import\s*(?:\(\s*)?)['"]@embedpdf\//);
     }
   });
+
+  it('keeps the EmbedPDF Document surface as seven single-purpose modules', () => {
+    const appDirectory = new URL('../app/', import.meta.url);
+    const modules = readdirSync(appDirectory, { encoding: 'utf8' })
+      .filter((path) => path.startsWith('embedpdf-') && path.endsWith('.ts'))
+      .sort();
+
+    expect(modules).toEqual([
+      'embedpdf-document-surface.ts',
+      'embedpdf-native-annotation-editing.ts',
+      'embedpdf-navigation-geometry.ts',
+      'embedpdf-offline-configuration.ts',
+      'embedpdf-print-preparation.ts',
+      'embedpdf-shortcuts.ts',
+      'embedpdf-viewer-runtime.ts',
+    ]);
+
+    const composition = readProjectFile('src/app/embedpdf-document-surface.ts');
+    expect(composition).not.toMatch(/from ['"]@embedpdf\//);
+    expect(composition).not.toMatch(/EmbedPDF\.init|createProductionViewer|onAnnotationEvent/);
+  });
 });
