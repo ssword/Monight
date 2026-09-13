@@ -390,8 +390,17 @@ fn visit_document_dictionaries(
 }
 
 fn load_editable(bytes: &[u8]) -> Result<lopdf::Document, String> {
-    let document = lopdf::Document::load_mem(bytes)
-        .map_err(|e| format!("PDF safety inspection failed: {e}"))?;
+    let parsed = std::thread::scope(|scope| -> Result<_, String> {
+        let worker = std::thread::Builder::new()
+            .name("pdf-safety-inspection".into())
+            .stack_size(8 * 1024 * 1024)
+            .spawn_scoped(scope, || lopdf::Document::load_mem(bytes))
+            .map_err(|e| format!("PDF safety inspection failed to start: {e}"))?;
+        worker
+            .join()
+            .map_err(|_| "PDF safety inspection parser stopped unexpectedly".to_string())
+    })?;
+    let document = parsed.map_err(|e| format!("PDF safety inspection failed: {e}"))?;
 
     if let Some(encryption) = &document.encryption_state {
         if !encryption
@@ -1036,9 +1045,15 @@ mod tests {
         document.add_object(nested);
         let mut bytes = Vec::new();
         document.save_to(&mut bytes).unwrap();
+        let status = std::thread::Builder::new()
+            .stack_size(512 * 1024)
+            .spawn(move || editing_status(&bytes))
+            .unwrap()
+            .join()
+            .unwrap();
 
         assert_eq!(
-            editing_status(&bytes).as_deref(),
+            status.as_deref(),
             Some("PDF object nesting exceeds the safety inspection limit; this Document is read-only")
         );
     }
