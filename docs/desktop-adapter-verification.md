@@ -26,6 +26,11 @@ operation. Native annotation round trips with Preview and Acrobat are separate a
 evidence. All of these migration-specific packaged checks remain pending; see the
 [engine migration review](pdf-engine-review-2026-09-09.md).
 
+Release candidates come from the manually dispatched `Release Candidate` GitHub Actions workflow.
+It produces unsigned macOS, Windows, and Linux artifacts without creating a tag or GitHub release.
+Every completed evidence cell must cite the workflow run URL, the platform artifact name, and the
+SHA-256 checksum from that artifact's `manifest.txt` file.
+
 ## Automated contract gate
 
 The `CI` workflow runs the complete TypeScript and Rust suites on `macos-latest`,

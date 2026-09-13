@@ -1,0 +1,67 @@
+name: Release Candidate
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-candidate-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  package:
+    name: Package ${{ matrix.platform }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos
+            os: macos-latest
+            rust_targets: aarch64-apple-darwin,x86_64-apple-darwin
+            build_args: --bundles app,dmg --target universal-apple-darwin
+          - platform: windows
+            os: windows-latest
+            rust_targets: ""
+            build_args: --bundles nsis,msi
+          - platform: linux
+            os: ubuntu-latest
+            rust_targets: ""
+            build_args: --bundles deb,rpm,appimage
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js dependencies
+        uses: ./.github/actions/setup-node
+
+      - name: Set up Rust and Tauri system dependencies
+        uses: ./.github/actions/setup-rust
+        with:
+          targets: ${{ matrix.rust_targets }}
+
+      - name: Install RPM packaging tools
+        if: runner.os == 'Linux'
+        run: sudo apt-get install --no-install-recommends --yes rpm
+
+      - name: Build release-profile bundles
+        env:
+          APPLE_SIGNING_IDENTITY: "-"
+        run: npm run tauri build -- ${{ matrix.build_args }}
+
+      - name: Stage bundles and write manifest
+        id: metadata
+        shell: bash
+        run: |
+          echo "short_sha=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+          node scripts/prepare-release-candidate.mjs "${{ matrix.platform }}"
+
+      - name: Upload release-candidate bundles
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.platform }}-${{ steps.metadata.outputs.short_sha }}
+          path: release-candidate/${{ matrix.platform }}/
+          if-no-files-found: error
+          retention-days: 14
