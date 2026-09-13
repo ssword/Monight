@@ -6,13 +6,37 @@
 }
 
 :root {
-  /* Dark theme colors */
-  --bg-primary: #1e1e1e;
-  --bg-secondary: #2d2d2d;
-  --text-primary: #e0e0e0;
-  --text-secondary: #a0a0a0;
-  --accent-color: #4a9eff;
-  --border-color: #3d3d3d;
+  /* ===== Monight / 墨页 — brand palette ======================================
+     墨夜蓝 #0C182C · 夜蓝 #25415F · 纸白 #FBFDFF · 蓝灰 #8FAECF
+     月光暖米 #FFD48C / #FFF2CE
+     Source of truth: design/brand-2026/BRAND.md
+     ========================================================================== */
+  --brand-night: #0c182c; /* 墨夜蓝 — brand base */
+  --brand-night-2: #16263d; /* derived step between 墨夜蓝 and 夜蓝 (UI chrome) */
+  --brand-blue: #25415f; /* 夜蓝 — floating surfaces */
+  --brand-blue-gray: #8faecf; /* 蓝灰 — secondary ink */
+  --brand-paper: #fbfdff; /* 纸白 — primary ink */
+  --brand-cream: #ffd48c; /* 月光暖米 — the single warm accent */
+  --brand-cream-soft: #fff2ce; /* 月光暖米 (浅) */
+
+  /* Surfaces — 面 */
+  --bg-primary: var(--brand-night); /* deepest: reading desk */
+  --bg-secondary: var(--brand-night-2); /* chrome: toolbar, tab bar */
+  --bg-elevated: var(--brand-blue); /* floating: dialogs, toasts, popovers */
+
+  /* Ink — 字 */
+  --text-primary: var(--brand-paper);
+  --text-secondary: var(--brand-blue-gray);
+  --text-on-accent: var(--brand-night); /* ink on warm fills */
+
+  /* Line — 线 */
+  --border-color: #2c4460; /* navy-tinted divider */
+
+  /* Accent — 月光 */
+  --accent-color: var(--brand-cream);
+  --accent-color-soft: var(--brand-cream-soft);
+  --accent-color-hover: #ffc978;
+  --accent-glow: rgba(255, 212, 140, 0.3);
 
   /* Typography */
   --font-family:
@@ -86,7 +110,7 @@ body.pdf-loaded {
   padding: 12px 32px;
   font-size: 16px;
   font-weight: 500;
-  color: var(--text-primary);
+  color: var(--text-on-accent);
   background-color: var(--accent-color);
   border: none;
   border-radius: 6px;
@@ -96,9 +120,9 @@ body.pdf-loaded {
 }
 
 .splash-open-btn:hover {
-  background-color: #3a8eef;
+  background-color: var(--accent-color-hover);
   transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(74, 158, 255, 0.3);
+  box-shadow: 0 4px 14px var(--accent-glow);
 }
 
 .splash-open-btn:active {
@@ -138,9 +162,9 @@ body.pdf-loaded {
 
 /* Drag and drop feedback */
 body.drag-over {
-  outline: 3px dashed #4a9eff;
+  outline: 3px dashed var(--accent-color);
   outline-offset: -10px;
-  background-color: rgba(74, 158, 255, 0.05);
+  background-color: rgba(255, 212, 140, 0.06);
   transition: all 0.2s ease;
 }
 
