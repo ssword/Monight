@@ -77,3 +77,7 @@ the final packaged matrix and Preview/Acrobat matrix above contain actual eviden
 
 The [2026-09-11 migration completion review](embedpdf-migration-review-2026-09-11.md) checks the
 #56–#66 diff against #55 and lists what remains before #66 can be accepted.
+
+The [desktop adapter verification record](desktop-adapter-verification.md#intentional-platform-differences)
+documents why the main window is intentionally shown and focused before Reading Session
+restoration, and why an early Quit skips that show.

@@ -805,7 +805,7 @@ describe('Reading Session restoration', () => {
 
     const restoration = intake.restore(session);
     await vi.waitFor(() => expect(passwordRequested).toBe(true));
-    intake.interruptRestoration();
+    intake.interrupt();
 
     await expect(restoration).resolves.toMatchObject({
       opened: 1,
@@ -841,7 +841,7 @@ describe('Reading Session restoration', () => {
 
     const restoration = intake.restore(session);
     await vi.waitFor(() => expect(finishBackgroundRead).toBeTypeOf('function'));
-    intake.interruptRestoration();
+    intake.interrupt();
     const earlySettlement = await Promise.race([
       restoration.then(() => 'resolved'),
       new Promise<'pending'>((resolve) => setTimeout(() => resolve('pending'), 20)),
@@ -874,7 +874,7 @@ describe('Reading Session restoration', () => {
       documents: [savedDocument('/docs/active.pdf', 1), savedDocument('/docs/later.pdf', 2)],
     };
 
-    intake.interruptRestoration();
+    intake.interrupt();
     const result = await intake.restore(session);
 
     expect(result).toMatchObject({ opened: 0, failed: 0, failedPaths: [], interruptedPaths: [] });
@@ -919,7 +919,7 @@ describe('Reading Session restoration', () => {
       explicitRequests: [{ paths: ['/docs/report.pdf'], page: 12 }],
     });
     await vi.waitFor(() => expect(finishProjection).toBeTypeOf('function'));
-    intake.interruptRestoration();
+    intake.interrupt();
     const earlySettlement = await Promise.race([
       restoration.then(() => 'resolved'),
       new Promise<'pending'>((resolve) => setTimeout(() => resolve('pending'), 20)),
@@ -954,7 +954,7 @@ describe('Reading Session restoration', () => {
 
     const restoration = intake.restore(session);
     await vi.waitFor(() => expect(finishActivation).toBeTypeOf('function'));
-    intake.interruptRestoration();
+    intake.interrupt();
     const earlySettlement = await Promise.race([
       restoration.then(() => 'resolved'),
       new Promise<'pending'>((resolve) => setTimeout(() => resolve('pending'), 20)),

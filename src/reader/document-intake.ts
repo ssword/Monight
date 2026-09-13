@@ -135,7 +135,6 @@ export interface DocumentIntake {
     options?: RestoreReadingSessionOptions,
   ): Promise<RestoreSessionResult>;
   interrupt(): void;
-  interruptRestoration(): void;
   stopAccepting(): void;
   resumeAccepting(): void;
   quiesce(): Promise<void>;
@@ -177,11 +176,10 @@ export function createDocumentIntake({
   onObserverError = (error) => console.error('Document Intake observer failed:', error),
 }: DocumentIntakeOptions): DocumentIntake {
   let accepting = true;
-  let restorationInterrupted = false;
+  let intakeInterrupted = false;
   const pending = new Set<Promise<unknown>>();
   const activeOperations = new Set<AbortController>();
-  const activeRestorations = new Set<AbortController>();
-  const restorationInterruptions = new WeakMap<AbortSignal, Error>();
+  const intakeInterruptions = new WeakMap<AbortSignal, Error>();
   const track = <T>(work: Promise<T>): Promise<T> => {
     pending.add(work);
     void work.then(
@@ -204,22 +202,22 @@ export function createDocumentIntake({
     }));
     return summarizeOutcomes(outcomes);
   };
-  const restorationInterruption = (signal: AbortSignal): Error => {
-    let interruption = restorationInterruptions.get(signal);
+  const intakeInterruption = (signal: AbortSignal): Error => {
+    let interruption = intakeInterruptions.get(signal);
     if (!interruption) {
-      interruption = new Error('Reading Session restoration interrupted by shutdown');
-      restorationInterruptions.set(signal, interruption);
+      interruption = new Error('Document Intake interrupted by shutdown');
+      intakeInterruptions.set(signal, interruption);
     }
     return interruption;
   };
-  const waitForRestorationWork = <T>(work: Promise<T>, signal?: AbortSignal): Promise<T> =>
+  const waitForIntakeWork = <T>(work: Promise<T>, signal?: AbortSignal): Promise<T> =>
     awaitAbortableWork(work, {
       signal,
       abortError: () =>
-        signal ? restorationInterruption(signal) : new Error('Restoration interrupted'),
+        signal ? intakeInterruption(signal) : new Error('Document Intake interrupted'),
     });
-  const wasRestorationInterrupted = (error: unknown, signal: AbortSignal): boolean =>
-    signal.aborted && error === restorationInterruption(signal);
+  const wasIntakeInterrupted = (error: unknown, signal: AbortSignal): boolean =>
+    signal.aborted && error === intakeInterruption(signal);
 
   const intakeDescribedDocument = async (
     requestedPath: string,
@@ -242,14 +240,14 @@ export function createDocumentIntake({
     preparation: DocumentPreparationResult;
   }> => {
     const notifyOpened = origin === 'explicit';
-    const preparation = await waitForRestorationWork(
+    const preparation = await waitForIntakeWork(
       coordinator.prepare(
         document.canonicalPath,
         () => runtime.isOpen(document.canonicalPath),
         async () => {
-          const bytes = await waitForRestorationWork(source.read(document.canonicalPath), signal);
-          if (signal?.aborted) throw restorationInterruption(signal);
-          await waitForRestorationWork(
+          const bytes = await waitForIntakeWork(source.read(document.canonicalPath), signal);
+          if (signal?.aborted) throw intakeInterruption(signal);
+          await waitForIntakeWork(
             runtime.open({
               document,
               bytes,
@@ -265,7 +263,7 @@ export function createDocumentIntake({
       ),
       signal,
     );
-    if (signal?.aborted) throw restorationInterruption(signal);
+    if (signal?.aborted) throw intakeInterruption(signal);
     if (preparation === 'existing') {
       if (activate) {
         const activateOptions =
@@ -275,14 +273,14 @@ export function createDocumentIntake({
                 ...(signal ? { signal } : {}),
               }
             : undefined;
-        await waitForRestorationWork(
+        await waitForIntakeWork(
           activateOptions
             ? runtime.activate(document.canonicalPath, activateOptions)
             : runtime.activate(document.canonicalPath),
           signal,
         );
       } else if (notifyOpened) {
-        await waitForRestorationWork(
+        await waitForIntakeWork(
           (signal
             ? runtime.notifyOpened?.(document.canonicalPath, { signal })
             : runtime.notifyOpened?.(document.canonicalPath)) ?? Promise.resolve(),
@@ -290,7 +288,7 @@ export function createDocumentIntake({
         );
       }
       if (initialPage !== undefined) {
-        await waitForRestorationWork(
+        await waitForIntakeWork(
           signal
             ? runtime.goToPage(document.canonicalPath, initialPage, { signal })
             : runtime.goToPage(document.canonicalPath, initialPage),
@@ -333,12 +331,12 @@ export function createDocumentIntake({
       let hasActivatedDocument = false;
       for (const [index, requestedPath] of paths.entries()) {
         try {
-          const document = await waitForRestorationWork(
+          const document = await waitForIntakeWork(
             source.describe(requestedPath),
             cancellation.signal,
           );
           if (cancellation.signal.aborted) {
-            throw restorationInterruption(cancellation.signal);
+            throw intakeInterruption(cancellation.signal);
           }
           const activateDocument = options.activate !== false && !hasActivatedDocument;
           const { outcome } = await intakeDescribedDocument(requestedPath, document, {
@@ -376,9 +374,8 @@ export function createDocumentIntake({
     const setDocumentOrder = runtime.setDocumentOrder;
     const cancellation = new AbortController();
     activeOperations.add(cancellation);
-    activeRestorations.add(cancellation);
-    restorationInterruption(cancellation.signal);
-    if (restorationInterrupted) {
+    intakeInterruption(cancellation.signal);
+    if (intakeInterrupted) {
       cancellation.abort();
     }
 
@@ -432,7 +429,7 @@ export function createDocumentIntake({
           (document) => document.filePath === entry.requestedPath,
         );
         try {
-          const described = await waitForRestorationWork(
+          const described = await waitForIntakeWork(
             source.describe(entry.requestedPath),
             cancellation.signal,
           );
@@ -480,7 +477,7 @@ export function createDocumentIntake({
           }
           return outcome;
         } catch (error) {
-          if (wasRestorationInterrupted(error, cancellation.signal)) {
+          if (wasIntakeInterrupted(error, cancellation.signal)) {
             const interrupted: RestoredDocumentOutcome = {
               status: 'interrupted',
               requestedPath: entry.requestedPath,
@@ -511,7 +508,7 @@ export function createDocumentIntake({
       ): Promise<DocumentIntakeOutcome | null> => {
         if (cancellation.signal.aborted) return null;
         try {
-          const described = await waitForRestorationWork(
+          const described = await waitForIntakeWork(
             source.describe(document.filePath),
             cancellation.signal,
           );
@@ -533,7 +530,7 @@ export function createDocumentIntake({
             !explicitSavedStateSources.has(described.canonicalPath)
           ) {
             const mergedDocument = runtime.restoreExistingDocument
-              ? await waitForRestorationWork(
+              ? await waitForIntakeWork(
                   runtime.restoreExistingDocument(described.canonicalPath, restoredDocument, {
                     preserveReadingPosition: explicitPageOverrides.has(described.canonicalPath),
                     signal: cancellation.signal,
@@ -548,7 +545,7 @@ export function createDocumentIntake({
           recordSavedOutcome(document, outcome);
           return outcome;
         } catch (error) {
-          if (wasRestorationInterrupted(error, cancellation.signal)) {
+          if (wasIntakeInterrupted(error, cancellation.signal)) {
             recordSavedOutcome(document, {
               status: 'interrupted',
               requestedPath: document.filePath,
@@ -632,7 +629,6 @@ export function createDocumentIntake({
       };
     })().finally(() => {
       activeOperations.delete(cancellation);
-      activeRestorations.delete(cancellation);
     });
 
     return track(completion);
@@ -648,15 +644,9 @@ export function createDocumentIntake({
     open,
     restore,
     interrupt() {
-      restorationInterrupted = true;
+      intakeInterrupted = true;
       for (const operation of activeOperations) {
         operation.abort();
-      }
-    },
-    interruptRestoration() {
-      restorationInterrupted = true;
-      for (const restoration of activeRestorations) {
-        restoration.abort();
       }
     },
     resumeAccepting() {
