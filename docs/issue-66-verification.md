@@ -32,6 +32,19 @@ The repository CI runs TypeScript and Rust checks on macOS, Windows, and Linux, 
 EmbedPDF Chromium runtime check on Linux. A local pass is not evidence that those remote jobs or
 packaged applications passed.
 
+## Release-candidate packaging evidence
+
+The manually dispatched `Release Candidate` workflow must pass on all three platforms before its
+bundles are used for the native matrix. Record the proof run and exact artifact names below; the
+initial workflow-validation run is packaging evidence only and is not the release candidate.
+
+| Evidence | Result |
+| --- | --- |
+| Workflow run URL | Pending first successful dispatch |
+| macOS artifact | Pending (`macos-<short-commit>`) |
+| Windows artifact | Pending (`windows-<short-commit>`) |
+| Linux artifact | Pending (`linux-<short-commit>`) |
+
 ## Native workflow matrix
 
 No cell below is complete without tester, date, OS/application versions, CI run, artifact, and

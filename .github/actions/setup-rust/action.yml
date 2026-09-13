@@ -1,0 +1,31 @@
+name: Set up Rust and Tauri system dependencies
+description: Install the Rust toolchain and Linux desktop libraries used by CI and packaging
+
+inputs:
+  targets:
+    description: Optional comma-separated Rust compilation targets
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Install Tauri system dependencies
+      if: runner.os == 'Linux'
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install --no-install-recommends --yes \
+          libwebkit2gtk-4.1-dev \
+          build-essential \
+          curl \
+          wget \
+          file \
+          libxdo-dev \
+          libssl-dev \
+          libayatana-appindicator3-dev \
+          librsvg2-dev
+    - name: Set up Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        targets: ${{ inputs.targets }}
