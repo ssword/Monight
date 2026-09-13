@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Monight · 墨页 — UI 令牌对照（已对齐）</title>
+
+<!-- 真实样式，不是复刻：本页直接引用产品样式表 -->
+<link rel="stylesheet" href="../../src/styles/main.css" />
+<link rel="stylesheet" href="../../src/styles/reader-shell.css" />
+<link rel="stylesheet" href="../../src/styles/tabs.css" />
+<link rel="stylesheet" href="../../src/styles/dialogs.css" />
+
+<style>
+  /* ===== 仅本页脚手架 / preview-only ===== */
+  body {
+    background: #eef1f5 !important;
+    color: #1b2430 !important;
+    overflow: auto !important;
+    user-select: auto !important;
+    -webkit-user-select: auto !important;
+    padding: 40px 32px 90px;
+    font-size: 14px;
+  }
+  .wrap { max-width: 1060px; margin: 0 auto; }
+  .lede { font-size: 25px; font-weight: 600; letter-spacing: -0.2px; }
+  .sub { color: #5a6675; margin-top: 8px; line-height: 1.65; max-width: 74ch; }
+  h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.14em;
+       color: #66717f; margin: 44px 0 14px; font-weight: 700; }
+  .card { background: #fff; border: 1px solid #d6dce4; border-radius: 10px; padding: 20px; }
+  .swatches { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(148px, 1fr)); }
+  .sw { border-radius: 8px; overflow: hidden; border: 1px solid #d6dce4; background: #fff; }
+  .sw .chip { height: 74px; }
+  .sw .meta { padding: 9px 11px; }
+  .sw .name { font-size: 13px; font-weight: 600; }
+  .sw .hex { font-family: ui-monospace, "SF Mono", Monaco, monospace; font-size: 11.5px; color: #5a6675; margin-top: 2px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #e6eaef; vertical-align: top; }
+  th { color: #66717f; font-weight: 700; font-size: 11px; text-transform: uppercase; letter-spacing: 0.07em; }
+  tr:last-child td { border-bottom: none; }
+  code, .mono { font-family: ui-monospace, "SF Mono", Monaco, monospace; font-size: 12px; }
+  .oldv { color: #98a2b0; text-decoration: line-through; }
+  .newv { color: #14663f; font-weight: 600; }
+  .tag { display: inline-block; font-size: 10.5px; font-weight: 700; letter-spacing: 0.06em;
+         padding: 2px 7px; border-radius: 99px; text-transform: uppercase; }
+  .tag-new { background: #e2f2e8; color: #1d6b43; }
+  .tag-keep { background: #eceae4; color: #6b6355; }
+  .mock-row { display: flex; flex-wrap: wrap; gap: 22px; align-items: flex-start; }
+  .mock-label { font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
+                color: #66717f; margin-bottom: 8px; }
+  .app-frame { border-radius: 10px; overflow: hidden; background: var(--bg-primary);
+               box-shadow: 0 14px 34px rgba(11, 24, 44, 0.18); }
+
+  /* 桌面上的“纸”——只是示意文档，不是产品样式 */
+  #pdf-container { display: flex; align-items: center; justify-content: center; }
+  .mock-page { width: 244px; height: 306px; background: var(--brand-paper); border-radius: 2px;
+               box-shadow: 0 14px 32px rgba(2, 8, 18, 0.45); padding: 26px 22px; }
+  .mock-page i { display: block; height: 7px; border-radius: 4px; background: #dfe5ec; margin-bottom: 11px; }
+  .mock-page i:nth-child(1) { width: 60%; height: 13px; background: #c3ccd8; margin-bottom: 20px; }
+  .mock-page i:nth-child(4) { width: 76%; }
+  .mock-page i:nth-child(7) { width: 44%; }
+
+  /* 设置页脚手架（真实规则在 settings.html 内联，此处为等价副本，仅用于预览） */
+  .sidebar-item { padding: 11px 18px; color: var(--text-secondary); cursor: pointer; }
+  .sidebar-item.active { background: var(--bg-elevated); color: var(--text-primary);
+                         box-shadow: inset 3px 0 0 var(--accent-color); }
+  .setting-group { background: var(--bg-secondary); border-radius: 8px; padding: 16px 18px; }
+  .setting-row { display: flex; justify-content: space-between; align-items: center;
+                 padding: 11px 0; border-bottom: 1px solid var(--border-color); }
+  .setting-row:last-child { border-bottom: none; }
+  .setting-row h3 { font-size: 14px; font-weight: 500; color: var(--text-primary); }
+  .setting-row p { font-size: 12px; color: var(--text-secondary); margin-top: 3px; }
+  .toggle-switch { display: block; position: relative; width: 50px; height: 26px; flex-shrink: 0; }
+  .toggle-slider { position: absolute; inset: 0; background: #33455f; border-radius: 26px; transition: 0.3s; }
+  .toggle-slider:before { content: ""; position: absolute; height: 20px; width: 20px; left: 3px; bottom: 3px;
+                          background: var(--brand-paper); border-radius: 50%; transition: 0.3s; }
+  .toggle-switch.on .toggle-slider { background: var(--accent-color); }
+  .toggle-switch.on .toggle-slider:before { background: var(--text-on-accent); transform: translateX(24px); }
+  .btn { padding: 8px 16px; background: var(--accent-color); color: var(--text-on-accent);
+         border: none; border-radius: 4px; font-size: 14px; }
+  .btn-secondary { background: var(--bg-elevated); color: var(--text-primary); }
+  .key-badge { background: var(--bg-elevated); padding: 4px 10px; border-radius: 4px; font-size: 12px;
+               color: var(--text-primary); font-family: ui-monospace, monospace; }
+  .keybind-add { border: 1px dashed var(--accent-color); color: var(--accent-color);
+                 padding: 4px 10px; border-radius: 4px; font-size: 12px; }
+  .keybind-remove { background: #c9464f; color: var(--brand-paper); width: 20px; height: 20px;
+                    border-radius: 50%; font-size: 14px; line-height: 1; display: flex;
+                    align-items: center; justify-content: center; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="lede">Monight · 墨页 — UI 令牌对照</div>
+  <p class="sub">
+    标记于 2026-09-13 落地。产品界面已从「中性灰 + 电光蓝」收敛到品牌色板。
+    本页直接引用 <code>src/styles/*.css</code>，下面是实机样式，不是复刻稿。
+  </p>
+
+  <h2>1 · 品牌基色</h2>
+  <div class="swatches">
+    <div class="sw"><div class="chip" style="background:#0c182c"></div><div class="meta"><div class="name">墨夜蓝</div><div class="hex">#0C182C</div></div></div>
+    <div class="sw"><div class="chip" style="background:#16263d"></div><div class="meta"><div class="name">夜蓝·暗 <span style="font-weight:400;color:#98a2b0">派生</span></div><div class="hex">#16263D</div></div></div>
+    <div class="sw"><div class="chip" style="background:#25415f"></div><div class="meta"><div class="name">夜蓝</div><div class="hex">#25415F</div></div></div>
+    <div class="sw"><div class="chip" style="background:#2c4460"></div><div class="meta"><div class="name">分隔线 <span style="font-weight:400;color:#98a2b0">派生</span></div><div class="hex">#2C4460</div></div></div>
+    <div class="sw"><div class="chip" style="background:#8faecf"></div><div class="meta"><div class="name">蓝灰</div><div class="hex">#8FAECF</div></div></div>
+    <div class="sw"><div class="chip" style="background:#fbfdff;border-bottom:1px solid #d6dce4"></div><div class="meta"><div class="name">纸白</div><div class="hex">#FBFDFF</div></div></div>
+    <div class="sw"><div class="chip" style="background:#ffd48c"></div><div class="meta"><div class="name">月光暖米</div><div class="hex">#FFD48C</div></div></div>
+    <div class="sw"><div class="chip" style="background:#fff2ce"></div><div class="meta"><div class="name">月光暖米（浅）</div><div class="hex">#FFF2CE</div></div></div>
+  </div>
+
+  <h2>2 · 语义令牌映射</h2>
+  <div class="card">
+    <table>
+      <tr><th>令牌</th><th>原值</th><th>现值</th><th>用在哪</th></tr>
+      <tr><td><code>--bg-primary</code></td><td class="oldv">#1e1e1e</td><td class="newv">墨夜蓝</td><td>阅读台面、窗口底</td></tr>
+      <tr><td><code>--bg-secondary</code></td><td class="oldv">#2d2d2d</td><td class="newv">夜蓝·暗</td><td>工具栏、标签栏、设置卡片</td></tr>
+      <tr><td><code>--bg-elevated</code></td><td><span class="tag tag-new">新增</span></td><td class="newv">夜蓝</td><td>弹窗、Toast、配置面板</td></tr>
+      <tr><td><code>--text-primary</code></td><td class="oldv">#e0e0e0</td><td class="newv">纸白</td><td>主文字</td></tr>
+      <tr><td><code>--text-secondary</code></td><td class="oldv">#a0a0a0</td><td class="newv">蓝灰</td><td>次要文字、未选中标签</td></tr>
+      <tr><td><code>--text-on-accent</code></td><td><span class="tag tag-new">新增</span></td><td class="newv">墨夜蓝</td><td>暖米底上的字</td></tr>
+      <tr><td><code>--border-color</code></td><td class="oldv">#3d3d3d</td><td class="newv">#2C4460</td><td>分隔线（染蓝 + 提亮一档）</td></tr>
+      <tr><td><code>--accent-color</code></td><td class="oldv">#4a9eff</td><td class="newv">月光暖米</td><td>唯一强调色</td></tr>
+      <tr><td><code>--accent-color-hover</code></td><td class="oldv">#3a8eef</td><td class="newv">#FFC978</td><td>强调色悬停</td></tr>
+      <tr><td><code>--accent-color-soft</code></td><td><span class="tag tag-new">新增</span></td><td class="newv">暖米（浅）</td><td>暖色底、只读状态条</td></tr>
+      <tr><td><code>--accent-glow</code></td><td class="oldv">蓝光 rgba(74,158,255,.3)</td><td class="newv">暖光 rgba(255,212,140,.3)</td><td>光晕</td></tr>
+    </table>
+  </div>
+
+  <h2>3 · 语义色例外（有意留在色板之外）</h2>
+  <div class="card">
+    <table>
+      <tr><th>角色</th><th>值</th><th>原值</th><th>说明</th></tr>
+      <tr><td>错误</td><td><span class="mono newv">#E2606E</span></td><td class="oldv">#dc5c68</td><td>Toast 错误边框</td></tr>
+      <tr><td>删除</td><td><span class="mono newv">#C9464F</span></td><td class="oldv">#d32f2f</td><td>快捷键删除按钮</td></tr>
+    </table>
+    <p class="sub" style="margin-top:12px">
+      状态色不能靠品牌色表达。这两个值只是往暖调靠了一档，保持与夜蓝共存时的观感一致，仍明确属于「警示」语义。
+    </p>
+  </div>
+
+  <h2>4 · 实机预览 · 阅读器外壳</h2>
+  <div class="mock-row">
+    <div>
+      <div class="mock-label">工具栏 + 标签栏 + 阅读台面</div>
+      <div class="app-frame" style="width:660px;height:430px">
+        <div id="viewer-container" style="height:430px">
+          <div id="toolbar">
+            <div class="toolbar-group preset-group">
+              <button class="preset-btn active"><span>Default</span></button>
+              <button class="preset-btn"><span>Original</span></button>
+              <button class="preset-btn"><span>Redeye</span></button>
+              <button class="preset-btn"><span>Sepia</span></button>
+            </div>
+            <div class="toolbar-group file-info">
+              <span class="file-name">一页月光 · brand-guide.pdf</span>
+            </div>
+            <div class="toolbar-group">
+              <button class="toolbar-btn"><span>🖨</span></button>
+              <button class="toolbar-btn"><span>📂</span></button>
+            </div>
+          </div>
+          <div id="tab-bar">
+            <div class="tab-list">
+              <div class="tab-item">
+                <button class="tab active">
+                  <span class="tab-title">一页月光.pdf<span class="tab-dirty-indicator">●</span></span>
+                </button>
+              </div>
+              <div class="tab-item">
+                <button class="tab"><span class="tab-title">CONTEXT.md</span></button>
+              </div>
+            </div>
+            <button class="new-tab-btn">+</button>
+          </div>
+          <div id="document-workspace" style="display:flex;flex:1;min-height:0">
+            <div id="pdf-container" style="flex:1">
+              <div class="mock-page">
+                <i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div>
+      <div class="mock-label">启动页</div>
+      <div class="app-frame" style="width:300px;height:430px">
+        <div id="splash-container" style="height:430px">
+          <h1 class="app-title" style="font-size:30px">Monight</h1>
+          <h2 class="app-subtitle" style="font-size:20px;margin-top:0;margin-bottom:14px">墨页</h2>
+          <p class="app-version" style="margin-bottom:22px">v0.1.0</p>
+          <button class="splash-open-btn" style="font-size:15px;padding:11px 26px">Open PDF File</button>
+          <p class="hint-text">Press ⌘O to open a PDF</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <h2>5 · 实机预览 · 弹窗与 Toast</h2>
+  <div class="mock-row">
+    <div>
+      <div class="mock-label">解锁弹窗</div>
+      <div class="app-frame" style="width:392px;padding:22px">
+        <div class="app-dialog" style="margin:0;width:100%">
+          <form>
+            <h2 style="font-size:18px">Unlock PDF</h2>
+            <p>This PDF is encrypted.</p>
+            <label style="color:var(--text-secondary);font-size:13px">
+              Password
+              <input type="password" value="moonlight" style="margin-top:7px" />
+            </label>
+            <div class="dialog-actions">
+              <button type="button" class="dialog-secondary">Cancel</button>
+              <button type="button" class="dialog-primary">Unlock</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+    <div>
+      <div class="mock-label">Toast</div>
+      <div class="app-frame" style="width:392px;padding:22px;display:grid;gap:10px">
+        <div class="toast" style="max-width:none">Saved to Monight/brand-2026/BRAND.md</div>
+        <div class="toast toast-error" style="max-width:none">Couldn't open that file.</div>
+      </div>
+    </div>
+  </div>
+
+  <h2>6 · 实机预览 · 设置页</h2>
+  <div class="mock-label">侧栏 + 卡片 + 开关 + 按钮</div>
+  <div class="app-frame" style="width:660px">
+    <div style="display:flex;height:316px">
+      <div style="width:170px;background:var(--bg-secondary);border-right:1px solid var(--border-color);padding:14px 0">
+        <div class="sidebar-item active">General</div>
+        <div class="sidebar-item">Appearance</div>
+        <div class="sidebar-item">Keybinds</div>
+        <div class="sidebar-item">About</div>
+      </div>
+      <div style="flex:1;padding:18px 20px;overflow:hidden">
+        <div style="font-size:19px;color:var(--text-primary);margin-bottom:14px">General Settings</div>
+        <div class="setting-group">
+          <div class="setting-row">
+            <div><h3>Maximize on Open</h3><p>Maximize window when opening a PDF</p></div>
+            <span class="toggle-switch on"><span class="toggle-slider"></span></span>
+          </div>
+          <div class="setting-row">
+            <div><h3>Continuous Scroll by Default</h3><p>Open PDFs in continuous scroll view</p></div>
+            <span class="toggle-switch"><span class="toggle-slider"></span></span>
+          </div>
+          <div class="setting-row">
+            <div><h3>Open File</h3><p>⌘O</p></div>
+            <span style="display:flex;align-items:center;gap:8px">
+              <span class="key-badge">⌘ O</span>
+              <span class="keybind-add">+ Add</span>
+              <span class="keybind-remove">×</span>
+            </span>
+          </div>
+          <div class="setting-row">
+            <div><h3>Clear Reading History</h3><p>Clear Recent Documents</p></div>
+            <span style="display:flex;gap:8px">
+              <button class="btn btn-secondary">Reset</button>
+              <button class="btn">Apply</button>
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <h2>7 · 对比度（WCAG 实算）</h2>
+  <div class="card">
+    <table>
+      <tr><th>组合</th><th>比值</th><th>结论</th></tr>
+      <tr><td>纸白 / 墨夜蓝</td><td class="mono">17.4 : 1</td><td>AAA</td></tr>
+      <tr><td>纸白 / 夜蓝（浮层）</td><td class="mono">10.3 : 1</td><td>AAA</td></tr>
+      <tr><td>月光暖米 / 墨夜蓝</td><td class="mono">12.7 : 1</td><td>AAA</td></tr>
+      <tr><td>墨夜蓝 / 月光暖米（暖米底上的字）</td><td class="mono">12.7 : 1</td><td>AAA</td></tr>
+      <tr><td>蓝灰 / 夜蓝</td><td class="mono">4.6 : 1</td><td>AA</td></tr>
+      <tr><td>分隔线 / 夜蓝</td><td class="mono">1.5 : 1</td><td>非文字，克制保留</td></tr>
+    </table>
+    <p class="sub" style="margin-top:12px">
+      暖米换成强调色后，「暖米底 + 白字」全部失效，必须改用 <code>--text-on-accent</code>（墨夜蓝字）。
+      已处理：启动页主按钮、激活滤镜预设、弹窗主按钮、设置页按钮与开关选中态。
+    </p>
+  </div>
+
+</div>
+</body>
+</html>
