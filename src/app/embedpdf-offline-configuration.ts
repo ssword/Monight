@@ -29,7 +29,7 @@ const DISABLED_CATEGORIES = [
 const localFontFallback = {
   baseUrl: EMBEDPDF_FONT_BASE_URL,
   fonts: {
-    0: 'NotoSans-Regular.ttf',
+    0: 'MonightMultiscriptFallback-Regular.ttf',
     1: 'NotoSans-Regular.ttf',
     128: 'NotoSansJP-Regular.otf',
     129: 'NotoSansKR-Regular.otf',

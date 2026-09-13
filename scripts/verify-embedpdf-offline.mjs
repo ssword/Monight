@@ -113,8 +113,8 @@ try {
         image.naturalHeight > 0,
     ),
   );
-  const renderedInkPixels = await renderedPages.evaluateAll((images) => {
-    let maxInkPixels = 0;
+  const renderedScriptInk = await renderedPages.evaluateAll((images) => {
+    const maxInkPixels = { arabic: 0, cjk: 0, hebrew: 0 };
     for (const image of images) {
       if (!(image instanceof HTMLImageElement)) continue;
       const canvas = document.createElement('canvas');
@@ -124,13 +124,31 @@ try {
       context?.drawImage(image, 0, 0);
       const pixels = context?.getImageData(0, 0, canvas.width, canvas.height).data;
       if (!pixels) continue;
-      let inkPixels = 0;
-      for (let index = 0; index < pixels.length; index += 4) {
-        if (pixels[index] < 220 || pixels[index + 1] < 220 || pixels[index + 2] < 220) {
-          inkPixels += 1;
+      const boxes = {
+        cjk: [0.1, 0.25, 0.08, 0.15],
+        arabic: [0.1, 0.25, 0.19, 0.24],
+        hebrew: [0.1, 0.4, 0.27, 0.32],
+      };
+      for (const [script, [left, right, top, bottom]] of Object.entries(boxes)) {
+        let inkPixels = 0;
+        for (
+          let y = Math.floor(canvas.height * top);
+          y < Math.ceil(canvas.height * bottom);
+          y += 1
+        ) {
+          for (
+            let x = Math.floor(canvas.width * left);
+            x < Math.ceil(canvas.width * right);
+            x += 1
+          ) {
+            const index = (y * canvas.width + x) * 4;
+            if (pixels[index] < 220 || pixels[index + 1] < 220 || pixels[index + 2] < 220) {
+              inkPixels += 1;
+            }
+          }
         }
+        maxInkPixels[script] = Math.max(maxInkPixels[script], inkPixels);
       }
-      maxInkPixels = Math.max(maxInkPixels, inkPixels);
     }
     return maxInkPixels;
   });
@@ -187,14 +205,27 @@ try {
   }
   if (renderedImages.length === 0)
     throw new Error('EmbedPDF did not render a non-empty page image');
-  if (renderedInkPixels < 10) {
-    throw new Error('EmbedPDF rendered the required-font fixture without visible glyph pixels');
+  for (const [script, inkPixels] of Object.entries(renderedScriptInk)) {
+    if (inkPixels < 10) {
+      throw new Error(
+        `EmbedPDF rendered no visible ${script} fallback glyph pixels: ${JSON.stringify(renderedScriptInk)}`,
+      );
+    }
   }
   if (externalRequests.length > 0) {
     throw new Error(`EmbedPDF requested external assets: ${externalRequests.join(', ')}`);
   }
   if (!localFontRequests.includes('/embedpdf/fonts/NotoSansHans-Regular.otf')) {
     throw new Error(`EmbedPDF did not preload the local CJK fallback font: ${localFontRequests}`);
+  }
+  for (const font of [
+    'MonightMultiscriptFallback-Regular.ttf',
+    'NotoNaskhArabic-Regular.ttf',
+    'NotoSansHebrew-Regular.ttf',
+  ]) {
+    if (!localFontRequests.includes(`/embedpdf/fonts/${font}`)) {
+      throw new Error(`EmbedPDF did not preload the local fallback font ${font}`);
+    }
   }
   console.log(
     `EmbedPDF offline smoke passed: ${result.state.pageCount} page(s), zoom ${result.state.zoom}`,

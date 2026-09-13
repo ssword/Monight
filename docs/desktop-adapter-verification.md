@@ -30,6 +30,8 @@ Release candidates come from the manually dispatched `Release Candidate` GitHub 
 It produces unsigned macOS, Windows, and Linux artifacts without creating a tag or GitHub release.
 Every completed evidence cell must cite the workflow run URL, the platform artifact name, and the
 SHA-256 checksum from that artifact's `manifest.txt` file.
+Execute these cells with the concrete steps and fixture mapping in the
+[release-candidate test runbook](release-candidate-test-runbook.md).
 
 ## Automated contract gate
 

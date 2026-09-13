@@ -50,6 +50,8 @@ initial workflow-validation run is packaging evidence only and is not the releas
 No cell below is complete without tester, date, OS/application versions, CI run, artifact, and
 observed outcome. Existing slice-specific records are useful context but do not replace a final
 release-candidate pass.
+Use the [release-candidate test runbook](release-candidate-test-runbook.md) for the fixture and
+step mapping for every row.
 
 | Workflow | macOS | Windows | Linux |
 | --- | --- | --- | --- |
@@ -70,6 +72,8 @@ release-candidate pass.
 
 Enabled creation tools are highlight and text comment. Both directions must preserve native,
 non-flattened annotations and unrelated unsupported content.
+Use the same [release-candidate test runbook](release-candidate-test-runbook.md) for each complete
+external-reader round trip.
 
 | Round trip | Highlight | Text comment | Unsupported content | Saved/printed transforms |
 | --- | --- | --- | --- | --- |
