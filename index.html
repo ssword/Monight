@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Monight (墨页)</title>
     <link rel="stylesheet" href="/src/styles/main.css" />
-    <link rel="stylesheet" href="/src/styles/pdf-viewer.css" />
+    <link rel="stylesheet" href="/src/styles/reader-shell.css" />
     <link rel="stylesheet" href="/src/styles/configurator.css" />
     <link rel="stylesheet" href="/src/styles/tabs.css" />
     <meta http-equiv="Content-Security-Policy"
@@ -33,41 +33,6 @@
         <div id="viewer-container" class="hidden">
             <!-- Toolbar with controls -->
             <div id="toolbar">
-                <!-- Navigation group -->
-                <div class="toolbar-group">
-                    <button id="prev-page" class="toolbar-btn" title="Previous Page (Left Arrow)">
-                        <span>◀</span>
-                    </button>
-                    <div class="page-controls">
-                        <input type="number" id="page-input" class="page-input" value="1" min="1" />
-                        <span class="page-separator">/</span>
-                        <span id="page-count">0</span>
-                    </div>
-                    <button id="next-page" class="toolbar-btn" title="Next Page (Right Arrow)">
-                        <span>▶</span>
-                    </button>
-                </div>
-
-                <!-- Zoom group -->
-                <div class="toolbar-group">
-                    <button id="zoom-out" class="toolbar-btn" title="Zoom Out (Ctrl+-)">
-                        <span>−</span>
-                    </button>
-                    <span id="zoom-info" class="zoom-info">100%</span>
-                    <button id="zoom-in" class="toolbar-btn" title="Zoom In (Ctrl++)">
-                        <span>+</span>
-                    </button>
-                    <button id="fit-width" class="toolbar-btn" title="Fit to Width">
-                        <span>⬌</span>
-                    </button>
-                    <button id="fit-page" class="toolbar-btn" title="Fit to Page">
-                        <span>⬍</span>
-                    </button>
-                    <button id="toggle-view-mode" class="toolbar-btn" title="Toggle Continuous Scroll">
-                        <span id="view-mode-icon">⊟</span>
-                    </button>
-                </div>
-
                 <!-- Filter preset group -->
                 <div class="toolbar-group preset-group">
                     <button id="preset-default" class="preset-btn active" title="Default Dark Mode">
@@ -88,18 +53,6 @@
                 </div>
 
                 <div class="toolbar-group viewer-tools">
-                    <button id="open-search" class="toolbar-btn" title="Find in Document (Ctrl+F)" aria-label="Find in document">
-                        <span>⌕</span>
-                    </button>
-                    <button id="toggle-outline" class="toolbar-btn" title="Table of Contents" aria-label="Toggle table of contents">
-                        <span>☷</span>
-                    </button>
-                    <button id="toggle-thumbnails" class="toolbar-btn" title="Page Thumbnails" aria-label="Toggle page thumbnails">
-                        <span>▦</span>
-                    </button>
-                    <button id="toggle-annotations" class="toolbar-btn" title="Annotations" aria-label="Toggle annotations">
-                        <span>✎</span>
-                    </button>
                     <button id="presentation-mode" class="toolbar-btn" title="Presentation Mode (Shift+F11)" aria-label="Start presentation mode">
                         <span>▣</span>
                     </button>
@@ -121,15 +74,6 @@
                 </div>
             </div>
 
-            <div id="search-bar" class="search-bar hidden" role="search">
-                <label for="search-input">Find</label>
-                <input id="search-input" type="search" autocomplete="off" placeholder="Search this PDF" />
-                <span id="search-status" class="search-status" aria-live="polite">Type to search</span>
-                <button id="search-previous" type="button" title="Previous result (Shift+Enter)" aria-label="Previous search result">↑</button>
-                <button id="search-next" type="button" title="Next result (Enter)" aria-label="Next search result">↓</button>
-                <button id="search-close" type="button" title="Close search (Escape)" aria-label="Close search">✕</button>
-            </div>
-
             <!-- Tab Bar -->
             <div id="tab-bar" class="tab-bar hidden">
                 <div id="tab-container" class="tab-list" role="tablist" aria-label="Open documents">
@@ -139,16 +83,6 @@
             </div>
 
             <div id="document-workspace" role="tabpanel">
-                <aside id="document-sidebar" class="document-sidebar hidden" aria-label="Document sidebar">
-                    <div class="sidebar-tabs" role="tablist">
-                        <button type="button" data-sidebar-tab="outline" role="tab">Contents</button>
-                        <button id="thumbnails-tab" type="button" data-sidebar-tab="thumbnails" role="tab">Pages</button>
-                        <button type="button" data-sidebar-tab="annotations" role="tab">Notes</button>
-                        <button id="close-sidebar" type="button" class="sidebar-close" title="Close sidebar" aria-label="Close sidebar">✕</button>
-                    </div>
-                    <div id="sidebar-content" class="sidebar-content"></div>
-                </aside>
-
                 <!-- PDF canvas container -->
                 <div id="pdf-container"></div>
             </div>
@@ -201,20 +135,6 @@
                 <div class="dialog-actions">
                     <button type="button" class="dialog-secondary" data-dialog-cancel>Cancel</button>
                     <button type="submit" class="dialog-primary">Unlock</button>
-                </div>
-            </form>
-        </dialog>
-
-        <dialog id="annotation-dialog" class="app-dialog">
-            <form method="dialog">
-                <h2>Annotation note</h2>
-                <label>
-                    Note
-                    <textarea name="note" rows="5" placeholder="Add a note to this highlight"></textarea>
-                </label>
-                <div class="dialog-actions">
-                    <button type="button" class="dialog-secondary" data-dialog-cancel>Cancel</button>
-                    <button type="submit" class="dialog-primary">Save</button>
                 </div>
             </form>
         </dialog>

@@ -134,8 +134,10 @@ export interface DocumentIntake {
     session: PersistedReadingSession,
     options?: RestoreReadingSessionOptions,
   ): Promise<RestoreSessionResult>;
+  interrupt(): void;
   interruptRestoration(): void;
   stopAccepting(): void;
+  resumeAccepting(): void;
   quiesce(): Promise<void>;
 }
 
@@ -177,6 +179,7 @@ export function createDocumentIntake({
   let accepting = true;
   let restorationInterrupted = false;
   const pending = new Set<Promise<unknown>>();
+  const activeOperations = new Set<AbortController>();
   const activeRestorations = new Set<AbortController>();
   const restorationInterruptions = new WeakMap<AbortSignal, Error>();
   const track = <T>(work: Promise<T>): Promise<T> => {
@@ -320,6 +323,8 @@ export function createDocumentIntake({
         completion: Promise.resolve(result),
       };
     }
+    const cancellation = new AbortController();
+    activeOperations.add(cancellation);
     const foreground = createForegroundSignal();
     if (paths.length === 0) foreground.resolve(null);
 
@@ -328,12 +333,19 @@ export function createDocumentIntake({
       let hasActivatedDocument = false;
       for (const [index, requestedPath] of paths.entries()) {
         try {
-          const document = await source.describe(requestedPath);
+          const document = await waitForRestorationWork(
+            source.describe(requestedPath),
+            cancellation.signal,
+          );
+          if (cancellation.signal.aborted) {
+            throw restorationInterruption(cancellation.signal);
+          }
           const activateDocument = options.activate !== false && !hasActivatedDocument;
           const { outcome } = await intakeDescribedDocument(requestedPath, document, {
             activate: activateDocument,
             ...(index === 0 && options.page !== undefined ? { initialPage: options.page } : {}),
             origin: 'explicit',
+            signal: cancellation.signal,
           });
           if (activateDocument) hasActivatedDocument = true;
           outcomes.push(outcome);
@@ -346,7 +358,9 @@ export function createDocumentIntake({
       }
 
       return summarizeOutcomes(outcomes);
-    })();
+    })().finally(() => {
+      activeOperations.delete(cancellation);
+    });
 
     return { foreground: foreground.promise, completion: track(completion) };
   };
@@ -361,6 +375,7 @@ export function createDocumentIntake({
     const canonicalizeDocumentPaths = runtime.canonicalizeDocumentPaths;
     const setDocumentOrder = runtime.setDocumentOrder;
     const cancellation = new AbortController();
+    activeOperations.add(cancellation);
     activeRestorations.add(cancellation);
     restorationInterruption(cancellation.signal);
     if (restorationInterrupted) {
@@ -616,6 +631,7 @@ export function createDocumentIntake({
         explicitRequestResult: summarizeOutcomes(explicitOutcomes),
       };
     })().finally(() => {
+      activeOperations.delete(cancellation);
       activeRestorations.delete(cancellation);
     });
 
@@ -631,11 +647,20 @@ export function createDocumentIntake({
     begin,
     open,
     restore,
+    interrupt() {
+      restorationInterrupted = true;
+      for (const operation of activeOperations) {
+        operation.abort();
+      }
+    },
     interruptRestoration() {
       restorationInterrupted = true;
       for (const restoration of activeRestorations) {
         restoration.abort();
       }
+    },
+    resumeAccepting() {
+      accepting = true;
     },
     stopAccepting() {
       accepting = false;

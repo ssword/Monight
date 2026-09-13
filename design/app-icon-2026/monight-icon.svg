@@ -1,0 +1,97 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" fill="none">
+  <title>Monight · 一页月光</title>
+  <desc>A moonlit glass document and ivory crescent on an ink-blue macOS icon tile. Editable static design.</desc>
+  <defs>
+    <linearGradient id="ink" x1="512" y1="64" x2="512" y2="960" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#25415F"/>
+      <stop offset=".48" stop-color="#142A44"/>
+      <stop offset="1" stop-color="#0C182C"/>
+    </linearGradient>
+    <radialGradient id="ink-light" cx="0" cy="0" r="1" gradientTransform="translate(400 128) rotate(74) scale(780 710)" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#699DBF" stop-opacity=".22"/>
+      <stop offset=".8" stop-color="#274365" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="tile-rim" x1="512" y1="64" x2="512" y2="960" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#B2D5ED" stop-opacity=".52"/>
+      <stop offset=".24" stop-color="#86B1D4" stop-opacity=".12"/>
+      <stop offset=".75" stop-color="#2E567C" stop-opacity=".08"/>
+      <stop offset="1" stop-color="#7697B6" stop-opacity=".28"/>
+    </linearGradient>
+    <linearGradient id="back-glass" x1="290" y1="286" x2="595" y2="847" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#9BCEEE" stop-opacity=".88"/>
+      <stop offset=".5" stop-color="#5795C5" stop-opacity=".68"/>
+      <stop offset="1" stop-color="#376B9B" stop-opacity=".8"/>
+    </linearGradient>
+    <linearGradient id="paper" x1="402" y1="258" x2="646" y2="802" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F6FBFF"/>
+      <stop offset=".42" stop-color="#E6F1F6"/>
+      <stop offset="1" stop-color="#BDD4E5"/>
+    </linearGradient>
+    <linearGradient id="paper-sheen" x1="516" y1="262" x2="516" y2="802" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFFFF" stop-opacity=".5"/>
+      <stop offset=".22" stop-color="#FFFFFF" stop-opacity="0"/>
+      <stop offset=".82" stop-color="#EBF8FF" stop-opacity="0"/>
+      <stop offset="1" stop-color="#E8F7FF" stop-opacity=".34"/>
+    </linearGradient>
+    <linearGradient id="paper-edge" x1="346" y1="262" x2="660" y2="802" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFFFF"/>
+      <stop offset=".38" stop-color="#FFFFFF" stop-opacity=".58"/>
+      <stop offset=".72" stop-color="#A4BDD3" stop-opacity=".55"/>
+      <stop offset="1" stop-color="#F1FAFF" stop-opacity=".8"/>
+    </linearGradient>
+    <linearGradient id="fold" x1="637" y1="264" x2="711" y2="364" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#D6E9F5"/>
+      <stop offset="1" stop-color="#94B5CE"/>
+    </linearGradient>
+    <linearGradient id="moon" x1="647" y1="253" x2="728" y2="465" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFDF2"/>
+      <stop offset=".45" stop-color="#FFF3D4"/>
+      <stop offset="1" stop-color="#E7C17A"/>
+    </linearGradient>
+    <linearGradient id="moon-edge" x1="630" y1="250" x2="728" y2="469" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFFFF"/>
+      <stop offset=".48" stop-color="#FFF8DC"/>
+      <stop offset="1" stop-color="#CFA969"/>
+    </linearGradient>
+    <filter id="tile-shadow" x="0" y="0" width="1024" height="1024" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="12" stdDeviation="12" flood-color="#030C1A" flood-opacity=".26"/>
+    </filter>
+    <filter id="page-shadow" x="140" y="170" width="710" height="750" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="22" stdDeviation="19" flood-color="#040F24" flood-opacity=".33"/>
+      <feDropShadow dx="0" dy="3" stdDeviation="3" flood-color="#0A2645" flood-opacity=".2"/>
+    </filter>
+    <filter id="moon-shadow" x="524" y="193" width="315" height="340" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="8" stdDeviation="7" flood-color="#574728" flood-opacity=".22"/>
+      <feDropShadow dx="0" dy="1" stdDeviation="1.2" flood-color="#8D784C" flood-opacity=".17"/>
+    </filter>
+    <path id="tile-shape" d="M296 64H728C895 64 960 129 960 296V728C960 895 895 960 728 960H296C129 960 64 895 64 728V296C64 129 129 64 296 64Z"/>
+    <path id="page-shape" d="M355 262H631L732 363V752C732 784 714 802 682 802H355C323 802 305 784 305 752V312C305 280 323 262 355 262Z"/>
+    <path id="moon-shape" d="M724 244C678 229 623 249 596 295C563 353 585 426 644 458C691 483 748 472 783 434C734 448 681 421 663 374C643 320 669 266 724 244Z"/>
+  </defs>
+  <g id="background" filter="url(#tile-shadow)">
+    <use href="#tile-shape" fill="url(#ink)"/>
+    <use href="#tile-shape" fill="url(#ink-light)"/>
+    <use href="#tile-shape" stroke="url(#tile-rim)" stroke-width="3"/>
+  </g>
+  <g id="rear-page" filter="url(#page-shadow)">
+    <rect x="266" y="293" width="414" height="528" rx="49" transform="rotate(-9 473 557)" fill="url(#back-glass)"/>
+    <rect x="267.5" y="294.5" width="411" height="525" rx="47.5" transform="rotate(-9 473 557)" stroke="#C0E9FF" stroke-opacity=".5" stroke-width="3"/>
+  </g>
+  <g id="front-page" filter="url(#page-shadow)">
+    <use href="#page-shape" fill="url(#paper)"/>
+    <use href="#page-shape" fill="url(#paper-sheen)"/>
+    <use href="#page-shape" stroke="url(#paper-edge)" stroke-width="3"/>
+    <path d="M631 263V330C631 352 641 363 664 363H731" fill="url(#fold)"/>
+    <path d="M631 264V330C631 352 641 363 664 363H729" stroke="#FCFEFF" stroke-opacity=".72" stroke-width="2.5"/>
+    <path d="M318 726V751C318 774 332 789 356 789H680" stroke="#EFF9FF" stroke-opacity=".38" stroke-width="3" stroke-linecap="round"/>
+  </g>
+  <g id="reading-marks" fill="#6F93AE">
+    <rect x="365" y="447" width="158" height="21" rx="10.5" fill-opacity=".76"/>
+    <rect x="365" y="496" width="215" height="17" rx="8.5" fill-opacity=".41"/>
+  </g>
+  <g id="crescent-moon" filter="url(#moon-shadow)">
+    <use href="#moon-shape" fill="url(#moon)"/>
+    <use href="#moon-shape" stroke="url(#moon-edge)" stroke-width="3" stroke-linejoin="round"/>
+    <path d="M695 245C656 244 618 266 600 300C575 349 591 409 631 440" stroke="#FFFFFF" stroke-opacity=".54" stroke-width="3" stroke-linecap="round"/>
+  </g>
+</svg>

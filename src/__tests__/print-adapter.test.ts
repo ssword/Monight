@@ -6,6 +6,7 @@ import type { PrintAdapter, PrintDocumentRequest } from '../reader/reader-action
 interface PrintAdapterHarness {
   readonly adapter: PrintAdapter;
   readonly printCount: () => number;
+  readonly printedBytes: () => Promise<Uint8Array | undefined>;
 }
 
 const request: PrintDocumentRequest = {
@@ -25,6 +26,7 @@ function expectPrintAdapterContract(
       await harness.adapter.print(request);
 
       expect(harness.printCount()).toBe(1);
+      await expect(harness.printedBytes()).resolves.toEqual(request.bytes);
     });
 
     it('reports platform failures to the Reader Action caller', async () => {
@@ -47,16 +49,21 @@ describe('Print adapter contract', () => {
         },
       },
       printCount: () => printed.length,
+      printedBytes: async () => printed[printed.length - 1]?.bytes,
     };
   });
 
   expectPrintAdapterContract('browser production adapter', (failure) => {
     const browser = new Window();
     let printCount = 0;
+    let printedBlob: Blob | undefined;
     const appendChild = browser.document.body.appendChild.bind(browser.document.body);
     vi.stubGlobal('document', browser.document);
     vi.stubGlobal('window', browser);
-    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:print-contract');
+    vi.spyOn(URL, 'createObjectURL').mockImplementation((blob) => {
+      printedBlob = blob as Blob;
+      return 'blob:print-contract';
+    });
     vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
     Object.defineProperty(browser, 'setTimeout', {
       configurable: true,
@@ -81,6 +88,11 @@ describe('Print adapter contract', () => {
         return appended;
       },
     });
-    return { adapter: browserPrintAdapter, printCount: () => printCount };
+    return {
+      adapter: browserPrintAdapter,
+      printCount: () => printCount,
+      printedBytes: async () =>
+        printedBlob ? new Uint8Array(await printedBlob.arrayBuffer()) : undefined,
+    };
   });
 });

@@ -25,14 +25,6 @@ export default defineConfig({
         main: resolve(__dirname, 'index.html'),
         settings: resolve(__dirname, 'settings.html'),
       },
-      output: {
-        assetFileNames: (assetInfo) => {
-          if (assetInfo.name === 'pdf.worker.min.mjs') {
-            return 'pdf.worker.min.mjs';
-          }
-          return 'assets/[name]-[hash][extname]';
-        },
-      },
     },
   },
 });

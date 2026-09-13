@@ -110,3 +110,12 @@
   opacity: 0;
   transform: translateY(8px);
 }
+
+.pdf-decision-dialog {
+  padding: 22px;
+  width: min(520px, calc(100vw - 40px));
+}
+
+.pdf-decision-dialog .dialog-actions {
+  flex-wrap: wrap;
+}

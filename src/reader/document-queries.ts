@@ -1,15 +1,11 @@
-import type {
-  PdfAnnotation,
-  PdfOutlineItem,
-  PdfSearchMatch,
-  SearchProgress,
-} from '../lib/document-features';
+import type { PdfOutlineItem, PdfSearchMatch, SearchProgress } from '../lib/document-features';
 import type { PdfLinkTarget } from '../lib/pdf-links';
 import type {
   DocumentContent,
   DocumentContentMetadata,
   ResolvedDocumentLinkTarget,
 } from './document-content';
+import type { NativePdfEditing } from './native-pdf-editing';
 
 export interface DocumentThumbnailOptions {
   readonly maxWidth?: number;
@@ -17,13 +13,16 @@ export interface DocumentThumbnailOptions {
 }
 
 export interface DocumentRuntime {
+  editing?: NativePdfEditing;
+  preparePrintDocument?: () => Promise<Uint8Array>;
+  saveSource?: string;
+  recovery?: { sourceVersion: string };
   readonly content: DocumentContent;
   destroy(): Promise<void>;
   renderThumbnail(
     pageNumber: number,
     options?: DocumentThumbnailOptions,
   ): Promise<HTMLCanvasElement>;
-  getAnnotations(): readonly PdfAnnotation[];
 }
 
 export interface DocumentQueryOptions {
@@ -49,7 +48,6 @@ export interface DocumentQuery {
     pageNumber: number,
     options?: DocumentThumbnailOptions & DocumentQueryOptions,
   ): Promise<HTMLCanvasElement>;
-  annotations(): readonly PdfAnnotation[];
 }
 
 interface CreateDocumentQueryOptions {
@@ -58,12 +56,6 @@ interface CreateDocumentQueryOptions {
   readonly runtime: DocumentRuntime;
   readonly isCurrent: () => boolean;
 }
-
-const cloneAnnotations = (annotations: readonly PdfAnnotation[]): PdfAnnotation[] =>
-  annotations.map((annotation) => ({
-    ...annotation,
-    rects: annotation.rects.map((rect) => ({ ...rect })),
-  }));
 
 const cloneOutline = (items: readonly PdfOutlineItem[]): PdfOutlineItem[] =>
   items.map((item) => ({
@@ -133,9 +125,6 @@ export function createDocumentQuery({
       const canvas = await runtime.renderThumbnail(pageNumber, options);
       if (cancelled(options)) throw new Error('Document Query generation is no longer current');
       return canvas;
-    },
-    annotations() {
-      return isCurrent() ? cloneAnnotations(runtime.getAnnotations()) : [];
     },
   };
 }

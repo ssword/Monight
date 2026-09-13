@@ -134,7 +134,10 @@ export class KeybindManager {
   }
 
   private findMatchingBinding(e: KeyboardEvent): string | null {
-    if (this.isEditableTarget(e.target)) {
+    if (
+      this.isEditableTarget(e.target) ||
+      e.composedPath?.().some((target) => this.isEditableTarget(target))
+    ) {
       return null;
     }
 

@@ -21,10 +21,8 @@ const tauriStores = vi.hoisted(() => {
 
 vi.mock('@tauri-apps/plugin-store', () => ({ Store: { load: tauriStores.load } }));
 
-import { createAnnotationStorage } from '../app/annotation-storage';
 import { createReadingSessionStorage } from '../app/reading-session-storage';
 import { createRecentDocumentStorage } from '../app/recent-document-storage';
-import type { AnnotationStorage, PersistedAnnotations } from '../reader/annotations';
 import type { PersistedReadingSession } from '../reader/reader-actions';
 import type { ReadingSessionStorage } from '../reader/reading-session-store';
 import type { PersistedRecentDocuments, RecentDocumentStorage } from '../reader/recent-documents';
@@ -112,13 +110,6 @@ const replacementReadingSession: PersistedReadingSession = {
 };
 const legacyReadingSession = { activeFilePath: '/docs/legacy.pdf', tabs: [] };
 
-const initialAnnotations: PersistedAnnotations = { schemaVersion: 1, documents: {} };
-const replacementAnnotations: PersistedAnnotations = {
-  schemaVersion: 1,
-  documents: { '/docs/report.pdf': [] },
-};
-const legacyAnnotations = { '/docs/legacy.pdf': [] };
-
 const initialRecentDocuments: PersistedRecentDocuments = { schemaVersion: 1, documents: [] };
 const replacementRecentDocuments: PersistedRecentDocuments = {
   schemaVersion: 1,
@@ -150,33 +141,6 @@ describe('Reading Session storage contract', () => {
       initial: initialReadingSession,
       replacement: replacementReadingSession,
       legacy: legacyReadingSession,
-    };
-  });
-});
-
-describe('Annotation storage contract', () => {
-  expectStorageContract('in-memory adapter', () => ({
-    storage: createInMemoryStorage(initialAnnotations, legacyAnnotations),
-    initial: initialAnnotations,
-    replacement: replacementAnnotations,
-    legacy: legacyAnnotations,
-  }));
-
-  expectStorageContract('production adapter', () => {
-    tauriStores.values.set(
-      'annotations.json',
-      new Map([['annotations', structuredClone(initialAnnotations)]]),
-    );
-    const legacy = createLegacyValue(legacyAnnotations);
-    const storage: AnnotationStorage = createAnnotationStorage({
-      readLegacyAnnotations: legacy.read,
-      removeLegacyAnnotations: legacy.remove,
-    });
-    return {
-      storage,
-      initial: initialAnnotations,
-      replacement: replacementAnnotations,
-      legacy: legacyAnnotations,
     };
   });
 });

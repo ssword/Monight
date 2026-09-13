@@ -167,6 +167,51 @@
             border-color: #007acc;
         }
 
+        input[type="text"] {
+            width: 220px;
+            max-width: 100%;
+            min-width: 0;
+            padding: 8px 10px;
+            border: 1px solid #3d3d3d;
+            border-radius: 4px;
+            background: #1e1e1e;
+            color: #e0e0e0;
+            font: inherit;
+        }
+
+        input[type="text"]:focus {
+            outline: none;
+            border-color: #007acc;
+        }
+
+        @media (max-width: 640px) {
+            #settings-sidebar {
+                width: 140px;
+            }
+
+            .sidebar-item {
+                padding: 12px 16px;
+            }
+
+            #settings-content {
+                padding: 20px 16px;
+            }
+
+            .setting-group {
+                padding: 16px;
+            }
+
+            .setting-item {
+                align-items: stretch;
+                flex-direction: column;
+            }
+
+            .setting-control {
+                margin-top: 12px;
+                margin-left: 0;
+            }
+        }
+
         /* Buttons */
         .btn {
             padding: 8px 16px;
@@ -402,18 +447,6 @@
                 </div>
                 <div class="setting-item">
                     <div class="setting-label">
-                        <h3>Display Thumbnails</h3>
-                        <p>Show the page thumbnails tab in the document sidebar</p>
-                    </div>
-                    <div class="setting-control">
-                        <label class="toggle-switch">
-                            <input type="checkbox" id="displayThumbs">
-                            <span class="toggle-slider"></span>
-                        </label>
-                    </div>
-                </div>
-                <div class="setting-item">
-                    <div class="setting-label">
                         <h3>Remember Last Filter</h3>
                         <p>Remember and apply the last used dark mode filter</p>
                     </div>
@@ -439,7 +472,7 @@
                 <div class="setting-item">
                     <div class="setting-label">
                         <h3>Clear Reading History</h3>
-                        <p>Clear Recent Documents, the saved Reading Session, and all annotations</p>
+                        <p>Clear Recent Documents and the saved Reading Session</p>
                     </div>
                     <div class="setting-control">
                         <button class="btn btn-secondary" id="clear-reading-history">Clear History</button>
@@ -455,6 +488,14 @@
                             <input type="checkbox" id="defaultContinuousScroll">
                             <span class="toggle-slider"></span>
                         </label>
+                    </div>
+                </div>
+                <div class="setting-item">
+                    <div class="setting-label">
+                        <h3 id="annotationDisplayNameLabel">Annotation Display Name</h3>
+                    </div>
+                    <div class="setting-control">
+                        <input type="text" id="annotationDisplayName" maxlength="80" autocomplete="off" aria-labelledby="annotationDisplayNameLabel">
                     </div>
                 </div>
             </div>
@@ -507,10 +548,6 @@
                 <div class="version-row">
                     <span class="version-label">Tauri Version:</span>
                     <span class="version-value" id="tauri-version">Loading...</span>
-                </div>
-                <div class="version-row">
-                    <span class="version-label">PDF.js Version:</span>
-                    <span class="version-value" id="pdfjs-version">Loading...</span>
                 </div>
             </div>
 

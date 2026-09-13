@@ -1,13 +1,12 @@
 import { getName, getTauriVersion, getVersion } from '@tauri-apps/api/app';
 import { emit, listen } from '@tauri-apps/api/event';
-import { version as pdfjsVersion } from 'pdfjs-dist';
 import { requestConfirmation } from '../app/dialogs';
 import { debugLog } from '../lib/debug-log';
 import '../styles/dialogs.css';
 import { KeybindEditor } from './keybind-editor';
 import { KeybindManager } from './keybind-manager';
 import type { MoonightSettings } from './settings';
-import { type KeybindConfig, SettingsManager } from './settings';
+import { type KeybindConfig, normalizeAnnotationDisplayName, SettingsManager } from './settings';
 
 // Initialize settings manager
 const settingsManager = new SettingsManager('settings');
@@ -55,9 +54,6 @@ async function loadSettings(): Promise<void> {
   const maximizeOnOpen = document.getElementById('maximizeOnOpen') as HTMLInputElement;
   if (maximizeOnOpen) maximizeOnOpen.checked = currentSettings.general.maximizeOnOpen;
 
-  const displayThumbs = document.getElementById('displayThumbs') as HTMLInputElement;
-  if (displayThumbs) displayThumbs.checked = currentSettings.general.displayThumbs;
-
   const rememberLastFilter = document.getElementById('rememberLastFilter') as HTMLInputElement;
   if (rememberLastFilter) rememberLastFilter.checked = currentSettings.general.rememberLastFilter;
 
@@ -72,6 +68,12 @@ async function loadSettings(): Promise<void> {
   ) as HTMLInputElement;
   if (defaultContinuousScroll)
     defaultContinuousScroll.checked = currentSettings.general.defaultViewMode === 'continuous';
+
+  const annotationDisplayName = document.getElementById(
+    'annotationDisplayName',
+  ) as HTMLInputElement;
+  if (annotationDisplayName)
+    annotationDisplayName.value = currentSettings.general.annotationDisplayName;
 
   // Appearance settings
   const defaultDarkMode = document.getElementById('defaultDarkMode') as HTMLSelectElement;
@@ -88,7 +90,6 @@ async function updateAboutPanel(): Promise<void> {
   const appName = document.getElementById('app-name');
   const appVersion = document.getElementById('app-version');
   const tauriVersion = document.getElementById('tauri-version');
-  const pdfjsVersionEl = document.getElementById('pdfjs-version');
 
   try {
     const [name, version, tauri] = await Promise.all([getName(), getVersion(), getTauriVersion()]);
@@ -98,10 +99,6 @@ async function updateAboutPanel(): Promise<void> {
     if (tauriVersion) tauriVersion.textContent = tauri;
   } catch (error) {
     console.error('Failed to update About panel info:', error);
-  }
-
-  if (pdfjsVersionEl) {
-    pdfjsVersionEl.textContent = pdfjsVersion;
   }
 }
 
@@ -121,13 +118,6 @@ function setupSettingListeners(): void {
   const maximizeOnOpen = document.getElementById('maximizeOnOpen') as HTMLInputElement;
   maximizeOnOpen?.addEventListener('change', async () => {
     currentSettings.general.maximizeOnOpen = maximizeOnOpen.checked;
-    await settingsManager.set('general', currentSettings.general);
-    await notifyMainSettingsChanged();
-  });
-
-  const displayThumbs = document.getElementById('displayThumbs') as HTMLInputElement;
-  displayThumbs?.addEventListener('change', async () => {
-    currentSettings.general.displayThumbs = displayThumbs.checked;
     await settingsManager.set('general', currentSettings.general);
     await notifyMainSettingsChanged();
   });
@@ -159,6 +149,17 @@ function setupSettingListeners(): void {
     await notifyMainSettingsChanged();
   });
 
+  const annotationDisplayName = document.getElementById(
+    'annotationDisplayName',
+  ) as HTMLInputElement;
+  annotationDisplayName?.addEventListener('change', async () => {
+    const value = normalizeAnnotationDisplayName(annotationDisplayName.value);
+    annotationDisplayName.value = value;
+    currentSettings.general.annotationDisplayName = value;
+    await settingsManager.set('general', currentSettings.general);
+    await notifyMainSettingsChanged();
+  });
+
   // Appearance settings
   const defaultDarkMode = document.getElementById('defaultDarkMode') as HTMLSelectElement;
   defaultDarkMode?.addEventListener('change', async () => {
@@ -171,7 +172,7 @@ function setupSettingListeners(): void {
   clearHistoryButton?.addEventListener('click', async () => {
     const confirmed = await requestConfirmation({
       title: 'Clear reading history?',
-      message: 'Clear Recent Documents, the saved Reading Session, and all annotations?',
+      message: 'Clear Recent Documents and the saved Reading Session?',
       confirmLabel: 'Clear history',
     });
     if (confirmed) {

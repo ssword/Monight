@@ -1,16 +1,13 @@
 import { awaitAbortableWork } from '../lib/abortable-work';
 import { debugLog } from '../lib/debug-log';
+import type { ViewMode } from '../lib/document-features';
 import type { PdfLinkTarget } from '../lib/pdf-links';
-import { type AnnotationAccess, createTransientAnnotationAccess } from '../reader/annotations';
 import type { DocumentAccess, DocumentPresentation } from '../reader/document-access';
-import type {
-  LoadableDocumentContent,
-  ResolvedDocumentLinkTarget,
-} from '../reader/document-content';
+import type { PdfPasswordRequester } from '../reader/document-content';
 import type { DocumentRuntimeIntake, DocumentRuntimeOpenRequest } from '../reader/document-intake';
 import type { DocumentQuery, DocumentRuntime } from '../reader/document-queries';
-import type { DocumentRendering } from '../reader/document-rendering';
-import { createPdfDocumentContent } from '../reader/pdf-document-content';
+import type { DocumentRendering, DocumentViewTransform } from '../reader/document-rendering';
+import type { AnnotationDisplayName } from '../reader/native-pdf-editing';
 import type {
   ReaderAction,
   ReaderActionOptions,
@@ -23,12 +20,13 @@ import type {
   RestorableReadingPosition,
   ZoomIntent,
 } from '../reader/reader-actions';
+import type {
+  RecoveryDraftAdapter,
+  RecoveryDraftChoice,
+  RecoveryDraftInspection,
+  RecoveryDraftRequest,
+} from '../reader/recovery-drafts';
 import { buildFilterCSS } from '../scripts/filters';
-import {
-  type AnnotationNoteRequester,
-  PDFViewer,
-  type PdfPasswordRequester,
-} from '../scripts/pdf-viewer';
 import type { PresentationSurface } from './presentation-controller';
 
 export interface DocumentSurface {
@@ -42,6 +40,12 @@ export interface DocumentSurfaceCallbacks {
   readonly stateChanged: () => void;
   readonly pageNavigationRequested: (page: number, options?: ReaderActionOptions) => Promise<void>;
   readonly zoomIntentRequested: (zoomIntent: ZoomIntent) => Promise<void>;
+  readonly rotationRequested?: (direction: 'clockwise' | 'counter-clockwise') => Promise<void>;
+  readonly viewModeRequested?: (viewMode: ViewMode) => Promise<void>;
+  readonly linkTargetRequested?: (
+    target: PdfLinkTarget,
+    options?: ReaderActionOptions,
+  ) => Promise<void>;
 }
 
 export interface DocumentSurfaceFactoryRequest {
@@ -56,7 +60,16 @@ export type DocumentSurfaceFactory = (
   request: DocumentSurfaceFactoryRequest,
 ) => Promise<DocumentSurface>;
 
+export type DocumentSurfaceProvider = (options: {
+  requestPassword?: PdfPasswordRequester;
+  getAnnotationDisplayName?: () => AnnotationDisplayName;
+}) => DocumentSurfaceFactory;
+
 interface DocumentWorkspaceOptions {
+  pdfSaveAdapter?: import('../reader/native-pdf-editing').NativePdfSaveAdapter;
+  recoveryDraftAdapter?: RecoveryDraftAdapter;
+  chooseRecoveryDraft?: (request: RecoveryDraftRequest) => Promise<RecoveryDraftChoice>;
+  captureRecoveryDraft?: (filePath: string) => Promise<ReaderActionOutcome>;
   dispatchReaderAction(
     action: ReaderAction,
     options?: ReaderActionOptions,
@@ -69,19 +82,8 @@ interface DocumentWorkspaceOptions {
   snapshot(): ReadingSessionSnapshot;
   isDocumentOpen(filePath: string): boolean;
   defaultVisualState(): ReadingSessionVisualState;
-  createSurface?: DocumentSurfaceFactory;
-  createDocumentContent?: (options: {
-    readonly requestPassword?: PdfPasswordRequester;
-  }) => LoadableDocumentContent;
-  annotationAuthority?: AnnotationAccess;
-  requestPassword?: PdfPasswordRequester;
-  requestAnnotationNote?: AnnotationNoteRequester;
+  createSurface: DocumentSurfaceFactory;
   reportError?: (message: string) => void;
-  resolveLinkTarget?: (
-    filePath: string,
-    target: PdfLinkTarget,
-  ) => Promise<ResolvedDocumentLinkTarget | null>;
-  activateLinkTarget?: (filePath: string, target: PdfLinkTarget) => Promise<void>;
   documentOpened?: (filePath: string, title: string) => void | Promise<void>;
   activeDocumentChanged?: () => void | Promise<void>;
   renderingStateChanged?: () => void;
@@ -95,15 +97,29 @@ export interface DocumentWorkspace {
   activePresentation(): PresentationSurface | null;
   activeRenderingState(): ReturnType<DocumentRendering['getState']> | null;
   activeReadingPosition(): { filePath: string; readingPosition: ReadingPosition } | null;
-  replaceAnnotations(filePath: string | null): void;
+  viewTransform(filePath: string): DocumentViewTransform | null;
+  openActiveSearch(): void;
+  setAnnotationDisplayName(displayName: AnnotationDisplayName): void;
 }
 
 interface PresentedDocument {
+  readonly identity: { filePath: string; title: string };
+  readonly runtime: DocumentRuntime;
   readonly id: string;
   readonly title: string;
   readonly rendering: DocumentRendering;
   readonly presentation: DocumentPresentation;
 }
+
+type PreparedRecoveryDraft =
+  | { readonly status: 'unavailable'; readonly bytes: Uint8Array }
+  | { readonly status: 'ready'; readonly bytes: Uint8Array; readonly sourceVersion: string }
+  | {
+      readonly status: 'recovered';
+      readonly bytes: Uint8Array;
+      readonly sourceVersion: string;
+      readonly recoveredRevision: number;
+    };
 
 const cloneZoomIntent = (zoomIntent: ZoomIntent): ZoomIntent =>
   zoomIntent.kind === 'manual'
@@ -125,10 +141,10 @@ async function projectDocumentState(
 }
 
 export function createDocumentWorkspace(options: DocumentWorkspaceOptions): DocumentWorkspace {
-  const annotationAuthority = options.annotationAuthority ?? createTransientAnnotationAccess();
   const presented = new Map<string, PresentedDocument>();
   let visibleDocumentPath: string | null = null;
   const disposedSurfaces = new WeakSet<DocumentSurface>();
+  const reportedRecoveryFailures = new Map<string, number>();
 
   const interruptionError = (): Error => new Error('Document Intake interrupted');
 
@@ -155,95 +171,91 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
     return rendering;
   };
 
-  const createPdfSurface: DocumentSurfaceFactory = async ({
-    filePath,
-    title,
-    bytes,
-    callbacks,
-    signal,
-  }) => {
-    const requestPassword = options.requestPassword;
-    const requestDocumentPassword = requestPassword
-      ? (fileName: string, reason: 'required' | 'incorrect') =>
-          requestPassword(fileName, reason, signal)
-      : undefined;
-    const content: LoadableDocumentContent = options.createDocumentContent
-      ? options.createDocumentContent({ requestPassword: requestDocumentPassword })
-      : createPdfDocumentContent({ requestPassword: requestDocumentPassword });
-    const resolveLinkTarget = options.resolveLinkTarget;
-    const activateLinkTarget = options.activateLinkTarget;
-    const rendering = new PDFViewer('pdf-container', `pdf-canvas-${crypto.randomUUID()}`, {
-      content,
-      requestAnnotationNote: options.requestAnnotationNote,
-      reportError: options.reportError,
-      ...(resolveLinkTarget
-        ? { resolveLinkTarget: (target) => resolveLinkTarget(filePath, target) }
-        : {}),
-      ...(activateLinkTarget
-        ? {
-            activateLinkTarget: (target) => activateLinkTarget(filePath, target),
-          }
-        : {}),
-    });
-    rendering.setOnPageChange(callbacks.stateChanged);
-    rendering.setOnScrollChange(() =>
-      callbacks.readingPositionObserved(rendering.getReadingPosition()),
-    );
-    rendering.setOnScrollSettled(() =>
-      callbacks.readingPositionSettled(rendering.getReadingPosition()),
-    );
-    rendering.setOnPageNavigationRequest(callbacks.pageNavigationRequested);
-    rendering.setOnZoomIntentRequest(callbacks.zoomIntentRequested);
-    rendering.setAnnotations(annotationAuthority.snapshot(filePath));
-    rendering.setOnAnnotationsChange((annotations) => {
-      if (options.acceptsReaderActions?.() === false) return;
-      annotationAuthority.replace(filePath, annotations);
-      callbacks.stateChanged();
-    });
-    let loadDisposed = false;
-    const disposeLoad = async (): Promise<void> => {
-      if (loadDisposed) return;
-      loadDisposed = true;
-      rendering.destroy();
-      await content.destroy();
-    };
-    const cancelLoad = (): void => {
-      void disposeLoad();
-    };
-    if (signal?.aborted) {
-      await disposeLoad();
-      throw interruptionError();
-    }
-    signal?.addEventListener('abort', cancelLoad, { once: true });
+  const baseCreateSurface = options.createSurface;
+  const prepareRecoveryDraft = async (
+    request: DocumentSurfaceFactoryRequest,
+  ): Promise<PreparedRecoveryDraft> => {
+    const adapter = options.recoveryDraftAdapter;
+    if (!adapter) return { status: 'unavailable', bytes: request.bytes };
+    let inspection: RecoveryDraftInspection;
     try {
-      await rendering.loadPDF(bytes, title, filePath);
+      inspection = await adapter.inspect(request.filePath, request.bytes);
     } catch (error) {
-      await disposeLoad();
-      throw error;
-    } finally {
-      signal?.removeEventListener('abort', cancelLoad);
+      if (request.signal?.aborted) throw interruptionError();
+      options.reportError?.(
+        `Recovery Drafts are unavailable for ${request.title}: ${String(error)}`,
+      );
+      return { status: 'unavailable', bytes: request.bytes };
     }
-    if (signal?.aborted) {
-      await disposeLoad();
-      throw interruptionError();
+    if (inspection.status === 'protected') {
+      return { status: 'unavailable', bytes: request.bytes };
     }
-    let destroyed = false;
-    return {
-      rendering,
-      runtime: {
-        content,
-        renderThumbnail: (pageNumber, thumbnailOptions) =>
-          rendering.renderThumbnail(pageNumber, thumbnailOptions),
-        getAnnotations: () => annotationAuthority.snapshot(filePath),
-        async destroy() {
-          if (destroyed) return;
-          destroyed = true;
-          await content.destroy();
-        },
-      },
-    };
+    if (inspection.status === 'stale') {
+      options.reportError?.(
+        `Recovery Draft for ${request.title} was rejected because the source Document changed.`,
+      );
+      return { status: 'ready', bytes: request.bytes, sourceVersion: inspection.sourceVersion };
+    }
+    if (inspection.status === 'none') {
+      return { status: 'ready', bytes: request.bytes, sourceVersion: inspection.sourceVersion };
+    }
+    const choice = await options.chooseRecoveryDraft?.({
+      documentPath: request.filePath,
+      title: request.title,
+      editedRevision: inspection.draft.editedRevision,
+      ...(request.signal ? { signal: request.signal } : {}),
+    });
+    if (request.signal?.aborted) throw interruptionError();
+    if (choice === 'recover') {
+      return {
+        status: 'recovered',
+        bytes: inspection.draft.bytes,
+        sourceVersion: inspection.sourceVersion,
+        recoveredRevision: inspection.draft.editedRevision,
+      };
+    }
+    if (choice === 'discard') {
+      await adapter.remove(request.filePath);
+      return { status: 'ready', bytes: request.bytes, sourceVersion: inspection.sourceVersion };
+    }
+    throw new Error('Recovery Draft decision cancelled');
   };
-  const createSurface = options.createSurface ?? createPdfSurface;
+  const createSurface: DocumentSurfaceFactory = async (request) => {
+    const prepared = await prepareRecoveryDraft(request);
+    const saveSource = await options.pdfSaveAdapter?.captureSource?.(
+      request.filePath,
+      request.bytes,
+    );
+    try {
+      const surface = await baseCreateSurface({ ...request, bytes: prepared.bytes });
+      if (prepared.status !== 'unavailable') {
+        surface.runtime.recovery = { sourceVersion: prepared.sourceVersion };
+      }
+      if (prepared.status === 'recovered') {
+        if (!surface.runtime.editing?.markRecovered) {
+          await disposeSurface(surface);
+          throw new Error('This viewer cannot restore Recovery Drafts safely');
+        }
+        surface.runtime.editing.markRecovered(prepared.recoveredRevision);
+      }
+      if (!saveSource) return surface;
+      surface.runtime.saveSource = saveSource;
+      const destroy = surface.runtime.destroy.bind(surface.runtime);
+      surface.runtime.destroy = async () => {
+        try {
+          await destroy();
+        } finally {
+          const token = surface.runtime.saveSource;
+          surface.runtime.saveSource = undefined;
+          if (token) await options.pdfSaveAdapter?.releaseSource?.(token);
+        }
+      };
+      return surface;
+    } catch (error) {
+      if (saveSource) await options.pdfSaveAdapter?.releaseSource?.(saveSource);
+      throw error;
+    }
+  };
 
   const notifyDocumentOpened = async (filePath: string, title: string): Promise<void> => {
     try {
@@ -305,9 +317,18 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
 
       const title = document.createElement('span');
       title.className = 'tab-title';
+      const editing = presented.get(documentState.filePath)?.runtime.editing?.state();
       title.textContent = documentState.title;
       title.title = documentState.title;
       control.append(title);
+      if (editing?.dirty) {
+        const indicator = document.createElement('span');
+        indicator.className = 'tab-dirty-indicator';
+        indicator.textContent = '•';
+        indicator.setAttribute('aria-label', 'Unsaved changes');
+        indicator.title = 'Unsaved changes';
+        control.append(indicator);
+      }
       control.addEventListener('click', () => {
         if (options.acceptsReaderActions?.() === false) return;
         void options.dispatchReaderAction({
@@ -325,12 +346,37 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
       close.addEventListener('click', (event) => {
         event.stopPropagation();
         if (options.acceptsReaderActions?.() === false) return;
-        void options.dispatchReaderAction({
-          type: 'closeDocument',
-          filePath: documentState.filePath,
-        });
+        void options
+          .dispatchReaderAction({
+            type: 'closeDocument',
+            filePath: documentState.filePath,
+          })
+          .then((outcome) => {
+            if (outcome.status === 'failure') options.reportError?.(String(outcome.error));
+          });
       });
       item.append(control, close);
+      if (editing) {
+        for (const [label, type] of [
+          ['Save', 'saveDocument'],
+          ['Save As…', 'saveDocumentAs'],
+        ] as const) {
+          const save = document.createElement('button');
+          save.type = 'button';
+          save.className = type === 'saveDocument' ? 'tab-save' : 'tab-save-as';
+          save.textContent = label;
+          save.title = editing.readOnlyReason ?? label;
+          save.disabled = Boolean(editing.readOnlyReason);
+          save.addEventListener('click', () => {
+            void options
+              .dispatchReaderAction({ type, filePath: documentState.filePath })
+              .then((outcome) => {
+                if (outcome.status === 'failure') options.reportError?.(String(outcome.error));
+              });
+          });
+          item.append(save);
+        }
+      }
       container.append(item);
     }
   };
@@ -365,7 +411,186 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
     }
   };
 
+  const createCallbacks = (
+    identity: { filePath: string; title: string },
+    surfaceId: string,
+  ): DocumentSurfaceCallbacks => {
+    const isCurrentSurface = (): boolean =>
+      presented.get(identity.filePath)?.id === surfaceId &&
+      options.isDocumentOpen(identity.filePath);
+    const dispatchSurfaceAction = async (
+      action: ReaderAction,
+      actionOptions?: ReaderActionOptions,
+    ): Promise<void> => {
+      if (!isCurrentSurface()) return;
+      await dispatchReaderActionOrThrow(action, {
+        ...actionOptions,
+        isCancelled: () => !isCurrentSurface() || Boolean(actionOptions?.isCancelled?.()),
+      });
+    };
+    const settleReadingPosition = (readingPosition: ReadingPosition): void => {
+      void dispatchSurfaceAction({
+        type: 'settleReadingPosition',
+        filePath: identity.filePath,
+        readingPosition,
+      });
+    };
+    const captureRecoveryDraft = (): void => {
+      const presentedDocument = presented.get(identity.filePath);
+      const editRevision = presentedDocument?.runtime.editing?.state().revision;
+      if (!presentedDocument || editRevision === undefined || !options.captureRecoveryDraft) return;
+      void options.captureRecoveryDraft(identity.filePath).then((outcome) => {
+        if (outcome.status === 'failure') {
+          if (reportedRecoveryFailures.get(identity.filePath) === editRevision) return;
+          reportedRecoveryFailures.set(identity.filePath, editRevision);
+          options.reportError?.(
+            `Recovery Draft could not be saved for ${identity.title}: ${String(outcome.error)}. Your live edits are retained.`,
+          );
+        } else if (outcome.status === 'performed') {
+          reportedRecoveryFailures.delete(identity.filePath);
+        }
+      });
+    };
+    return {
+      stateChanged: () => {
+        if (isCurrentSurface()) {
+          renderDocumentControls(options.snapshot());
+          options.renderingStateChanged?.();
+          captureRecoveryDraft();
+        }
+      },
+      readingPositionObserved: settleReadingPosition,
+      readingPositionSettled: settleReadingPosition,
+      pageNavigationRequested: (page, actionOptions) =>
+        dispatchSurfaceAction(
+          { type: 'goToPage', filePath: identity.filePath, page },
+          actionOptions,
+        ),
+      zoomIntentRequested: (zoomIntent) =>
+        dispatchSurfaceAction({
+          type: 'setZoomIntent',
+          filePath: identity.filePath,
+          zoomIntent,
+        }),
+      rotationRequested: (direction) =>
+        dispatchSurfaceAction({
+          type: direction === 'clockwise' ? 'rotateClockwise' : 'rotateCounterClockwise',
+          filePath: identity.filePath,
+        }),
+      viewModeRequested: (viewMode) =>
+        dispatchSurfaceAction({
+          type: 'setViewMode',
+          filePath: identity.filePath,
+          viewMode,
+        }),
+      linkTargetRequested: (target, actionOptions) =>
+        dispatchSurfaceAction(
+          {
+            type: 'activateDocumentTarget',
+            filePath: identity.filePath,
+            target,
+          },
+          actionOptions,
+        ),
+    };
+  };
+
+  const presentSurface = (
+    surface: DocumentSurface,
+    identity: { filePath: string; title: string },
+    surfaceId: string,
+  ): PresentedDocument => {
+    const originalGetState = surface.rendering.getState;
+    surface.rendering.getState = () => ({
+      ...originalGetState.call(surface.rendering),
+      filePath: identity.filePath,
+      fileName: identity.title,
+    });
+    return {
+      identity,
+      runtime: surface.runtime,
+      id: surfaceId,
+      title: identity.title,
+      rendering: surface.rendering,
+      presentation: {
+        snapshot: () => surface.rendering.getState(),
+        ...(surface.rendering.openSearch
+          ? { openSearch: () => surface.rendering.openSearch?.() }
+          : {}),
+      },
+    };
+  };
+
   const projection: ReaderProjection = {
+    async prepareReloadDocument(documentState, actionOptions) {
+      const previous = presented.get(documentState.filePath);
+      const read = options.pdfSaveAdapter?.readSource;
+      if (!previous || !read) throw new Error('Document reload is unavailable');
+      const bytes = await read(documentState.filePath);
+      if (actionOptions.isCancelled?.()) throw interruptionError();
+      const identity = { filePath: documentState.filePath, title: documentState.title };
+      const id = crypto.randomUUID();
+      const surface = await createSurface({
+        ...identity,
+        bytes,
+        callbacks: createCallbacks(identity, id),
+      });
+      try {
+        surface.rendering.setVisible(false);
+        await projectDocumentState(surface.rendering, documentState, actionOptions);
+        if (actionOptions.isCancelled?.()) throw interruptionError();
+        const replacement = presentSurface(surface, identity, id);
+        return {
+          runtime: surface.runtime,
+          commit() {
+            if (presented.get(identity.filePath) !== previous) throw interruptionError();
+            surface.rendering.setVisible(visibleDocumentPath === identity.filePath);
+            presented.set(identity.filePath, replacement);
+            previous.rendering.destroy();
+            renderDocumentControls(options.snapshot());
+            options.renderingStateChanged?.();
+          },
+          async dispose() {
+            await disposeSurface(surface);
+          },
+        };
+      } catch (error) {
+        await disposeSurface(surface);
+        throw error;
+      }
+    },
+    async verifySavedDocument(documentState, bytes, actionOptions) {
+      const surface = await createSurface({
+        filePath: documentState.filePath,
+        title: documentState.title,
+        bytes,
+        callbacks: {
+          readingPositionObserved() {},
+          readingPositionSettled() {},
+          stateChanged() {},
+          pageNavigationRequested: async () => undefined,
+          zoomIntentRequested: async () => undefined,
+        },
+      });
+      try {
+        surface.rendering.setVisible(false);
+        if (actionOptions.isCancelled?.()) throw new Error('Save As preparation cancelled');
+        await projectDocumentState(surface.rendering, documentState, actionOptions);
+        if (actionOptions.isCancelled?.()) throw new Error('Save As preparation cancelled');
+      } finally {
+        await disposeSurface(surface);
+      }
+    },
+    reidentifyDocument(filePath, destination) {
+      const document = presented.get(filePath);
+      if (!document || presented.has(destination.canonicalPath))
+        throw new Error('Save As Document identity is stale');
+      document.identity.filePath = destination.canonicalPath;
+      document.identity.title = destination.title;
+      presented.delete(filePath);
+      presented.set(destination.canonicalPath, document);
+      if (visibleDocumentPath === filePath) visibleDocumentPath = destination.canonicalPath;
+    },
     activateDocument: activate,
     async closeDocument(filePath, nextActiveDocumentPath) {
       const documentState = presented.get(filePath);
@@ -430,29 +655,9 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
     },
     async open(request: DocumentRuntimeOpenRequest) {
       const { document, bytes, initialPage, restoredDocument, signal } = request;
-      const settleReadingPosition = (readingPosition: ReadingPosition): void => {
-        void options.dispatchReaderAction({
-          type: 'settleReadingPosition',
-          filePath: document.canonicalPath,
-          readingPosition,
-        });
-      };
-      const callbacks: DocumentSurfaceCallbacks = {
-        stateChanged: () => options.renderingStateChanged?.(),
-        readingPositionObserved: settleReadingPosition,
-        readingPositionSettled: settleReadingPosition,
-        pageNavigationRequested: (page, actionOptions) =>
-          dispatchReaderActionOrThrow(
-            { type: 'goToPage', filePath: document.canonicalPath, page },
-            actionOptions,
-          ),
-        zoomIntentRequested: (zoomIntent) =>
-          dispatchReaderActionOrThrow({
-            type: 'setZoomIntent',
-            filePath: document.canonicalPath,
-            zoomIntent,
-          }),
-      };
+      const identity = { filePath: document.canonicalPath, title: document.title };
+      const surfaceId = crypto.randomUUID();
+      const callbacks = createCallbacks(identity, surfaceId);
       const surfaceWork = createSurface({
         filePath: document.canonicalPath,
         title: document.title,
@@ -470,21 +675,7 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
           }
         },
       });
-      presented.set(document.canonicalPath, {
-        id: crypto.randomUUID(),
-        title: document.title,
-        rendering: surface.rendering,
-        presentation: {
-          snapshot: () => surface.rendering.getState(),
-          setSearchQuery: (query) => surface.rendering.setSearchQuery(query),
-          clearSearch: () => surface.rendering.clearSearch(),
-          revealSearchMatch: (match) => surface.rendering.revealSearchMatch(match),
-          addPageNote: (note) => surface.rendering.addPageNote(note),
-          updateAnnotation: (annotationId, updates) =>
-            surface.rendering.updateAnnotation(annotationId, updates),
-          removeAnnotation: (annotationId) => surface.rendering.removeAnnotation(annotationId),
-        },
-      });
+      presented.set(document.canonicalPath, presentSurface(surface, identity, surfaceId));
       surface.rendering.setVisible(false);
 
       const initialDocument: ReadingSessionDocument = restoredDocument
@@ -603,10 +794,27 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
         ? { filePath, readingPosition: rendering.getReadingPosition() }
         : null;
     },
-    replaceAnnotations(filePath) {
-      for (const [path, documentState] of presented) {
-        if (filePath !== null && path !== filePath) continue;
-        documentState.rendering.setAnnotations(annotationAuthority.snapshot(path));
+    viewTransform(filePath) {
+      const state = presented.get(filePath)?.rendering.getState();
+      const visualState = options
+        .snapshot()
+        .documents.find((item) => item.filePath === filePath)?.visualState;
+      if (!state || !visualState) return null;
+      return {
+        scale: state.zoom,
+        zoomIntent: cloneZoomIntent(state.zoomIntent),
+        viewingRotation: state.rotation,
+        viewMode: state.viewMode,
+        filterCss: buildFilterCSS(visualState.filterSettings),
+      };
+    },
+    openActiveSearch() {
+      const filePath = options.snapshot().activeDocumentPath;
+      if (filePath) presented.get(filePath)?.rendering.openSearch?.();
+    },
+    setAnnotationDisplayName(displayName) {
+      for (const documentState of presented.values()) {
+        documentState.runtime.editing?.setAnnotationDisplayName?.(displayName);
       }
     },
   };

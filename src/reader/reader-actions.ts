@@ -2,11 +2,13 @@ import type { ViewMode } from '../lib/document-features';
 import type { PdfLinkTarget } from '../lib/pdf-links';
 import { type FilterSettings, PRESETS } from '../scripts/filters';
 import { createDocumentQuery, type DocumentQuery, type DocumentRuntime } from './document-queries';
+import type { NativePdfSaveAdapter, PdfSaveDestination } from './native-pdf-editing';
 import {
   createReadingSession,
   type DocumentPathReconciliation,
   type PersistenceUrgency,
 } from './reading-session';
+import type { RecoveryDraftAdapter } from './recovery-drafts';
 
 export interface ReadingPosition {
   readonly page: number;
@@ -56,6 +58,20 @@ export interface PresentationExitOptions {
 export type RestorePresentation = () => Promise<void>;
 
 export interface ReaderProjection {
+  prepareReloadDocument?(
+    document: ReadingSessionDocument,
+    options: ReaderActionOptions,
+  ): Promise<{
+    runtime: DocumentRuntime;
+    commit(): void;
+    dispose(): Promise<void>;
+  }>;
+  verifySavedDocument?(
+    document: ReadingSessionDocument,
+    bytes: Uint8Array,
+    options: ReaderActionOptions,
+  ): Promise<void>;
+  reidentifyDocument?(filePath: string, destination: PdfSaveDestination): void;
   activateDocument(
     filePath: string,
     position: RestorableReadingPosition,
@@ -123,6 +139,9 @@ export type ReaderAction =
     }
   | { type: 'activateDocumentTarget'; filePath: string; target: PdfLinkTarget }
   | { type: 'printDocument'; filePath?: string }
+  | { type: 'discardAndReloadDocument'; filePath?: string }
+  | { type: 'saveDocument'; filePath?: string }
+  | { type: 'saveDocumentAs'; filePath?: string }
   | { type: 'reorderDocuments'; filePaths: readonly string[] }
   | { type: 'closeDocument'; filePath: string }
   | { type: 'reopenLastClosedDocument' }
@@ -173,12 +192,23 @@ export interface PrintAdapter {
   print(request: PrintDocumentRequest): Promise<void>;
 }
 
+export type UnsavedDocumentChoice = 'save' | 'save-as' | 'discard' | 'cancel';
+
+export interface UnsavedDocumentRequest {
+  readonly filePath: string;
+  readonly title: string;
+  readonly error?: unknown;
+}
+
 interface CreateReaderActionsOptions {
+  chooseUnsavedDocument?: (request: UnsavedDocumentRequest) => Promise<UnsavedDocumentChoice>;
   initialSession: PersistedReadingSession;
   defaultVisualState?: ReadingSessionVisualState;
   projection: ReaderProjection;
   externalLinkAdapter?: ExternalLinkAdapter;
   printAdapter?: PrintAdapter;
+  pdfSaveAdapter?: NativePdfSaveAdapter;
+  recoveryDraftAdapter?: RecoveryDraftAdapter;
   reopenDocument?: (filePath: string) => Promise<void>;
   persist: (snapshot: ReadingSessionSnapshot) => Promise<void>;
   persistenceDebounceMs?: number;
@@ -196,7 +226,12 @@ export interface ReaderActions {
   observe(observer: (snapshot: ReadingSessionSnapshot) => void): () => void;
   quiesce(): Promise<void>;
   flush(): Promise<void>;
+  captureRecoveryDraft(filePath: string): Promise<ReaderActionOutcome>;
   hasDirtySession(): boolean;
+  hasUnsavedPdfWork(): boolean;
+  prepareShutdown(): Promise<boolean>;
+  isShutdownPrepared(): boolean;
+  cancelShutdown(): void;
 }
 
 interface PendingAbsoluteAction {
@@ -223,7 +258,7 @@ interface RegisteredDocumentRuntime {
   readonly runtime: DocumentRuntime;
 }
 
-type DocumentContentOperationResult<T> =
+type DocumentRuntimeOperationResult<T> =
   | { readonly status: 'ready'; readonly value: T }
   | Extract<ReaderActionOutcome, { status: 'no-op' | 'failure' }>;
 
@@ -355,6 +390,9 @@ export function createReaderActions({
   projection,
   externalLinkAdapter,
   printAdapter,
+  pdfSaveAdapter,
+  recoveryDraftAdapter,
+  chooseUnsavedDocument,
   reopenDocument,
   persist,
   persistenceDebounceMs = 250,
@@ -380,9 +418,44 @@ export function createReaderActions({
   const lanes = new Map<string, DocumentLane>();
   const runtimes = new Map<string, RegisteredDocumentRuntime>();
   const runtimeGenerations = new Map<string, number>();
+  const pendingSaves = new Map<string, Promise<ReaderActionOutcome>>();
+  const pendingDraftCaptures = new Map<DocumentRuntime, Promise<ReaderActionOutcome>>();
+  const pendingReloads = new Set<string>();
   const recentlyClosedDocumentPaths: string[] = [];
   let globalTail = Promise.resolve();
+  let recoveryTail = Promise.resolve();
   let activeReopenReservation: GlobalLaneReservation | null = null;
+
+  const enqueueRecovery = <T>(work: () => Promise<T>): Promise<T> => {
+    const result = recoveryTail.catch(() => undefined).then(work);
+    recoveryTail = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
+  };
+
+  const bytePreparationTails = new WeakMap<DocumentRuntime, Promise<void>>();
+  const prepareDocumentBytes = (
+    runtime: DocumentRuntime,
+    prepare: () => Promise<Uint8Array>,
+  ): Promise<Uint8Array> => {
+    const result = (bytePreparationTails.get(runtime) ?? Promise.resolve())
+      .catch(() => undefined)
+      .then(prepare);
+    bytePreparationTails.set(
+      runtime,
+      result.then(
+        () => undefined,
+        () => undefined,
+      ),
+    );
+    return result;
+  };
+  const exportPdf = (
+    runtime: DocumentRuntime,
+    editing: NonNullable<DocumentRuntime['editing']>,
+  ): Promise<Uint8Array> => prepareDocumentBytes(runtime, () => editing.exportPdf());
 
   const revision = (): number => session.snapshot().revision;
   const generation = (filePath: string): number => lanes.get(filePath)?.generation ?? 0;
@@ -423,12 +496,12 @@ export function createReaderActions({
     !hasSessionDocument(filePath) ||
     Boolean(options?.isCancelled?.());
 
-  const runDocumentContentOperation = async <T>(
+  const runDocumentRuntimeOperation = async <T>(
     filePath: string,
     expectedGeneration: number,
     options: ReaderActionOptions | undefined,
     operation: (runtime: DocumentRuntime, isCancelled: () => boolean) => Promise<T>,
-  ): Promise<DocumentContentOperationResult<T>> => {
+  ): Promise<DocumentRuntimeOperationResult<T>> => {
     if (cancelled(filePath, expectedGeneration, options)) {
       return { status: 'no-op', revision: revision() };
     }
@@ -436,7 +509,7 @@ export function createReaderActions({
     if (!registered) {
       return {
         status: 'failure',
-        error: new Error(`Document Content is unavailable: ${filePath}`),
+        error: new Error(`Document runtime is unavailable: ${filePath}`),
         revision: revision(),
       };
     }
@@ -773,24 +846,539 @@ export function createReaderActions({
   const quiesce = async (): Promise<void> => {
     while (true) {
       const capturedGlobalTail = globalTail;
+      const capturedRecoveryTail = recoveryTail;
       const capturedDocumentTails = Array.from(
         lanes,
         ([filePath, lane]) => [filePath, lane.tail] as const,
       );
       await Promise.allSettled([
         capturedGlobalTail,
+        capturedRecoveryTail,
         ...capturedDocumentTails.map(([, tail]) => tail),
       ]);
       const unchanged =
         capturedGlobalTail === globalTail &&
+        capturedRecoveryTail === recoveryTail &&
         capturedDocumentTails.length === lanes.size &&
         capturedDocumentTails.every(([filePath, tail]) => lanes.get(filePath)?.tail === tail);
       if (unchanged) return;
     }
   };
 
-  return {
+  // A discard decision authorizes only the live runtime and revision the reader saw.
+  const discards = new Map<DocumentRuntime, number>();
+  const mayDestroy = (filePath: string): boolean => {
+    const runtime = runtimes.get(filePath)?.runtime;
+    const state = runtime?.editing?.state();
+    return !state?.dirty || (runtime !== undefined && discards.get(runtime) === state.revision);
+  };
+  const removeDocument = (
+    action: Extract<ReaderAction, { type: 'closeDocument' | 'removeDocument' }>,
+  ): Promise<ReaderActionOutcome> => {
+    const lane = laneFor(action.filePath);
+    lane.pendingRemovals += 1;
+    lane.generation += 1;
+    const invalidatedRuntime = invalidateRuntime(action.filePath);
+    for (const pending of lane.pendingAbsolute.values()) {
+      pending.superseded = true;
+      pending.resolve({ status: 'no-op', revision: revision() });
+    }
+    lane.pendingAbsolute.clear();
+
+    return enqueueGlobal(
+      async () => {
+        try {
+          if (runtimes.get(action.filePath) !== invalidatedRuntime) {
+            return { status: 'superseded', revision: revision() };
+          }
+          const current = session.snapshot();
+          const transition = closeDocumentTransition(current, action.filePath);
+          if (!transition) {
+            restoreRuntimeAfterFailedRemoval(action.filePath, invalidatedRuntime);
+            return { status: 'no-op', revision: current.revision };
+          }
+          if (action.type === 'closeDocument' && !projection.closeDocument) {
+            restoreRuntimeAfterFailedRemoval(action.filePath, invalidatedRuntime);
+            return {
+              status: 'failure',
+              error: new Error('Reader projection cannot close a Document'),
+              revision: current.revision,
+            };
+          }
+          try {
+            if (current.activeDocumentPath === action.filePath) {
+              await projection.exitPresentation?.({ restoreVisualState: false });
+            }
+            if (
+              pendingReloads.has(action.filePath) ||
+              pendingSaves.has(action.filePath) ||
+              !mayDestroy(action.filePath)
+            ) {
+              throw new Error('Document changed during the close decision; retry closing.');
+            }
+            await projection.closeDocument?.(action.filePath, transition.activeDocumentPath);
+          } catch (error) {
+            restoreRuntimeAfterFailedRemoval(action.filePath, invalidatedRuntime);
+            return { status: 'failure', error, revision: revision() };
+          }
+          const latest = session.snapshot();
+          const latestTransition = closeDocumentTransition(latest, action.filePath);
+          if (!latestTransition) return { status: 'no-op', revision: latest.revision };
+          const outcome = await commit({ schemaVersion: 2, ...latestTransition }, 'immediate');
+          await removeRuntime(action.filePath);
+          if (action.type === 'closeDocument') {
+            recentlyClosedDocumentPaths.push(action.filePath);
+          }
+          return outcome;
+        } finally {
+          lane.pendingRemovals -= 1;
+        }
+      },
+      action.type === 'removeDocument' ? action.filePath : undefined,
+    );
+  };
+
+  let decisionTail = Promise.resolve();
+  const pendingCloses = new Map<string, Promise<ReaderActionOutcome>>();
+  const enqueueDecision = <T>(work: () => Promise<T>): Promise<T> => {
+    const result = decisionTail.then(work);
+    decisionTail = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
+  };
+  const runtimePath = (runtime: DocumentRuntime): string | undefined =>
+    [...runtimes].find(([, registered]) => registered.runtime === runtime)?.[0];
+
+  const persistRecoveryDraft = async (
+    runtime: DocumentRuntime,
+    documentPath: string,
+    sourceVersion: string,
+  ): Promise<boolean> => {
+    if (!recoveryDraftAdapter) return false;
+    while (true) {
+      const editing = runtime.editing;
+      if (!editing) return false;
+      const state = editing.state();
+      if (!state.dirty || state.readOnlyReason) return false;
+      const bytes = await exportPdf(runtime, editing);
+      if (editing.state().revision !== state.revision) continue;
+      await recoveryDraftAdapter.write({
+        documentPath,
+        sourceVersion,
+        editedRevision: state.revision,
+        bytes,
+      });
+      if (editing.state().revision === state.revision) return true;
+    }
+  };
+
+  const captureRecoveryDraft = (filePath: string): Promise<ReaderActionOutcome> => {
+    const registered = runtimes.get(filePath);
+    if (!registered || !recoveryDraftAdapter)
+      return Promise.resolve({ status: 'no-op', revision: revision() });
+    const runtime = registered.runtime;
+    const pending = pendingDraftCaptures.get(runtime);
+    if (pending) return pending;
+    const capture = enqueueRecovery(async (): Promise<ReaderActionOutcome> => {
+      try {
+        const currentPath = runtimePath(runtime);
+        const sourceVersion = runtime.recovery?.sourceVersion;
+        if (!currentPath || !sourceVersion) return { status: 'no-op', revision: revision() };
+        const document = session.snapshot().documents.find((item) => item.filePath === currentPath);
+        if (!document) return { status: 'no-op', revision: revision() };
+        const persisted = await persistRecoveryDraft(runtime, currentPath, sourceVersion);
+        return { status: persisted ? 'performed' : 'no-op', revision: revision() };
+      } catch (error) {
+        return { status: 'failure', error, revision: revision() };
+      }
+    });
+    pendingDraftCaptures.set(runtime, capture);
+    void capture.finally(() => {
+      if (pendingDraftCaptures.get(runtime) === capture) pendingDraftCaptures.delete(runtime);
+    });
+    return capture;
+  };
+
+  const reconcileRecoveryDraft = async (
+    runtime: DocumentRuntime,
+    previousDocumentPath: string,
+    documentPath: string,
+    persistedRevision: number,
+    sourceBytes: Uint8Array,
+  ): Promise<void> => {
+    if (!recoveryDraftAdapter || !runtime.recovery) return;
+    const result = await enqueueRecovery(() =>
+      recoveryDraftAdapter.reconcile({
+        previousDocumentPath,
+        documentPath,
+        persistedRevision,
+        sourceBytes,
+      }),
+    );
+    runtime.recovery = { sourceVersion: result.sourceVersion };
+  };
+
+  const refreshRecoveryDraftAfterOriginalWrite = async (
+    runtime: DocumentRuntime,
+    documentPath: string,
+    sourceBytes: Uint8Array,
+  ): Promise<void> => {
+    if (!recoveryDraftAdapter || !runtime.recovery) return;
+    const repairAfterWrite = recoveryDraftAdapter.repairAfterWrite;
+    if (!repairAfterWrite) throw new Error('Recovery Draft repair is unavailable');
+    await enqueueRecovery(async () => {
+      while (true) {
+        const editing = runtime.editing;
+        if (!editing) return;
+        const state = editing.state();
+        if (!state.dirty || state.readOnlyReason) {
+          await recoveryDraftAdapter.remove(documentPath);
+          return;
+        }
+        const draftBytes = await exportPdf(runtime, editing);
+        if (editing.state().revision !== state.revision) continue;
+        const result = await repairAfterWrite({
+          documentPath,
+          sourceBytes,
+          editedRevision: state.revision,
+          draftBytes,
+        });
+        runtime.recovery = { sourceVersion: result.sourceVersion };
+        if (editing.state().revision === state.revision) return;
+      }
+    });
+  };
+
+  const removeRecoveryDraft = (documentPath: string): Promise<void> =>
+    recoveryDraftAdapter
+      ? enqueueRecovery(() => recoveryDraftAdapter.remove(documentPath))
+      : Promise.resolve();
+
+  const saveDocument = async (
+    action: Extract<ReaderAction, { type: 'saveDocumentAs' | 'saveDocument' }>,
+    options?: ReaderActionOptions,
+  ): Promise<ReaderActionOutcome> => {
+    const saveAs = action.type === 'saveDocumentAs';
+    const captured = session.snapshot();
+    const filePath = action.filePath ?? captured.activeDocumentPath;
+    if (!filePath) return { status: 'no-op', revision: revision() };
+    if (pendingReloads.has(filePath))
+      return {
+        status: 'failure',
+        error: new Error('Finish reloading before saving this Document'),
+        revision: revision(),
+      };
+    const pending = pendingSaves.get(filePath);
+    if (pending) return pending;
+    const registered = runtimes.get(filePath);
+    const editing = registered?.runtime.editing;
+    const document = captured.documents.find((item) => item.filePath === filePath);
+    if (
+      !registered ||
+      !editing ||
+      !document ||
+      !pdfSaveAdapter ||
+      !projection.verifySavedDocument ||
+      (saveAs
+        ? !projection.reidentifyDocument
+        : !pdfSaveAdapter.writeOriginal || !registered.runtime.saveSource)
+    ) {
+      return {
+        status: 'failure',
+        error: new Error('Native PDF saving is unavailable'),
+        revision: revision(),
+      };
+    }
+    const state = editing.state();
+    if (state.readOnlyReason)
+      return {
+        status: 'failure',
+        error: new Error(state.readOnlyReason),
+        revision: revision(),
+      };
+    const expectedGeneration = generation(filePath);
+    const isCancelled = () =>
+      cancelled(filePath, expectedGeneration, options) || runtimes.get(filePath) !== registered;
+    const save = (async (): Promise<ReaderActionOutcome> => {
+      let destination: PdfSaveDestination | null = null;
+      let replacementSource: string | undefined;
+      try {
+        if (isCancelled()) return { status: 'superseded', revision: revision() };
+        if (saveAs) {
+          destination = await pdfSaveAdapter.chooseDestination(document.title);
+          if (!destination || isCancelled()) return { status: 'superseded', revision: revision() };
+          if (
+            session
+              .snapshot()
+              .documents.some((item) => item.filePath === destination?.canonicalPath)
+          ) {
+            throw new Error('Save As destination is already open');
+          }
+        }
+        const exportedRevision = editing.state().revision;
+        const bytes = await exportPdf(registered.runtime, editing);
+        if (editing.state().revision !== exportedRevision)
+          throw new Error('Annotations changed during export; retry Save');
+        if (isCancelled()) return { status: 'superseded', revision: revision() };
+        const sourceToken = registered.runtime.saveSource;
+        if (!sourceToken) throw new Error('Source Document is no longer authorized');
+        let reopened: Uint8Array;
+        if (saveAs && destination)
+          reopened = await pdfSaveAdapter.writeDestination(destination, bytes, sourceToken);
+        else if (pdfSaveAdapter.writeOriginal)
+          reopened = await pdfSaveAdapter.writeOriginal(sourceToken, bytes);
+        else throw new Error('Original PDF saving is unavailable');
+        if (!saveAs) {
+          try {
+            if (isCancelled()) throw new Error('Save was superseded after writing the PDF');
+            if (
+              bytes.length !== reopened.length ||
+              bytes.some((value, index) => value !== reopened[index])
+            )
+              throw new Error('Written PDF verification failed');
+            await reconcileRecoveryDraft(
+              registered.runtime,
+              filePath,
+              filePath,
+              exportedRevision,
+              reopened,
+            );
+            await projection.verifySavedDocument?.(document, reopened, { isCancelled });
+            if (isCancelled()) throw new Error('Save was superseded after writing the PDF');
+            editing.markSaved(exportedRevision);
+            return { status: 'performed', revision: revision() };
+          } catch (error) {
+            try {
+              await refreshRecoveryDraftAfterOriginalWrite(registered.runtime, filePath, reopened);
+            } catch (recoveryError) {
+              throw new AggregateError(
+                [error, recoveryError],
+                'The PDF was written, but its Recovery Draft could not be refreshed. Keep Monight open and retry Save.',
+              );
+            }
+            if (isCancelled()) return { status: 'superseded', revision: revision() };
+            throw error;
+          }
+        }
+        if (isCancelled()) return { status: 'superseded', revision: revision() };
+        if (
+          bytes.length !== reopened.length ||
+          bytes.some((value, index) => value !== reopened[index])
+        )
+          throw new Error('Written PDF verification failed');
+        if (!destination) throw new Error('Missing Save As destination');
+        replacementSource = await pdfSaveAdapter.captureSource?.(
+          destination.canonicalPath,
+          reopened,
+        );
+        const selected = destination;
+        return await enqueueGlobal(async () => {
+          if (isCancelled()) return { status: 'superseded', revision: revision() };
+          const current = session.snapshot();
+          if (current.documents.some((item) => item.filePath === selected.canonicalPath))
+            throw new Error('Save As destination is already open');
+          const origin = current.documents.find((item) => item.filePath === filePath);
+          if (!origin) return { status: 'superseded', revision: revision() };
+          const replacement = {
+            ...origin,
+            filePath: selected.canonicalPath,
+            title: selected.title,
+          };
+          await projection.verifySavedDocument?.(replacement, reopened, { isCancelled });
+          if (isCancelled()) return { status: 'superseded', revision: revision() };
+          await reconcileRecoveryDraft(
+            registered.runtime,
+            filePath,
+            selected.canonicalPath,
+            exportedRevision,
+            reopened,
+          );
+          projection.reidentifyDocument?.(filePath, selected);
+          invalidateRuntime(filePath);
+          runtimes.delete(filePath);
+          const nextGeneration = (runtimeGenerations.get(selected.canonicalPath) ?? 0) + 1;
+          runtimeGenerations.set(selected.canonicalPath, nextGeneration);
+          runtimes.set(selected.canonicalPath, {
+            generation: nextGeneration,
+            runtime: registered.runtime,
+          });
+          laneFor(filePath).generation += 1;
+          laneFor(selected.canonicalPath).generation += 1;
+          const oldSource = registered.runtime.saveSource;
+          registered.runtime.saveSource = replacementSource;
+          replacementSource = undefined;
+          if (oldSource) void pdfSaveAdapter.releaseSource?.(oldSource).catch(() => undefined);
+          editing.markSaved(exportedRevision);
+          const latest = session.snapshot();
+          return commit(
+            {
+              schemaVersion: 2,
+              activeDocumentPath:
+                latest.activeDocumentPath === filePath
+                  ? selected.canonicalPath
+                  : latest.activeDocumentPath,
+              documents: latest.documents.map((item) =>
+                item.filePath === filePath
+                  ? { ...item, filePath: selected.canonicalPath, title: selected.title }
+                  : item,
+              ),
+            },
+            'immediate',
+          );
+        });
+      } catch (error) {
+        return { status: 'failure', error, revision: revision() };
+      } finally {
+        if (replacementSource)
+          await pdfSaveAdapter.releaseSource?.(replacementSource).catch(() => undefined);
+        if (destination)
+          await pdfSaveAdapter.releaseDestination(destination).catch(() => undefined);
+      }
+    })();
+    pendingSaves.set(filePath, save);
+    try {
+      return await save;
+    } finally {
+      pendingSaves.delete(filePath);
+    }
+  };
+
+  const decideUnsavedDocument = async (
+    runtime: DocumentRuntime,
+    options?: ReaderActionOptions,
+  ): Promise<boolean> => {
+    let error: unknown;
+    while (true) {
+      const filePath = runtimePath(runtime);
+      if (!filePath || options?.isCancelled?.()) return false;
+      const pending = pendingSaves.get(filePath);
+      if (pending) {
+        const result = await pending;
+        if (result.status === 'failure') error = result.error;
+        continue;
+      }
+      if (pendingReloads.has(filePath)) await quiesce();
+      if (runtimePath(runtime) !== filePath) continue;
+      if (mayDestroy(filePath)) return true;
+      if (pendingSaves.size > 0) {
+        await Promise.allSettled([...pendingSaves.values()]);
+        continue;
+      }
+      const document = session.snapshot().documents.find((item) => item.filePath === filePath);
+      if (!document || !chooseUnsavedDocument) return false;
+      const editRevision = runtime.editing?.state().revision;
+      const choice = await chooseUnsavedDocument({ ...document, error });
+      if (options?.isCancelled?.() || runtimePath(runtime) !== filePath) return false;
+      if (choice === 'cancel') return false;
+      if (runtime.editing?.state().revision !== editRevision) continue;
+      if (choice === 'discard') {
+        try {
+          await removeRecoveryDraft(filePath);
+          if (editRevision !== undefined) discards.set(runtime, editRevision);
+          return true;
+        } catch (removeError) {
+          error = removeError;
+          continue;
+        }
+      }
+      const result = await saveDocument(
+        {
+          type: choice === 'save-as' ? 'saveDocumentAs' : 'saveDocument',
+          filePath,
+        },
+        options,
+      );
+      if (result.status === 'failure') error = result.error;
+      else if (result.status !== 'performed' && result.status !== 'committed') return false;
+      else error = undefined;
+    }
+  };
+
+  let shutdownRequested = false;
+  let shutdownPreparation: Promise<boolean> | null = null;
+  const cancelShutdown = (): void => {
+    shutdownRequested = false;
+    shutdownPreparation = null;
+    discards.clear();
+  };
+  const isShutdownPrepared = (): boolean =>
+    shutdownRequested &&
+    pendingSaves.size === 0 &&
+    pendingReloads.size === 0 &&
+    pendingCloses.size === 0 &&
+    [...runtimes.keys()].every(mayDestroy);
+
+  const reader: ReaderActions = {
     async dispatch(action, options) {
+      if (shutdownRequested && action.type !== 'settleReadingPosition')
+        return { status: 'no-op', revision: revision() };
+      if (action.type === 'discardAndReloadDocument') {
+        const filePath = action.filePath ?? session.snapshot().activeDocumentPath;
+        if (!filePath) return { status: 'no-op', revision: revision() };
+        const registered = runtimes.get(filePath);
+        const editRevision = registered?.runtime.editing?.state().revision;
+        const expectedGeneration = generation(filePath);
+        const isCancelled = () =>
+          cancelled(filePath, expectedGeneration, options) ||
+          runtimes.get(filePath) !== registered ||
+          registered?.runtime.editing?.state().revision !== editRevision;
+        if (pendingReloads.has(filePath) || pendingSaves.has(filePath))
+          return {
+            status: 'failure',
+            error: new Error('A save or reload is already in progress'),
+            revision: revision(),
+          };
+        pendingReloads.add(filePath);
+        return enqueueGlobal(async () => {
+          // Earlier routed actions have joined this lane; later ones await this global turn.
+          await laneFor(filePath).tail;
+          const document = session.snapshot().documents.find((item) => item.filePath === filePath);
+          if (!document || !registered || isCancelled())
+            return { status: 'superseded', revision: revision() };
+          if (pendingSaves.has(filePath) || !projection.prepareReloadDocument)
+            return {
+              status: 'failure',
+              error: new Error('Finish saving before reloading this Document'),
+              revision: revision(),
+            };
+          let prepared:
+            | Awaited<ReturnType<NonNullable<ReaderProjection['prepareReloadDocument']>>>
+            | undefined;
+          try {
+            await removeRecoveryDraft(filePath);
+            if (isCancelled()) return { status: 'superseded', revision: revision() };
+            prepared = await projection.prepareReloadDocument(document, { isCancelled });
+            if (isCancelled()) return { status: 'superseded', revision: revision() };
+            prepared.commit();
+            invalidateRuntime(filePath);
+            const nextGeneration = (runtimeGenerations.get(filePath) ?? 0) + 1;
+            runtimeGenerations.set(filePath, nextGeneration);
+            runtimes.set(filePath, { generation: nextGeneration, runtime: prepared.runtime });
+            laneFor(filePath).generation += 1;
+            prepared = undefined;
+            await registered.runtime.destroy().catch((error) => onObserverError?.(error));
+            return { status: 'performed', revision: revision() };
+          } catch (error) {
+            return { status: 'failure', error, revision: revision() };
+          } finally {
+            await prepared?.dispose();
+          }
+        }).finally(() => {
+          pendingReloads.delete(filePath);
+        });
+      }
+      if (action.type === 'saveDocumentAs' || action.type === 'saveDocument') {
+        // A close owns the decision UI; only join an already-running explicit save.
+        if (pendingCloses.size > 0) {
+          const filePath = action.filePath ?? session.snapshot().activeDocumentPath;
+          return (
+            (filePath && pendingSaves.get(filePath)) || { status: 'no-op', revision: revision() }
+          );
+        }
+        return saveDocument(action, options);
+      }
       if (action.type === 'reorderDocuments') {
         return enqueueGlobal(async () => {
           const current = session.snapshot();
@@ -869,57 +1457,44 @@ export function createReaderActions({
       }
 
       if (action.type === 'closeDocument' || action.type === 'removeDocument') {
-        const lane = laneFor(action.filePath);
-        lane.pendingRemovals += 1;
-        lane.generation += 1;
-        const invalidatedRuntime = invalidateRuntime(action.filePath);
-        for (const pending of lane.pendingAbsolute.values()) {
-          pending.superseded = true;
-          pending.resolve({ status: 'no-op', revision: revision() });
+        const pending = pendingCloses.get(action.filePath);
+        if (pending) return pending;
+        const runtime = runtimes.get(action.filePath)?.runtime;
+        const needsDecision =
+          runtime &&
+          (runtime.editing?.state().dirty ||
+            pendingSaves.has(action.filePath) ||
+            pendingReloads.has(action.filePath));
+        if (!needsDecision) {
+          const result = removeDocument(action).finally(() => {
+            pendingCloses.delete(action.filePath);
+          });
+          pendingCloses.set(action.filePath, result);
+          return result;
         }
-        lane.pendingAbsolute.clear();
-
-        return enqueueGlobal(
-          async () => {
-            try {
-              const current = session.snapshot();
-              const transition = closeDocumentTransition(current, action.filePath);
-              if (!transition) {
-                restoreRuntimeAfterFailedRemoval(action.filePath, invalidatedRuntime);
-                return { status: 'no-op', revision: current.revision };
-              }
-              if (action.type === 'closeDocument' && !projection.closeDocument) {
-                restoreRuntimeAfterFailedRemoval(action.filePath, invalidatedRuntime);
-                return {
-                  status: 'failure',
-                  error: new Error('Reader projection cannot close a Document'),
-                  revision: current.revision,
-                };
-              }
-              try {
-                if (current.activeDocumentPath === action.filePath) {
-                  await projection.exitPresentation?.({ restoreVisualState: false });
-                }
-                await projection.closeDocument?.(action.filePath, transition.activeDocumentPath);
-              } catch (error) {
-                restoreRuntimeAfterFailedRemoval(action.filePath, invalidatedRuntime);
-                return { status: 'failure', error, revision: revision() };
-              }
-              const latest = session.snapshot();
-              const latestTransition = closeDocumentTransition(latest, action.filePath);
-              if (!latestTransition) return { status: 'no-op', revision: latest.revision };
-              const outcome = await commit({ schemaVersion: 2, ...latestTransition }, 'immediate');
-              await removeRuntime(action.filePath);
-              if (action.type === 'closeDocument') {
-                recentlyClosedDocumentPaths.push(action.filePath);
-              }
-              return outcome;
-            } finally {
-              lane.pendingRemovals -= 1;
-            }
-          },
-          action.type === 'removeDocument' ? action.filePath : undefined,
-        );
+        if (!chooseUnsavedDocument)
+          return {
+            status: 'failure',
+            error: new Error('Unsaved Document close decisions are unavailable'),
+            revision: revision(),
+          };
+        const result = enqueueDecision(async (): Promise<ReaderActionOutcome> => {
+          try {
+            if (!(await decideUnsavedDocument(runtime, options)))
+              return { status: 'no-op', revision: revision() };
+            const filePath = runtimePath(runtime);
+            if (!filePath) return { status: 'superseded', revision: revision() };
+            return await removeDocument({ ...action, filePath });
+          } catch (error) {
+            return { status: 'failure', error, revision: revision() };
+          } finally {
+            discards.delete(runtime);
+          }
+        }).finally(() => {
+          pendingCloses.delete(action.filePath);
+        });
+        pendingCloses.set(action.filePath, result);
+        return result;
       }
 
       if (action.type === 'registerDocument') {
@@ -1041,7 +1616,7 @@ export function createReaderActions({
         return routeRelativeDocumentAction(
           action.filePath,
           async (filePath, expectedGeneration) => {
-            const resolution = await runDocumentContentOperation(
+            const resolution = await runDocumentRuntimeOperation(
               filePath,
               expectedGeneration,
               options,
@@ -1063,7 +1638,10 @@ export function createReaderActions({
               };
             }
 
-            const readingPosition = { page: resolved.pageNumber, location: 0 };
+            const readingPosition = {
+              page: resolved.pageNumber,
+              location: resolved.location ?? 0,
+            };
             try {
               await projection.goToReadingPosition(filePath, readingPosition, {
                 isCancelled: () => cancelled(filePath, expectedGeneration, options),
@@ -1106,11 +1684,14 @@ export function createReaderActions({
                 revision: current.revision,
               };
             }
-            const data = await runDocumentContentOperation(
+            const data = await runDocumentRuntimeOperation(
               filePath,
               expectedGeneration,
               options,
-              (runtime) => runtime.content.getData(),
+              (runtime) =>
+                runtime.preparePrintDocument
+                  ? prepareDocumentBytes(runtime, runtime.preparePrintDocument)
+                  : runtime.content.getData(),
             );
             if (data.status !== 'ready') return data;
             await printAdapter.print({
@@ -1355,6 +1936,34 @@ export function createReaderActions({
         },
       );
     },
+    prepareShutdown() {
+      if (shutdownPreparation) return shutdownPreparation;
+      shutdownRequested = true;
+      shutdownPreparation = enqueueDecision(async () => {
+        try {
+          await quiesce();
+          // Runtime identity survives Save As; no Document is removed during preparation.
+          for (const { runtime } of [...runtimes.values()]) {
+            if (!(await decideUnsavedDocument(runtime))) {
+              cancelShutdown();
+              return false;
+            }
+          }
+          if (!isShutdownPrepared()) {
+            cancelShutdown();
+            return false;
+          }
+          return true;
+        } catch (error) {
+          cancelShutdown();
+          throw error;
+        }
+      });
+      return shutdownPreparation;
+    },
+    isShutdownPrepared,
+    cancelShutdown,
+    captureRecoveryDraft,
     canonicalizeDocumentPaths,
     query(filePath) {
       const targetPath = filePath ?? session.snapshot().activeDocumentPath;
@@ -1385,6 +1994,11 @@ export function createReaderActions({
     observe: session.observe,
     quiesce,
     flush: session.flush,
+    hasUnsavedPdfWork: () =>
+      pendingReloads.size > 0 ||
+      pendingSaves.size > 0 ||
+      [...runtimes.values()].some(({ runtime }) => runtime.editing?.state().dirty),
     hasDirtySession: session.isDirty,
   };
+  return reader;
 }

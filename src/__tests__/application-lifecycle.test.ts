@@ -30,6 +30,7 @@ const mocks = vi.hoisted(() => {
   let requestAuxiliaryClose: (() => Promise<void>) | null = null;
   let pendingQuit = false;
   let restorePreviousSession = true;
+  let annotationDisplayName = 'Guest';
   let confirmationChoices: boolean[] = [];
   let finishRestoration: (() => void) | null = null;
   let restorationBarrier = Promise.resolve();
@@ -64,6 +65,10 @@ const mocks = vi.hoisted(() => {
       restorePreviousSession = value;
     },
     restorePreviousSession: () => restorePreviousSession,
+    setAnnotationDisplayName(value: string) {
+      annotationDisplayName = value;
+    },
+    annotationDisplayName: () => annotationDisplayName,
     setUseRealRestoration(value: boolean) {
       useRealRestoration = value;
     },
@@ -103,6 +108,7 @@ const mocks = vi.hoisted(() => {
       auxiliaryCloseHandler = null;
       pendingQuit = false;
       restorePreviousSession = true;
+      annotationDisplayName = 'Guest';
       confirmationChoices = [];
       useRealRestoration = false;
       savedReadingSession = {
@@ -193,9 +199,10 @@ vi.mock('@tauri-apps/api/webviewWindow', () => {
   };
 });
 vi.mock('../app/dialogs', () => ({
-  requestAnnotationNote: vi.fn(async () => null),
+  requestUnsavedDocument: vi.fn(async () => 'cancel'),
   requestConfirmation: vi.fn(async () => mocks.takeConfirmationChoice()),
   requestPdfPassword: vi.fn(async () => null),
+  requestRecoveryDraft: vi.fn(async () => 'discard'),
   showToast: vi.fn(),
 }));
 vi.mock('../app/dom-events', () => ({ setupEventListeners: vi.fn() }));
@@ -212,20 +219,6 @@ vi.mock('../app/presentation-controller', () => ({
   PresentationController: class {
     exit = vi.fn(async () => undefined);
     toggle = vi.fn(async () => undefined);
-  },
-}));
-vi.mock('../app/search-controller', () => ({
-  SearchController: class {
-    open = vi.fn();
-    activeDocumentChanged = vi.fn();
-  },
-}));
-vi.mock('../app/sidebar-controller', () => ({
-  SidebarController: class {
-    annotationsChanged = vi.fn();
-    presentationStateChanged = vi.fn();
-    activeDocumentChanged = vi.fn();
-    setThumbnailsEnabled = vi.fn();
   },
 }));
 vi.mock('../app/startup-restoration', async (importOriginal) => {
@@ -263,17 +256,6 @@ vi.mock('../app/ui', () => ({
   updateUI: vi.fn(),
 }));
 vi.mock('../lib/debug-log', () => ({ debugLog: vi.fn() }));
-vi.mock('../reader/annotations', () => ({
-  loadAnnotations: vi.fn(async () => ({
-    snapshot: vi.fn(() => []),
-    replace: vi.fn(),
-    clear: vi.fn(),
-    isDirty: vi.fn(() => false),
-    flush: vi.fn(async () => {
-      mocks.events.push('flush:annotations');
-    }),
-  })),
-}));
 vi.mock('../reader/reading-session-store', () => ({
   EMPTY_READING_SESSION: { schemaVersion: 2, activeDocumentPath: null, documents: [] },
   loadReadingSession: vi.fn(async () => mocks.savedReadingSession()),
@@ -301,11 +283,11 @@ vi.mock('../scripts/settings', () => ({
       return {
         general: {
           maximizeOnOpen: false,
-          displayThumbs: false,
           defaultDarkMode: 'default',
           rememberLastFilter: false,
           restorePreviousSession: mocks.restorePreviousSession(),
           defaultViewMode: 'continuous',
+          annotationDisplayName: mocks.annotationDisplayName(),
         },
         keybinds: {},
       };
@@ -332,6 +314,7 @@ function createModules(
         readingPosition: { page: number; location: number };
       };
     };
+    annotationDisplayNameChanged?: (displayName: string) => void;
   } = {},
 ): ApplicationModules {
   let remainingSessionFlushFailures = options.sessionFlushFailures ?? 0;
@@ -367,15 +350,27 @@ function createModules(
         throw new Error('session store unavailable');
       }
     }),
+    captureRecoveryDraft: vi.fn(async () => ({ status: 'no-op' as const, revision: 0 })),
+    hasUnsavedPdfWork: vi.fn(() => false),
+    prepareShutdown: vi.fn(async () => true),
+    isShutdownPrepared: vi.fn(() => true),
+    cancelShutdown: vi.fn(),
     hasDirtySession: vi.fn(() => false),
   } as ReaderActions;
   const intake = {
     begin: vi.fn(),
     open: vi.fn(),
     restore: vi.fn(),
+    interrupt: vi.fn(() => {
+      mocks.events.push('intake:interrupt');
+      mocks.finishRestoration();
+    }),
     interruptRestoration: vi.fn(() => {
       mocks.events.push('intake:interrupt-restoration');
       mocks.finishRestoration();
+    }),
+    resumeAccepting: vi.fn(() => {
+      mocks.events.push('intake:resume');
     }),
     stopAccepting: vi.fn(() => {
       mocks.events.push('intake:stop');
@@ -386,8 +381,8 @@ function createModules(
     }),
   } as unknown as DocumentIntake;
   return {
-    createAnnotationStorage: vi.fn(() => ({}) as never),
     browserPrintAdapter: { print: vi.fn(async () => undefined) },
+    createDocumentSurface: vi.fn(() => options.realRestoration?.createSurface ?? vi.fn()),
     externalLinkAdapter: { open: vi.fn(async () => undefined) },
     createDocumentIntakeRuntime: vi.fn(({ runtime, canonicalizeDocumentPaths }) =>
       options.realRestoration
@@ -428,7 +423,8 @@ function createModules(
             filePath: '/docs/report.pdf',
             readingPosition: { page: 4, location: 0.5 },
           })),
-          replaceAnnotations: vi.fn(),
+          openActiveSearch: vi.fn(),
+          setAnnotationDisplayName: options.annotationDisplayNameChanged ?? vi.fn(),
         };
       },
     ),
@@ -494,6 +490,74 @@ describe('application lifecycle composition', () => {
     document.body.innerHTML = '<span id="version-info"></span>';
   });
 
+  it('propagates persisted annotation attribution through the application workspace', async () => {
+    const setAnnotationDisplayName = vi.fn();
+    const modules = createModules({ annotationDisplayNameChanged: setAnnotationDisplayName });
+    const createDocumentSurface = vi.fn((_options: { getAnnotationDisplayName?: () => string }) =>
+      vi.fn(),
+    );
+    modules.createDocumentSurface = createDocumentSurface as never;
+    const { initializeApplication } = await import('../application');
+    const initialization = initializeApplication(modules);
+    await vi.waitFor(() => expect(mocks.events).toContain('restoration:foreground'));
+    mocks.finishRestoration();
+    await initialization;
+    const getAnnotationDisplayName = createDocumentSurface.mock.calls[0]?.[0]
+      .getAnnotationDisplayName as () => string;
+
+    expect(getAnnotationDisplayName()).toBe('Guest');
+
+    mocks.setAnnotationDisplayName('Ada Lovelace');
+    await mocks.listeners.get('settings-changed')?.();
+
+    expect(getAnnotationDisplayName()).toBe('Ada Lovelace');
+    expect(setAnnotationDisplayName).toHaveBeenCalledWith('Ada Lovelace');
+  });
+
+  it('reveals a persistent startup error when initialization fails before the window is shown', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const modules = createModules();
+    modules.createRecentDocumentStorage = vi.fn(() => {
+      throw new Error('startup storage failed');
+    });
+    const { initializeApplication } = await import('../application');
+
+    try {
+      await initializeApplication(modules);
+
+      expect(mocks.events).toContain('window:show');
+      expect(mocks.events).toContain('window:focus');
+      expect(document.getElementById('version-info')).toMatchObject({
+        textContent: 'Startup failed: startup storage failed',
+      });
+      expect(document.getElementById('version-info')?.getAttribute('role')).toBe('alert');
+      expect(consoleError).toHaveBeenCalledWith(
+        'Initialization error:',
+        expect.objectContaining({ message: 'startup storage failed' }),
+      );
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
+  it('shows the main window and resumes normal startup when initialization-time Quit is cancelled', async () => {
+    const { initializeApplication } = await import('../application');
+    const modules = createModules();
+    const createActions = modules.createReaderActions;
+    modules.createReaderActions = (options) => {
+      const actions = createActions(options);
+      actions.prepareShutdown = async () => false;
+      return actions;
+    };
+    const initialization = initializeApplication(modules);
+    await vi.waitFor(() => expect(mocks.events).toContain('restoration:foreground'));
+    const quitting = mocks.listeners.get('application-quit-requested')?.();
+    await Promise.all([initialization, quitting]);
+    expect(mocks.events).toContain('window:show');
+    expect(mocks.events).not.toContain('quit');
+    expect(mocks.events).toContain('intake:resume');
+  });
+
   it('retains Quit during restoration and flushes every authority before exit', async () => {
     const { initializeApplication } = await import('../application');
     const initialization = initializeApplication(createModules());
@@ -508,24 +572,26 @@ describe('application lifecycle composition', () => {
     expect(mocks.events.indexOf('invoke:complete_frontend_lifecycle_registration')).toBeLessThan(
       mocks.events.indexOf('restoration:start'),
     );
+    expect(mocks.events.indexOf('window:show')).toBeLessThan(
+      mocks.events.indexOf('restoration:start'),
+    );
 
     const quitting = mocks.listeners.get('application-quit-requested')?.();
     await Promise.resolve();
     expect(mocks.events).toContain('intake:stop');
-    expect(mocks.events).toContain('intake:interrupt-restoration');
+    expect(mocks.events).toContain('intake:interrupt');
     expect(mocks.events).not.toContain('flush:intake-quiesce');
     expect(mocks.events).not.toContain('invoke:complete_application_quit');
 
     await Promise.all([initialization, quitting]);
 
     const ordered = [
-      'intake:interrupt-restoration',
+      'intake:interrupt',
       'restoration:done',
       'flush:intake-quiesce',
       'flush:actions-quiesce',
       'flush:settle',
       'flush:session',
-      'flush:annotations',
       'flush:recent',
       'invoke:complete_application_quit',
     ];
@@ -543,7 +609,7 @@ describe('application lifecycle composition', () => {
     expect(mocks.events).not.toContain('window:show');
     await initialization;
 
-    expect(mocks.events).toContain('intake:interrupt-restoration');
+    expect(mocks.events).toContain('intake:interrupt');
     expect(mocks.events).toContain('flush:intake-quiesce');
     expect(mocks.events).toContain('invoke:complete_application_quit');
     expect(mocks.events).not.toContain('window:destroy');
@@ -675,7 +741,7 @@ describe('application lifecycle composition', () => {
     const closing = mocks.getCloseHandler()?.({ preventDefault: vi.fn() });
     await Promise.all([initialization, closing]);
 
-    expect(mocks.events).toContain('intake:interrupt-restoration');
+    expect(mocks.events).toContain('intake:interrupt');
     expect(mocks.events.filter((event) => event === 'flush:session')).toHaveLength(2);
     expect(mocks.events).toContain('confirmation:true');
     expect(mocks.events).toContain('window:destroy');
@@ -689,7 +755,7 @@ describe('application lifecycle composition', () => {
     const closing = mocks.getCloseHandler()?.({ preventDefault: vi.fn() });
     await Promise.all([initialization, closing]);
 
-    expect(mocks.events).toContain('intake:interrupt-restoration');
+    expect(mocks.events).toContain('intake:interrupt');
     expect(mocks.events.filter((event) => event === 'flush:session')).toHaveLength(1);
     expect(mocks.events).toContain('confirmation:false');
     expect(mocks.events).toContain('window:destroy');
@@ -705,7 +771,6 @@ describe('application lifecycle composition', () => {
     expect(mocks.events).toContain('flush:actions-quiesce');
     expect(mocks.events).not.toContain('flush:settle');
     expect(mocks.events).not.toContain('flush:session');
-    expect(mocks.events).toContain('flush:annotations');
     expect(mocks.events).toContain('flush:recent');
     expect(mocks.events).toContain('window:destroy');
   });

@@ -13,7 +13,7 @@ export interface DocumentContentMetadata {
 }
 
 export type ResolvedDocumentLinkTarget =
-  | { readonly kind: 'page'; readonly pageNumber: number }
+  | { readonly kind: 'page'; readonly pageNumber: number; readonly location?: number }
   | { readonly kind: 'external'; readonly url: string };
 
 export interface DocumentContentQueryOptions {

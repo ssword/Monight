@@ -135,25 +135,3 @@ export interface PdfOutlineItem {
   italic: boolean;
   items: PdfOutlineItem[];
 }
-
-export type PdfAnnotationKind = 'highlight' | 'note';
-export type PdfAnnotationColor = 'yellow' | 'green' | 'blue' | 'pink';
-
-export interface PdfAnnotationRect {
-  x1: number;
-  y1: number;
-  x2: number;
-  y2: number;
-}
-
-export interface PdfAnnotation {
-  id: string;
-  kind: PdfAnnotationKind;
-  pageNumber: number;
-  rects: PdfAnnotationRect[];
-  text: string;
-  note: string;
-  color: PdfAnnotationColor;
-  createdAt: number;
-  updatedAt: number;
-}

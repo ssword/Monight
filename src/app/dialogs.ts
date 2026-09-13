@@ -1,3 +1,6 @@
+import type { UnsavedDocumentChoice, UnsavedDocumentRequest } from '../reader/reader-actions';
+import type { RecoveryDraftChoice, RecoveryDraftRequest } from '../reader/recovery-drafts';
+
 export type PasswordRequestReason = 'required' | 'incorrect';
 
 export interface ConfirmationRequest {
@@ -113,29 +116,6 @@ export function requestPdfPassword(
   });
 }
 
-export function requestAnnotationNote(initialValue = ''): Promise<string | null> {
-  const dialog = requireDialog('annotation-dialog');
-  const form = dialog.querySelector<HTMLFormElement>('form');
-  const input = dialog.querySelector<HTMLTextAreaElement>('textarea[name="note"]');
-  const cancelButton = dialog.querySelector<HTMLButtonElement>('[data-dialog-cancel]');
-
-  if (!form || !input || !cancelButton) {
-    throw new Error('Annotation dialog is incomplete');
-  }
-
-  input.value = initialValue;
-
-  return requestDialogValue({
-    dialog,
-    form,
-    cancelButton,
-    cancelValue: null,
-    submitValue: () => input.value.trim(),
-    focusTarget: input,
-    afterFocus: () => input.select(),
-  });
-}
-
 export function requestConfirmation({
   title,
   message,
@@ -184,4 +164,121 @@ export function showToast(message: string, tone: 'info' | 'error' = 'info'): voi
     toast.classList.add('toast-leaving');
     window.setTimeout(() => toast.remove(), 180);
   }, 3200);
+}
+
+let pdfDecisionTail = Promise.resolve();
+
+function requestPdfDecision<T extends string>(
+  title: string,
+  message: string,
+  choices: ReadonlyArray<readonly [T, string]>,
+  cancelValue: T,
+  isCurrent: () => boolean = () => true,
+  signal?: AbortSignal,
+): Promise<T> {
+  const result = pdfDecisionTail.then(() => {
+    if (!isCurrent()) return cancelValue;
+    const dialog = document.createElement('dialog');
+    dialog.className = 'app-dialog pdf-decision-dialog';
+    const heading = document.createElement('h2');
+    heading.id = 'pdf-decision-title';
+    heading.textContent = title;
+    dialog.setAttribute('aria-labelledby', heading.id);
+    const description = document.createElement('p');
+    description.textContent = message;
+    const actions = document.createElement('div');
+    actions.className = 'dialog-actions';
+    dialog.append(heading, description, actions);
+    return new Promise<T>((resolve) => {
+      const finish = (choice: T) => {
+        signal?.removeEventListener('abort', handleAbort);
+        dialog.close();
+        dialog.remove();
+        resolve(choice);
+      };
+      const handleAbort = () => finish(cancelValue);
+      for (const [choice, label] of choices) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className =
+          choice === 'save' || choice === 'recover' ? 'dialog-primary' : 'dialog-secondary';
+        button.textContent = label;
+        button.addEventListener('click', () => finish(choice));
+        actions.append(button);
+      }
+      dialog.addEventListener('cancel', (event) => {
+        event.preventDefault();
+        finish(cancelValue);
+      });
+      if (signal?.aborted) {
+        finish(cancelValue);
+        return;
+      }
+      signal?.addEventListener('abort', handleAbort, { once: true });
+      document.body.append(dialog);
+      dialog.showModal();
+      actions.querySelector<HTMLButtonElement>('button:last-child')?.focus();
+    });
+  });
+  pdfDecisionTail = result.then(
+    () => undefined,
+    () => undefined,
+  );
+  return result;
+}
+
+/** All destructive recovery choices require an explicit button click. */
+export function requestPdfSaveFailure(
+  title: string,
+  message: string,
+  isCurrent?: () => boolean,
+): Promise<'save-as' | 'reload' | 'cancel'> {
+  return requestPdfDecision<'save-as' | 'reload' | 'cancel'>(
+    `Could not save ${title}`,
+    `${message} Your unsaved edits are retained.`,
+    [
+      ['save-as', 'Save As…'],
+      ...(/conflict/i.test(message) ? [['reload', 'Discard edits and reload'] as const] : []),
+      ['cancel', 'Keep editing'],
+    ],
+    'cancel',
+    isCurrent,
+  );
+}
+
+export function requestUnsavedDocument({
+  title,
+  error,
+}: UnsavedDocumentRequest): Promise<UnsavedDocumentChoice> {
+  return requestPdfDecision<UnsavedDocumentChoice>(
+    `Save changes to ${title}?`,
+    error
+      ? `${String(error)} Your unsaved changes are retained.`
+      : 'Your annotation changes will be lost if you discard them.',
+    [
+      ['save', error ? 'Retry Save' : 'Save'],
+      ...(error ? [['save-as', 'Save As…'] as const] : []),
+      ['discard', 'Discard'],
+      ['cancel', 'Cancel'],
+    ],
+    'cancel',
+  );
+}
+
+export function requestRecoveryDraft({
+  title,
+  signal,
+}: RecoveryDraftRequest): Promise<RecoveryDraftChoice> {
+  return requestPdfDecision<RecoveryDraftChoice>(
+    `Recover changes to ${title}?`,
+    'Monight found annotation work from an interrupted app run. Recovering it will not save the PDF.',
+    [
+      ['recover', 'Recover'],
+      ['discard', 'Discard'],
+      ['cancel', 'Not Now'],
+    ],
+    'cancel',
+    () => !signal?.aborted,
+    signal,
+  );
 }

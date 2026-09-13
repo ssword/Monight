@@ -1,5 +1,10 @@
 import { Store } from '@tauri-apps/plugin-store';
-import type { PdfAnnotation, ViewMode } from '../lib/document-features';
+import type { ViewMode } from '../lib/document-features';
+import {
+  type AnnotationDisplayName,
+  DEFAULT_ANNOTATION_DISPLAY_NAME,
+  normalizeAnnotationDisplayName,
+} from '../reader/native-pdf-editing';
 import type {
   PersistedReadingSession,
   RestorableReadingPosition,
@@ -7,6 +12,8 @@ import type {
 } from '../reader/reader-actions';
 import type { RecentDocument } from '../reader/recent-documents';
 import type { FilterSettings } from './filters';
+
+export { normalizeAnnotationDisplayName } from '../reader/native-pdf-editing';
 
 export interface SavedTabSession {
   filePath: string;
@@ -43,11 +50,11 @@ export interface KeybindConfig {
 export interface MoonightSettings {
   general: {
     maximizeOnOpen: boolean;
-    displayThumbs: boolean;
     defaultDarkMode: string; // preset name
     rememberLastFilter: boolean;
     restorePreviousSession: boolean;
     defaultViewMode: ViewMode;
+    annotationDisplayName: AnnotationDisplayName;
   };
   keybinds: Record<string, KeybindConfig>;
   lastFilter?: FilterSettings;
@@ -66,7 +73,7 @@ interface LegacyMoonightSettings extends Partial<MoonightSettings> {
   version?: string;
   lastSession?: ReadingSession;
   recentFiles?: RecentDocument[];
-  annotations?: Record<string, PdfAnnotation[]>;
+  annotations?: unknown;
 }
 
 /**
@@ -75,11 +82,11 @@ interface LegacyMoonightSettings extends Partial<MoonightSettings> {
 export const DEFAULT_SETTINGS: MoonightSettings = {
   general: {
     maximizeOnOpen: true,
-    displayThumbs: true,
     defaultDarkMode: 'default',
     rememberLastFilter: true,
     restorePreviousSession: true,
     defaultViewMode: 'continuous',
+    annotationDisplayName: DEFAULT_ANNOTATION_DISPLAY_NAME,
   },
   keybinds: {
     OpenFile: {
@@ -317,10 +324,6 @@ export class SettingsManager<Owner extends SettingsOwner = 'main'> {
         (await store.get<PersistedReadingSession>('readingSession')) ??
         migrateLegacyReadingSession(legacy?.lastSession),
       recentFiles: (await store.get<RecentDocument[]>('recentFiles')) ?? legacy?.recentFiles ?? [],
-      annotations:
-        (await store.get<Record<string, PdfAnnotation[]>>('annotations')) ??
-        legacy?.annotations ??
-        {},
       lastFilter:
         (await store.get<FilterSettings | null>('lastFilter')) ?? legacy?.lastFilter ?? null,
     };
@@ -329,10 +332,9 @@ export class SettingsManager<Owner extends SettingsOwner = 'main'> {
     await store.set('keybinds', values.keybinds);
     await store.set('readingSession', values.readingSession);
     await store.set('recentFiles', values.recentFiles);
-    await store.set('annotations', values.annotations);
     await store.set('lastFilter', values.lastFilter);
     await store.set('storageSchemaVersion', SETTINGS_SCHEMA_VERSION);
-    await store.delete('settings');
+    if (legacy?.annotations === undefined) await store.delete('settings');
     await store.save();
   }
 
@@ -345,8 +347,14 @@ export class SettingsManager<Owner extends SettingsOwner = 'main'> {
         store.get<MoonightSettings['keybinds']>('keybinds'),
         store.get<FilterSettings | null>('lastFilter'),
       ]);
+      const mergedGeneral = { ...DEFAULT_SETTINGS.general, ...general };
       this.settings = {
-        general: { ...DEFAULT_SETTINGS.general, ...general },
+        general: {
+          ...mergedGeneral,
+          annotationDisplayName: normalizeAnnotationDisplayName(
+            mergedGeneral.annotationDisplayName,
+          ),
+        },
         keybinds: { ...DEFAULT_SETTINGS.keybinds, ...keybinds },
         ...(lastFilter ? { lastFilter } : {}),
       };
@@ -398,19 +406,6 @@ export class SettingsManager<Owner extends SettingsOwner = 'main'> {
   }
 
   async removeLegacyReadingSession(): Promise<void> {}
-
-  async readLegacyAnnotations(): Promise<unknown> {
-    const store = await this.initStore();
-    await this.ensureMigrated(store);
-    return await store.get('annotations');
-  }
-
-  async removeLegacyAnnotations(): Promise<void> {
-    this.assertMainOwnership('annotations');
-    const store = await this.initStore();
-    await store.delete('annotations');
-    await store.save();
-  }
 
   async readLegacyRecentDocuments(): Promise<unknown> {
     const store = await this.initStore();

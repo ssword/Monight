@@ -13,11 +13,14 @@ export type FinalSaveFailureChoice = 'retry' | 'discard';
 export type ApplicationShutdownRequest = 'close-main-window' | 'quit-application';
 
 interface ApplicationShutdownCoordinatorOptions {
+  prepareShutdown?: () => Promise<boolean>;
+  canShutdown?: () => boolean;
   flush: () => Promise<void>;
   closeMainWindow: () => Promise<void>;
   quitApplication: () => Promise<void>;
   chooseAfterFailure?: (error: unknown) => Promise<FinalSaveFailureChoice>;
   onShutdownStarted?: () => void;
+  onShutdownCancelled?: () => void;
 }
 
 export interface ApplicationShutdownCoordinator {
@@ -57,10 +60,13 @@ async function completeFinalPersistence(
 
 export function createApplicationShutdownCoordinator({
   flush,
+  canShutdown,
+  prepareShutdown,
   closeMainWindow,
   quitApplication,
   chooseAfterFailure = async () => 'discard',
   onShutdownStarted,
+  onShutdownCancelled,
 }: ApplicationShutdownCoordinatorOptions): ApplicationShutdownCoordinator {
   let requestedEffect: ApplicationShutdownRequest | null = null;
   let teardownEffect: ApplicationShutdownRequest | null = null;
@@ -72,6 +78,13 @@ export function createApplicationShutdownCoordinator({
   });
   const quitWasRequested = (): boolean => requestedEffect === 'quit-application';
 
+  const cancelShutdown = (): void => {
+    requestedEffect = null;
+    teardownEffect = null;
+    operation = null;
+    onShutdownCancelled?.();
+  };
+
   const request = (next: ApplicationShutdownRequest): Promise<void> => {
     const firstRequest = requestedEffect === null;
     if (teardownEffect === null && requestedEffect !== 'quit-application') requestedEffect = next;
@@ -79,7 +92,15 @@ export function createApplicationShutdownCoordinator({
 
     operation ??= (async () => {
       await readyPromise;
+      if (prepareShutdown && !(await prepareShutdown())) {
+        cancelShutdown();
+        return;
+      }
       await completeFinalPersistence(flush, chooseAfterFailure);
+      if (canShutdown?.() === false) {
+        cancelShutdown();
+        return;
+      }
       teardownEffect = quitWasRequested() ? 'quit-application' : 'close-main-window';
 
       if (teardownEffect === 'quit-application') {
@@ -88,7 +109,10 @@ export function createApplicationShutdownCoordinator({
       }
 
       await closeMainWindow();
-    })();
+    })().catch((error) => {
+      cancelShutdown();
+      throw error;
+    });
     return operation;
   };
 

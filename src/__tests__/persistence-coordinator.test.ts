@@ -16,11 +16,6 @@ describe('application persistence coordinator', () => {
         events.push('session');
       }),
     };
-    const annotations = {
-      flush: vi.fn(async () => {
-        events.push('annotations');
-      }),
-    };
     const recentDocuments = {
       flush: vi.fn(async () => {
         events.push('recent');
@@ -28,7 +23,6 @@ describe('application persistence coordinator', () => {
     };
     const coordinator = createPersistenceCoordinator({
       readerActions: () => readerActions as never,
-      annotations: () => annotations as never,
       recentDocuments: () => recentDocuments as never,
       activeReadingPosition: () => ({
         filePath: '/docs/report.pdf',
@@ -44,7 +38,7 @@ describe('application persistence coordinator', () => {
       filePath: '/docs/report.pdf',
       readingPosition: { page: 4, location: 0.25 },
     });
-    expect(events).toEqual(['quiesce', 'settle', 'session', 'annotations', 'recent']);
+    expect(events).toEqual(['quiesce', 'settle', 'session', 'recent']);
   });
 
   it('settles accepted work but skips Reading Session persistence when disabled', async () => {
@@ -63,12 +57,6 @@ describe('application persistence coordinator', () => {
     };
     const coordinator = createPersistenceCoordinator({
       readerActions: () => readerActions as never,
-      annotations: () =>
-        ({
-          flush: vi.fn(async () => {
-            events.push('annotations');
-          }),
-        }) as never,
       recentDocuments: () =>
         ({
           flush: vi.fn(async () => {
@@ -84,13 +72,12 @@ describe('application persistence coordinator', () => {
 
     await coordinator.flush();
 
-    expect(events).toEqual(['quiesce', 'annotations', 'recent']);
+    expect(events).toEqual(['quiesce', 'recent']);
     expect(readerActions.dispatch).not.toHaveBeenCalled();
     expect(readerActions.flush).not.toHaveBeenCalled();
   });
 
   it('attempts every independent durable authority when Reading Session persistence fails', async () => {
-    const annotations = { flush: vi.fn(async () => undefined) };
     const recentDocuments = { flush: vi.fn(async () => undefined) };
     const coordinator = createPersistenceCoordinator({
       readerActions: () =>
@@ -101,7 +88,6 @@ describe('application persistence coordinator', () => {
             throw new Error('session unavailable');
           }),
         }) as never,
-      annotations: () => annotations as never,
       recentDocuments: () => recentDocuments as never,
       activeReadingPosition: () => null,
       shouldPersistReadingSession: () => true,
@@ -109,7 +95,6 @@ describe('application persistence coordinator', () => {
 
     await expect(coordinator.flush()).rejects.toThrow('durable authorities');
 
-    expect(annotations.flush).toHaveBeenCalledOnce();
     expect(recentDocuments.flush).toHaveBeenCalledOnce();
   });
 });

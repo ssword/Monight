@@ -28,10 +28,19 @@ export function createTauriPdfSource(
     },
     async read(canonicalPath) {
       const response = await invokeCommand('read_pdf_file', { path: canonicalPath });
-      if (!(response instanceof ArrayBuffer)) {
-        throw new Error('Invalid PDF source byte response');
+      if (Object.prototype.toString.call(response) === '[object ArrayBuffer]') {
+        return new Uint8Array(response as ArrayBuffer).slice();
       }
-      return new Uint8Array(response).slice();
+      if (ArrayBuffer.isView(response)) {
+        return new Uint8Array(response.buffer, response.byteOffset, response.byteLength).slice();
+      }
+      if (
+        Array.isArray(response) &&
+        response.every((value) => Number.isInteger(value) && value >= 0 && value <= 255)
+      ) {
+        return Uint8Array.from(response);
+      }
+      throw new Error('Invalid PDF source byte response');
     },
   };
 }

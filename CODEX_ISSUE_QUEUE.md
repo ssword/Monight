@@ -1,5 +1,9 @@
 # Codex Issue Queue
 
+Historical queue snapshot from the earlier Reading Session refactor. The statuses below are
+not a live issue inventory. Consult GitHub Issues for current status and
+`docs/pdf-engine-review-2026-09-09.md` for the EmbedPDF migration review.
+
 - Repository: `ssword/Monight`
 - Label: `ready-for-agent`
 - Started: `2026-09-03`

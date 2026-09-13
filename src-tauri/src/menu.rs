@@ -13,6 +13,14 @@ fn build_file_menu(app: &AppHandle) -> Result<Submenu<Wry>, tauri::Error> {
         true,
         &[
             &MenuItem::with_id(app, "open", "Open...", true, Some("CmdOrCtrl+O"))?,
+            &MenuItem::with_id(app, "save", "Save", true, Some("CmdOrCtrl+S"))?,
+            &MenuItem::with_id(
+                app,
+                "save-as",
+                "Save As...",
+                true,
+                Some("CmdOrCtrl+Shift+S"),
+            )?,
             &MenuItem::with_id(app, "print", "Print", true, Some("CmdOrCtrl+P"))?,
             &PredefinedMenuItem::separator(app)?,
             &PredefinedMenuItem::close_window(app, Some("Close"))?,
@@ -32,6 +40,14 @@ fn build_file_menu_with_settings(
         true,
         &[
             &MenuItem::with_id(app, "open", "Open...", true, Some("CmdOrCtrl+O"))?,
+            &MenuItem::with_id(app, "save", "Save", true, Some("CmdOrCtrl+S"))?,
+            &MenuItem::with_id(
+                app,
+                "save-as",
+                "Save As...",
+                true,
+                Some("CmdOrCtrl+Shift+S"),
+            )?,
             &MenuItem::with_id(app, "print", "Print", true, Some("CmdOrCtrl+P"))?,
             &PredefinedMenuItem::separator(app)?,
             &MenuItem::with_id(
@@ -216,6 +232,8 @@ pub fn handle_menu_event(app: &AppHandle, event_id: &str) {
             // Emit event to frontend to open file dialog
             emit_to_main(app, "menu-open");
         }
+        "save" => emit_to_main(app, "menu-save"),
+        "save-as" => emit_to_main(app, "menu-save-as"),
         "print" => {
             // Emit event to frontend to print
             emit_to_main(app, "menu-print");

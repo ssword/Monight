@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en" data-pdf-surface="embedpdf">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>EmbedPDF Reading Session contract</title>
+    <style>
+      html, body { margin: 0; height: 100%; }
+      #pdf-container { position: relative; width: 100%; height: calc(100% - 40px); }
+    </style>
+  </head>
+  <body data-status="loading">
+    <div id="tab-container"></div>
+    <button id="preset-dark" class="preset-btn">Dark</button>
+    <div id="pdf-container"></div>
+    <script type="module" src="/src/embedpdf-reading-smoke.ts"></script>
+  </body>
+</html>
