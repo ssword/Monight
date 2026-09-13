@@ -3,13 +3,10 @@ import EmbedPDF, {
   type AnnotationCapability,
   type CommandsCapability,
   type DocumentManagerCapability,
-  LockModeType,
-  type PDFViewerConfig,
   PdfAnnotationSubtype,
-  type PdfLinkAnnoObject,
   type PluginRegistry,
   type RotateCapability,
-  Rotation,
+  type Rotation,
   type ScrollCapability,
   ScrollStrategy,
   type SpreadCapability,
@@ -19,7 +16,6 @@ import EmbedPDF, {
   type UICapability,
   type ViewportCapability,
   type ZoomCapability,
-  type ZoomLevel,
   ZoomMode,
 } from '@embedpdf/snippet';
 import type {
@@ -54,126 +50,30 @@ import type {
   DocumentSurfaceCallbacks,
   DocumentSurfaceFactory,
 } from './document-workspace';
-
-const EMBEDPDF_WASM_URL = '/embedpdf/pdfium.wasm';
-const EMBEDPDF_FONT_BASE_URL = '/embedpdf/fonts';
-const ENABLED_ANNOTATION_TOOL_IDS = ['highlight', 'textComment'] as const;
-
-const DISABLED_CATEGORIES = [
-  'annotation',
-  'redaction',
-  'insert',
-  'document-open',
-  'document-close',
-  'document-print',
-  'document-export',
-  'document-protect',
-  'document-capture',
-  // Reading Session supports single, continuous, and odd-page spreads.
-  'spread-even',
-] as const;
-
-const localFontFallback = {
-  baseUrl: EMBEDPDF_FONT_BASE_URL,
-  fonts: {
-    0: 'NotoSans-Regular.ttf',
-    1: 'NotoSans-Regular.ttf',
-    128: 'NotoSansJP-Regular.otf',
-    129: 'NotoSansKR-Regular.otf',
-    134: 'NotoSansHans-Regular.otf',
-    136: 'NotoSansHant-Regular.otf',
-    161: 'NotoSans-Regular.ttf',
-    163: 'NotoSans-Regular.ttf',
-    177: 'NotoSansHebrew-Regular.ttf',
-    178: 'NotoNaskhArabic-Regular.ttf',
-    204: 'NotoSans-Regular.ttf',
-    238: 'NotoSans-Regular.ttf',
-  },
-};
-
-type LocalFontLoader = (fontPath: string) => Uint8Array | null;
-
-const localFontUrls = [...new Set(Object.values(localFontFallback.fonts))].map(
-  (fileName) => `${EMBEDPDF_FONT_BASE_URL}/${fileName}`,
-);
-
-let localFontData: Promise<Map<string, Uint8Array>> | null = null;
-
-async function preloadLocalFonts(): Promise<Map<string, Uint8Array>> {
-  localFontData ??= Promise.all(
-    localFontUrls.map(async (url) => {
-      const response = await fetch(url);
-      if (!response.ok) throw new Error(`EmbedPDF font request failed: ${response.status} ${url}`);
-      return [url, new Uint8Array(await response.arrayBuffer())] as const;
-    }),
-  ).then((entries) => new Map(entries));
-  try {
-    return await localFontData;
-  } catch (error) {
-    localFontData = null;
-    throw error;
-  }
-}
-
-export function createEmbedPdfViewerConfig(
-  fontLoader?: LocalFontLoader,
-  editable = false,
-  annotationDisplayName: AnnotationDisplayName = DEFAULT_ANNOTATION_DISPLAY_NAME,
-): PDFViewerConfig {
-  return {
-    worker: false,
-    wasmUrl: EMBEDPDF_WASM_URL,
-    tabBar: 'never',
-    fontFallback: {
-      ...localFontFallback,
-      ...(fontLoader ? { fontLoader } : {}),
-    },
-    stamp: { manifests: [], defaultLibrary: false },
-    fonts: {
-      ui: { family: 'system-ui, sans-serif', stylesheetUrl: null },
-      signature: null,
-    },
-    disabledCategories: [
-      ...DISABLED_CATEGORIES.filter((category) => !editable || category !== 'annotation'),
-      'form',
-      'signature',
-      'annotation-ink',
-      'annotation-shape',
-      'annotation-text',
-      'annotation-underline',
-      'annotation-strikeout',
-      'annotation-squiggly',
-      'annotation-insert-text',
-      'annotation-replace-text',
-      'annotation-link',
-      'annotation-group',
-      'annotation-widget-edit',
-    ],
-    permissions: {
-      enforceDocumentPermissions: true,
-      overrides: {
-        modifyContents: false,
-        ...(editable ? {} : { modifyAnnotations: false }),
-        fillForms: false,
-        assembleDocument: false,
-      },
-    },
-    render: { withAnnotations: true, withForms: false },
-    annotations: {
-      autoOpenLinks: false,
-      annotationAuthor: annotationDisplayName,
-      autoCommit: false,
-      tools: ENABLED_ANNOTATION_TOOL_IDS.map((id) => ({
-        id,
-        categories: ['monight-native'],
-      })),
-      locked: editable
-        ? { type: LockModeType.Exclude, categories: ['monight-native'] }
-        : { type: LockModeType.All },
-    },
-    form: { withForms: false, withAnnotations: true },
-  };
-}
+import {
+  captureEmbedPdfReadingPosition,
+  degreesFromEmbedPdfRotation,
+  embedPdfDestinationReadingPosition,
+  embedPdfLayoutForViewMode,
+  embedPdfLinkGeometries,
+  embedPdfLinkTarget,
+  embedPdfLinkTargetAtGeometry,
+  embedPdfOutlinePath,
+  embedPdfPageNumberForEventPath,
+  embedPdfReadingFilterStyle,
+  embedPdfRotationFromDegrees,
+  embedPdfZoomLevelFromIntent,
+  isEmbedPdfLinkHitArea,
+  restoreEmbedPdfReadingPositionCoordinates,
+  viewModeForEmbedPdfLayout,
+  zoomIntentFromEmbedPdfLevel,
+} from './embedpdf-navigation-geometry';
+import {
+  createEmbedPdfViewerConfig,
+  embedPdfAnnotationToolIds,
+  preloadEmbedPdfLocalFonts,
+} from './embedpdf-offline-configuration';
+import { removeEmbedPdfCommandShortcuts } from './embedpdf-shortcuts';
 
 interface EmbedPdfOpenRequest {
   readonly bytes: Uint8Array;
@@ -236,204 +136,6 @@ const requireCapability = <T>(registry: PluginRegistry, pluginId: string): T => 
   return capability;
 };
 
-type EmbedPdfShortcutRegistry = Pick<
-  CommandsCapability,
-  'getCommandByShortcut' | 'registerCommand' | 'unregisterCommand'
->;
-
-export function removeEmbedPdfCommandShortcuts(
-  registry: EmbedPdfShortcutRegistry,
-  commandId: string,
-  shortcuts: readonly string[],
-): void {
-  const command = shortcuts
-    .map((shortcut) => registry.getCommandByShortcut(shortcut))
-    .find((candidate) => candidate?.id === commandId);
-  if (!command) return;
-
-  registry.unregisterCommand(commandId);
-  registry.registerCommand({ ...command, shortcuts: undefined });
-}
-
-interface EmbedPdfDestination {
-  readonly pageIndex: number;
-  readonly zoom?: unknown;
-  readonly view?: readonly number[];
-}
-
-interface EmbedPdfLinkTarget {
-  readonly type: 'destination' | 'action';
-  readonly destination?: EmbedPdfDestination;
-  readonly action?: {
-    readonly type: number;
-    readonly uri?: string;
-    readonly destination?: EmbedPdfDestination;
-  };
-}
-
-interface EmbedPdfLinkGeometry {
-  readonly left: number;
-  readonly top: number;
-  readonly width: number;
-  readonly height: number;
-}
-
-export function embedPdfLinkTarget(
-  target: EmbedPdfLinkTarget,
-  resolveDestination: (destination: EmbedPdfDestination) => ReadingPosition,
-): PdfLinkTarget | null {
-  if (target.type === 'action' && target.action?.uri) return { url: target.action.uri };
-  const destination =
-    target.type === 'destination' ? target.destination : target.action?.destination;
-  return destination ? { readingPosition: resolveDestination(destination) } : null;
-}
-
-export function embedPdfDestinationReadingPosition(
-  destination: EmbedPdfDestination,
-  pageCount: number,
-  pageHeight: number,
-): ReadingPosition {
-  const zoom = destination.zoom;
-  const params = zoom && typeof zoom === 'object' && 'params' in zoom ? zoom.params : undefined;
-  const y =
-    params && typeof params === 'object' && 'y' in params && typeof params.y === 'number'
-      ? params.y
-      : undefined;
-  return {
-    page: Math.max(1, Math.min(destination.pageIndex + 1, pageCount)),
-    location:
-      typeof y === 'number' && pageHeight > 0
-        ? Math.max(0, Math.min(1, (pageHeight - y) / pageHeight))
-        : 0,
-  };
-}
-
-const approximatelyEqual = (left: number, right: number, tolerance = 1.5): boolean =>
-  Math.abs(left - right) <= tolerance;
-
-const isEmbedPdfTrackedLink = (
-  annotation: TrackedAnnotation,
-): annotation is TrackedAnnotation<PdfLinkAnnoObject> =>
-  annotation.object.type === PdfAnnotationSubtype.LINK;
-
-export function embedPdfLinkTargetAtGeometry(
-  annotations: readonly TrackedAnnotation[],
-  geometries: readonly EmbedPdfLinkGeometry[],
-  scale: number,
-  pageNumber: number,
-): EmbedPdfLinkTarget | null {
-  const matches = annotations.filter(isEmbedPdfTrackedLink).filter(({ object }) => {
-    if (!object.target) return false;
-    const sizeScale = object.flags?.includes('noZoom') ? 1 : scale;
-    return geometries.some(
-      (geometry) =>
-        approximatelyEqual(geometry.left, object.rect.origin.x * scale) &&
-        approximatelyEqual(geometry.top, object.rect.origin.y * scale) &&
-        approximatelyEqual(geometry.width, object.rect.size.width * sizeScale) &&
-        approximatelyEqual(geometry.height, object.rect.size.height * sizeScale),
-    );
-  });
-  const match = matches.find(({ object }) => object.pageIndex + 1 === pageNumber);
-  return match?.object.target ?? null;
-}
-
-interface EmbedPdfPageLookupLayout {
-  readonly virtualItems: readonly {
-    readonly pageLayouts: readonly { readonly pageNumber: number }[];
-  }[];
-}
-
-export function embedPdfPageNumberForEventPath(
-  path: readonly EventTarget[],
-  layout: EmbedPdfPageLookupLayout,
-  renderedPageIndexes: readonly number[],
-): number | null {
-  const pageWrapper = path.find(
-    (target): target is HTMLElement =>
-      target instanceof HTMLElement &&
-      target.style.position === 'relative' &&
-      target.parentElement?.style.display === 'flex' &&
-      target.parentElement.style.justifyContent === 'center' &&
-      target.parentElement.parentElement?.style.position === 'relative',
-  );
-  const pagesContainer = pageWrapper?.parentElement?.parentElement;
-  if (!pageWrapper || !pagesContainer) return null;
-  const pageWrappers = [...pagesContainer.children].flatMap((item) => [...item.children]);
-  const pageIndex = pageWrappers.indexOf(pageWrapper);
-  if (pageIndex < 0) return null;
-  return (
-    renderedPageIndexes.flatMap((index) => layout.virtualItems[index]?.pageLayouts ?? [])[pageIndex]
-      ?.pageNumber ?? null
-  );
-}
-
-const isEmbedPdfLinkHitArea = (element: Element): boolean =>
-  (element.tagName.toLowerCase() === 'rect' &&
-    element.getAttribute('fill') === 'transparent' &&
-    element.getAttribute('style')?.includes('cursor: pointer') === true &&
-    element.getAttribute('style')?.includes('pointer-events: visible') === true) ||
-  (element.tagName.toLowerCase() === 'div' &&
-    element.getAttribute('style')?.includes('cursor: pointer') === true &&
-    element.getAttribute('style')?.includes('pointer-events: auto') === true);
-
-const embedPdfLinkGeometries = (path: readonly EventTarget[]): EmbedPdfLinkGeometry[] =>
-  path.flatMap((target) => {
-    if (!(target instanceof HTMLElement)) return [];
-    const geometry = {
-      left: Number.parseFloat(target.style.left),
-      top: Number.parseFloat(target.style.top),
-      width: Number.parseFloat(target.style.width),
-      height: Number.parseFloat(target.style.height),
-    };
-    return Object.values(geometry).every(Number.isFinite) ? [geometry] : [];
-  });
-
-// Snippet 2.15 has no bookmark activation hook. Capture its ready-made rows,
-// preserving tree indices (titles need not be unique) and leaving expand buttons
-// alone. Actual-runtime contracts guard this pinned DOM integration.
-const embedPdfOutlinePath = (event: Event): number[] | null => {
-  const path = event.composedPath();
-  const origin = path[0];
-  if (!(origin instanceof Element) || origin.closest('button')) return null;
-  const tree = origin.closest('.outline-tree');
-  let item = origin.closest('.select-none');
-  if (!tree || !item || !tree.contains(item)) return null;
-  const indices: number[] = [];
-  while (item && tree.contains(item)) {
-    const parent: HTMLElement | null = item.parentElement;
-    if (!parent) return null;
-    indices.unshift([...parent.children].indexOf(item));
-    if (parent === tree) return indices;
-    item = parent.closest('.select-none');
-  }
-  return null;
-};
-
-const zoomIntentFromLevel = (level: ZoomLevel): ZoomIntent => {
-  if (typeof level === 'number') return { kind: 'manual', scale: level };
-  return level === ZoomMode.FitWidth ? { kind: 'fit-width' } : { kind: 'fit-page' };
-};
-
-const zoomLevelFromIntent = (intent: ZoomIntent): ZoomLevel => {
-  if (intent.kind === 'manual') return intent.scale;
-  return intent.kind === 'fit-width' ? ZoomMode.FitWidth : ZoomMode.FitPage;
-};
-
-const rotationFromDegrees = (degrees: number): Rotation => {
-  switch (((degrees % 360) + 360) % 360) {
-    case 90:
-      return Rotation.Degree90;
-    case 180:
-      return Rotation.Degree180;
-    case 270:
-      return Rotation.Degree270;
-    default:
-      return Rotation.Degree0;
-  }
-};
-
-const degreesFromRotation = (rotation: Rotation): number => rotation * 90;
-
 const isPasswordError = (error: unknown): boolean =>
   Boolean(
     error &&
@@ -471,77 +173,6 @@ const createSearchMatch = (
   index: result.charIndex,
   excerpt: searchExcerpt(result.context),
 });
-
-interface EmbedPdfScrollMetrics {
-  readonly pageVisibilityMetrics: readonly {
-    readonly pageNumber: number;
-    readonly original: { readonly pageY: number };
-  }[];
-}
-
-interface EmbedPdfScrollLayout {
-  readonly virtualItems: readonly {
-    readonly pageLayouts: readonly {
-      readonly pageNumber: number;
-      readonly rotatedHeight: number;
-    }[];
-  }[];
-}
-
-export function captureEmbedPdfReadingPosition(
-  page: number,
-  metrics: EmbedPdfScrollMetrics,
-  layout: EmbedPdfScrollLayout,
-  pageInset = 0,
-): ReadingPosition {
-  const visibility = metrics.pageVisibilityMetrics.find((item) => item.pageNumber === page);
-  const pageLayout = layout.virtualItems
-    .flatMap((item) => item.pageLayouts)
-    .find((item) => item.pageNumber === page);
-  const location =
-    visibility && pageLayout && pageLayout.rotatedHeight > 0
-      ? Math.min(1, Math.max(0, (visibility.original.pageY - pageInset) / pageLayout.rotatedHeight))
-      : 0;
-  return { page, location };
-}
-
-export function restoreEmbedPdfReadingPositionCoordinates(
-  pageSize: { readonly width: number; readonly height: number },
-  rotation: Rotation,
-  position: ReadingPosition,
-): { x: number; y: number } {
-  const location = Math.min(1, Math.max(0, position.location));
-  switch (rotation) {
-    case Rotation.Degree90:
-      return { x: pageSize.width * location, y: pageSize.height };
-    case Rotation.Degree180:
-      return { x: pageSize.width, y: pageSize.height * (1 - location) };
-    case Rotation.Degree270:
-      return { x: pageSize.width * (1 - location), y: 0 };
-    default:
-      return { x: 0, y: pageSize.height * location };
-  }
-}
-
-export function embedPdfLayoutForViewMode(viewMode: ViewMode): {
-  scrollStrategy: ScrollStrategy;
-  spreadMode: SpreadMode;
-} {
-  return viewMode === 'continuous'
-    ? { scrollStrategy: ScrollStrategy.Vertical, spreadMode: SpreadMode.None }
-    : {
-        scrollStrategy: ScrollStrategy.Horizontal,
-        spreadMode: viewMode === 'spread' ? SpreadMode.Odd : SpreadMode.None,
-      };
-}
-
-const viewModeForEmbedPdfLayout = (
-  scrollStrategy: ScrollStrategy,
-  spreadMode: SpreadMode,
-): ViewMode => {
-  if (spreadMode !== SpreadMode.None) return 'spread';
-  return scrollStrategy === ScrollStrategy.Horizontal ? 'single' : 'continuous';
-};
 
 async function blobToCanvas(blob: Blob, maxWidth?: number): Promise<HTMLCanvasElement> {
   const bitmap = await createImageBitmap(blob);
@@ -617,7 +248,7 @@ async function createProductionViewer({
   readOnlyReason = 'Native editing safety inspection is unavailable',
   annotationDisplayName,
 }: CreateEmbedPdfViewerRequest): Promise<EmbedPdfViewerRuntime> {
-  const fonts = await preloadLocalFonts();
+  const fonts = await preloadEmbedPdfLocalFonts();
   const container = EmbedPDF.init({
     type: 'container',
     target,
@@ -792,15 +423,13 @@ async function createProductionViewer({
       callbacks.stateChanged();
     },
     setAnnotationDisplayName(displayName) {
-      for (const toolId of ENABLED_ANNOTATION_TOOL_IDS) {
+      for (const toolId of embedPdfAnnotationToolIds()) {
         annotations.setToolDefaults(toolId, { author: displayName });
       }
     },
   };
   const currentPageNumber = () => scrollScope.getCurrentPage();
-  const currentReadingPosition = (
-    metrics: EmbedPdfScrollMetrics = scrollScope.getMetrics(),
-  ): ReadingPosition =>
+  const currentReadingPosition = (metrics = scrollScope.getMetrics()): ReadingPosition =>
     captureEmbedPdfReadingPosition(
       currentPageNumber(),
       metrics,
@@ -819,7 +448,7 @@ async function createProductionViewer({
       void callbacks.viewModeRequested?.(nextViewMode);
     }
   };
-  const linkTargetForEvent = (event: Event): EmbedPdfLinkTarget | null => {
+  const linkTargetForEvent = (event: Event): ReturnType<typeof embedPdfLinkTargetAtGeometry> => {
     const path = event.composedPath();
     if (!path.some((target) => target instanceof Element && isEmbedPdfLinkHitArea(target))) {
       return null;
@@ -837,7 +466,9 @@ async function createProductionViewer({
       pageNumber,
     );
   };
-  const requestLinkTarget = async (target: EmbedPdfLinkTarget): Promise<void> => {
+  const requestLinkTarget = async (
+    target: NonNullable<ReturnType<typeof embedPdfLinkTargetAtGeometry>>,
+  ): Promise<void> => {
     if (destroyed) return;
     const monightTarget = embedPdfLinkTarget(target, (destination) => {
       const page = currentDocument().pages[destination.pageIndex];
@@ -880,14 +511,8 @@ async function createProductionViewer({
   };
   const shadowRoot = container.shadowRoot;
   if (!shadowRoot) throw new Error('EmbedPDF viewer shadow root is unavailable');
-  // The pinned ready-made viewer's viewport owns the page layers. Filtering its
-  // contents keeps text/annotations aligned and leaves toolbars and panels alone.
   const readingStyle = document.createElement('style');
-  readingStyle.textContent = `
-    .bg-bg-app[style*="overflow: auto"] > div {
-      filter: var(--monight-reading-filter, none);
-    }
-  `;
+  readingStyle.textContent = embedPdfReadingFilterStyle();
   shadowRoot.append(readingStyle);
   shadowRoot.addEventListener('pointerdown', interceptEmbedPdfLink, { capture: true });
   shadowRoot.addEventListener('click', interceptEmbedPdfLink, { capture: true });
@@ -954,7 +579,7 @@ async function createProductionViewer({
       callbacks.stateChanged();
       // Relative zoom events carry the old numeric level plus the resulting
       // actual scale. Fit modes keep their symbolic intent across recalculation.
-      const intent = zoomIntentFromLevel(
+      const intent = zoomIntentFromEmbedPdfLevel(
         typeof event.level === 'number' ? event.newZoom : event.level,
       );
       const changed = JSON.stringify(intent) !== JSON.stringify(selectedZoomIntent);
@@ -969,7 +594,7 @@ async function createProductionViewer({
     }),
     rotate.onRotateChange((event) => {
       if (event.documentId !== documentId) return;
-      const nextRotation = degreesFromRotation(event.rotation);
+      const nextRotation = degreesFromEmbedPdfRotation(event.rotation);
       const delta = (nextRotation - selectedRotation + 360) % 360;
       selectedRotation = nextRotation;
       callbacks.stateChanged();
@@ -1119,8 +744,9 @@ async function createProductionViewer({
     pageCount: () => documentObject?.pageCount ?? 0,
     currentPage: currentPageNumber,
     currentZoom: () => zoom.forDocument(documentId).getState().currentZoomLevel,
-    zoomIntent: () => zoomIntentFromLevel(zoom.forDocument(documentId).getState().zoomLevel),
-    rotation: () => degreesFromRotation(rotate.forDocument(documentId).getRotation()),
+    zoomIntent: () =>
+      zoomIntentFromEmbedPdfLevel(zoom.forDocument(documentId).getState().zoomLevel),
+    rotation: () => degreesFromEmbedPdfRotation(rotate.forDocument(documentId).getRotation()),
     viewMode: () => selectedViewMode,
     readingPosition: currentReadingPosition,
     goToPage: (pageNumber) =>
@@ -1131,11 +757,13 @@ async function createProductionViewer({
       // focal point). Committing that intent must not execute the zoom a second time.
       if (
         JSON.stringify(intent) ===
-        JSON.stringify(zoomIntentFromLevel(zoom.forDocument(documentId).getState().zoomLevel))
+        JSON.stringify(
+          zoomIntentFromEmbedPdfLevel(zoom.forDocument(documentId).getState().zoomLevel),
+        )
       )
         return Promise.resolve();
       return withProjection('zoom', () =>
-        zoom.forDocument(documentId).requestZoom(zoomLevelFromIntent(intent)),
+        zoom.forDocument(documentId).requestZoom(embedPdfZoomLevelFromIntent(intent)),
       );
     },
     zoomIn: () => withProjection('zoom', () => zoom.forDocument(documentId).zoomIn()),
@@ -1143,7 +771,7 @@ async function createProductionViewer({
     setRotation: (rotation) =>
       withProjection('rotation', () => {
         selectedRotation = ((rotation % 360) + 360) % 360;
-        rotate.forDocument(documentId).setRotation(rotationFromDegrees(rotation));
+        rotate.forDocument(documentId).setRotation(embedPdfRotationFromDegrees(rotation));
       }),
     setViewMode: (viewMode) =>
       withProjection('viewMode', () => {

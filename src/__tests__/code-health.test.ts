@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 const readProjectFile = (path: string): string =>
@@ -91,6 +91,18 @@ describe('shipped code-health invariants', () => {
     expect(application).not.toMatch(/loadAnnotations|AnnotationAuthority|createAnnotationStorage/);
     for (const path of removedModules) {
       expect(existsSync(new URL(`../../${path}`, import.meta.url))).toBe(false);
+    }
+  });
+
+  it('keeps Tauri and EmbedPDF dependencies out of the reader domain', () => {
+    const readerDirectory = new URL('../reader/', import.meta.url);
+    const readerModules = readdirSync(readerDirectory, { encoding: 'utf8', recursive: true })
+      .filter((path) => path.endsWith('.ts'))
+      .map((path) => [path, readFileSync(new URL(path, readerDirectory), 'utf8')] as const);
+
+    for (const [path, source] of readerModules) {
+      expect(source, path).not.toMatch(/(?:from\s+|import\s*(?:\(\s*)?)['"]@tauri-apps\//);
+      expect(source, path).not.toMatch(/(?:from\s+|import\s*(?:\(\s*)?)['"]@embedpdf\//);
     }
   });
 });

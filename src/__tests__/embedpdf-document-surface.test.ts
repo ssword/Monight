@@ -3,18 +3,20 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createDocumentWorkspace, type DocumentSurfaceCallbacks } from '../app/document-workspace';
 import {
-  captureEmbedPdfReadingPosition,
   createEmbedPdfDocumentSurfaceFactory,
-  createEmbedPdfViewerConfig,
   type EmbedPdfViewerRuntime,
+} from '../app/embedpdf-document-surface';
+import {
+  captureEmbedPdfReadingPosition,
   embedPdfDestinationReadingPosition,
   embedPdfLayoutForViewMode,
   embedPdfLinkTarget,
   embedPdfLinkTargetAtGeometry,
   embedPdfPageNumberForEventPath,
-  removeEmbedPdfCommandShortcuts,
   restoreEmbedPdfReadingPositionCoordinates,
-} from '../app/embedpdf-document-surface';
+} from '../app/embedpdf-navigation-geometry';
+import { createEmbedPdfViewerConfig } from '../app/embedpdf-offline-configuration';
+import { removeEmbedPdfCommandShortcuts } from '../app/embedpdf-shortcuts';
 import { createDocumentIntake } from '../reader/document-intake';
 import { normalizeAnnotationDisplayName } from '../reader/native-pdf-editing';
 import { createReaderActions, type ReaderActions } from '../reader/reader-actions';
