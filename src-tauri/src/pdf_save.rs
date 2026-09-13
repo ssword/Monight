@@ -393,17 +393,16 @@ fn load_editable(bytes: &[u8]) -> Result<lopdf::Document, String> {
     let document = lopdf::Document::load_mem(bytes)
         .map_err(|e| format!("PDF safety inspection failed: {e}"))?;
 
-    let mut contains_signature = false;
-    visit_document_dictionaries(&document, |dictionary| {
-        contains_signature |= (dictionary.has(b"ByteRange") && dictionary.has(b"Contents"))
-            || (dictionary.get(b"FT").and_then(lopdf::Object::as_name).ok() == Some(b"Sig")
-                && dictionary
-                    .get(b"V")
-                    .is_ok_and(|value| !matches!(value, lopdf::Object::Null)));
-        Ok(())
-    })?;
-    if contains_signature {
-        return Err("Digitally signed PDFs are read-only to preserve their signatures".into());
+    if let Some(encryption) = &document.encryption_state {
+        if !encryption
+            .permissions()
+            .contains(lopdf::Permissions::ANNOTABLE)
+        {
+            return Err(
+                "PDF permissions prohibit annotation editing; this Document is read-only".into(),
+            );
+        }
+        return Err("Encrypted PDFs are read-only because Save, Save As, and Recovery Drafts cannot preserve their protection".into());
     }
     if document.trailer.has(b"Encrypt") {
         let annotation_editing_allowed = document
@@ -418,6 +417,33 @@ fn load_editable(bytes: &[u8]) -> Result<lopdf::Document, String> {
             );
         }
         return Err("Encrypted PDFs are read-only because Save, Save As, and Recovery Drafts cannot preserve their protection".into());
+    }
+    if document.reference_table.entries.iter().any(|(id, entry)| {
+        use lopdf::xref::XrefEntry;
+        let object_id = match entry {
+            XrefEntry::Normal { generation, .. } => Some((*id, *generation)),
+            XrefEntry::Compressed { .. } => Some((*id, 0)),
+            XrefEntry::Free | XrefEntry::UnusableFree => None,
+        };
+        object_id.is_some_and(|object_id| !document.objects.contains_key(&object_id))
+    }) {
+        return Err(
+            "PDF object nesting exceeds the safety inspection limit; this Document is read-only"
+                .into(),
+        );
+    }
+
+    let mut contains_signature = false;
+    visit_document_dictionaries(&document, |dictionary| {
+        contains_signature |= (dictionary.has(b"ByteRange") && dictionary.has(b"Contents"))
+            || (dictionary.get(b"FT").and_then(lopdf::Object::as_name).ok() == Some(b"Sig")
+                && dictionary
+                    .get(b"V")
+                    .is_ok_and(|value| !matches!(value, lopdf::Object::Null)));
+        Ok(())
+    })?;
+    if contains_signature {
+        return Err("Digitally signed PDFs are read-only to preserve their signatures".into());
     }
     visit_document_dictionaries(&document, |dictionary| {
         if dictionary.has(b"AcroForm") || dictionary.has(b"XFA") {
