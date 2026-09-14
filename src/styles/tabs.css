@@ -186,7 +186,7 @@
 
 .tab-dirty-indicator {
   flex-shrink: 0;
-  color: var(--accent-color, #5b9aff);
+  color: var(--accent-color, #ffd48c);
   margin-left: 6px;
 }
 
@@ -216,7 +216,7 @@
   right: 0;
   z-index: 10;
   padding: 6px 12px;
-  background: #fff2ce;
-  color: #463713;
+  background: var(--accent-color-soft, #fff2ce);
+  color: var(--text-on-accent, #0c182c);
   font-size: 12px;
 }
