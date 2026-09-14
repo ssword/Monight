@@ -18,7 +18,7 @@ describe('release-candidate packaging workflow', () => {
     expect(workflow).toMatch(/permissions:\s*\n\s+contents: read/);
     expect(workflow).toContain('uses: ./.github/actions/setup-node');
     expect(workflow).toContain('uses: ./.github/actions/setup-rust');
-    expect(workflow).toContain('macos-latest');
+    expect(workflow).toContain('macos-15');
     expect(workflow).toContain('windows-latest');
     expect(workflow).toContain('ubuntu-latest');
     expect(workflow).toContain('--bundles app,dmg --target universal-apple-darwin');
@@ -39,5 +39,11 @@ describe('release-candidate packaging workflow', () => {
     expect(workflow).toContain('uses: ./.github/actions/setup-rust');
     expect(existsSync(projectPath('.github/actions/setup-node/action.yml'))).toBe(true);
     expect(existsSync(projectPath('.github/actions/setup-rust/action.yml'))).toBe(true);
+  });
+
+  it('runs Windows command shims through a shell while writing bundle metadata', () => {
+    const stagingScript = readProjectFile('scripts/prepare-release-candidate.mjs');
+
+    expect(stagingScript).toContain("shell: process.platform === 'win32'");
   });
 });

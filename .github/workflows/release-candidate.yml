@@ -19,7 +19,7 @@ jobs:
       matrix:
         include:
           - platform: macos
-            os: macos-latest
+            os: macos-15
             rust_targets: aarch64-apple-darwin,x86_64-apple-darwin
             build_args: --bundles app,dmg --target universal-apple-darwin
           - platform: windows
