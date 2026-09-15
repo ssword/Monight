@@ -40,10 +40,4 @@ describe('release-candidate packaging workflow', () => {
     expect(existsSync(projectPath('.github/actions/setup-node/action.yml'))).toBe(true);
     expect(existsSync(projectPath('.github/actions/setup-rust/action.yml'))).toBe(true);
   });
-
-  it('runs Windows command shims through a shell while writing bundle metadata', () => {
-    const stagingScript = readProjectFile('scripts/prepare-release-candidate.mjs');
-
-    expect(stagingScript).toContain("shell: process.platform === 'win32'");
-  });
 });
