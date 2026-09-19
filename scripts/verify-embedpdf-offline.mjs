@@ -1,8 +1,9 @@
 import { spawn } from 'node:child_process';
-import { chromium } from 'playwright';
+import { chromium, webkit } from 'playwright';
 import { verifyAnnotations } from './verify-embedpdf-annotations.mjs';
 import { verifyNavigation } from './verify-embedpdf-navigation.mjs';
 import { verifyReading } from './verify-embedpdf-reading.mjs';
+import { verifyScrolling } from './verify-embedpdf-scrolling.mjs';
 
 const port = 4178;
 const origin = `http://127.0.0.1:${port}`;
@@ -236,6 +237,17 @@ try {
     throw new Error('The protected-document password entered browser diagnostics');
   }
   await verifyNavigation(browser, origin);
+  await verifyScrolling(browser, origin);
+  // macOS uses WebKit; Chromium alone does not reproduce its anchoring jump.
+  const webkitBrowser = await webkit.launch({
+    headless: true,
+    executablePath: process.env.WEBKIT_EXECUTABLE_PATH || undefined,
+  });
+  try {
+    await verifyScrolling(webkitBrowser, origin);
+  } finally {
+    await webkitBrowser.close();
+  }
 } finally {
   await browser?.close();
   server.kill('SIGTERM');

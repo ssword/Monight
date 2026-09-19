@@ -153,6 +153,11 @@ export function embedPdfLinkGeometries(path: readonly EventTarget[]): EmbedPdfLi
 // EmbedPDF 2.15.0 DOM integration. Revalidate against the actual runtime on upgrade.
 export function embedPdfReadingFilterStyle(): string {
   return `
+    .bg-bg-app[style*="overflow: auto"] {
+      /* The virtual scroller already preserves page offsets with spacers.
+         WebKit scroll anchoring otherwise adds a page when one is evicted. */
+      overflow-anchor: none;
+    }
     .bg-bg-app[style*="overflow: auto"] > div {
       filter: var(--monight-reading-filter, none);
     }
