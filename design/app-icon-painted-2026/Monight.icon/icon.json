@@ -1,0 +1,27 @@
+{
+  "fill": {
+    "automatic-gradient": "extended-srgb:0.02000,0.05500,0.10000,1.00000"
+  },
+  "groups": [
+    {
+      "layers": [
+        {
+          "image-name": "painted-m-moon.png",
+          "name": "Painted M and Moon"
+        }
+      ],
+      "name": "Moonlit Paint",
+      "shadow": {
+        "kind": "neutral",
+        "opacity": 0.25
+      },
+      "translucency": {
+        "enabled": true,
+        "value": 0.08
+      }
+    }
+  ],
+  "supported-platforms": {
+    "squares": "shared"
+  }
+}
