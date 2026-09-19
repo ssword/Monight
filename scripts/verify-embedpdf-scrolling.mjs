@@ -52,6 +52,24 @@ export async function verifyScrolling(browser, origin) {
         const state = registry.getPlugin('scroll').provides().getMetrics();
         return { y: state.scrollOffset.y, firstRendered: state.renderedPageIndexes[0] };
       });
+    const settledMetrics = async (previousY) => {
+      const deadline = Date.now() + 5_000;
+      let last = await metrics();
+      let changedAt = Date.now();
+      while (Date.now() < deadline) {
+        await page.waitForTimeout(25);
+        const current = await metrics();
+        if (current.y !== last.y) changedAt = Date.now();
+        // Linux WebKit animates wheel input beyond 80ms. Wait for movement
+        // followed by a quiet interval, then assert the full displacement.
+        // Waiting only for the expected offset could miss a later anchoring jump.
+        if (current.y !== previousY && Date.now() - changedAt >= 150) return current;
+        last = current;
+      }
+      assert.fail(
+        `${browser.browserType().name()} wheel scrolling did not settle from ${previousY}px (last ${last.y}px)`,
+      );
+    };
     await page.mouse.move(700, 450);
     let previous = await metrics();
     const initial = previous;
@@ -59,8 +77,7 @@ export async function verifyScrolling(browser, origin) {
     for (const delta of [100, -100]) {
       for (let step = 0; step < 65; step += 1) {
         await page.mouse.wheel(0, delta);
-        await page.waitForTimeout(80);
-        const current = await metrics();
+        const current = await settledMetrics(previous.y);
         assert.ok(
           Math.abs(current.y - previous.y - delta) <= 2,
           `${browser.browserType().name()} wheel ${delta}px moved ${current.y - previous.y}px at ${previous.y}px (step ${step})`,

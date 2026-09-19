@@ -50,6 +50,12 @@ with `npx playwright install --with-deps chromium webkit`. For a separately inst
 WebKit runtime, `WEBKIT_EXECUTABLE_PATH` can override its executable path. Local
 WebKit verification used the installed Playwright WebKit 2311 runtime on macOS.
 
+The wheel check waits for movement followed by 150ms with an unchanged offset,
+with a five-second timeout per step, before asserting the original two-pixel
+tolerance. A fixed 80ms delay sampled only 89px of a 100px wheel event on Linux
+WebKit in CI. Waiting for a quiet interval also avoids accepting an intermediate
+expected offset before a later scroll-anchoring adjustment.
+
 ### Reading Session contracts
 
 `npm run test:embedpdf-offline` now runs the Reading Session contract as well as the
