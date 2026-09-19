@@ -40,7 +40,7 @@ afterEach(() => {
 });
 
 describe('release candidate Windows staging', () => {
-  it('executes command shims through the shell and records their output', async () => {
+  it('executes only npm command shims through the shell and records their output', async () => {
     Object.defineProperty(process, 'platform', { value: 'win32' });
     process.argv[2] = 'windows';
     process.env.GITHUB_SHA = 'fd76e86f64300de7a9ff06a0c9dfbc5d8cd12514';
@@ -60,11 +60,11 @@ describe('release candidate Windows staging', () => {
     );
     expect(mocks.execFileSync).toHaveBeenNthCalledWith(3, 'rustc', ['--version'], {
       encoding: 'utf8',
-      shell: true,
+      shell: false,
     });
     expect(mocks.execFileSync).toHaveBeenNthCalledWith(4, 'cargo', ['--version'], {
       encoding: 'utf8',
-      shell: true,
+      shell: false,
     });
 
     const manifest = mocks.writeFileSync.mock.calls[0]?.[1];
