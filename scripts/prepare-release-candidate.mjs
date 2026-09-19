@@ -63,8 +63,12 @@ function findBundle(extension) {
 }
 
 function commandVersion(command, args = ['--version']) {
-  const executable = process.platform === 'win32' && command === 'npm' ? 'npm.cmd' : command;
-  return execFileSync(executable, args, { encoding: 'utf8' }).trim();
+  const isWindowsNpmShim = process.platform === 'win32' && command === 'npm';
+  const executable = isWindowsNpmShim ? 'npm.cmd' : command;
+  return execFileSync(executable, args, {
+    encoding: 'utf8',
+    shell: isWindowsNpmShim,
+  }).trim();
 }
 
 function sha256(path) {

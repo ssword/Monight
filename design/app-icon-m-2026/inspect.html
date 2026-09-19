@@ -1,0 +1,37 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="color-scheme" content="light"><style>
+  :root{color-scheme:light only}
+  html,body{margin:0;padding:0}
+  body{width:1260px;background:#EDF1F6;font-family:-apple-system,"SF Pro Text","Helvetica Neue",Arial,sans-serif;color:#1B2733}
+  .wrap{padding:48px 56px 56px}
+  h1{font-size:22px;font-weight:650;margin:0 0 6px;letter-spacing:-.02em}
+  .sub{font-size:13.5px;color:#5C6B7E;margin:0 0 36px}
+  .lbl{font-size:11px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;color:#7B8A9C;margin:0 0 16px}
+  .row{display:flex;align-items:flex-end;gap:40px;margin-bottom:40px}
+  .cell{text-align:center}
+  .cell img{display:block;margin:0 auto 10px;image-rendering:pixelated;
+            box-shadow:0 0 0 1px #C9D3DF;border-radius:3px}
+  .cap{font-size:11.5px;color:#5C6B7E;font-variant-numeric:tabular-nums}
+  .a img{box-shadow:0 0 0 1px #C9D3DF;border-radius:6px}
+  .divider{height:1px;background:#D6DEE8;margin:36px 0}
+</style></head><body><div class="wrap">
+  <h1>小尺寸检视 · 像素级放大</h1>
+  <p class="sub">最近邻放大，不做插值 —— 这是 16 / 32 px 下图标真实的样子。判断标准只有一条：M 是否还认得出来。</p>
+
+  <p class="lbl">新图标（方案 A）</p>
+  <div class="row">
+    <div class="cell"><img src="monight-icon-m-16.png" width="192" height="192"><div class="cap">16px ×12</div></div>
+    <div class="cell"><img src="monight-icon-m-32.png" width="288" height="288"><div class="cap">32px ×9</div></div>
+    <div class="cell"><img src="monight-icon-m-64.png" width="224" height="224"><div class="cap">64px ×3.5</div></div>
+    <div class="cell a"><img src="monight-icon-m-128.png" width="192" height="192"><div class="cap">128px ×1.5</div></div>
+  </div>
+
+  <div class="divider"></div>
+
+  <p class="lbl">现有图标 vs 新图标 · 32px ×9</p>
+  <div class="row">
+    <div class="cell"><img src="../app-icon-2026/monight-native-default-1024.png" width="288" height="288"><div class="cap">现有 v1</div></div>
+    <div class="cell"><img src="monight-icon-m-32.png" width="288" height="288"><div class="cap">新 · 方案 A</div></div>
+    <div class="cell"><img src="monight-icon-m-C-32.png" width="288" height="288"><div class="cap">新 · 方案 C</div></div>
+  </div>
+</div></body></html>

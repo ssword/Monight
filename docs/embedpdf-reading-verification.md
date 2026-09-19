@@ -35,6 +35,29 @@ slices and are composed by default in issue #66.
 
 ## Runtime evidence
 
+### Continuous mouse-wheel scrolling regression (2026-09-18)
+
+WebKit reproduced a 902px movement from a 100px wheel event when EmbedPDF evicted
+an offscreen page: the extra 802px equals one fixture page plus its gap. Chromium
+did not reproduce the jump. Disabling `overflow-anchor` on the PDF viewport fixes
+the browser's extra adjustment; EmbedPDF's virtual spacers already preserve offsets.
+
+`scripts/verify-embedpdf-scrolling.mjs` opens a 30-page PDF through Document Intake
+and checks each 100px wheel step forward and backward across multiple page evictions.
+It fails on the original code in WebKit and passes with the fix in both engines.
+The offline test command runs this regression in Chromium and WebKit; install both
+with `npx playwright install --with-deps chromium webkit`. For a separately installed
+WebKit runtime, `WEBKIT_EXECUTABLE_PATH` can override its executable path. Local
+WebKit verification used the installed Playwright WebKit 2311 runtime on macOS.
+
+The wheel check waits for movement followed by 150ms with an unchanged offset,
+with a five-second timeout per step, before asserting the original two-pixel
+tolerance. A fixed 80ms delay sampled only 89px of a 100px wheel event on Linux
+WebKit in CI. Waiting for a quiet interval also avoids accepting an intermediate
+expected offset before a later scroll-anchoring adjustment.
+
+### Reading Session contracts
+
 `npm run test:embedpdf-offline` now runs the Reading Session contract as well as the
 existing offline rendering and navigation contracts. The existing Linux CI browser
 step invokes the same command. All HTTP requests outside the local test origin are

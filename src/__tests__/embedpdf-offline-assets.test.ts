@@ -11,6 +11,7 @@ describe('EmbedPDF offline assets', () => {
     const requiredAssets = [
       'public/embedpdf/pdfium.wasm',
       'public/embedpdf/fonts/NotoSans-Regular.ttf',
+      'public/embedpdf/fonts/MonightMultiscriptFallback-Regular.ttf',
       'public/embedpdf/fonts/NotoSansHans-Regular.otf',
       'public/embedpdf/fonts/NotoSansHant-Regular.otf',
       'public/embedpdf/fonts/NotoSansJP-Regular.otf',
@@ -24,5 +25,8 @@ describe('EmbedPDF offline assets', () => {
       expect(existsSync(projectPath(asset)), asset).toBe(true);
       expect(statSync(projectPath(asset)).size, asset).toBeGreaterThan(10_000);
     }
+    expect(existsSync(projectPath('src-tauri/tests/fixtures/tester-kit/fallback-font.pdf'))).toBe(
+      true,
+    );
   });
 });

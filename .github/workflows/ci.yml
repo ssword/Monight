@@ -35,9 +35,9 @@ jobs:
         run: npm run build
       - name: Test frontend
         run: npm test
-      - name: Install Chromium for EmbedPDF runtime contracts
+      - name: Install Chromium and WebKit for EmbedPDF runtime contracts
         if: runner.os == 'Linux'
-        run: npx playwright install --with-deps chromium
+        run: npx playwright install --with-deps chromium webkit
       - name: Verify EmbedPDF offline reading and navigation
         if: runner.os == 'Linux'
         run: npm run test:embedpdf-offline

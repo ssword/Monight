@@ -80,7 +80,7 @@
 }
 
 .preset-btn.active {
-  color: #fff;
+  color: var(--text-on-accent);
   background-color: var(--accent-color);
   border-color: var(--accent-color);
 }

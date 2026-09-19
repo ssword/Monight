@@ -1,0 +1,131 @@
+%PDF-1.4
+% Monight tester fixture; generated file, do not edit.
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 5 0 R /Resources << /Font << /FC 7 0 R /FA 9 0 R /FH 11 0 R >> >> /Annots [13 0 R] >>
+endobj
+4 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 6 0 R /Resources << /Font << /FC 7 0 R /FA 9 0 R /FH 11 0 R >> >> >>
+endobj
+5 0 obj
+<< /Length 225 >>
+stream
+BT /FC 24 Tf 72 700 Td <4F60597D> Tj ET
+/Span << /ActualText <FEFF06440627> >> BDC BT /FA 32 Tf 72 620 Td <FEFB> Tj ET EMC
+/Span << /ActualText <FEFF05E905DC05D505DD> >> BDC BT /FH 32 Tf 72 555 Td <05DD05D505DC05E9> Tj ET EMC
+endstream
+endobj
+6 0 obj
+<< /Length 225 >>
+stream
+BT /FC 24 Tf 72 700 Td <4F60597D> Tj ET
+/Span << /ActualText <FEFF06440627> >> BDC BT /FA 32 Tf 72 620 Td <FEFB> Tj ET EMC
+/Span << /ActualText <FEFF05E905DC05D505DD> >> BDC BT /FH 32 Tf 72 555 Td <05DD05D505DC05E9> Tj ET EMC
+endstream
+endobj
+7 0 obj
+<< /Type /Font /Subtype /Type0 /BaseFont /STSong-Light /Encoding /UniGB-UCS2-H /DescendantFonts [8 0 R] >>
+endobj
+8 0 obj
+<< /Type /Font /Subtype /CIDFontType0 /BaseFont /STSong-Light /CIDSystemInfo << /Registry (Adobe) /Ordering (GB1) /Supplement 4 >> >>
+endobj
+9 0 obj
+<< /Type /Font /Subtype /Type0 /BaseFont /NotoNaskhArabic /Encoding /Identity-H /DescendantFonts [10 0 R] /ToUnicode 15 0 R >>
+endobj
+10 0 obj
+<< /Type /Font /Subtype /CIDFontType2 /BaseFont /NotoNaskhArabic /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> /FontDescriptor 17 0 R >>
+endobj
+11 0 obj
+<< /Type /Font /Subtype /Type0 /BaseFont /NotoSansHebrew /Encoding /Identity-H /DescendantFonts [12 0 R] /ToUnicode 16 0 R >>
+endobj
+12 0 obj
+<< /Type /Font /Subtype /CIDFontType2 /BaseFont /NotoSansHebrew /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> /FontDescriptor 18 0 R >>
+endobj
+13 0 obj
+<< /Type /Annot /Subtype /Link /Rect [400 680 520 730] /Border [0 0 1] /A << /S /GoTo /D [4 0 R /XYZ 0 600 1] >> >>
+endobj
+14 0 obj
+<< /Title (Fallback font Document: CJK, Arabic, Hebrew) /Author (Monight tester kit) >>
+endobj
+15 0 obj
+<< /Length 332 >>
+stream
+/CIDInit /ProcSet findresource begin
+12 dict begin
+begincmap
+/CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def
+/CMapName /MonightArabic def
+/CMapType 2 def
+1 begincodespacerange
+<0000> <FFFF>
+endcodespacerange
+1 beginbfchar
+<FEFB> <FEFB>
+endbfchar
+endcmap
+CMapName currentdict /CMap defineresource pop
+end
+end
+endstream
+endobj
+16 0 obj
+<< /Length 374 >>
+stream
+/CIDInit /ProcSet findresource begin
+12 dict begin
+begincmap
+/CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def
+/CMapName /MonightHebrew def
+/CMapType 2 def
+1 begincodespacerange
+<0000> <FFFF>
+endcodespacerange
+4 beginbfchar
+<05DD> <05DD>
+<05D5> <05D5>
+<05DC> <05DC>
+<05E9> <05E9>
+endbfchar
+endcmap
+CMapName currentdict /CMap defineresource pop
+end
+end
+endstream
+endobj
+17 0 obj
+<< /Type /FontDescriptor /FontName /NotoNaskhArabic /Flags 4 /FontBBox [-1000 -1000 2000 2000] /ItalicAngle 0 /Ascent 1069 /Descent -634 /CapHeight 714 /StemV 80 >>
+endobj
+18 0 obj
+<< /Type /FontDescriptor /FontName /NotoSansHebrew /Flags 4 /FontBBox [-1000 -1000 2000 2000] /ItalicAngle 0 /Ascent 1069 /Descent -293 /CapHeight 714 /StemV 80 >>
+endobj
+xref
+0 19
+0000000000 65535 f 
+0000000064 00000 n 
+0000000113 00000 n 
+0000000176 00000 n 
+0000000340 00000 n 
+0000000487 00000 n 
+0000000763 00000 n 
+0000001039 00000 n 
+0000001161 00000 n 
+0000001310 00000 n 
+0000001452 00000 n 
+0000001633 00000 n 
+0000001775 00000 n 
+0000001955 00000 n 
+0000002087 00000 n 
+0000002191 00000 n 
+0000002575 00000 n 
+0000003001 00000 n 
+0000003182 00000 n 
+trailer
+<< /Size 19 /Root 1 0 R /Info 14 0 R >>
+startxref
+3362
+%%EOF

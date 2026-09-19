@@ -98,21 +98,20 @@ or power loss cannot be guaranteed, so ordinary debounced persistence remains th
 protection.
 
 ## Iconography
-The app uses the “A Page of Moonlight” icon, created in Icon Composer. The editable native
-source is `design/app-icon-2026/Monight.icon`; its exported default appearance is
-`design/app-icon-2026/monight-native-default-1024.png`.
+The app uses a painted M and crescent moon adapted from the Monight brand artwork.
+The source is `design/app-icon-painted-2026/monight-painted-1024.png`.
 
-After editing the native document, export its Default appearance at 1024px to that PNG,
-then regenerate the platform icon set:
+After updating the source PNG, regenerate the platform icon set:
 ```bash
 npm run icons:generate
 ```
 
-PNG and ICO assets use the exported artwork. The macOS ICNS fallback includes a transparent
-inset so it matches other Dock icons. `src-tauri/tauri.macos.conf.json` also includes the
-native `.icon` source: Tauri compiles it for Liquid Glass when Xcode 26+ provides `actool`.
-With Command Line Tools alone, Tauri skips the native asset catalog and uses the new ICNS
-icon. See [the icon design notes](design/app-icon-2026/README.md).
+PNG and ICO assets use the square artwork. macOS bundles the native layered
+`design/app-icon-painted-2026/Monight.icon`, with system-rendered default, dark,
+clear, and tinted appearances. Its ICNS fallback uses the native default rendering
+with a transparent Dock inset. After editing the native document, run
+`npm run icons:macos` on a Mac with Xcode and Icon Composer supporting design generation 27.
+See [the icon design notes](design/app-icon-painted-2026/README.md).
 
 ## Future Work (AI)
 - Smart classification of PDFs

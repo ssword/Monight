@@ -5,7 +5,7 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
-const source = join(root, 'design/app-icon-2026/monight-native-default-1024.png');
+const source = join(root, 'design/app-icon-painted-2026/monight-painted-1024.png');
 const output = join(root, 'src-tauri/icons');
 const cli = join(root, 'node_modules/@tauri-apps/cli/tauri.js');
 const temporary = mkdtempSync(join(tmpdir(), 'monight-icons-'));
@@ -21,9 +21,11 @@ function generate(input, destination, quiet = false) {
 try {
   generate(source, output);
 
-  // Icon Composer exports the system-masked tile edge to edge. Legacy macOS
-  // ICNS files need their own transparent inset to match the size of Dock icons.
-  const artwork = readFileSync(source).toString('base64');
+  // Icon Composer supplies the native mask. Legacy macOS ICNS files also
+  // need a transparent inset to match the size of other Dock icons.
+  const artwork = readFileSync(
+    join(root, 'design/app-icon-painted-2026/previews/Default.png'),
+  ).toString('base64');
   const macSource = join(temporary, 'macos.svg');
   writeFileSync(
     macSource,

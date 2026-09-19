@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <radialGradient id="tile" cx="50%" cy="44%" r="76%">
+      <stop offset="0%" stop-color="#17293F"/>
+      <stop offset="58%" stop-color="#0C182C"/>
+      <stop offset="100%" stop-color="#080F1A"/>
+    </radialGradient>
+    <radialGradient id="moon" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#FFD48C" stop-opacity="0.55"/>
+      <stop offset="55%" stop-color="#FFD48C" stop-opacity="0.16"/>
+      <stop offset="100%" stop-color="#FFD48C" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <!-- squircle tile: rendered full-bleed, the shipped icon's alpha is applied as the mask -->
+  <rect x="0" y="0" width="1024" height="1024" fill="url(#tile)"/>
+
+  <!-- brush-anchored flat M (from the approved flat-simplified material) -->
+  <path d="M 232.00,308.93 L 361.01,308.93 L 512.00,486.68 L 662.99,308.93 L 792.00,308.93 L 792.00,715.07 L 662.99,715.07 L 662.99,518.21 L 512.00,698.83 L 361.01,518.21 L 361.01,715.07 L 232.00,715.07 Z" fill="#8FAECF"/>
+  <circle cx="566.83" cy="477.88" r="173.59" fill="url(#moon)" opacity="0.1"/>
+
+  <!-- crescent: two-arc construction, warm-cream, nested in the M's right counter -->
+  <path d="M 618.41,415.80 A 80.74,80.74 0 1 1 512.82,537.85 A 111.00,111.00 0 0 0 618.41,415.80 Z" fill="#FFD48C"/>
+</svg>

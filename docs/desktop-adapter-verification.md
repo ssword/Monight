@@ -30,6 +30,8 @@ Release candidates come from the manually dispatched `Release Candidate` GitHub 
 It produces unsigned macOS, Windows, and Linux artifacts without creating a tag or GitHub release.
 Every completed evidence cell must cite the workflow run URL, the platform artifact name, and the
 SHA-256 checksum from that artifact's `manifest.txt` file.
+Execute these cells with the concrete steps and fixture mapping in the
+[release-candidate test runbook](release-candidate-test-runbook.md).
 
 ## Automated contract gate
 
@@ -82,5 +84,8 @@ platform's result.
 - All three paths produce the same ordered external-open payload consumed by Document Intake.
 - Printing uses the webview's hidden PDF frame and therefore delegates the final dialog and print
   lifecycle to the platform webview.
-- Window show, focus, and unminimize calls stay in the Tauri adapter. Reading Session, Reader
-  Actions, and Document Intake contain no operating-system branches.
+- Window show, focus, and unminimize calls stay in the Tauri adapter. The main window is shown and
+  focused before Reading Session restoration because EmbedPDF publishes layout frames only from a
+  visible WebView; the splash remains interactive while restoration continues. An early Quit skips
+  the show. Reading Session, Reader Actions, and Document Intake contain no operating-system
+  branches.

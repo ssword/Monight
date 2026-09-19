@@ -1,0 +1,83 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="color-scheme" content="light"><style>
+  :root{color-scheme:light only}
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{width:1500px;background:#EDF1F6;
+       font-family:-apple-system,"SF Pro Text","Helvetica Neue",Arial,sans-serif;color:#1B2733}
+  .wrap{padding:56px 64px 64px}
+  h1{font-size:26px;font-weight:650;margin:0 0 6px;letter-spacing:-.02em}
+  .sub{font-size:14px;color:#5C6B7E;margin:0 0 40px}
+  .lbl{font-size:11px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;color:#7B8A9C;margin:0 0 18px}
+  .row{display:flex;align-items:flex-end;gap:44px;margin-bottom:14px}
+  .cell{text-align:center}
+  .cell img{display:block;margin:0 auto 12px;
+            filter:drop-shadow(0 6px 16px rgba(12,24,44,.20))}
+  .cap{font-size:12px;color:#5C6B7E;font-variant-numeric:tabular-nums}
+  .small .cap{font-size:11px}
+  .zoom img{image-rendering:pixelated;filter:none;
+            box-shadow:0 0 0 1px #C9D3DF;border-radius:3px}
+  .divider{height:1px;background:#D6DEE8;margin:44px 0}
+  .variants{display:flex;gap:56px;align-items:flex-start}
+  .v{text-align:center}
+  .v .pair{display:flex;gap:22px;align-items:flex-end;justify-content:center}
+  .v .name{font-size:15px;font-weight:600;margin:20px 0 4px}
+  .v .desc{font-size:12.5px;color:#5C6B7E;line-height:1.45;max-width:290px;margin:0 auto}
+  .tag{display:inline-block;font-size:10.5px;font-weight:700;letter-spacing:.08em;
+       padding:2px 7px;border-radius:4px;background:#0C182C;color:#FFD48C;
+       vertical-align:2px;margin-left:6px}
+  .old{opacity:.95}
+</style></head><body><div class="wrap">
+  <h1>Monight 应用图标 · 笔触标志重锚版</h1>
+  <p class="sub">造型取自品牌物料「平面简化版」，色值取自 BRAND.md §3，容器沿用现有图标的 squircle 遮罩。</p>
+
+  <p class="lbl">尺寸表现 — 方案 A（墨夜蓝底 · 纸白 M）</p>
+  <div class="row small">
+    <div class="cell"><img src="monight-icon-m-512.png" width="256" height="256"><div class="cap">512 → 256</div></div>
+    <div class="cell"><img src="monight-icon-m-256.png" width="128" height="128"><div class="cap">256 → 128</div></div>
+    <div class="cell"><img src="monight-icon-m-128.png" width="96"  height="96"><div class="cap">128 → 96</div></div>
+    <div class="cell"><img src="monight-icon-m-64.png"  width="64"  height="64"><div class="cap">64</div></div>
+    <div class="cell"><img src="monight-icon-m-32.png"  width="32"  height="32"><div class="cap">32</div></div>
+    <div class="cell zoom" style="margin-left:26px"><img src="monight-icon-m-32.png" width="320" height="320"><div class="cap">32px 放大 10×</div></div>
+  </div>
+
+  <div class="divider"></div>
+
+  <p class="lbl">与现有图标对照 — 各 128</p>
+  <div class="row">
+    <div class="cell old"><img src="../app-icon-2026/monight-native-default-1024.png" width="128" height="128"><div class="cap">现有（v1 纸页 + 月亮 · 无 M）</div></div>
+    <div class="cell" style="margin-left:20px"><img src="monight-icon-m-128.png" width="128" height="128"><div class="cap">新（笔触重锚 M + 新月）</div></div>
+    <div class="cell" style="margin-left:20px"><img src="monight-icon-m-B-128.png" width="128" height="128"><div class="cap">新 · 方案 B</div></div>
+    <div class="cell" style="margin-left:20px"><img src="monight-icon-m-C-128.png" width="128" height="128"><div class="cap">新 · 方案 C</div></div>
+  </div>
+
+  <div class="divider"></div>
+
+  <p class="lbl">配色方案对照 — 256 / 64</p>
+  <div class="variants">
+    <div class="v">
+      <div class="pair">
+        <img src="monight-icon-m-256.png" width="256" height="256" style="filter:drop-shadow(0 8px 20px rgba(12,24,44,.22))">
+        <img src="monight-icon-m-64.png" width="64" height="64" style="filter:drop-shadow(0 4px 10px rgba(12,24,44,.22))">
+      </div>
+      <div class="name">A · 墨夜蓝底 + 纸白 M<span class="tag">推荐</span></div>
+      <p class="desc">对比最高，小尺寸最稳。与暗底 A 版品牌物料同源。</p>
+    </div>
+    <div class="v">
+      <div class="pair">
+        <img src="monight-icon-m-B-256.png" width="256" height="256" style="filter:drop-shadow(0 8px 20px rgba(12,24,44,.14))">
+        <img src="monight-icon-m-B-64.png" width="64" height="64" style="filter:drop-shadow(0 4px 10px rgba(12,24,44,.14))">
+      </div>
+      <div class="name">B · 纸白底 + 墨夜蓝 M</div>
+      <p class="desc">对应「暗底 B / 浅色承印物」。在浅色桌面与浅色浏览器里更融得进去。</p>
+    </div>
+    <div class="v">
+      <div class="pair">
+        <img src="monight-icon-m-C-256.png" width="256" height="256" style="filter:drop-shadow(0 8px 20px rgba(12,24,44,.22))">
+        <img src="monight-icon-m-C-64.png" width="64" height="64" style="filter:drop-shadow(0 4px 10px rgba(12,24,44,.22))">
+      </div>
+      <div class="name">C · 深底 + 低对比剪影 M</div>
+      <p class="desc">蓝灰 #8FAECF 剪影，对应「暗底 C」。夜里更安静，但 32px 下 M 会变软。</p>
+    </div>
+  </div>
+</div></body></html>

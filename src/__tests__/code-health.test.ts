@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 const readProjectFile = (path: string): string =>
@@ -92,5 +92,38 @@ describe('shipped code-health invariants', () => {
     for (const path of removedModules) {
       expect(existsSync(new URL(`../../${path}`, import.meta.url))).toBe(false);
     }
+  });
+
+  it('keeps Tauri and EmbedPDF dependencies out of the reader domain', () => {
+    const readerDirectory = new URL('../reader/', import.meta.url);
+    const readerModules = readdirSync(readerDirectory, { encoding: 'utf8', recursive: true })
+      .filter((path) => path.endsWith('.ts'))
+      .map((path) => [path, readFileSync(new URL(path, readerDirectory), 'utf8')] as const);
+
+    for (const [path, source] of readerModules) {
+      expect(source, path).not.toMatch(/(?:from\s+|import\s*(?:\(\s*)?)['"]@tauri-apps\//);
+      expect(source, path).not.toMatch(/(?:from\s+|import\s*(?:\(\s*)?)['"]@embedpdf\//);
+    }
+  });
+
+  it('keeps the EmbedPDF Document surface as seven single-purpose modules', () => {
+    const appDirectory = new URL('../app/', import.meta.url);
+    const modules = readdirSync(appDirectory, { encoding: 'utf8' })
+      .filter((path) => path.startsWith('embedpdf-') && path.endsWith('.ts'))
+      .sort();
+
+    expect(modules).toEqual([
+      'embedpdf-document-surface.ts',
+      'embedpdf-native-annotation-editing.ts',
+      'embedpdf-navigation-geometry.ts',
+      'embedpdf-offline-configuration.ts',
+      'embedpdf-print-preparation.ts',
+      'embedpdf-shortcuts.ts',
+      'embedpdf-viewer-runtime.ts',
+    ]);
+
+    const composition = readProjectFile('src/app/embedpdf-document-surface.ts');
+    expect(composition).not.toMatch(/from ['"]@embedpdf\//);
+    expect(composition).not.toMatch(/EmbedPDF\.init|createProductionViewer|onAnnotationEvent/);
   });
 });

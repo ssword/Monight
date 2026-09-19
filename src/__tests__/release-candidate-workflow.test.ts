@@ -18,7 +18,7 @@ describe('release-candidate packaging workflow', () => {
     expect(workflow).toMatch(/permissions:\s*\n\s+contents: read/);
     expect(workflow).toContain('uses: ./.github/actions/setup-node');
     expect(workflow).toContain('uses: ./.github/actions/setup-rust');
-    expect(workflow).toContain('macos-latest');
+    expect(workflow).toContain('macos-15');
     expect(workflow).toContain('windows-latest');
     expect(workflow).toContain('ubuntu-latest');
     expect(workflow).toContain('--bundles app,dmg --target universal-apple-darwin');

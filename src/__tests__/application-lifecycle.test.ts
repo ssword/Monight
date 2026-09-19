@@ -365,10 +365,6 @@ function createModules(
       mocks.events.push('intake:interrupt');
       mocks.finishRestoration();
     }),
-    interruptRestoration: vi.fn(() => {
-      mocks.events.push('intake:interrupt-restoration');
-      mocks.finishRestoration();
-    }),
     resumeAccepting: vi.fn(() => {
       mocks.events.push('intake:resume');
     }),
@@ -573,6 +569,9 @@ describe('application lifecycle composition', () => {
       mocks.events.indexOf('restoration:start'),
     );
     expect(mocks.events.indexOf('window:show')).toBeLessThan(
+      mocks.events.indexOf('restoration:start'),
+    );
+    expect(mocks.events.indexOf('window:focus')).toBeLessThan(
       mocks.events.indexOf('restoration:start'),
     );
 
