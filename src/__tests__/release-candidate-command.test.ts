@@ -17,11 +17,11 @@ vi.mock('node:fs', () => ({
   copyFileSync: vi.fn(),
   mkdirSync: vi.fn(),
   readdirSync: vi.fn(() => [
-    { isDirectory: () => false, name: 'Monight_2.0.0_x64-setup.exe' },
-    { isDirectory: () => false, name: 'Monight_2.0.0_x64_en-US.msi' },
+    { isDirectory: () => false, name: 'Monight_0.6.0_x64-setup.exe' },
+    { isDirectory: () => false, name: 'Monight_0.6.0_x64_en-US.msi' },
   ]),
   readFileSync: vi.fn((path: string) =>
-    path.endsWith('package.json') ? '{"version":"2.0.0"}' : 'bundle bytes',
+    path.endsWith('package.json') ? '{"version":"0.6.0"}' : 'bundle bytes',
   ),
   rmSync: vi.fn(),
   statSync: vi.fn(() => ({ size: 12 })),

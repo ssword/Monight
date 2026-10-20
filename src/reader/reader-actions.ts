@@ -202,6 +202,8 @@ export interface UnsavedDocumentRequest {
 
 interface CreateReaderActionsOptions {
   chooseUnsavedDocument?: (request: UnsavedDocumentRequest) => Promise<UnsavedDocumentChoice>;
+  /** Save edited Documents on close and Quit, asking only when that save fails. */
+  saveEditsOnClose?: boolean;
   initialSession: PersistedReadingSession;
   defaultVisualState?: ReadingSessionVisualState;
   projection: ReaderProjection;
@@ -393,6 +395,7 @@ export function createReaderActions({
   pdfSaveAdapter,
   recoveryDraftAdapter,
   chooseUnsavedDocument,
+  saveEditsOnClose = false,
   reopenDocument,
   persist,
   persistenceDebounceMs = 250,
@@ -420,6 +423,25 @@ export function createReaderActions({
   const runtimeGenerations = new Map<string, number>();
   const pendingSaves = new Map<string, Promise<ReaderActionOutcome>>();
   const pendingDraftCaptures = new Map<DocumentRuntime, Promise<ReaderActionOutcome>>();
+  // Viewer state changes (scrolling, zoom) request drafts too; exporting is costly, so
+  // skip a capture whose path, source version, and edit revision are already on disk.
+  const persistedDrafts = new WeakMap<
+    DocumentRuntime,
+    { documentPath: string; sourceVersion: string; editedRevision: number }
+  >();
+  const isDraftPersisted = (
+    runtime: DocumentRuntime,
+    documentPath: string,
+    sourceVersion: string,
+    editedRevision: number,
+  ): boolean => {
+    const draft = persistedDrafts.get(runtime);
+    return (
+      draft?.documentPath === documentPath &&
+      draft.sourceVersion === sourceVersion &&
+      draft.editedRevision === editedRevision
+    );
+  };
   const pendingReloads = new Set<string>();
   const recentlyClosedDocumentPaths: string[] = [];
   let globalTail = Promise.resolve();
@@ -455,7 +477,11 @@ export function createReaderActions({
   const exportPdf = (
     runtime: DocumentRuntime,
     editing: NonNullable<DocumentRuntime['editing']>,
-  ): Promise<Uint8Array> => prepareDocumentBytes(runtime, () => editing.exportPdf());
+  ): Promise<Uint8Array> =>
+    prepareDocumentBytes(runtime, async () => {
+      const bytes = await editing.exportPdf();
+      return pdfSaveAdapter?.prepareBytes ? pdfSaveAdapter.prepareBytes(bytes) : bytes;
+    });
 
   const revision = (): number => session.snapshot().revision;
   const generation = (filePath: string): number => lanes.get(filePath)?.generation ?? 0;
@@ -962,14 +988,17 @@ export function createReaderActions({
       if (!editing) return false;
       const state = editing.state();
       if (!state.dirty || state.readOnlyReason) return false;
+      if (isDraftPersisted(runtime, documentPath, sourceVersion, state.revision)) return false;
       const bytes = await exportPdf(runtime, editing);
       if (editing.state().revision !== state.revision) continue;
+      persistedDrafts.delete(runtime);
       await recoveryDraftAdapter.write({
         documentPath,
         sourceVersion,
         editedRevision: state.revision,
         bytes,
       });
+      persistedDrafts.set(runtime, { documentPath, sourceVersion, editedRevision: state.revision });
       if (editing.state().revision === state.revision) return true;
     }
   };
@@ -1009,6 +1038,7 @@ export function createReaderActions({
     sourceBytes: Uint8Array,
   ): Promise<void> => {
     if (!recoveryDraftAdapter || !runtime.recovery) return;
+    persistedDrafts.delete(runtime);
     const result = await enqueueRecovery(() =>
       recoveryDraftAdapter.reconcile({
         previousDocumentPath,
@@ -1028,6 +1058,7 @@ export function createReaderActions({
     if (!recoveryDraftAdapter || !runtime.recovery) return;
     const repairAfterWrite = recoveryDraftAdapter.repairAfterWrite;
     if (!repairAfterWrite) throw new Error('Recovery Draft repair is unavailable');
+    persistedDrafts.delete(runtime);
     await enqueueRecovery(async () => {
       while (true) {
         const editing = runtime.editing;
@@ -1046,15 +1077,23 @@ export function createReaderActions({
           draftBytes,
         });
         runtime.recovery = { sourceVersion: result.sourceVersion };
+        persistedDrafts.set(runtime, {
+          documentPath,
+          sourceVersion: result.sourceVersion,
+          editedRevision: state.revision,
+        });
         if (editing.state().revision === state.revision) return;
       }
     });
   };
 
-  const removeRecoveryDraft = (documentPath: string): Promise<void> =>
-    recoveryDraftAdapter
+  const removeRecoveryDraft = (documentPath: string): Promise<void> => {
+    const registered = runtimes.get(documentPath);
+    if (registered) persistedDrafts.delete(registered.runtime);
+    return recoveryDraftAdapter
       ? enqueueRecovery(() => recoveryDraftAdapter.remove(documentPath))
       : Promise.resolve();
+  };
 
   const saveDocument = async (
     action: Extract<ReaderAction, { type: 'saveDocumentAs' | 'saveDocument' }>,
@@ -1250,6 +1289,9 @@ export function createReaderActions({
     options?: ReaderActionOptions,
   ): Promise<boolean> => {
     let error: unknown;
+    // Like Preview, closing saves edits into the PDF; the reader is asked only when
+    // that save fails, so an unsavable Document never loses work silently.
+    let autosaveAttempted = !saveEditsOnClose;
     while (true) {
       const filePath = runtimePath(runtime);
       if (!filePath || options?.isCancelled?.()) return false;
@@ -1264,6 +1306,12 @@ export function createReaderActions({
       if (mayDestroy(filePath)) return true;
       if (pendingSaves.size > 0) {
         await Promise.allSettled([...pendingSaves.values()]);
+        continue;
+      }
+      if (!autosaveAttempted) {
+        autosaveAttempted = true;
+        const result = await saveDocument({ type: 'saveDocument', filePath }, options);
+        if (result.status === 'failure') error = result.error;
         continue;
       }
       const document = session.snapshot().documents.find((item) => item.filePath === filePath);

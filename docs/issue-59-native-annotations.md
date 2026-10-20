@@ -43,13 +43,17 @@ resolving references and decoding streams, allowing changes only to supported pa
 annotation lists. Metadata, outline, page contents/resources and authored geometry
 must match. Unverified content transformations block saving before file creation.
 
-**Observed limitation:** EmbedPDF adds `/AP`, `/NM`, and `/PDFIUM_HasGeneratedAP` to
-existing link annotations when loading/exporting. The initial real-runtime fixture
-with links was rejected by the preservation check. Documents containing Link
-annotations therefore remain read-only. This is a recorded compatibility limitation,
-not permission to silently alter unsupported annotations. Other unsupported types
-also block editing/saving. Built-in exports, protection, form editing, redaction,
-stamps, signatures, grouping and unsupported annotation tools are disabled/locked.
+**Observed limitation (resolved 2026-10-20):** EmbedPDF adds `/AP`, `/NM`, and
+`/PDFIUM_HasGeneratedAP` to existing link annotations when loading/exporting, so the
+initial real-runtime fixture with links was rejected and documents containing Link
+annotations were read-only. Link, Underline, StrikeOut, and Squiggly annotations are
+now admitted as preserved annotations: the viewer keeps them locked, and every save
+must carry them through unchanged, tolerating only those three PDFium-added keys when
+the original lacked them, including where a tagged PDF's structure tree reaches them.
+Streams lopdf cannot decode, such as JPEG images, are compared by their encoded bytes.
+Other unsupported types still block editing/saving. Built-in exports, protection, form
+editing, redaction, stamps, signatures, grouping and unsupported annotation tools are
+disabled/locked.
 Reading rotation and filters are not passed to native export.
 
 The native writer accepts only a single-use destination authorization issued by the

@@ -459,6 +459,11 @@ export async function initializeApplication(modules: ApplicationModules): Promis
           status: 'no-op',
           revision: 0,
         },
+      autosaveDocument: async (filePath) =>
+        (await readerActions?.dispatch({ type: 'saveDocument', filePath })) ?? {
+          status: 'no-op',
+          revision: 0,
+        },
       snapshot: () => readerActions?.snapshot() ?? { ...initialReadingSession, revision: 0 },
       isDocumentOpen: (filePath) => readerActions?.isDocumentOpen(filePath) ?? false,
       defaultVisualState,
@@ -490,6 +495,7 @@ export async function initializeApplication(modules: ApplicationModules): Promis
       pdfSaveAdapter: modules.pdfSaveAdapter,
       recoveryDraftAdapter: modules.recoveryDraftAdapter,
       chooseUnsavedDocument: requestUnsavedDocument,
+      saveEditsOnClose: true,
       reopenDocument: async (filePath) => {
         if (!documentIntake) throw new Error('Document Intake is unavailable');
         await openFiles([filePath], {

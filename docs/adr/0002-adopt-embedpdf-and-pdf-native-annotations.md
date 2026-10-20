@@ -10,7 +10,7 @@ Monight will replace its PDF.js-based viewer with EmbedPDF's ready-made viewer t
 
 - Adopt the ready-made interface rather than rebuilding annotation interactions with headless components.
 - Enable EmbedPDF's native annotation and comment tools with undo/redo, subject to interoperability verification. Redaction, form editing, and document restructuring are outside this migration.
-- Persist annotation edits into the original PDF through explicit Save (Cmd/Ctrl+S), with an unsaved indicator and Save/Discard/Cancel when closing an edited Document. Save As remains available. An export-only workflow does not meet the requirement.
+- Persist annotation edits into the original PDF automatically, as Preview does: save shortly after editing pauses and again on close or Quit. Ask Save/Save As/Discard/Cancel only when that automatic save fails, so an unsavable Document never loses edits silently. Explicit Save (Cmd/Ctrl+S) and Save As remain available, with an unsaved indicator between edits and their save. An export-only workflow does not meet the requirement. (Amended 2026-10-20; originally explicit Save only, with a prompt on every close.)
 - Save native annotations without flattening them into page graphics. Persistence does not mean irreversibility: supported annotations must remain selectable, editable, and deletable across Monight, Preview, and Acrobat, including annotations created by the other readers.
 - Treat interoperability with Preview and Acrobat as an acceptance requirement to verify, not a guarantee inferred from the library's feature list.
 - Ship only annotation tools that pass the required round-trip checks. Disable failing tools rather than flattening their output or weakening the compatibility requirement. Existing unsupported annotations must still survive saves unchanged, or saving is blocked.
@@ -38,7 +38,7 @@ Monight will replace its PDF.js-based viewer with EmbedPDF's ready-made viewer t
 
 This decision replaces ADR 0001's choice of PDF.js and its separate durable annotation store as the authority for saved annotations. Reading Session remains authoritative over open Documents, settled Reading Position, and Visual State. EmbedPDF supplies the live viewer and annotation interactions; its transient state must integrate with, rather than replace, Reading Session restoration.
 
-The current Tauri backend has no PDF-writing bridge. Native file persistence needs an explicit adapter with overwrite authorization and conflict checking. Save/Discard/Cancel on close or Quit must be separate from automatic Reading Session persistence; replacing the old annotation-store flush with a PDF write would violate explicit Save semantics.
+The current Tauri backend has no PDF-writing bridge. Native file persistence needs an explicit adapter with overwrite authorization and conflict checking. Automatic PDF saves must stay separate from automatic Reading Session persistence: they run through the same verified Save path as an explicit Save, including preservation checks and external-conflict detection, and never through the Reading Session flush.
 
 ## Verification Work
 

@@ -37,6 +37,8 @@ src-tauri/WixTools/
 
 # Testing
 coverage/
+/artifacts/issue-75/
+/artifacts/issue-80/
 
 # Misc
 *.suo

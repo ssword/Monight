@@ -29,8 +29,8 @@ Protect writes against external changes and failures, retain local Recovery Draf
 13. As a reader, I want successful Save As to switch my current tab to the new Document while retaining my Reading Position and Visual State, so that I can continue without reopening it manually.
 14. As a reader, I want replacement blocked when a Save As destination is already open in another tab, so that two live copies cannot overwrite each other's work.
 15. As a reader, I want cancelling or failing Save As to leave my current Document and unsaved edits intact, so that an unfinished file operation does not lose my work.
-16. As a reader, I want Save/Discard/Cancel when closing an edited Document, so that I control whether to persist, abandon, or continue editing it.
-17. As a reader, I want the same protection on application Quit, so that closing the app does not silently save or discard annotations.
+16. As a reader, I want my edits saved into the PDF automatically shortly after I stop editing and when I close the Document, as Preview does, and to be asked Save As/Discard/Cancel only when that save fails, so that I never lose work to a forgotten Save. (Amended 2026-10-20.)
+17. As a reader, I want the same behavior on application Quit, so that quitting saves my edits and never silently discards annotations that could not be saved. (Amended 2026-10-20.)
 18. As a reader, I want cancelling close or Quit to leave the application usable, so that I can continue editing rather than being left in a partially shut-down state.
 19. As a reader, I want printing to include current annotations, including unsaved ones, so that the printed document reflects my current work.
 20. As a reader, I want printing to leave the original file and unsaved indicator unchanged, so that printing is not an implicit Save.

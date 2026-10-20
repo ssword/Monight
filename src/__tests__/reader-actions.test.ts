@@ -49,6 +49,60 @@ function createDocumentRuntime(): DocumentRuntime {
 }
 
 describe('Reader Actions', () => {
+  it.each([
+    'success',
+    'prepare failure',
+    'write mismatch',
+  ])('prepares native bytes before exact-byte verification: %s', async (scenario) => {
+    let saved = false;
+    const runtime = createDocumentRuntime();
+    const raw = new Uint8Array([1]);
+    const prepared = new Uint8Array([2, 3]);
+    runtime.editing = {
+      state: () => ({ revision: 1, dirty: !saved, readOnlyReason: null }),
+      exportPdf: async () => raw,
+      markSaved: () => {
+        saved = true;
+      },
+    };
+    const writeOriginal = vi.fn(async (_token: string, bytes: Uint8Array) =>
+      scenario === 'write mismatch' ? raw : bytes,
+    );
+    const verifySavedDocument = vi.fn(async () => undefined);
+    const reader = createReaderActions({
+      initialSession: INITIAL_SESSION,
+      projection: {
+        activateDocument: async () => undefined,
+        goToReadingPosition: async () => undefined,
+        verifySavedDocument,
+      },
+      pdfSaveAdapter: {
+        prepareBytes: async () => {
+          if (scenario === 'prepare failure') throw new Error('Popup preparation failed');
+          return prepared;
+        },
+        writeOriginal,
+        chooseDestination: async () => null,
+        writeDestination: vi.fn(),
+        releaseDestination: async () => undefined,
+      },
+      persist: async () => undefined,
+    });
+    await reader.dispatch({
+      type: 'registerDocument',
+      document: INITIAL_SESSION.documents[0],
+      runtime,
+    });
+    const result = await reader.dispatch({ type: 'saveDocument' });
+    expect(result.status).toBe(scenario === 'success' ? 'performed' : 'failure');
+    expect(saved).toBe(scenario === 'success');
+    expect(raw).toEqual(new Uint8Array([1]));
+    if (scenario === 'prepare failure') expect(writeOriginal).not.toHaveBeenCalled();
+    else expect(writeOriginal).toHaveBeenCalledExactlyOnceWith('loaded-source', prepared);
+    if (scenario === 'success') expect(verifySavedDocument).toHaveBeenCalled();
+    else expect(verifySavedDocument).not.toHaveBeenCalled();
+  });
+
   it('Quit saves one Document, retains a staged Discard when another cancels, and permits retry', async () => {
     const choices: Array<'save' | 'discard' | 'cancel'> = ['discard', 'cancel', 'save', 'discard'];
     const prompts: string[] = [];
@@ -261,6 +315,15 @@ describe('Reader Actions', () => {
     await expect(first).resolves.toMatchObject({ status: 'performed' });
     await expect(second).resolves.toMatchObject({ status: 'performed' });
     expect(writes).toEqual([1, 2]);
+    // Scrolling and zooming request captures without new edits; those skip the export.
+    await expect(reader.captureRecoveryDraft('/docs/first.pdf')).resolves.toMatchObject({
+      status: 'no-op',
+    });
+    runtime.recovery = { sourceVersion: 'source-v2' };
+    await expect(reader.captureRecoveryDraft('/docs/first.pdf')).resolves.toMatchObject({
+      status: 'performed',
+    });
+    expect(writes).toEqual([1, 2, 2]);
 
     const failing = createReaderActions({
       initialSession: INITIAL_SESSION,

@@ -32,6 +32,8 @@ export interface PdfSaveDestination {
 }
 
 export interface NativePdfSaveAdapter {
+  /** Normalizes native annotation bookkeeping before exact-byte write verification. */
+  prepareBytes?(bytes: Uint8Array): Promise<Uint8Array>;
   captureSource?(filePath: string, bytes: Uint8Array): Promise<string>;
   releaseSource?(token: string): Promise<void>;
   readSource?(filePath: string): Promise<Uint8Array>;

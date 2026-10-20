@@ -70,6 +70,9 @@ interface DocumentWorkspaceOptions {
   recoveryDraftAdapter?: RecoveryDraftAdapter;
   chooseRecoveryDraft?: (request: RecoveryDraftRequest) => Promise<RecoveryDraftChoice>;
   captureRecoveryDraft?: (filePath: string) => Promise<ReaderActionOutcome>;
+  /** Saves edits into the PDF shortly after editing pauses, as Preview does. */
+  autosaveDocument?: (filePath: string) => Promise<ReaderActionOutcome>;
+  autosaveDelayMs?: number;
   dispatchReaderAction(
     action: ReaderAction,
     options?: ReaderActionOptions,
@@ -145,6 +148,7 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
   let visibleDocumentPath: string | null = null;
   const disposedSurfaces = new WeakSet<DocumentSurface>();
   const reportedRecoveryFailures = new Map<string, number>();
+  const autosaveDelayMs = options.autosaveDelayMs ?? 1500;
 
   const interruptionError = (): Error => new Error('Document Intake interrupted');
 
@@ -451,12 +455,41 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
         }
       });
     };
+    // Scrolling and zooming also report state changes; only a new edit revision
+    // restarts the pause. A failure is reported once until an autosave succeeds.
+    let autosaveTimer: ReturnType<typeof setTimeout> | undefined;
+    let autosaveRevision: number | undefined;
+    let autosaveFailureReported = false;
+    const scheduleAutosave = (): void => {
+      const editing = presented.get(identity.filePath)?.runtime.editing;
+      const state = editing?.state();
+      if (!editing || !state?.dirty || state.readOnlyReason || !options.autosaveDocument) return;
+      if (state.revision === autosaveRevision) return;
+      autosaveRevision = state.revision;
+      clearTimeout(autosaveTimer);
+      autosaveTimer = setTimeout(() => {
+        if (!isCurrentSurface() || !options.autosaveDocument) return;
+        const revision = editing.state().revision;
+        void options.autosaveDocument(identity.filePath).then((outcome) => {
+          if (outcome.status !== 'failure') {
+            if (outcome.status === 'performed') autosaveFailureReported = false;
+            return;
+          }
+          if (editing.state().revision !== revision || autosaveFailureReported) return;
+          autosaveFailureReported = true;
+          options.reportError?.(
+            `${identity.title} could not be saved automatically: ${String(outcome.error)}. Your edits are retained.`,
+          );
+        });
+      }, autosaveDelayMs);
+    };
     return {
       stateChanged: () => {
         if (isCurrentSurface()) {
           renderDocumentControls(options.snapshot());
           options.renderingStateChanged?.();
           captureRecoveryDraft();
+          scheduleAutosave();
         }
       },
       readingPositionObserved: settleReadingPosition,

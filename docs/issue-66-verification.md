@@ -94,10 +94,15 @@ external-reader round trip.
 
 | Round trip | Highlight | Text comment | Unsupported content | Saved/printed transforms |
 | --- | --- | --- | --- | --- |
-| Monight to Preview to Monight, including re-edit/delete/re-save | Pending | Pending | Pending | Pending |
-| Preview to Monight to Preview, including re-edit/delete/re-save | Pending | Pending | Pending | Pending |
-| Monight to Acrobat to Monight, including re-edit/delete/re-save | Pending | Pending | Pending | Pending |
-| Acrobat to Monight to Acrobat, including re-edit/delete/re-save | Pending | Pending | Pending | Pending |
+| Monight to Preview to Monight, including re-edit/delete/re-save | Agent-operated installed-build check passed repeated highlight edits/deletion; candidate provenance unverified ([record](issue-75-preview-verification.md)) | Failed: Preview note editor did not open; deletion worked ([record](issue-75-preview-verification.md)) | Preview Rectangle fixture blocked read-only with explicit explanation ([record](issue-75-preview-verification.md)) | Saved output upright/unfiltered; print action produced no panel, printed output unverified ([record](issue-75-preview-verification.md)) |
+| Preview to Monight to Preview, including re-edit/delete/re-save | Agent-operated installed-build check passed native comment edits and re-save; candidate provenance unverified ([record](issue-75-preview-verification.md)) | Failed: Preview note editor did not open after Monight save; Rect shrank 24 to 20 points ([record](issue-75-preview-verification.md)) | Preview Rectangle fixture blocked read-only with explicit explanation ([record](issue-75-preview-verification.md)). Automated by #79: safety inspection and native Save refuse it with `Unsupported embedded annotations; saving is blocked`; maintainer decision pending on blocking versus preserving `/Square` | Saved output upright/unfiltered; print action produced no panel, printed output unverified ([record](issue-75-preview-verification.md)) |
+| Monight to Acrobat to Monight, including re-edit/delete/re-save | Fresh local candidate UI creation with Guest author; repeated Acrobat/Monight edits, saves, Acrobat deletion, and Monight reopen verified | Fresh Guest Text created through UI; repeated in-place edit/save/delete/reopen verified by stable ID; earlier reply attempt excluded | Acrobat Ink companion blocked read-only; canonical fixture and native safety contract registered | Fixed local Save As and final native printed PDF upright/unfiltered in Acrobat; print includes unsaved markup and retains dirty/source state |
+| Acrobat to Monight to Acrobat, including re-edit/delete/re-save | Newly Acrobat-created object edited/saved in Monight; Acrobat re-edit/delete/save verified by stable ID, Monight reopened deletion; Monight deletion also verified in Acrobat after #92 Popup cleanup; shared native contracts pass | #86/#87 fixed locally; 24pt Rect retained through desktop Save and Acrobat re-edit; deletion and Monight reopen verified | Same supported source plus one native Ink stroke; explicit read-only block verified by shared contract | Fixed local Save As and final native print upright/unfiltered; #88 fixed locally, including unsaved markup; #91 separately records conflict/recovery cleanup failure |
+
+Acrobat observations: 2026-10-20, Codex with owner assistance, macOS 27.0.1 (26A434),
+Acrobat Reader 26.002.21901. These are installed/local-build observations, not a
+downloaded-CI-artifact pass. Exact local candidate binary identities, green final-code CI and candidate packaging links, fixtures,
+steps, failures, and execution limits are in the [issue-80 record](issue-80-acrobat-verification.md).
 
 ## Existing focused records
 

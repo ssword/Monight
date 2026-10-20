@@ -21,12 +21,14 @@ async function workflow(options: {
   write?: NativePdfSaveAdapter['writeOriginal'];
   destination?: NativePdfSaveAdapter['chooseDestination'];
   beforeClose?: () => Promise<void>;
+  saveEditsOnClose?: boolean;
 }) {
   const persisted: string[] = [];
   const removed: string[] = [];
   const reader = createReaderActions({
     initialSession: { schemaVersion: 2, documents: [], activeDocumentPath: null },
     chooseUnsavedDocument: options.choose,
+    saveEditsOnClose: options.saveEditsOnClose,
     projection: {
       activateDocument: async () => undefined,
       goToReadingPosition: async () => undefined,
@@ -107,6 +109,50 @@ async function workflow(options: {
 }
 
 describe('unsaved Document close and Quit workflows', () => {
+  it('saves edits into the PDF on close and Quit without asking', async () => {
+    const app = await workflow({
+      saveEditsOnClose: true,
+      choose: async () => {
+        throw new Error('A successful automatic save needs no prompt');
+      },
+    });
+    const first = await app.open('/first.pdf');
+    const second = await app.open('/second.pdf');
+
+    expect(
+      (await app.reader.dispatch({ type: 'closeDocument', filePath: '/first.pdf' })).status,
+    ).toBe('committed');
+    expect(app.persisted).toEqual(['/first.pdf']);
+    expect(first.destroyed()).toBe(true);
+
+    expect(await app.reader.prepareShutdown()).toBe(true);
+    expect(app.persisted).toEqual(['/first.pdf', '/second.pdf']);
+    expect(second.dirty()).toBe(false);
+  });
+
+  it('asks with the reason when the automatic close save fails and keeps edits on cancel', async () => {
+    const prompts: UnsavedDocumentRequest[] = [];
+    const app = await workflow({
+      saveEditsOnClose: true,
+      choose: async (request) => {
+        prompts.push(request);
+        return 'cancel';
+      },
+      write: async () => {
+        throw new Error('Saving blocked: unrelated PDF content or metadata changed');
+      },
+    });
+    const document = await app.open('/first.pdf');
+
+    expect(
+      (await app.reader.dispatch({ type: 'closeDocument', filePath: '/first.pdf' })).status,
+    ).toBe('no-op');
+    expect(prompts).toHaveLength(1);
+    expect(String(prompts[0].error)).toContain('Saving blocked');
+    expect(document.dirty()).toBe(true);
+    expect(document.destroyed()).toBe(false);
+  });
+
   it('waits for a pending save and coalesces repeated closes without another prompt or write', async () => {
     const write = deferred<Uint8Array>();
     let writes = 0;

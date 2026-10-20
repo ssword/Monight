@@ -257,6 +257,37 @@ async function run() {
   check(rejected, 'A failed native update was accepted');
   failed.engine.updatePageAnnotation = updateNativeAnnotation;
   await failed.surface.runtime.editing?.exportPdf();
+  const movedNoteRect = { origin: { x: 89, y: 113 }, size: { width: 31, height: 27 } };
+  failed.annotations.updateAnnotation(0, 'failed-comment', { rect: movedNoteRect });
+  failed.engine.updatePageAnnotation = (...args) =>
+    args[3]?.regenerateAppearance === false
+      ? PdfTaskHelper.resolve(false)
+      : updateNativeAnnotation(...args);
+  rejected = false;
+  try {
+    await failed.surface.runtime.editing?.exportPdf();
+  } catch {
+    rejected = true;
+  }
+  check(rejected, 'A failed native note geometry restoration was accepted');
+  failed.engine.updatePageAnnotation = updateNativeAnnotation;
+  const movedNoteBytes = await failed.surface.runtime.editing?.exportPdf();
+  if (!movedNoteBytes) throw new Error('Missing moved note export');
+  const movedDocument = await failed.engine
+    .openDocumentBuffer({ id: 'verify-moved-note', content: movedNoteBytes.buffer as ArrayBuffer })
+    .toPromise();
+  try {
+    const movedObjects = await failed.engine
+      .getPageAnnotations(movedDocument, movedDocument.pages[0])
+      .toPromise();
+    check(
+      JSON.stringify(movedObjects.find(({ id }) => id === 'failed-comment')?.rect) ===
+        JSON.stringify(movedNoteRect),
+      'Native note export lost a deliberate move or resize',
+    );
+  } finally {
+    await failed.engine.closeDocument(movedDocument).toPromise();
+  }
   const deleteNativeAnnotation = failed.engine.removePageAnnotation;
   failed.engine.removePageAnnotation = () =>
     PdfTaskHelper.reject({ code: PdfErrorCode.Unknown, message: 'Injected deletion failure' });

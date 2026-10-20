@@ -170,6 +170,9 @@ impl PdfSave {
             .get(token)
             .ok_or("Source Document is no longer authorized")?;
         verify_preservation(&source.version.bytes, bytes)?;
+        let normalized = remove_orphaned_supported_popups(bytes)?;
+        let bytes = normalized.as_deref().unwrap_or(bytes);
+        verify_preservation(&source.version.bytes, bytes)?;
         let version = write_pdf(
             &source.path,
             Some(&source.version),
@@ -236,6 +239,9 @@ impl PdfSave {
                 "Save As destination is already open; use Save for the current Document".into(),
             );
         }
+        verify_preservation(original, bytes)?;
+        let normalized = remove_orphaned_supported_popups(bytes)?;
+        let bytes = normalized.as_deref().unwrap_or(bytes);
         verify_preservation(original, bytes)?;
         let reopened = write_pdf(
             &destination.path,
@@ -345,11 +351,88 @@ fn write_pdf(
 }
 
 const EDITABLE_ANNOTATIONS: &[&[u8]] = &[b"Highlight", b"Text", b"Popup"];
-// Never edited by Monight; saving must carry them through unchanged.
-const PRESERVED_ANNOTATIONS: &[&[u8]] = &[b"Link"];
+// Never edited by Monight (the viewer locks them); saving must carry them through
+// unchanged. Text markup beyond highlights arrives from Preview, Acrobat, and others.
+const PRESERVED_ANNOTATIONS: &[&[u8]] = &[b"Link", b"Underline", b"StrikeOut", b"Squiggly"];
 
 fn is_supported_annotation(subtype: &[u8]) -> bool {
     EDITABLE_ANNOTATIONS.contains(&subtype) || PRESERVED_ANNOTATIONS.contains(&subtype)
+}
+
+pub fn prepare_save(bytes: &[u8]) -> Result<Vec<u8>, String> {
+    if let Some(normalized) = remove_orphaned_supported_popups(bytes)? {
+        verify_preservation(bytes, &normalized)?;
+        Ok(normalized)
+    } else {
+        Ok(bytes.to_vec())
+    }
+}
+
+// The pinned engine removes markup parents but leaves their Popup children in
+// /Annots. Acrobat follows those children back to the removed parents and lists
+// the deleted comments. Only detach Popups of supported parents that are no
+// longer in this page's annotation array; never touch live or unsupported parents.
+fn remove_orphaned_supported_popups(bytes: &[u8]) -> Result<Option<Vec<u8>>, String> {
+    use lopdf::Object;
+    let mut document = load_editable(bytes)?;
+    let mut changed = false;
+    for page_id in document.get_pages().values() {
+        let page = document
+            .get_dictionary(*page_id)
+            .map_err(|e| e.to_string())?;
+        let Ok(array) = page.get(b"Annots") else {
+            continue;
+        };
+        let (_, array) = document.dereference(array).map_err(|e| e.to_string())?;
+        let annots = array.as_array().map_err(|e| e.to_string())?.clone();
+        let live_ids = annots
+            .iter()
+            .filter_map(|entry| document.dereference(entry).ok().and_then(|(id, _)| id))
+            .collect::<std::collections::HashSet<_>>();
+        let mut retained = Vec::new();
+        for entry in &annots {
+            let (_, object) = document.dereference(entry).map_err(|e| e.to_string())?;
+            let annotation = object.as_dict().map_err(|e| e.to_string())?;
+            let orphaned =
+                if annotation.get(b"Subtype").and_then(Object::as_name).ok() == Some(b"Popup") {
+                    annotation
+                        .get(b"Parent")
+                        .ok()
+                        .and_then(|parent| document.dereference(parent).ok())
+                        .is_some_and(|(id, parent)| {
+                            id.is_some_and(|id| !live_ids.contains(&id))
+                                && parent
+                                    .as_dict()
+                                    .ok()
+                                    .and_then(|parent| parent.get(b"Subtype").ok())
+                                    .and_then(|subtype| subtype.as_name().ok())
+                                    .is_some_and(|subtype| {
+                                        subtype == b"Highlight" || subtype == b"Text"
+                                    })
+                        })
+                } else {
+                    false
+                };
+            if !orphaned {
+                retained.push(entry.clone());
+            }
+        }
+        if retained.len() != annots.len() {
+            document
+                .get_dictionary_mut(*page_id)
+                .map_err(|e| e.to_string())?
+                .set("Annots", Object::Array(retained));
+            changed = true;
+        }
+    }
+    if !changed {
+        return Ok(None);
+    }
+    let mut normalized = Vec::new();
+    document
+        .save_to(&mut normalized)
+        .map_err(|e| e.to_string())?;
+    Ok(Some(normalized))
 }
 
 fn preserved_page_annotations(
@@ -419,6 +502,34 @@ fn visit_document_dictionaries(
     Ok(())
 }
 
+// Acrobat may add default form resources when saving annotations, even when
+// there are no fields. Accept only that empty scaffolding; retain the normal
+// content-graph preservation check when saving it.
+fn is_empty_form_scaffolding(document: &lopdf::Document, object: &lopdf::Object) -> bool {
+    use lopdf::Object;
+    let Ok((_, Object::Dictionary(form))) = document.dereference(object) else {
+        return false;
+    };
+    if !form
+        .get(b"Fields")
+        .ok()
+        .and_then(|fields| document.dereference(fields).ok())
+        .and_then(|(_, fields)| fields.as_array().ok())
+        .is_some_and(Vec::is_empty)
+    {
+        return false;
+    }
+    form.iter().all(|(key, value)| match key.as_slice() {
+        b"Fields" => true,
+        b"DA" => value.as_str().is_ok(),
+        b"DR" => document
+            .dereference(value)
+            .is_ok_and(|(_, resources)| resources.as_dict().is_ok()),
+        b"NeedAppearances" => value.as_bool().is_ok(),
+        _ => false,
+    })
+}
+
 fn load_editable(bytes: &[u8]) -> Result<lopdf::Document, String> {
     let parsed = std::thread::scope(|scope| -> Result<_, String> {
         let worker = std::thread::Builder::new()
@@ -485,7 +596,12 @@ fn load_editable(bytes: &[u8]) -> Result<lopdf::Document, String> {
         return Err("Digitally signed PDFs are read-only to preserve their signatures".into());
     }
     visit_document_dictionaries(&document, |dictionary| {
-        if dictionary.has(b"AcroForm") || dictionary.has(b"XFA") {
+        if dictionary.has(b"XFA")
+            || dictionary.has(b"FT")
+            || dictionary
+                .get(b"AcroForm")
+                .is_ok_and(|form| !is_empty_form_scaffolding(&document, form))
+        {
             return Err(
                 "PDF form preservation has not been verified; this Document is read-only".into(),
             );
@@ -538,17 +654,35 @@ fn verify_preservation(original: &[u8], bytes: &[u8]) -> Result<(), String> {
     // Compare the reachable content graph, resolving references rather than
     // relying on object numbers surviving PDFium's serialization. Page annotation lists
     // may change only in their editable entries; preserved ones are compared below and
-    // all other annotations are blocked at intake.
+    // all other annotations are blocked at intake. On a mismatch, `path` is left naming
+    // where the graphs diverge so the refusal can say what changed.
+    fn within(
+        segment: String,
+        a: &lopdf::Object,
+        b: &lopdf::Object,
+        before: &lopdf::Document,
+        after: &lopdf::Document,
+        seen: &mut std::collections::HashSet<(lopdf::ObjectId, lopdf::ObjectId)>,
+        path: &mut Vec<String>,
+    ) -> bool {
+        path.push(segment);
+        let matched = same(a, b, before, after, seen, path);
+        if matched {
+            path.pop();
+        }
+        matched
+    }
     fn same(
         a: &lopdf::Object,
         b: &lopdf::Object,
         before: &lopdf::Document,
         after: &lopdf::Document,
         seen: &mut std::collections::HashSet<(lopdf::ObjectId, lopdf::ObjectId)>,
-        depth: usize,
+        path: &mut Vec<String>,
     ) -> bool {
         use lopdf::Object;
-        if depth > 200 {
+        if path.len() > 200 {
+            path.push("(nesting limit)".into());
             return false;
         }
         if let (Object::Reference(aid), Object::Reference(bid)) = (a, b) {
@@ -556,27 +690,46 @@ fn verify_preservation(original: &[u8], bytes: &[u8]) -> Result<(), String> {
                 return true;
             }
         }
-        let Ok((_, a)) = before.dereference(a) else {
-            return false;
-        };
-        let Ok((_, b)) = after.dereference(b) else {
+        let (Ok((_, a)), Ok((_, b))) = (before.dereference(a), after.dereference(b)) else {
+            path.push("(unresolvable reference)".into());
             return false;
         };
         match (a, b) {
             (Object::Dictionary(a), Object::Dictionary(b)) => {
                 let page = a.get(b"Type").and_then(Object::as_name).ok() == Some(b"Page");
+                // PDFium names every annotation and generates missing appearances on
+                // save. Preserved annotations may also be reached through the structure
+                // tree, so the allowance applies wherever they are compared.
+                let preserved = a
+                    .get(b"Subtype")
+                    .and_then(Object::as_name)
+                    .is_ok_and(|subtype| PRESERVED_ANNOTATIONS.contains(&subtype));
+                let generated = |key: &[u8]| {
+                    preserved
+                        && !a.has(key)
+                        && [b"NM".as_slice(), b"AP", b"PDFIUM_HasGeneratedAP"].contains(&key)
+                };
                 let keys = a.iter().map(|(k, _)| k).chain(b.iter().map(|(k, _)| k));
-                keys.filter(|k| !(page && k.as_slice() == b"Annots"))
-                    .all(|key| match (a.get(key), b.get(key)) {
-                        (Ok(a), Ok(b)) => same(a, b, before, after, seen, depth + 1),
-                        _ => false,
+                keys.filter(|k| !(page && k.as_slice() == b"Annots") && !generated(k))
+                    .all(|key| {
+                        let segment = format!("/{}", String::from_utf8_lossy(key));
+                        match (a.get(key), b.get(key)) {
+                            (Ok(a), Ok(b)) => within(segment, a, b, before, after, seen, path),
+                            _ => {
+                                path.push(segment);
+                                false
+                            }
+                        }
                     })
             }
             (Object::Array(a), Object::Array(b)) => {
-                a.len() == b.len()
-                    && a.iter()
-                        .zip(b)
-                        .all(|(a, b)| same(a, b, before, after, seen, depth + 1))
+                if a.len() != b.len() {
+                    path.push("(array length)".into());
+                    return false;
+                }
+                a.iter().zip(b).enumerate().all(|(index, (a, b))| {
+                    within(format!("[{index}]"), a, b, before, after, seen, path)
+                })
             }
             (Object::Stream(a), Object::Stream(b)) => {
                 let decoded = |s: &lopdf::Stream| {
@@ -586,23 +739,35 @@ fn verify_preservation(original: &[u8], bytes: &[u8]) -> Result<(), String> {
                         Some(s.content.clone())
                     }
                 };
+                let (decoded_a, decoded_b) = (decoded(a), decoded(b));
+                // Image codecs such as DCTDecode cannot be decoded here; those streams
+                // must keep their encoded bytes and encoding parameters unchanged.
+                let content = match (&decoded_a, &decoded_b) {
+                    (Some(_), Some(_)) => decoded_a == decoded_b,
+                    _ => a.content == b.content,
+                };
                 let mut ad = a.dict.clone();
                 let mut bd = b.dict.clone();
-                for key in [b"Length".as_slice(), b"Filter", b"DecodeParms"] {
-                    ad.remove(key);
-                    bd.remove(key);
+                ad.remove(b"Length");
+                bd.remove(b"Length");
+                if decoded_a.is_some() && decoded_b.is_some() {
+                    for key in [b"Filter".as_slice(), b"DecodeParms"] {
+                        ad.remove(key);
+                        bd.remove(key);
+                    }
                 }
-                let content = decoded(a);
-                content.is_some()
-                    && content == decoded(b)
-                    && same(
-                        &Object::Dictionary(ad),
-                        &Object::Dictionary(bd),
-                        before,
-                        after,
-                        seen,
-                        depth + 1,
-                    )
+                if !content {
+                    path.push("(stream data)".into());
+                    return false;
+                }
+                same(
+                    &Object::Dictionary(ad),
+                    &Object::Dictionary(bd),
+                    before,
+                    after,
+                    seen,
+                    path,
+                )
             }
             (Object::Integer(a), Object::Real(b)) => *a as f64 == f64::from(*b),
             (Object::Real(a), Object::Integer(b)) => f64::from(*a) == *b as f64,
@@ -610,29 +775,28 @@ fn verify_preservation(original: &[u8], bytes: &[u8]) -> Result<(), String> {
             _ => a == b,
         }
     }
+    let changed = |path: &[String]| {
+        format!(
+            "Saving blocked: unrelated PDF content or metadata changed at {}",
+            path.concat()
+        )
+    };
     for key in [b"Root".as_slice(), b"Info"] {
+        let mut path = vec![String::from_utf8_lossy(key).into_owned()];
         match (before.trailer.get(key), after.trailer.get(key)) {
-            (Ok(a), Ok(b)) if same(a, b, &before, &after, &mut seen, 0) => {}
+            (Ok(a), Ok(b)) if same(a, b, &before, &after, &mut seen, &mut path) => {}
             (Err(_), Err(_)) => {}
-            _ => return Err("Saving blocked: unrelated PDF content or metadata changed".into()),
+            _ => return Err(changed(&path)),
         }
     }
     let (before_pages, after_pages) = (before.get_pages(), after.get_pages());
     if before_pages.len() != after_pages.len() {
-        return Err("Saving blocked: unrelated PDF content or metadata changed".into());
+        return Err(changed(&["page count".into()]));
     }
-    for (before_page, after_page) in before_pages.values().zip(after_pages.values()) {
+    for ((number, before_page), after_page) in before_pages.iter().zip(after_pages.values()) {
         let a = preserved_page_annotations(&before, *before_page)?;
-        let mut b = preserved_page_annotations(&after, *after_page)?;
-        // PDFium names every annotation and generates missing appearances on save;
-        // anything the original already had must survive unchanged.
-        for (a, b) in a.iter().zip(&mut b) {
-            for key in [b"NM".as_slice(), b"AP", b"PDFIUM_HasGeneratedAP"] {
-                if !a.has(key) {
-                    b.remove(key);
-                }
-            }
-        }
+        let b = preserved_page_annotations(&after, *after_page)?;
+        let mut path = Vec::new();
         if a.len() != b.len()
             || !a.into_iter().zip(b).all(|(a, b)| {
                 same(
@@ -641,11 +805,13 @@ fn verify_preservation(original: &[u8], bytes: &[u8]) -> Result<(), String> {
                     &before,
                     &after,
                     &mut seen,
-                    0,
+                    &mut path,
                 )
             })
         {
-            return Err("Saving blocked: links or other preserved annotations changed".into());
+            return Err(format!(
+                "Saving blocked: links or other preserved annotations changed on page {number}"
+            ));
         }
     }
 
@@ -1049,6 +1215,87 @@ mod tests {
     }
 
     #[test]
+    fn undecodable_images_compare_by_encoded_bytes_and_refusals_name_the_change() {
+        use lopdf::{dictionary, Object, Stream};
+        let with_image = |data: &[u8]| {
+            let mut doc = lopdf::Document::load_mem(&pdf()).unwrap();
+            let image = doc.add_object(Stream::new(
+                dictionary! { "Type" => "XObject", "Subtype" => "Image", "Filter" => "DCTDecode" },
+                data.to_vec(),
+            ));
+            let page = *doc.get_pages().values().next().unwrap();
+            doc.get_object_mut(page)
+                .unwrap()
+                .as_dict_mut()
+                .unwrap()
+                .set(
+                    "Resources",
+                    dictionary! { "XObject" => dictionary! { "Im1" => image } },
+                );
+            let mut bytes = Vec::new();
+            doc.save_to(&mut bytes).unwrap();
+            bytes
+        };
+        // Not decodable as JPEG; only the encoded bytes can be compared.
+        let original = with_image(b"\xff\xd8 not really a jpeg");
+        verify_preservation(&original, &original).unwrap();
+        let error =
+            verify_preservation(&original, &with_image(b"\xff\xd8 another image")).unwrap_err();
+        assert_eq!(
+            error,
+            "Saving blocked: unrelated PDF content or metadata changed at \
+             Root/Pages/Kids[0]/Resources/XObject/Im1(stream data)"
+        );
+        let mut doc = lopdf::Document::load_mem(&original).unwrap();
+        doc.objects
+            .values_mut()
+            .filter_map(|object| object.as_stream_mut().ok())
+            .find(|stream| stream.dict.has(b"Filter"))
+            .unwrap()
+            .dict
+            .set("Filter", Object::Name(b"JPXDecode".to_vec()));
+        let mut recoded = Vec::new();
+        doc.save_to(&mut recoded).unwrap();
+        assert!(verify_preservation(&original, &recoded)
+            .unwrap_err()
+            .ends_with("/Im1/Filter"));
+    }
+
+    #[test]
+    fn external_text_markup_is_editable_and_must_survive_saves_unchanged() {
+        use lopdf::{dictionary, Object};
+        for subtype in ["Underline", "StrikeOut", "Squiggly"] {
+            let mut doc = lopdf::Document::load_mem(&pdf()).unwrap();
+            let markup = doc.add_object(dictionary! {
+                "Subtype" => subtype,
+                "Rect" => vec![72.into(), 650.into(), 260.into(), 685.into()],
+                "QuadPoints" => vec![72.into(), 685.into(), 260.into(), 685.into(), 72.into(), 650.into(), 260.into(), 650.into()],
+            });
+            let page = *doc.get_pages().values().next().unwrap();
+            let mut save = |doc: &mut lopdf::Document, annots: Vec<Object>| {
+                doc.get_object_mut(page)
+                    .unwrap()
+                    .as_dict_mut()
+                    .unwrap()
+                    .set("Annots", annots);
+                let mut bytes = Vec::new();
+                doc.save_to(&mut bytes).unwrap();
+                bytes
+            };
+            let original = save(&mut doc, vec![markup.into()]);
+            assert_eq!(editing_status(&original), None, "{subtype}");
+            let highlight = doc.add_object(dictionary! { "Subtype" => "Highlight" });
+            let highlighted = save(&mut doc, vec![markup.into(), highlight.into()]);
+            verify_preservation(&original, &highlighted).unwrap();
+            let removed = save(&mut doc, vec![highlight.into()]);
+            assert!(
+                verify_preservation(&original, &removed).is_err(),
+                "{subtype}"
+            );
+        }
+    }
+
+    #[test]
     fn links_are_editable_and_must_survive_saves_unchanged() {
         use lopdf::{dictionary, Object};
         let set_annots = |doc: &mut lopdf::Document, annots: Vec<Object>| {
@@ -1069,9 +1316,24 @@ mod tests {
             "Rect" => vec![72.into(), 650.into(), 260.into(), 685.into()],
             "A" => dictionary! { "S" => "URI", "URI" => Object::string_literal("https://example.com") },
         });
+        // Tagged PDFs also reach their links through the structure tree.
+        let structure = doc.add_object(dictionary! {
+            "Type" => "StructTreeRoot",
+            "K" => dictionary! { "Type" => "OBJR", "Obj" => link },
+        });
+        let root = doc.trailer.get(b"Root").unwrap().as_reference().unwrap();
+        doc.get_object_mut(root)
+            .unwrap()
+            .as_dict_mut()
+            .unwrap()
+            .set("StructTreeRoot", structure);
         let original = set_annots(&mut doc, vec![link.into()]);
         assert_eq!(editing_status(&original), None);
 
+        // PDFium names existing annotations and flags generated appearances on save.
+        let saved_link = doc.get_object_mut(link).unwrap().as_dict_mut().unwrap();
+        saved_link.set("NM", Object::string_literal("pdfium-name"));
+        saved_link.set("PDFIUM_HasGeneratedAP", true);
         let comment = doc.add_object(dictionary! { "Type" => "Annot", "Subtype" => "Text" });
         let commented = set_annots(&mut doc, vec![link.into(), comment.into()]);
         let removed = set_annots(&mut doc, vec![comment.into()]);
@@ -1110,6 +1372,164 @@ mod tests {
         {
             assert_eq!(editing_status(bytes).as_deref(), Some(reason));
         }
+    }
+
+    #[test]
+    fn deleting_acrobat_markup_removes_its_popup_children_on_save_and_save_as() {
+        let original = include_bytes!("../tests/fixtures/external/acrobat-supported.pdf");
+        let deleted =
+            include_bytes!("../tests/fixtures/external/exports/acrobat-reader-26-deleted.pdf");
+        let assert_no_orphan_popups = |bytes: &[u8]| {
+            let document = lopdf::Document::load_mem(bytes).unwrap();
+            let mut popup_count = 0;
+            for page in document.get_pages().values() {
+                let page = document.get_dictionary(*page).unwrap();
+                let Ok(annots) = page.get(b"Annots") else {
+                    continue;
+                };
+                let (_, array) = document.dereference(annots).unwrap();
+                let annots = array.as_array().unwrap();
+                for entry in annots {
+                    let (_, object) = document.dereference(entry).unwrap();
+                    let annotation = object.as_dict().unwrap();
+                    if annotation
+                        .get(b"Subtype")
+                        .and_then(lopdf::Object::as_name)
+                        .ok()
+                        == Some(b"Popup")
+                    {
+                        popup_count += 1;
+                        let parent = annotation.get(b"Parent").unwrap().as_reference().unwrap();
+                        assert!(annots.iter().any(|item| item.as_reference().ok() == Some(parent)),
+                            "Retained Popup points to a removed annotation; Acrobat resurrects its comment");
+                    }
+                }
+            }
+            assert_eq!(
+                popup_count, 1,
+                "The original note's live Popup must survive"
+            );
+        };
+        let prepared = prepare_save(deleted).unwrap();
+        assert_no_orphan_popups(&prepared);
+        assert_eq!(
+            prepare_save(&prepared).unwrap(),
+            prepared,
+            "Preparation must be byte-idempotent"
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("source.pdf");
+        std::fs::write(&path, original).unwrap();
+        let saves = PdfSave::default();
+        let source = saves.capture_source(&path, original).unwrap();
+        let destination = saves.authorize(&dir.path().join("saved-as.pdf")).unwrap();
+        let (_, saved_as) = saves
+            .write_destination(&destination.token, &source, deleted)
+            .unwrap();
+        assert_no_orphan_popups(&saved_as);
+        assert_eq!(std::fs::read(&path).unwrap(), original);
+        let saved = saves.write_original(&source, deleted).unwrap();
+        assert_no_orphan_popups(&saved);
+        verify_preservation(original, &saved).unwrap();
+        verify_preservation(original, &saved_as).unwrap();
+    }
+
+    #[test]
+    fn only_demonstrably_empty_form_scaffolding_is_editable() {
+        use lopdf::{dictionary, Object};
+
+        let empty = || Object::Array(Vec::new());
+        let cases = [
+            (dictionary! { "Fields" => empty() }, true),
+            (
+                dictionary! {
+                    "Fields" => empty(),
+                    "DA" => Object::string_literal("/Helv 0 Tf 0 g"),
+                    "DR" => dictionary! {},
+                    "NeedAppearances" => false,
+                },
+                true,
+            ),
+            (dictionary! {}, false),
+            (dictionary! { "Fields" => Object::Null }, false),
+            (
+                dictionary! { "Fields" => Object::string_literal("not an array") },
+                false,
+            ),
+            (
+                dictionary! { "Fields" => vec![Object::Dictionary(dictionary! { "FT" => "Tx" })] },
+                false,
+            ),
+            (
+                dictionary! { "Fields" => empty(), "XFA" => Object::Null },
+                false,
+            ),
+            (dictionary! { "Fields" => empty(), "SigFlags" => 0 }, false),
+            (
+                dictionary! { "Fields" => empty(), "Unknown" => true },
+                false,
+            ),
+            (dictionary! { "Fields" => empty(), "DA" => 42 }, false),
+            (dictionary! { "Fields" => empty(), "DR" => empty() }, false),
+            (
+                dictionary! { "Fields" => empty(), "NeedAppearances" => Object::Null },
+                false,
+            ),
+        ];
+        for (form, editable) in cases {
+            for indirect in [false, true] {
+                let mut document = lopdf::Document::load_mem(&pdf()).unwrap();
+                let form = if indirect {
+                    Object::Reference(document.add_object(form.clone()))
+                } else {
+                    Object::Dictionary(form.clone())
+                };
+                let root = document
+                    .trailer
+                    .get(b"Root")
+                    .unwrap()
+                    .as_reference()
+                    .unwrap();
+                document
+                    .get_object_mut(root)
+                    .unwrap()
+                    .as_dict_mut()
+                    .unwrap()
+                    .set("AcroForm", form.clone());
+                let mut bytes = Vec::new();
+                document.save_to(&mut bytes).unwrap();
+                assert_eq!(editing_status(&bytes).is_none(), editable, "{form:?}");
+            }
+        }
+
+        // Empty Fields must not hide a field dictionary elsewhere in the PDF.
+        let mut document = lopdf::Document::load_mem(&pdf()).unwrap();
+        let fields = document.add_object(empty());
+        let resources = document.add_object(dictionary! {});
+        let form = document.add_object(dictionary! { "Fields" => fields, "DR" => resources });
+        let root = document
+            .trailer
+            .get(b"Root")
+            .unwrap()
+            .as_reference()
+            .unwrap();
+        document
+            .get_object_mut(root)
+            .unwrap()
+            .as_dict_mut()
+            .unwrap()
+            .set("AcroForm", form);
+        let mut bytes = Vec::new();
+        document.save_to(&mut bytes).unwrap();
+        assert_eq!(editing_status(&bytes), None);
+        document.add_object(
+            dictionary! { "FT" => "Tx", "V" => Object::string_literal("private field") },
+        );
+        bytes.clear();
+        document.save_to(&mut bytes).unwrap();
+        assert!(editing_status(&bytes)
+            .unwrap()
+            .contains("PDF form preservation"));
     }
 
     #[test]

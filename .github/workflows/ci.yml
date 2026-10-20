@@ -40,7 +40,14 @@ jobs:
         run: npx playwright install --with-deps chromium webkit
       - name: Verify EmbedPDF offline reading and navigation
         if: runner.os == 'Linux'
-        run: npm run test:embedpdf-offline
+        # Writes this run's exports so the native contract below checks them, not stale copies.
+        run: npm run test:embedpdf-offline -- --write-annotation-fixtures
+      - name: Set up Rust for the external-reader contract
+        if: runner.os == 'Linux'
+        uses: ./.github/actions/setup-rust
+      - name: Verify this run's external-reader exports natively
+        if: runner.os == 'Linux'
+        run: cargo test --locked --manifest-path src-tauri/Cargo.toml external_reader_contract
 
   rust:
     name: Rust (${{ matrix.os }})

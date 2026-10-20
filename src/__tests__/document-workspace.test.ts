@@ -13,6 +13,7 @@ import { normalizeAnnotationDisplayName } from '../reader/native-pdf-editing';
 import {
   createReaderActions,
   type ReaderAction,
+  type ReaderActionOutcome,
   type ReaderActions,
   type ReadingSessionSnapshot,
   type RestorableReadingPosition,
@@ -434,6 +435,88 @@ describe('Document workspace adapter', () => {
       expect(reportError).toHaveBeenCalledWith(expect.stringContaining('draft disk full')),
     );
     expect(reader.hasUnsavedPdfWork()).toBe(true);
+  });
+
+  it('autosaves once after editing pauses and reports a failed autosave once', async () => {
+    const callbacks: DocumentSurfaceCallbacks[] = [];
+    let revision = 0;
+    let reader: ReaderActions;
+    const initialSession = { schemaVersion: 2 as const, documents: [], activeDocumentPath: null };
+    const autosaveDocument = vi.fn(
+      async (_filePath: string): Promise<ReaderActionOutcome> => ({
+        status: 'performed',
+        revision: 0,
+      }),
+    );
+    const reportError = vi.fn();
+    const workspace = createDocumentWorkspace({
+      dispatchReaderAction: (action, options) => reader.dispatch(action, options),
+      autosaveDocument,
+      autosaveDelayMs: 20,
+      snapshot: () => reader?.snapshot() ?? { ...initialSession, revision: 0 },
+      isDocumentOpen: (path) => reader?.isDocumentOpen(path) ?? false,
+      defaultVisualState: () => ({
+        filterSettings: PRESETS.default,
+        zoomIntent: { kind: 'fit-width' },
+        rotation: 0,
+        viewMode: 'single',
+      }),
+      reportError,
+      createSurface: async ({ filePath, callbacks: events }) => {
+        callbacks.push(events);
+        const surface = createControllableSurface(filePath);
+        surface.runtime.editing = {
+          state: () => ({ revision, dirty: revision > 0, readOnlyReason: null }),
+          exportPdf: async () => new Uint8Array([revision]),
+          markSaved: vi.fn(),
+        };
+        return surface;
+      },
+    });
+    reader = createReaderActions({
+      initialSession,
+      projection: workspace.projection,
+      persist: async () => undefined,
+    });
+    reader.observe(workspace.project);
+    await workspace.intakeRuntime.open({
+      document: { canonicalPath: '/first.pdf', title: 'first.pdf' },
+      bytes: new Uint8Array([1]),
+      activate: true,
+    });
+
+    // Scrolling or zooming a clean Document never saves.
+    callbacks[0].stateChanged();
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect(autosaveDocument).not.toHaveBeenCalled();
+
+    revision = 1;
+    callbacks[0].stateChanged();
+    callbacks[0].stateChanged();
+    callbacks[0].stateChanged();
+    await vi.waitFor(() => expect(autosaveDocument).toHaveBeenCalledTimes(1));
+    expect(autosaveDocument).toHaveBeenCalledWith('/first.pdf');
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect(autosaveDocument).toHaveBeenCalledTimes(1);
+
+    autosaveDocument.mockResolvedValue({
+      status: 'failure',
+      error: new Error('Saving blocked'),
+      revision: 0,
+    });
+    revision = 2;
+    callbacks[0].stateChanged();
+    await vi.waitFor(() =>
+      expect(reportError).toHaveBeenCalledWith(
+        expect.stringContaining('could not be saved automatically: Error: Saving blocked'),
+      ),
+    );
+    // The same problem on the next edit is not reported again.
+    revision = 3;
+    callbacks[0].stateChanged();
+    await vi.waitFor(() => expect(autosaveDocument).toHaveBeenCalledTimes(3));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(reportError).toHaveBeenCalledTimes(1);
   });
 
   it('projects tab controls from Reading Session snapshots and dispatches semantic actions', async () => {

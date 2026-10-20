@@ -1,0 +1,629 @@
+{
+  "schemaVersion": 1,
+  "observedOn": "2026-10-20",
+  "operator": "Codex via native computer control, explicitly authorized by user",
+  "os": "macOS 27.0.1 (26A434)",
+  "externalReader": {
+    "name": "Preview",
+    "version": "11.0"
+  },
+  "monight": {
+    "version": "0.6.0",
+    "binarySha256": "1b9e65f923bcce09738d05d523fe3c4018b8e12c37948c0e13e855d91c5f4ef2",
+    "sourceRevision": null,
+    "ciRun": null,
+    "artifact": "installed /Applications/Monight.app; not a verified CI candidate"
+  },
+  "readers": [
+    {
+      "id": "preview-11",
+      "supportedFixture": "preview-supported.pdf",
+      "unsupportedFixture": "preview-unsupported.pdf",
+      "supportedObservedClassification": "editable",
+      "unsupportedObservedClassification": "read-only",
+      "unsupportedReason": "Unsupported embedded annotations; saving is blocked",
+      "annotationSelectors": [
+        {
+          "subtype": "/Highlight",
+          "contents": "Preview native highlight 75",
+          "author": "Andrew Chen"
+        },
+        {
+          "subtype": "/Text",
+          "contents": "Preview native note 75",
+          "author": "Andrew Chen"
+        }
+      ],
+      "geometryTolerancePoints": 0.01,
+      "observedFailures": [
+        "Preview note editor does not open after Monight re-save",
+        "Preview note Rect changes from 24x24 points to 20x20 points after Monight re-save"
+      ],
+      "knownGeometryFailures": [
+        {
+          "subtype": "/Text",
+          "contents": "Preview native note 75",
+          "author": "Andrew Chen",
+          "stage": "edited",
+          "Rect": [220.6667, 372.0833, 240.6667, 392.0833],
+          "failure": "Preview note Rect changes from 24x24 points to 20x20 points after Monight re-save"
+        }
+      ]
+    },
+    {
+      "id": "acrobat-reader-26",
+      "supportedFixture": "acrobat-supported.pdf",
+      "unsupportedFixture": "acrobat-unsupported.pdf",
+      "supportedObservedClassification": "editable",
+      "unsupportedObservedClassification": "read-only",
+      "unsupportedReason": "Unsupported embedded annotations cannot yet be safely preserved; this Document is read-only",
+      "annotationSelectors": [
+        {
+          "subtype": "/Highlight",
+          "contents": "Acrobat native highlight 80",
+          "author": "ssword"
+        },
+        {
+          "subtype": "/Text",
+          "contents": "Acrobat native note 80",
+          "author": "ssword"
+        }
+      ],
+      "geometryTolerancePoints": 0.01,
+      "observedFailures": [],
+      "knownGeometryFailures": [],
+      "provenance": {
+        "observedOn": "2026-10-20",
+        "externalReader": "Adobe Acrobat Reader 26.002.21901",
+        "os": "macOS 27.0.1 (26A434)",
+        "operators": "Codex via native computer control with repository owner assistance for mouse operations",
+        "record": "docs/issue-80-acrobat-verification.md",
+        "monight": {
+          "version": "0.6.0",
+          "sourceRevision": "c2d1c8d4a33f6cda7f753bdd221c137c0998d6be",
+          "binarySha256": "ebcb2ed694bfd4fdfe11bb78f90ca43d22f6b55e2585ddddb3452b54d4fa0939",
+          "artifact": "local-macos-c2d1c8d.app.tar.gz; locally built release-profile candidate",
+          "artifactSha256": "ffd8e6fe7b718343f6a7449f3c6a036b5886f051df8816c4d64c0c7e6619d013",
+          "ciRun": "https://github.com/ssword/Monight/actions/runs/39443065781",
+          "candidatePackagingRun": "https://github.com/ssword/Monight/actions/runs/39443061858"
+        }
+      }
+    }
+  ],
+  "files": {
+    "preview-supported.pdf": {
+      "sha256": "807d4a7ea35b23bc4d25b706cb74071ebdd46264f982c68307ef2c135a9d556a",
+      "size": 20738,
+      "metadata": {
+        "/Title": "Native annotations",
+        "/Subject": "Navigation",
+        "/Keywords": "reader; queries",
+        "/Author": "Monight"
+      },
+      "outline": [
+        {
+          "title": "Chapter",
+          "pageIndex": 1
+        },
+        [
+          {
+            "title": "Nested chapter",
+            "pageIndex": 2
+          }
+        ],
+        {
+          "title": "Website",
+          "pageIndex": null
+        },
+        {
+          "title": "Blocked website",
+          "pageIndex": null
+        },
+        {
+          "title": "Chapter",
+          "pageIndex": 0
+        }
+      ],
+      "pages": [
+        {
+          "mediaBox": [0, 0, 612, 792],
+          "rotation": 0,
+          "text": "moon first page\nmoon lower match",
+          "contentSha256": "978999a72d46a7b2a903534ca7c22b65337cef093ce40059e937ea87dcf568ab",
+          "annotations": [
+            {
+              "Subtype": "/Link",
+              "Rect": [72, 650, 260, 685],
+              "NM": "2d70e975-354d-49de-a5b4-9a842fd642f0",
+              "hasAppearance": true,
+              "action": {
+                "URI": "https://example.com/page",
+                "S": "/URI"
+              }
+            },
+            {
+              "Subtype": "/Link",
+              "Rect": [72, 590, 260, 625],
+              "NM": "be5297ec-2b87-4068-ae8b-5fa369fb3371",
+              "hasAppearance": true,
+              "destination": {
+                "pageIndex": 1,
+                "fit": "/XYZ",
+                "args": [0, 396, 0]
+              }
+            },
+            {
+              "Subtype": "/Text",
+              "Contents": "Native comment",
+              "T": "Guest",
+              "Rect": [260, 668, 280, 688],
+              "NM": "comment-native",
+              "F": 28,
+              "Name": "/Comment",
+              "C": [1, 1, 0],
+              "hasAppearance": true
+            },
+            {
+              "Subtype": "/Popup",
+              "Rect": [236, 746, 308, 782],
+              "F": 4,
+              "C": [1, 1, 0],
+              "hasAppearance": false
+            },
+            {
+              "Subtype": "/Text",
+              "Contents": "Preview native note 75",
+              "T": "Andrew Chen",
+              "Rect": [220.6667, 372.0833, 244.6667, 396.0833],
+              "F": 4,
+              "C": [1, 0.92, 0.42],
+              "hasAppearance": true
+            },
+            {
+              "Subtype": "/Highlight",
+              "Contents": "Preview native highlight 75",
+              "T": "Andrew Chen",
+              "Rect": [72, 414.4805, 268.056, 738.4805],
+              "QuadPoints": [
+                72, 738.4805, 237.408, 738.4805, 72, 714.4805, 237.408, 714.4805, 72, 438.4805,
+                268.056, 438.4805, 72, 414.4805, 268.056, 414.4805
+              ],
+              "F": 4,
+              "C": [0.980392, 0.803922, 0.352941],
+              "hasAppearance": true
+            },
+            {
+              "Subtype": "/Popup",
+              "Rect": [272.056, 742.4805, 344.056, 778.4805],
+              "F": 4,
+              "C": [0.980392, 0.803922, 0.352941],
+              "hasAppearance": false
+            }
+          ]
+        },
+        {
+          "mediaBox": [0, 0, 612, 792],
+          "rotation": 0,
+          "text": "moon second page",
+          "contentSha256": "1e73df677c670b92a7929c6882dc63a507c4c8965a729da5c63b5d0fa45fbb7d",
+          "annotations": []
+        },
+        {
+          "mediaBox": [0, 0, 612, 792],
+          "rotation": 0,
+          "text": "sun third page",
+          "contentSha256": "dc7affbbb9c8187222d913b41c09d1739236ba428e643a98342111157d5a41cd",
+          "annotations": []
+        }
+      ]
+    },
+    "preview-unsupported.pdf": {
+      "sha256": "ffb4ddd074bfd896bdec01e19cf528a222e3dcb667f9b80cde54bf3f577f8276",
+      "size": 32111,
+      "metadata": {
+        "/Author": "Monight",
+        "/Keywords": "reader; queries",
+        "/Subject": "Navigation",
+        "/Title": "Native annotations"
+      },
+      "outline": [
+        {
+          "title": "Chapter",
+          "pageIndex": 1
+        },
+        [
+          {
+            "title": "Nested chapter",
+            "pageIndex": 2
+          }
+        ],
+        {
+          "title": "Website",
+          "pageIndex": null
+        },
+        {
+          "title": "Blocked website",
+          "pageIndex": null
+        },
+        {
+          "title": "Chapter",
+          "pageIndex": 0
+        }
+      ],
+      "pages": [
+        {
+          "mediaBox": [0, 0, 612, 792],
+          "rotation": 0,
+          "text": "moon first page\nmoon lower match",
+          "contentSha256": "978999a72d46a7b2a903534ca7c22b65337cef093ce40059e937ea87dcf568ab",
+          "annotations": [
+            {
+              "Subtype": "/Link",
+              "Rect": [72, 650, 260, 685],
+              "NM": "2d70e975-354d-49de-a5b4-9a842fd642f0",
+              "hasAppearance": true,
+              "action": {
+                "S": "/URI",
+                "URI": "https://example.com/page"
+              }
+            },
+            {
+              "Subtype": "/Link",
+              "Rect": [72, 590, 260, 625],
+              "NM": "be5297ec-2b87-4068-ae8b-5fa369fb3371",
+              "hasAppearance": true,
+              "destination": {
+                "pageIndex": 1,
+                "fit": "/XYZ",
+                "args": [0, 396, 0]
+              }
+            },
+            {
+              "Subtype": "/Text",
+              "Contents": "Native comment",
+              "T": "Guest",
+              "Rect": [260, 668, 280, 688],
+              "NM": "comment-native",
+              "F": 28,
+              "Name": "/Comment",
+              "C": [1, 1, 0],
+              "hasAppearance": true
+            },
+            {
+              "Subtype": "/Popup",
+              "Rect": [236, 746, 308, 782],
+              "F": 4,
+              "C": [1, 1, 0],
+              "hasAppearance": false
+            },
+            {
+              "Subtype": "/Text",
+              "Contents": "Preview native note 75",
+              "T": "Andrew Chen",
+              "Rect": [220.6667, 372.0833, 244.6667, 396.0833],
+              "F": 4,
+              "C": [1, 0.92, 0.42],
+              "hasAppearance": true
+            },
+            {
+              "Subtype": "/Highlight",
+              "Contents": "Preview native highlight 75",
+              "T": "Andrew Chen",
+              "Rect": [72, 414.4805, 268.056, 738.4805],
+              "QuadPoints": [
+                72, 738.4805, 237.408, 738.4805, 72, 714.4805, 237.408, 714.4805, 72, 438.4805,
+                268.056, 438.4805, 72, 414.4805, 268.056, 414.4805
+              ],
+              "F": 4,
+              "C": [0.980392, 0.803922, 0.352941],
+              "hasAppearance": true
+            },
+            {
+              "Subtype": "/Popup",
+              "Rect": [272.056, 742.4805, 344.056, 778.4805],
+              "F": 4,
+              "C": [0.980392, 0.803922, 0.352941],
+              "hasAppearance": false
+            },
+            {
+              "Subtype": "/Square",
+              "T": "Andrew Chen",
+              "Rect": [231.6667, 340.0833, 377, 452.0833],
+              "F": 4,
+              "C": [1, 0.1491314, 0],
+              "hasAppearance": true
+            }
+          ]
+        },
+        {
+          "mediaBox": [0, 0, 612, 792],
+          "rotation": 0,
+          "text": "moon second page",
+          "contentSha256": "1e73df677c670b92a7929c6882dc63a507c4c8965a729da5c63b5d0fa45fbb7d",
+          "annotations": []
+        },
+        {
+          "mediaBox": [0, 0, 612, 792],
+          "rotation": 0,
+          "text": "sun third page",
+          "contentSha256": "dc7affbbb9c8187222d913b41c09d1739236ba428e643a98342111157d5a41cd",
+          "annotations": []
+        }
+      ]
+    },
+    "acrobat-supported.pdf": {
+      "sha256": "6fea14aee552394e176a1e134ff75e24eb47a03d7a5c95359117da558efb2dd7",
+      "size": 17315,
+      "metadata": {
+        "/Title": "Native annotations",
+        "/Subject": "Navigation",
+        "/Keywords": "reader; queries",
+        "/Author": "Monight"
+      },
+      "outline": [
+        {
+          "title": "Chapter",
+          "pageIndex": 1
+        },
+        [
+          {
+            "title": "Nested chapter",
+            "pageIndex": 2
+          }
+        ],
+        {
+          "title": "Website",
+          "pageIndex": null
+        },
+        {
+          "title": "Blocked website",
+          "pageIndex": null
+        },
+        {
+          "title": "Chapter",
+          "pageIndex": 0
+        }
+      ],
+      "pages": [
+        {
+          "mediaBox": [0, 0, 612, 792],
+          "rotation": 0,
+          "text": "moon first page\nmoon lower match",
+          "contentSha256": "978999a72d46a7b2a903534ca7c22b65337cef093ce40059e937ea87dcf568ab",
+          "annotations": [
+            {
+              "Subtype": "/Link",
+              "Rect": [72, 650, 260, 685],
+              "NM": "2d70e975-354d-49de-a5b4-9a842fd642f0",
+              "hasAppearance": true,
+              "action": {
+                "S": "/URI",
+                "URI": "https://example.com/page"
+              }
+            },
+            {
+              "Subtype": "/Link",
+              "Rect": [72, 590, 260, 625],
+              "NM": "be5297ec-2b87-4068-ae8b-5fa369fb3371",
+              "hasAppearance": true
+            },
+            {
+              "Subtype": "/Text",
+              "Rect": [260, 668, 280, 688],
+              "NM": "comment-native",
+              "Contents": "Monight re-edited Acrobat note 80",
+              "T": "ssword",
+              "C": [1, 1, 0],
+              "Name": "/Comment",
+              "hasAppearance": true
+            },
+            {
+              "Subtype": "/Text",
+              "Rect": [300, 628, 320, 648],
+              "NM": "attributed-comment-native",
+              "Contents": "Attributed comment",
+              "T": "Ada Lovelace",
+              "C": [1, 0.80392158, 0.27058825],
+              "Name": "/Comment",
+              "hasAppearance": true
+            },
+            {
+              "Subtype": "/Popup",
+              "Rect": [612, 574, 816, 688],
+              "NM": "b75c4b02-77f3-464f-a53f-9bc778a97691",
+              "hasAppearance": false
+            },
+            {
+              "Subtype": "/Highlight",
+              "Rect": [71.133, 713.733, 238.274, 743.211],
+              "QuadPoints": [72.0, 742.344, 237.407, 742.344, 72.0, 714.6, 237.407, 714.6],
+              "NM": "8ba2511d-eef0-d145-a668-37271eff681f",
+              "Contents": "Acrobat native highlight 80",
+              "T": "ssword",
+              "C": [1.0, 0.384308, 0.0],
+              "hasAppearance": true
+            },
+            {
+              "Subtype": "/Popup",
+              "Rect": [612.0, 628.344, 816.0, 742.344],
+              "hasAppearance": false
+            },
+            {
+              "Subtype": "/Text",
+              "Rect": [258.61, 721.304, 282.61, 745.304],
+              "NM": "ee6ff9dc-c343-e24e-a355-70961149933a",
+              "Contents": "Acrobat native note 80",
+              "T": "ssword",
+              "C": [0.588242, 0.262741, 0.988235],
+              "Name": "/Comment",
+              "hasAppearance": true
+            },
+            {
+              "Subtype": "/Popup",
+              "Rect": [612.0, 631.304, 816.0, 745.304],
+              "hasAppearance": false
+            }
+          ]
+        },
+        {
+          "mediaBox": [0, 0, 612, 792],
+          "rotation": 0,
+          "text": "moon second page",
+          "contentSha256": "1e73df677c670b92a7929c6882dc63a507c4c8965a729da5c63b5d0fa45fbb7d",
+          "annotations": []
+        },
+        {
+          "mediaBox": [0, 0, 612, 792],
+          "rotation": 0,
+          "text": "sun third page",
+          "contentSha256": "dc7affbbb9c8187222d913b41c09d1739236ba428e643a98342111157d5a41cd",
+          "annotations": []
+        }
+      ]
+    },
+    "acrobat-unsupported.pdf": {
+      "sha256": "2e3490d360ded5bbbf7f6a84a84f4281d0f73f9e5a506af87762b764936bc99b",
+      "size": 23045,
+      "metadata": {
+        "/Title": "Native annotations",
+        "/Subject": "Navigation",
+        "/Keywords": "reader; queries",
+        "/Author": "Monight"
+      },
+      "outline": [
+        {
+          "title": "Chapter",
+          "pageIndex": 1
+        },
+        [
+          {
+            "title": "Nested chapter",
+            "pageIndex": 2
+          }
+        ],
+        {
+          "title": "Website",
+          "pageIndex": null
+        },
+        {
+          "title": "Blocked website",
+          "pageIndex": null
+        },
+        {
+          "title": "Chapter",
+          "pageIndex": 0
+        }
+      ],
+      "pages": [
+        {
+          "mediaBox": [0, 0, 612, 792],
+          "rotation": 0,
+          "text": "moon first page\nmoon lower match",
+          "contentSha256": "978999a72d46a7b2a903534ca7c22b65337cef093ce40059e937ea87dcf568ab",
+          "annotations": [
+            {
+              "Subtype": "/Link",
+              "Rect": [72, 650, 260, 685],
+              "NM": "2d70e975-354d-49de-a5b4-9a842fd642f0",
+              "hasAppearance": true,
+              "action": {
+                "S": "/URI",
+                "URI": "https://example.com/page"
+              }
+            },
+            {
+              "Subtype": "/Link",
+              "Rect": [72, 590, 260, 625],
+              "NM": "be5297ec-2b87-4068-ae8b-5fa369fb3371",
+              "hasAppearance": true
+            },
+            {
+              "Subtype": "/Text",
+              "Rect": [260, 668, 280, 688],
+              "NM": "comment-native",
+              "Contents": "Monight re-edited Acrobat note 80",
+              "T": "ssword",
+              "C": [1, 1, 0],
+              "Name": "/Comment",
+              "hasAppearance": true
+            },
+            {
+              "Subtype": "/Text",
+              "Rect": [300, 628, 320, 648],
+              "NM": "attributed-comment-native",
+              "Contents": "Attributed comment",
+              "T": "Ada Lovelace",
+              "C": [1, 0.80392158, 0.27058825],
+              "Name": "/Comment",
+              "hasAppearance": true
+            },
+            {
+              "Subtype": "/Popup",
+              "Rect": [612, 574, 816, 688],
+              "NM": "b75c4b02-77f3-464f-a53f-9bc778a97691",
+              "hasAppearance": false
+            },
+            {
+              "Subtype": "/Highlight",
+              "Rect": [71.133, 713.733, 238.274, 743.211],
+              "QuadPoints": [72.0, 742.344, 237.407, 742.344, 72.0, 714.6, 237.407, 714.6],
+              "NM": "8ba2511d-eef0-d145-a668-37271eff681f",
+              "Contents": "Acrobat native highlight 80",
+              "T": "ssword",
+              "C": [1.0, 0.384308, 0.0],
+              "hasAppearance": true
+            },
+            {
+              "Subtype": "/Popup",
+              "Rect": [612.0, 628.344, 816.0, 742.344],
+              "hasAppearance": false
+            },
+            {
+              "Subtype": "/Text",
+              "Rect": [258.61, 721.304, 282.61, 745.304],
+              "NM": "ee6ff9dc-c343-e24e-a355-70961149933a",
+              "Contents": "Acrobat native note 80",
+              "T": "ssword",
+              "C": [0.588242, 0.262741, 0.988235],
+              "Name": "/Comment",
+              "hasAppearance": true
+            },
+            {
+              "Subtype": "/Popup",
+              "Rect": [612.0, 631.304, 816.0, 745.304],
+              "hasAppearance": false
+            },
+            {
+              "Subtype": "/Ink",
+              "Rect": [165.207, 527.443, 348.847, 541.007],
+              "NM": "35ff3c2b-f001-9d4b-8a84-841838dd6433",
+              "T": "ssword",
+              "C": [0.858826, 0.203918, 0.145096],
+              "hasAppearance": true
+            },
+            {
+              "Subtype": "/Popup",
+              "Rect": [612.0, 424.534, 816.0, 538.534],
+              "hasAppearance": false
+            }
+          ]
+        },
+        {
+          "mediaBox": [0, 0, 612, 792],
+          "rotation": 0,
+          "text": "moon second page",
+          "contentSha256": "1e73df677c670b92a7929c6882dc63a507c4c8965a729da5c63b5d0fa45fbb7d",
+          "annotations": []
+        },
+        {
+          "mediaBox": [0, 0, 612, 792],
+          "rotation": 0,
+          "text": "sun third page",
+          "contentSha256": "dc7affbbb9c8187222d913b41c09d1739236ba428e643a98342111157d5a41cd",
+          "annotations": []
+        }
+      ]
+    }
+  },
+  "supportingEvidence": "artifacts/issue-75/2026-10-20 (not versioned)"
+}

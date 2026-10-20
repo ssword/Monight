@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import type { RecoveryDraftAdapter, RecoveryDraftInspection } from '../reader/recovery-drafts';
+import { bytesFromNativeResponse } from './native-bytes';
 
 interface NativeDraftMetadata {
   readonly documentPath: string;
@@ -17,10 +18,8 @@ type NativeDraftInspection =
       readonly draft: NativeDraftMetadata;
     };
 
-const asBytes = (response: ArrayBuffer): Uint8Array => {
-  if (!(response instanceof ArrayBuffer)) throw new Error('Invalid Recovery Draft response');
-  return new Uint8Array(response);
-};
+const asBytes = (response: unknown): Uint8Array =>
+  bytesFromNativeResponse(response, 'Invalid Recovery Draft response');
 
 export const nativeRecoveryDraftAdapter: RecoveryDraftAdapter = {
   async inspect(documentPath, sourceBytes): Promise<RecoveryDraftInspection> {
@@ -29,7 +28,7 @@ export const nativeRecoveryDraftAdapter: RecoveryDraftAdapter = {
       sourceBytes: Array.from(sourceBytes),
     });
     if (inspection.status !== 'available') return inspection;
-    const response = await invoke<ArrayBuffer>('read_recovery_draft', {
+    const response = await invoke('read_recovery_draft', {
       documentPath,
       sourceVersion: inspection.sourceVersion,
       editedRevision: inspection.draft.editedRevision,

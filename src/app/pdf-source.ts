@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import type { DocumentMetadata, PdfSource } from '../reader/pdf-source';
+import { bytesFromNativeResponse } from './native-bytes';
 
 export type PdfSourceInvoke = (command: string, args?: Record<string, unknown>) => Promise<unknown>;
 
@@ -27,20 +28,10 @@ export function createTauriPdfSource(
       );
     },
     async read(canonicalPath) {
-      const response = await invokeCommand('read_pdf_file', { path: canonicalPath });
-      if (Object.prototype.toString.call(response) === '[object ArrayBuffer]') {
-        return new Uint8Array(response as ArrayBuffer).slice();
-      }
-      if (ArrayBuffer.isView(response)) {
-        return new Uint8Array(response.buffer, response.byteOffset, response.byteLength).slice();
-      }
-      if (
-        Array.isArray(response) &&
-        response.every((value) => Number.isInteger(value) && value >= 0 && value <= 255)
-      ) {
-        return Uint8Array.from(response);
-      }
-      throw new Error('Invalid PDF source byte response');
+      return bytesFromNativeResponse(
+        await invokeCommand('read_pdf_file', { path: canonicalPath }),
+        'Invalid PDF source byte response',
+      );
     },
   };
 }

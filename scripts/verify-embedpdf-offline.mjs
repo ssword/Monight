@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import { chromium, webkit } from 'playwright';
 import { verifyAnnotations } from './verify-embedpdf-annotations.mjs';
+import { verifyExternalReaders } from './verify-embedpdf-external-readers.mjs';
 import { verifyNavigation } from './verify-embedpdf-navigation.mjs';
 import { verifyReading } from './verify-embedpdf-reading.mjs';
 import { verifyScrolling } from './verify-embedpdf-scrolling.mjs';
@@ -233,6 +234,7 @@ try {
   );
   await verifyReading(browser, origin);
   await verifyAnnotations(page, origin);
+  await verifyExternalReaders(page, origin);
   if (browserDiagnostics.some((entry) => entry.includes('monight-test-password'))) {
     throw new Error('The protected-document password entered browser diagnostics');
   }
