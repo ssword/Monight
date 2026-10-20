@@ -18,7 +18,7 @@ live prepared bytes through the shared print adapter, performs no PDF write, and
 identity, Reading Session state, and unsaved state unchanged. Closing the captured generation before
 preparation completes suppresses the stale print operation.
 
-## Packaged macOS check
+## Historical packaged macOS attempt (2026-09-10)
 
 A debug DMG built successfully before the final issue #66 switch with:
 
@@ -30,11 +30,11 @@ The mounted application launched from the DMG. This check exposed and fixed Taur
 normalization for numeric arrays, typed views, and isolation-realm `ArrayBuffer` values. After that
 fix, Document Intake advanced past the previous `Invalid PDF source byte response` failure.
 
-Native print-dialog evidence remains blocked: the development-gated EmbedPDF surface did not finish
+At that historical attempt, native print-dialog evidence was blocked: the development-gated EmbedPDF surface did not finish
 opening the annotated fixture in the packaged app, so Reader Actions correctly reported that no PDF
 was open when Print was invoked. The real EmbedPDF print-byte behavior is covered by the browser
-smoke above; the packaged surface initialization blocker must be resolved before final desktop print
-evidence can be collected.
+smoke above; that attempt did not establish desktop print acceptance. The later native macOS result below
+supersedes this blocker.
 
 
 ## Native macOS verification, 2026-10-20 (#80 / #88)
@@ -60,3 +60,21 @@ tests cover current-byte handoff, native errors, and the other-platform fallback
 Full provenance, output names, source-conflict setup, and the separate #91 recovery
 cleanup failure are in [the issue-80 record](issue-80-acrobat-verification.md).
 These are identified local candidate results, not a downloaded universal CI-bundle test.
+
+
+## Reconciled platform status — 2026-10-20 (#81)
+
+The macOS native observations above are evidence for the identified local candidates,
+not a complete downloaded-CI-artifact packaged run. The final Popup-cleanup candidate
+`c2d1c8d` also printed its deletion result without resurrecting comments; exact local
+archive/executable checksums, green CI, and successful packaging are linked in the
+[#80 record](issue-80-acrobat-verification.md#environment-and-build-identity).
+[#88](https://github.com/ssword/Monight/issues/88) is completed through PR #89.
+
+Windows: not executed (2026-10-20), no native desktop/browser print-panel or output
+record supplied. Linux: not executed (2026-10-20), no WebKitGTK desktop print-panel
+or output record supplied. Closed #77/#78 checklists and green CI/packaging are not
+native print observations. macOS Preview inspection of printed output was also not
+executed against the final candidate (no rerun recorded); Acrobat/PDFium inspected the
+output. These limits are consolidated in the
+[#66 matrix](issue-66-verification.md#native-workflow-matrix).
