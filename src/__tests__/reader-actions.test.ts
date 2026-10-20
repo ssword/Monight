@@ -907,6 +907,97 @@ describe('Reader Actions', () => {
     expect(runtime.recovery).toEqual({ sourceVersion: 'copy-source-v1' });
   });
 
+  it('Save As after an external conflict reports a post-write failure, then rebases on retry', async () => {
+    let editedRevision = 1;
+    let savedRevision = 0;
+    const runtime = createDocumentRuntime();
+    runtime.editing = {
+      state: () => ({
+        revision: editedRevision,
+        dirty: editedRevision > savedRevision,
+        readOnlyReason: null,
+      }),
+      exportPdf: async () => new Uint8Array([37, 80, 68, 70, editedRevision]),
+      markSaved: (revision) => {
+        savedRevision = revision;
+      },
+    };
+    runtime.recovery = { sourceVersion: 'source-v1' };
+    runtime.saveSource = 'source-token';
+    const write = vi.fn(async (draft: { documentPath: string }) => {
+      if (draft.documentPath === '/docs/first.pdf')
+        throw new Error('Recovery Draft source changed since inspection; reopen the Document');
+    });
+    const reconcile = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('Recovery Draft source is not authorized'))
+      .mockResolvedValue({ sourceVersion: 'copy-source-v1' });
+    const writeDestination = vi.fn(async (_destination: unknown, bytes: Uint8Array) => bytes);
+    const reader = createReaderActions({
+      initialSession: INITIAL_SESSION,
+      projection: {
+        activateDocument: async () => undefined,
+        goToReadingPosition: async () => undefined,
+        verifySavedDocument: async () => undefined,
+        reidentifyDocument: () => undefined,
+      },
+      pdfSaveAdapter: {
+        captureSource: async () => 'copy-source-token',
+        chooseDestination: async () => ({
+          token: 'selected',
+          canonicalPath: '/docs/copy.pdf',
+          title: 'copy.pdf',
+        }),
+        writeDestination,
+        releaseDestination: async () => undefined,
+        releaseSource: async () => undefined,
+      },
+      recoveryDraftAdapter: { inspect: vi.fn(), write, reconcile, remove: vi.fn() },
+      persist: async () => undefined,
+    });
+    await reader.dispatch({
+      type: 'registerDocument',
+      document: INITIAL_SESSION.documents[0],
+      runtime,
+    });
+    await expect(reader.captureRecoveryDraft('/docs/first.pdf')).resolves.toMatchObject({
+      status: 'failure',
+    });
+    const before = reader.snapshot();
+
+    const failed = await reader.dispatch({ type: 'saveDocumentAs' });
+    expect(failed).toMatchObject({ status: 'failure' });
+    expect(String(failed.status === 'failure' && failed.error)).toMatch(
+      /copy\.pdf was written, but this tab could not switch to it \(Recovery Draft source is not authorized\)/,
+    );
+    expect(writeDestination).toHaveBeenCalledOnce();
+    expect(reader.snapshot()).toEqual(before);
+    expect(runtime.saveSource).toBe('source-token');
+    expect(runtime.editing.state().dirty).toBe(true);
+
+    await expect(reader.dispatch({ type: 'saveDocumentAs' })).resolves.toMatchObject({
+      status: 'committed',
+    });
+    expect(reader.snapshot().documents[0]).toMatchObject({
+      filePath: '/docs/copy.pdf',
+      title: 'copy.pdf',
+    });
+    expect(runtime.saveSource).toBe('copy-source-token');
+    expect(runtime.recovery).toEqual({ sourceVersion: 'copy-source-v1' });
+    expect(runtime.editing.state().dirty).toBe(false);
+
+    editedRevision = 2;
+    await expect(reader.captureRecoveryDraft('/docs/copy.pdf')).resolves.toMatchObject({
+      status: 'performed',
+    });
+    expect(write).toHaveBeenLastCalledWith({
+      documentPath: '/docs/copy.pdf',
+      sourceVersion: 'copy-source-v1',
+      editedRevision: 2,
+      bytes: new Uint8Array([37, 80, 68, 70, 2]),
+    });
+  });
+
   it.each([
     'dialog',
     'export',

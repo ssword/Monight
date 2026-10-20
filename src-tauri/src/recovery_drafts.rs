@@ -350,24 +350,26 @@ impl RecoveryDrafts {
         }
         let document_path =
             canonical_source(&reconciliation.document_path, &reconciliation.source_bytes)?;
+        // A revoked source (for example after an external change) has no trusted draft
+        // to carry forward, but the verified destination bytes may still be rebased.
         let previous_authorization = self
             .authorized_sources
             .lock()
             .map_err(|error| error.to_string())?
             .get(&reconciliation.previous_document_path)
-            .cloned()
-            .ok_or("Recovery Draft source is not authorized")?;
+            .cloned();
         let previous_path = draft_path(root, &reconciliation.previous_document_path);
-        let previous = if previous_path.exists() {
-            let draft = decode(&previous_path)?;
-            if draft.0.document_path != reconciliation.previous_document_path
-                || draft.0.source_version != previous_authorization
-            {
-                return Err("Recovery Draft does not match its live Document".into());
+        let previous = match &previous_authorization {
+            Some(authorized_version) if previous_path.exists() => {
+                let draft = decode(&previous_path)?;
+                if draft.0.document_path != reconciliation.previous_document_path
+                    || &draft.0.source_version != authorized_version
+                {
+                    return Err("Recovery Draft does not match its live Document".into());
+                }
+                Some(draft)
             }
-            Some(draft)
-        } else {
-            None
+            _ => None,
         };
         let destination_path = draft_path(root, &document_path);
         if destination_path != previous_path {
@@ -385,6 +387,8 @@ impl RecoveryDrafts {
                     remove_if_present(&previous_path)?;
                 }
             }
+            // Never remove a draft whose source this session cannot vouch for.
+            _ if previous_authorization.is_none() => {}
             _ => remove_if_present(&previous_path)?,
         }
         let mut sources = self
@@ -592,6 +596,129 @@ mod tests {
                 },
             )
             .unwrap();
+        assert!(!draft_path(&root, &destination).exists());
+    }
+
+    #[test]
+    fn save_as_after_external_conflict_rebases_onto_the_verified_destination() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("drafts");
+        let (source, bytes) = source_fixture(directory.path(), "source.pdf");
+        let path = source.to_string_lossy().to_string();
+        let drafts = RecoveryDrafts::default();
+        let source_version = match drafts.inspect(&root, &path, &bytes).unwrap() {
+            DraftInspection::None { source_version } => source_version,
+            result => panic!("unexpected inspection: {result:?}"),
+        };
+        std::fs::write(&source, changed_pdf(bytes.clone())).unwrap();
+        let capture = |revision| RecoveryDraftInput {
+            document_path: path.clone(),
+            source_version: source_version.clone(),
+            edited_revision: revision,
+            bytes: bytes.clone(),
+        };
+        assert!(drafts
+            .write(&root, capture(1))
+            .unwrap_err()
+            .contains("source changed"));
+        assert!(drafts
+            .write(&root, capture(1))
+            .unwrap_err()
+            .contains("not authorized"));
+
+        let destination = directory.path().join("copy.pdf");
+        let saved = changed_pdf(changed_pdf(bytes.clone()));
+        std::fs::write(&destination, &saved).unwrap();
+        let destination = destination
+            .canonicalize()
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
+        let reconciliation = |source_bytes: &[u8]| RecoveryDraftReconciliation {
+            previous_document_path: path.clone(),
+            document_path: destination.clone(),
+            persisted_revision: 1,
+            source_bytes: source_bytes.to_vec(),
+        };
+
+        // Destination bytes that no longer match the written PDF are not rebased.
+        assert!(drafts
+            .reconcile(&root, reconciliation(&bytes))
+            .unwrap_err()
+            .contains("source changed"));
+        assert!(!draft_path(&root, &destination).exists());
+
+        let reconciled = drafts.reconcile(&root, reconciliation(&saved)).unwrap();
+        assert_eq!(reconciled.source_version, version(&saved));
+        assert!(!draft_path(&root, &destination).exists());
+        assert!(drafts
+            .write(&root, capture(2))
+            .unwrap_err()
+            .contains("not authorized"));
+
+        drafts
+            .write(
+                &root,
+                RecoveryDraftInput {
+                    document_path: destination.clone(),
+                    source_version: reconciled.source_version,
+                    edited_revision: 2,
+                    bytes: bytes.clone(),
+                },
+            )
+            .unwrap();
+        let restarted = RecoveryDrafts::default();
+        assert!(matches!(
+            restarted.inspect(&root, &destination, &saved).unwrap(),
+            DraftInspection::Available { draft, .. }
+                if draft.edited_revision == 2 && draft.document_path == destination
+        ));
+        assert_eq!(
+            restarted
+                .read(&root, &destination, &version(&saved), 2)
+                .unwrap(),
+            bytes
+        );
+    }
+
+    #[test]
+    fn unauthorized_reconciliation_leaves_the_previous_draft_untouched() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("drafts");
+        let (source, bytes) = source_fixture(directory.path(), "source.pdf");
+        let path = source.to_string_lossy().to_string();
+        let first_run = RecoveryDrafts::default();
+        let source_version = match first_run.inspect(&root, &path, &bytes).unwrap() {
+            DraftInspection::None { source_version } => source_version,
+            result => panic!("unexpected inspection: {result:?}"),
+        };
+        first_run
+            .write(
+                &root,
+                RecoveryDraftInput {
+                    document_path: path.clone(),
+                    source_version,
+                    edited_revision: 3,
+                    bytes: bytes.clone(),
+                },
+            )
+            .unwrap();
+        let (destination, saved) = source_fixture(directory.path(), "copy.pdf");
+        let destination = destination.to_string_lossy().to_string();
+
+        RecoveryDrafts::default()
+            .reconcile(
+                &root,
+                RecoveryDraftReconciliation {
+                    previous_document_path: path.clone(),
+                    document_path: destination.clone(),
+                    persisted_revision: 1,
+                    source_bytes: saved,
+                },
+            )
+            .unwrap();
+
+        assert!(draft_path(&root, &path).exists());
         assert!(!draft_path(&root, &destination).exists());
     }
 
