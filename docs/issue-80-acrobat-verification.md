@@ -104,7 +104,8 @@ The input exposed two product failures:
   24pt Rect as 20pt. The fix restores the current live Rect through the public engine
   update API with appearance regeneration disabled, then reopens exported bytes to
   verify them. It preserves deliberate moves/resizes and rejects failed correction;
-  retry retains edits. The existing unknown-icon Preview failure remains recorded.
+  retry retains edits. The unknown-icon Preview failure was recorded separately and later
+  fixed in engine exports by #94.
 - [#87](https://github.com/ssword/Monight/issues/87): Acrobat's empty AcroForm resource
   scaffolding caused an unnecessary form-protection block. The fix permits only an
   empty Fields array plus well-typed default resources/appearance options. Actual

@@ -324,6 +324,75 @@ fn native_save_accepts_monight_exports_without_changing_document_content() {
     }
 }
 
+/// The normal appearance of the one Text note with `contents` by `author`: its stream
+/// dictionary geometry and decoded drawing operators.
+fn note_appearance(bytes: &[u8], contents: &str, author: &str) -> (String, Vec<u8>) {
+    use lopdf::{decode_text_string, Object};
+    let document = lopdf::Document::load_mem(bytes).unwrap();
+    let pages: Vec<_> = document.get_pages().into_values().collect();
+    let notes: Vec<_> = pages
+        .iter()
+        .flat_map(|page| document.get_page_annotations(*page).unwrap())
+        .filter(|annotation| {
+            let text = |key: &[u8]| annotation.get(key).and_then(decode_text_string).ok();
+            annotation.get(b"Subtype").and_then(Object::as_name).ok() == Some(b"Text")
+                && text(b"Contents").as_deref() == Some(contents)
+                && text(b"T").as_deref() == Some(author)
+        })
+        .collect();
+    assert_eq!(
+        notes.len(),
+        1,
+        "expected one note {contents:?} by {author:?}"
+    );
+    let appearance = notes[0].get(b"AP").unwrap();
+    let appearance = document
+        .dereference(appearance)
+        .unwrap()
+        .1
+        .as_dict()
+        .unwrap();
+    let normal = document
+        .dereference(appearance.get(b"N").unwrap())
+        .unwrap()
+        .1;
+    let stream = normal.as_stream().unwrap();
+    let field = |key: &[u8]| {
+        stream
+            .dict
+            .get(key)
+            .map(|value| canonical(&document, &pages, value))
+            .unwrap_or_default()
+    };
+    (
+        format!("BBox {} Matrix {}", field(b"BBox"), field(b"Matrix")),
+        stream.get_plain_content().unwrap(),
+    )
+}
+
+#[test]
+fn contents_edits_keep_the_external_readers_note_appearance() {
+    for reader in readers() {
+        let id = required_str(&reader, "id");
+        let input = fixture(&required_str(&reader, "supportedFixture"));
+        let edited = export(&reader, "edited");
+        for selector in reader["annotationSelectors"].as_array().unwrap() {
+            if selector["subtype"] != "/Text" {
+                continue;
+            }
+            let contents = selector["contents"].as_str().unwrap();
+            let author = selector["author"].as_str().unwrap();
+            // The Chromium contract's edit, in src/embedpdf-external-readers-smoke.ts.
+            let edited_contents = format!("Monight edited {contents}");
+            assert_eq!(
+                note_appearance(&edited, &edited_contents, author),
+                note_appearance(&input, contents, author),
+                "{id}: editing a note's contents replaced its appearance"
+            );
+        }
+    }
+}
+
 fn outline_entries(entries: &Value) -> usize {
     entries
         .as_array()
