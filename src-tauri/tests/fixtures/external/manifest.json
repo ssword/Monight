@@ -77,7 +77,16 @@
         "externalReader": "Adobe Acrobat Reader 26.002.21901",
         "os": "macOS 27.0.1 (26A434)",
         "operators": "Codex via native computer control with repository owner assistance for mouse operations",
-        "record": "docs/issue-80-acrobat-verification.md"
+        "record": "docs/issue-80-acrobat-verification.md",
+        "monight": {
+          "version": "0.6.0",
+          "sourceRevision": "c2d1c8d4a33f6cda7f753bdd221c137c0998d6be",
+          "binarySha256": "ebcb2ed694bfd4fdfe11bb78f90ca43d22f6b55e2585ddddb3452b54d4fa0939",
+          "artifact": "local-macos-c2d1c8d.app.tar.gz; locally built release-profile candidate",
+          "artifactSha256": "ffd8e6fe7b718343f6a7449f3c6a036b5886f051df8816c4d64c0c7e6619d013",
+          "ciRun": "https://github.com/ssword/Monight/actions/runs/39443065781",
+          "candidatePackagingRun": "https://github.com/ssword/Monight/actions/runs/39443061858"
+        }
       }
     }
   ],
