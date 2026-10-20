@@ -1,4 +1,4 @@
-# Preview fixtures for issues #75 and #79
+# External-reader fixtures for issues #75, #79, and #80
 
 Created on 2026-10-20 using Preview 11.0 on macOS 27.0.1 (26A434).
 Operator: Codex through native computer control, explicitly requested by the user.
@@ -27,8 +27,7 @@ Preview supplied a stable `/NM`. Preview's author value is retained as written b
 The 0.01-point tolerance in the registration is an intended serialization tolerance,
 not permission to accept the observed 4-point shrink of the Preview note. #79 should
 expose that failure rather than change the expected input geometry to the broken output.
-An Acrobat fixture can be registered later with another `readers` entry and inventory
-entries; none was created or tested in this session. The automated #79 contracts have
+The Acrobat inputs and their separate provenance are described below. The automated #79 contracts have
 since been implemented; see [Automated contracts](#automated-contracts-79).
 
 ## Automated contracts (#79)
@@ -77,6 +76,52 @@ git status -- src-tauri/tests/fixtures/external/exports
 ```
 
 No test code changes are needed.
+
+## Acrobat provenance (#80)
+
+Created on 2026-10-20 using Adobe Acrobat Reader 26.002.21901 on macOS 27.0.1
+(26A434). Operators: Codex through native computer control and the repository owner
+for mouse interactions unavailable through the computer-control interface. These are
+real Acrobat saves; no PDF authoring library generated or edited their objects.
+
+1. Copied the committed `native-annotations/annotated.pdf` to a disposable path.
+   Acrobat edited its original Guest Highlight and Text contents; Monight re-edited
+   both and saved. Acrobat then re-edited and deleted the original objects, in
+   separate observed steps. The original Text deletion happened after the canonical
+   supported snapshot; the snapshot still contains that original Text.
+2. The owner created a new Highlight (`Acrobat native highlight 80`) and a new Text
+   (`Acrobat native note 80`) in Acrobat and saved. Both are independent objects,
+   with no `/IRT` reply relationship, authored `ssword` as written by Acrobat.
+   Preserved this save as `acrobat-supported.pdf`. The highlight is on the first
+   text line; the sticky note has a 24-by-24-point Rect. Ada's original note and
+   both Links remain. Acrobat also wrote an empty AcroForm resource dictionary.
+3. Copied that supported snapshot to a companion path. The owner added one pencil
+   stroke in blank space and saved in Acrobat. Preserved those exact bytes as
+   `acrobat-unsupported.pdf`; native inspection confirms one additional `/Ink`.
+   An earlier experimental companion with two Ink objects is not the canonical input.
+4. The newly authored supported input exposed #86 (Text geometry shrank to 20pt)
+   and #87 (empty AcroForm blocked editing). The owner chose to fix both and continue.
+   With the fixes, the actual runtime contract preserves the 24pt Rect within 0.01pt,
+   edits and deletes both selected objects, and the Rust contract accepts the exports
+   while preserving unrelated Document Content. The Ink companion remains read-only
+   with `Unsupported embedded annotations cannot yet be safely preserved; this Document is read-only`.
+5. The fixed local desktop build opened the supported input as editable, edited its
+   new note and highlight through the comments sidebar, and saved. Native inspection
+   confirmed the same note ID and unchanged 24pt Rect. Save As under Sepia, 150% zoom,
+   and 90-degree viewing rotation retained original page content and geometry;
+   Acrobat displayed upright, unfiltered pages and four native comments.
+
+`acrobat-reader-26` registers the new objects as selectors. Canonical checksums,
+geometry, page content, metadata, outline, and other native objects are inventoried
+in `manifest.json`. The shared contracts iterate over this reader without a special
+Acrobat branch. No additional creation tool is enabled.
+
+All six final canonical pages were rendered with PDFium and visually inspected:
+readable upright content, with one visible pencil stroke only in the companion.
+Intermediate evidence is retained in the ignored repository-relative archive
+`artifacts/issue-80/2026-10-20/`. See the
+[verification record](../../../../docs/issue-80-acrobat-verification.md) for build
+identity, desktop outcomes, remaining failures, and candidate acceptance limits.
 
 ## Preview provenance
 

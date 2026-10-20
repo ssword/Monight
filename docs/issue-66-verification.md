@@ -96,8 +96,13 @@ external-reader round trip.
 | --- | --- | --- | --- | --- |
 | Monight to Preview to Monight, including re-edit/delete/re-save | Agent-operated installed-build check passed repeated highlight edits/deletion; candidate provenance unverified ([record](issue-75-preview-verification.md)) | Failed: Preview note editor did not open; deletion worked ([record](issue-75-preview-verification.md)) | Preview Rectangle fixture blocked read-only with explicit explanation ([record](issue-75-preview-verification.md)) | Saved output upright/unfiltered; print action produced no panel, printed output unverified ([record](issue-75-preview-verification.md)) |
 | Preview to Monight to Preview, including re-edit/delete/re-save | Agent-operated installed-build check passed native comment edits and re-save; candidate provenance unverified ([record](issue-75-preview-verification.md)) | Failed: Preview note editor did not open after Monight save; Rect shrank 24 to 20 points ([record](issue-75-preview-verification.md)) | Preview Rectangle fixture blocked read-only with explicit explanation ([record](issue-75-preview-verification.md)). Automated by #79: safety inspection and native Save refuse it with `Unsupported embedded annotations; saving is blocked`; maintainer decision pending on blocking versus preserving `/Square` | Saved output upright/unfiltered; print action produced no panel, printed output unverified ([record](issue-75-preview-verification.md)) |
-| Monight to Acrobat to Monight, including re-edit/delete/re-save | Pending | Pending | Pending | Pending |
-| Acrobat to Monight to Acrobat, including re-edit/delete/re-save | Pending | Pending | Pending | Pending |
+| Monight to Acrobat to Monight, including re-edit/delete/re-save | Installed-build native fixture: repeated edit/delete/save observed; fresh fixed-candidate UI creation not executed yet | Original native Text re-edit and deletion verified by stable ID; earlier reply attempt excluded | Acrobat Ink companion blocked read-only; canonical fixture and native safety contract registered | Fixed local Save As upright/unfiltered in Acrobat; native Print produced no dialog, output unverified |
+| Acrobat to Monight to Acrobat, including re-edit/delete/re-save | Newly Acrobat-created object edited/saved in fixed local desktop build; automated edit/delete/reopen passed; final desktop return cycle in progress | #86/#87 reproduced and fixed locally; native 24pt Rect preserved on desktop Save; final desktop return cycle in progress | Same supported source plus one native Ink stroke; explicit read-only block verified by shared contract | Fixed local Save As upright/unfiltered; desktop print failed to show dialog; prepared-print-byte automation passed |
+
+Acrobat observations: 2026-10-20, Codex with owner assistance, macOS 27.0.1 (26A434),
+Acrobat Reader 26.002.21901. These are installed/local-build observations, not a
+verified CI-artifact pass. Exact binary identities, CI packaging link, fixtures,
+steps, failures, and execution limits are in the [issue-80 record](issue-80-acrobat-verification.md).
 
 ## Existing focused records
 

@@ -420,6 +420,34 @@ fn visit_document_dictionaries(
     Ok(())
 }
 
+// Acrobat may add default form resources when saving annotations, even when
+// there are no fields. Accept only that empty scaffolding; retain the normal
+// content-graph preservation check when saving it.
+fn is_empty_form_scaffolding(document: &lopdf::Document, object: &lopdf::Object) -> bool {
+    use lopdf::Object;
+    let Ok((_, Object::Dictionary(form))) = document.dereference(object) else {
+        return false;
+    };
+    if !form
+        .get(b"Fields")
+        .ok()
+        .and_then(|fields| document.dereference(fields).ok())
+        .and_then(|(_, fields)| fields.as_array().ok())
+        .is_some_and(Vec::is_empty)
+    {
+        return false;
+    }
+    form.iter().all(|(key, value)| match key.as_slice() {
+        b"Fields" => true,
+        b"DA" => value.as_str().is_ok(),
+        b"DR" => document
+            .dereference(value)
+            .is_ok_and(|(_, resources)| resources.as_dict().is_ok()),
+        b"NeedAppearances" => value.as_bool().is_ok(),
+        _ => false,
+    })
+}
+
 fn load_editable(bytes: &[u8]) -> Result<lopdf::Document, String> {
     let parsed = std::thread::scope(|scope| -> Result<_, String> {
         let worker = std::thread::Builder::new()
@@ -486,7 +514,12 @@ fn load_editable(bytes: &[u8]) -> Result<lopdf::Document, String> {
         return Err("Digitally signed PDFs are read-only to preserve their signatures".into());
     }
     visit_document_dictionaries(&document, |dictionary| {
-        if dictionary.has(b"AcroForm") || dictionary.has(b"XFA") {
+        if dictionary.has(b"XFA")
+            || dictionary.has(b"FT")
+            || dictionary
+                .get(b"AcroForm")
+                .is_ok_and(|form| !is_empty_form_scaffolding(&document, form))
+        {
             return Err(
                 "PDF form preservation has not been verified; this Document is read-only".into(),
             );
@@ -1257,6 +1290,104 @@ mod tests {
         {
             assert_eq!(editing_status(bytes).as_deref(), Some(reason));
         }
+    }
+
+    #[test]
+    fn only_demonstrably_empty_form_scaffolding_is_editable() {
+        use lopdf::{dictionary, Object};
+
+        let empty = || Object::Array(Vec::new());
+        let cases = [
+            (dictionary! { "Fields" => empty() }, true),
+            (
+                dictionary! {
+                    "Fields" => empty(),
+                    "DA" => Object::string_literal("/Helv 0 Tf 0 g"),
+                    "DR" => dictionary! {},
+                    "NeedAppearances" => false,
+                },
+                true,
+            ),
+            (dictionary! {}, false),
+            (dictionary! { "Fields" => Object::Null }, false),
+            (
+                dictionary! { "Fields" => Object::string_literal("not an array") },
+                false,
+            ),
+            (
+                dictionary! { "Fields" => vec![Object::Dictionary(dictionary! { "FT" => "Tx" })] },
+                false,
+            ),
+            (
+                dictionary! { "Fields" => empty(), "XFA" => Object::Null },
+                false,
+            ),
+            (dictionary! { "Fields" => empty(), "SigFlags" => 0 }, false),
+            (
+                dictionary! { "Fields" => empty(), "Unknown" => true },
+                false,
+            ),
+            (dictionary! { "Fields" => empty(), "DA" => 42 }, false),
+            (dictionary! { "Fields" => empty(), "DR" => empty() }, false),
+            (
+                dictionary! { "Fields" => empty(), "NeedAppearances" => Object::Null },
+                false,
+            ),
+        ];
+        for (form, editable) in cases {
+            for indirect in [false, true] {
+                let mut document = lopdf::Document::load_mem(&pdf()).unwrap();
+                let form = if indirect {
+                    Object::Reference(document.add_object(form.clone()))
+                } else {
+                    Object::Dictionary(form.clone())
+                };
+                let root = document
+                    .trailer
+                    .get(b"Root")
+                    .unwrap()
+                    .as_reference()
+                    .unwrap();
+                document
+                    .get_object_mut(root)
+                    .unwrap()
+                    .as_dict_mut()
+                    .unwrap()
+                    .set("AcroForm", form.clone());
+                let mut bytes = Vec::new();
+                document.save_to(&mut bytes).unwrap();
+                assert_eq!(editing_status(&bytes).is_none(), editable, "{form:?}");
+            }
+        }
+
+        // Empty Fields must not hide a field dictionary elsewhere in the PDF.
+        let mut document = lopdf::Document::load_mem(&pdf()).unwrap();
+        let fields = document.add_object(empty());
+        let resources = document.add_object(dictionary! {});
+        let form = document.add_object(dictionary! { "Fields" => fields, "DR" => resources });
+        let root = document
+            .trailer
+            .get(b"Root")
+            .unwrap()
+            .as_reference()
+            .unwrap();
+        document
+            .get_object_mut(root)
+            .unwrap()
+            .as_dict_mut()
+            .unwrap()
+            .set("AcroForm", form);
+        let mut bytes = Vec::new();
+        document.save_to(&mut bytes).unwrap();
+        assert_eq!(editing_status(&bytes), None);
+        document.add_object(
+            dictionary! { "FT" => "Tx", "V" => Object::string_literal("private field") },
+        );
+        bytes.clear();
+        document.save_to(&mut bytes).unwrap();
+        assert!(editing_status(&bytes)
+            .unwrap()
+            .contains("PDF form preservation"));
     }
 
     #[test]
