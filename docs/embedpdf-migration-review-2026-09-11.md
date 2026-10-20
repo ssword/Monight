@@ -12,6 +12,25 @@ evidence against #55 and the acceptance criteria of #66. **Standards** checks th
 `CONTEXT.md`, the ADRs, and a baseline of code smells. Findings are not merged or ranked across
 axes.
 
+## Status note — 2026-10-20 (#68 / #81)
+
+The review below is preserved as the historical assessment. Subsequent work resolved
+the lint/CI/push and vulnerable-parser findings (3 and 6), documented and tested
+window-before-restoration plus early Quit (7), unified Document Intake interruption
+and its helper names (S1/S2, `51cc825`), and decomposed the EmbedPDF surface with a
+layering guard (S3, `27bfc87` / `f64222c`). Candidate packaging and tester runbooks
+exist; the [reconciled #66 record](issue-66-verification.md) links green CI and builds.
+Both Acrobat directions and native macOS printing now have identified local-candidate
+observations ([#80](issue-80-acrobat-verification.md)); this partially addresses 2/4.
+The full packaged evidence in 1/4 is still unexecuted where explicitly recorded.
+Preview Text failures remain [#94](https://github.com/ssword/Monight/issues/94), and
+conflict/Save As recovery remains [#91](https://github.com/ssword/Monight/issues/91).
+The tracker mismatch in 5 changed direction: #55 and #57–#66 are closed, but closure
+does not establish all acceptance checks. #81 reconciles records and adds evidence
+links without reopening or editing those issue bodies. Parent #68 retains the
+remaining release work. The [ADR status](adr/0002-adopt-embedpdf-and-pdf-native-annotations.md#verification-work)
+and [desktop record](desktop-adapter-verification.md) state these same limits.
+
 ## Assessment
 
 The #55 behavior is largely implemented in code, but #66 is not complete. The remaining gaps are

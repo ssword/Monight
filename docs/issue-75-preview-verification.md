@@ -61,11 +61,16 @@ pypdf. The automated #79 Rust and Chromium contracts are described in the
 - No product code changed; the full frontend/Rust/offline suites and CI were not run
   for this fixture-preparation change. These checks are not #79 contract completion.
 
-## Failure report drafts
+## Recorded failures and follow-up
 
-These are local reports for maintainer review; no issue has been posted. #75 must
-remain open until its core-tool failure has a tracker issue and maintainer decision,
-and successful retesting against an identified candidate supplies missing evidence.
+Status reconciled 2026-10-20 for #81: #75 was closed at the maintainer's explicit
+request after testing/fixture preparation ([closure comment](https://github.com/ssword/Monight/issues/75#issuecomment-6286913129)).
+That disposition did not accept the failed note behavior. The editor and geometry
+symptoms below remain tracked in [#94](https://github.com/ssword/Monight/issues/94);
+no final-candidate Preview rerun or core-tool disablement is recorded. The historical
+no-dialog print failure was fixed separately as [#88](https://github.com/ssword/Monight/issues/88)
+through PR #89, with Acrobat/PDFium output inspection. It does not supply the missing
+Preview round-trip or Preview inspection of printed output.
 
 ### Preview text comments cannot be re-edited after Monight save
 

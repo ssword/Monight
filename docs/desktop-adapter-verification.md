@@ -4,7 +4,7 @@ Issue #39 verifies that platform adapters preserve the same Document Intake, Rea
 Reader Action, and Document Query behavior on macOS, Windows, and Linux. Platform branching must
 remain in the adapters listed below; it must not enter those domain modules.
 
-The focused repair evidence and pending native matrix for issue #52 are recorded in
+The historical focused repair evidence and unexecuted native matrix for issue #52 are recorded in
 [`issue-52-verification.md`](issue-52-verification.md).
 
 ## EmbedPDF migration
@@ -23,8 +23,15 @@ Re-run the platform smoke matrix using release-candidate artifacts. It must cove
 annotation Save/Save As and reopen, failed/conflicting writes, Save/Discard/Cancel
 on close and Quit, crash recovery, protected PDFs, unsaved-annotation printing, and offline
 operation. Native annotation round trips with Preview and Acrobat are separate acceptance
-evidence. All of these migration-specific packaged checks remain pending; see the
-[engine migration review](pdf-engine-review-2026-09-09.md).
+evidence. The [consolidated matrices and candidate identities](issue-66-verification.md)
+were reconciled on 2026-10-20 for #81. macOS has identified local release-profile
+observations for native Highlight/Text round trips, ordinary Save/Save As, unsupported
+Ink protection, and native PDFKit printing with unsaved annotations and no viewing
+transforms ([#80 record](issue-80-acrobat-verification.md)). A complete downloaded-CI-bundle
+runbook is not demonstrated. Windows and Linux have green automated and packaging
+runs but no supplied native execution records. Preview Text interoperability and
+conflict/Save As recovery remain open as [#94](https://github.com/ssword/Monight/issues/94)
+and [#91](https://github.com/ssword/Monight/issues/91).
 
 Release candidates come from the manually dispatched `Release Candidate` GitHub Actions workflow.
 It produces unsigned macOS, Windows, and Linux artifacts without creating a tag or GitHub release.
@@ -49,7 +56,7 @@ The suites cover these repeatable adapter checks:
 | Command-line intake and page targeting | Rust CLI payload parsing plus TypeScript startup restoration and page-scoping coverage |
 | Main-window close and whole-app Quit | TypeScript awaited-flush guards plus Rust exit interception |
 | Auxiliary-window close | TypeScript window-scoped close guard |
-| Printing | Shared in-memory/browser print contract plus Reader Action routing |
+| Printing | Reader Action routing, macOS PDFKit preparation/native adapter contracts, and browser fallback contract |
 | External links | Shared in-memory/Tauri contract plus Rust URL-policy tests |
 | Restoration and concurrency regressions | Document Intake, Reader Actions, Reading Session, and startup-restoration suites |
 
@@ -58,23 +65,29 @@ The suites cover these repeatable adapter checks:
 For release candidates, record one native packaged-app pass per platform. Use two valid PDFs, one
 invalid or missing PDF path, and one encrypted PDF. Link the CI run and release artifact used.
 
+Evidence audit date: 2026-10-20. “Not executed” records the complete smoke check
+not run in this reconciliation, with no supporting execution record supplied; it
+is not a pass. Closed #76–#78 checklists have no evidence comments. Full per-platform
+limits are in the [matrix evidence scope](issue-66-verification.md#matrix-evidence-scope).
+
 | Check | macOS | Windows | Linux |
 | --- | --- | --- | --- |
-| CI run and artifact | Pending | Pending | Pending |
-| Multi-select file dialog opens valid PDFs and reports the invalid path once | Pending | Pending | Pending |
-| Drag-and-drop opens valid paths and reports a mixed invalid path independently | Pending | Pending | Pending |
-| OS file association opens valid paths and reports a mixed invalid path independently | Pending | Pending | Pending |
-| CLI opens valid paths after an invalid first path; `--page` is not transferred | Pending | Pending | Pending |
-| Main-window close waits for a final flush | Pending | Pending | Pending |
-| Application Quit waits for a final flush | Pending | Pending | Pending |
-| Closing Settings leaves the main window and Reading Session active | Pending | Pending | Pending |
-| Print opens the native print flow for the active Document | Pending | Pending | Pending |
-| HTTPS, HTTP, and mail links open; unsafe schemes remain blocked | Pending | Pending | Pending |
-| Encrypted restoration can succeed or cancel without persisting a password | Pending | Pending | Pending |
+| CI run and artifact | Local candidate only: [revision, archive/executable checksums, CI and packaging](issue-66-verification.md#current-code-and-candidate-evidence-2026-10-20); downloaded CI-bundle smoke not executed (2026-10-20): no run recorded | CI/packaging passed; installed-artifact check not executed (2026-10-20): no Windows desktop record ([candidate](issue-66-verification.md#current-code-and-candidate-evidence-2026-10-20)) | CI/packaging passed; installed-artifact check not executed (2026-10-20): no Linux desktop record ([candidate](issue-66-verification.md#current-code-and-candidate-evidence-2026-10-20)) |
+| Multi-select file dialog opens valid PDFs and reports the invalid path once | Not executed (2026-10-20): no complete native smoke record supplied | Not executed (2026-10-20): no Windows desktop record supplied | Not executed (2026-10-20): no Linux desktop record supplied |
+| Drag-and-drop opens valid paths and reports a mixed invalid path independently | Not executed (2026-10-20): no complete native smoke record supplied | Not executed (2026-10-20): no Windows desktop record supplied | Not executed (2026-10-20): no Linux desktop record supplied |
+| OS file association opens valid paths and reports a mixed invalid path independently | Not executed (2026-10-20): no complete native smoke record supplied | Not executed (2026-10-20): no Windows desktop record supplied | Not executed (2026-10-20): no Linux desktop record supplied |
+| CLI opens valid paths after an invalid first path; `--page` is not transferred | Not executed (2026-10-20): no complete native smoke record supplied | Not executed (2026-10-20): no Windows desktop record supplied | Not executed (2026-10-20): no Linux desktop record supplied |
+| Main-window close waits for a final flush | Not executed (2026-10-20): no complete native smoke record supplied | Not executed (2026-10-20): no Windows desktop record supplied | Not executed (2026-10-20): no Linux desktop record supplied |
+| Application Quit waits for a final flush | Not executed (2026-10-20): no complete native smoke record supplied | Not executed (2026-10-20): no Windows desktop record supplied | Not executed (2026-10-20): no Linux desktop record supplied |
+| Closing Settings leaves the main window and Reading Session active | Not executed (2026-10-20): no complete native smoke record supplied | Not executed (2026-10-20): no Windows desktop record supplied | Not executed (2026-10-20): no Linux desktop record supplied |
+| Print opens the native print flow for the active Document | Observed, 2026-10-20: local release-profile candidate opens Print/Cmd+P panels, including permitted read-only input; saved output includes unsaved markup without viewing transforms; source/dirty state retained ([tester, versions, checksums and runs](issue-80-acrobat-verification.md)); CI-bundle rerun not executed: no run recorded | Not executed (2026-10-20): no Windows desktop record supplied | Not executed (2026-10-20): no Linux desktop record supplied |
+| HTTPS, HTTP, and mail links open; unsafe schemes remain blocked | Not executed (2026-10-20): no complete native smoke record supplied | Not executed (2026-10-20): no Windows desktop record supplied | Not executed (2026-10-20): no Linux desktop record supplied |
+| Encrypted restoration can succeed or cancel without persisting a password | Not executed (2026-10-20): no complete native smoke record supplied | Not executed (2026-10-20): no Windows desktop record supplied | Not executed (2026-10-20): no Linux desktop record supplied |
 
-Record the tester, date, OS version, CI URL, artifact identifier, and any failure details in each
-completed cell or in a linked issue comment. Do not mark a platform complete from another
-platform's result.
+Record tester, date, OS/application version, CI URL, artifact identifier/checksum,
+and observed outcome for each future execution. A platform remains unverified until
+its own native record exists. The local macOS print observation covers that subset
+and does not supply the remaining smoke outcomes.
 
 ## Intentional platform differences
 
@@ -82,8 +95,10 @@ platform's result.
 - Windows and Linux receive subsequent command-line/file-association requests through the Tauri
   single-instance plugin.
 - All three paths produce the same ordered external-open payload consumed by Document Intake.
-- Printing uses the webview's hidden PDF frame and therefore delegates the final dialog and print
-  lifecycle to the platform webview.
+- macOS sends current prepared PDF bytes to PDFKit in memory on the main thread for the native
+  print panel. PDF permissions are checked again, and visible supported markup receives a print
+  flag only in the separate in-memory print document. Windows and Linux retain the hidden PDF
+  frame/browser print adapter; their native desktop print flows remain unverified here.
 - Window show, focus, and unminimize calls stay in the Tauri adapter. The main window is shown and
   focused before Reading Session restoration because EmbedPDF publishes layout frames only from a
   visible WebView; the splash remains interactive while restoration continues. An early Quit skips

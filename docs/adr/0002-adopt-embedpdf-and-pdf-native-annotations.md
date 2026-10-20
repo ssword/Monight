@@ -46,7 +46,24 @@ Implementation must verify a pinned production-supported EmbedPDF release rather
 
 The individual decisions and consolidated design were confirmed during the design interview on 2026-09-08. No interview decisions remain open.
 
-Implementation status, updated for issue #66: EmbedPDF 2.15.0 is the only production viewer, the PDF.js runtime and permanent annotation store have been removed, and native Save, Save As, Recovery Draft, and annotated-print paths are composed by default. Automated verification is recorded in the [issue #66 verification record](../issue-66-verification.md); packaged desktop and Preview/Acrobat interoperability evidence remains pending and must not be inferred from automated tests.
+Implementation status, reconciled 2026-10-20 for issue #81: EmbedPDF 2.15.0 is the
+only production viewer; PDF.js and the permanent annotation store have been removed.
+Native Save, Save As, Recovery Drafts, automatic annotation saving, and annotated
+printing are composed by default. The [issue #66 record](../issue-66-verification.md)
+separates green cross-platform CI/packaging from actual desktop evidence. Identified
+local macOS candidates demonstrate both Acrobat Highlight/Text directions, ordinary
+Save/Save As, native PDFKit print output including unsaved markup without viewing
+transforms, and the conservative read-only block for unsupported Ink. Acrobat
+geometry, empty-form, print-panel, and orphan-Popup failures were fixed through PR #89;
+exact revisions, checksums, and observations are in the [#80 record](../issue-80-acrobat-verification.md).
+No creation tool was disabled or newly enabled; highlight and text comment remain enabled.
+Preview note editing/geometry still fails ([#94](https://github.com/ssword/Monight/issues/94)),
+and conflict/Save As Recovery Draft rebasing remains unresolved
+([#91](https://github.com/ssword/Monight/issues/91)). The full packaged matrices,
+including Windows/Linux native execution, close/Quit, crash recovery, protected-document
+privacy inspection, and OS-level offline checks, are recorded as dated non-execution
+where evidence is absent. This status does not establish migration release acceptance
+or change the decisions above.
 
 ## References
 

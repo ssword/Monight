@@ -81,11 +81,29 @@ independently checked by extracting its `/ByteRange` and `/Contents` values and 
 
 ## Remaining release gates
 
-No packaged desktop pass is claimed here. Before enabling native editing by default,
-exercise this matrix in final Tauri packages on macOS, Windows, and Linux, including the
+Native editing was subsequently enabled by default in #66. No full packaged protected-document
+pass is claimed here. Exercise this matrix in final Tauri packages on macOS, Windows, and Linux, including the
 native password dialog and Save As chooser. Record tester, date, OS and application
 versions, build artifact, CI run, and outcomes. These external checks do not weaken the
 automated guards above and must not be replaced with mocked permission flags.
 The packaged pass must also inspect native logs, temporary directories, caches, Reading
 Session state, and Recent Documents for the test password before claiming complete
 platform-level password non-persistence.
+
+
+## Reconciled native status — 2026-10-20 (#81)
+
+Not executed in this reconciliation on macOS, Windows, or Linux: the full protected
+fixture/native password/Save As chooser runbook and password scans of native logs,
+temporary directories, caches, Reading Session, and Recent Documents have no supplied
+execution record. Closed #76–#78 checklists do not supply those results. Browser storage
+and diagnostic assertions remain automated evidence only.
+
+A narrower macOS observation exists: Codex with owner assistance, macOS 27.0.1
+(26A434), Monight 0.6.0, opened the real Acrobat Ink companion in the identified
+local native-print candidate. Editing/Save/Save As were blocked with the unsupported-content
+reason; Cmd+P opened the permitted native print panel and Cancel retained protection.
+This was not the signed/encrypted/restricted fixture or password-privacy runbook.
+Exact executable/candidate identity and CI/packaging links are in the
+[#80 record](issue-80-acrobat-verification.md). The complete per-platform outcome remains
+explicitly unexecuted in the [#66 matrix](issue-66-verification.md#native-workflow-matrix).
