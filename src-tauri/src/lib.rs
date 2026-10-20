@@ -321,6 +321,7 @@ pub fn run() {
             commands::reconcile_recovery_draft,
             commands::remove_recovery_draft,
             commands::inspect_pdf_editing,
+            commands::prepare_pdf_save,
             commands::choose_pdf_save_destination,
             commands::release_pdf_save_destination,
             commands::write_pdf_destination,

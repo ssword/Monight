@@ -790,3 +790,12 @@ pub async fn print_pdf(
         Err("Native PDF printing is only used on macOS".into())
     }
 }
+
+#[command]
+pub fn prepare_pdf_save(
+    window: tauri::WebviewWindow,
+    bytes: Vec<u8>,
+) -> Result<tauri::ipc::Response, String> {
+    require_main_reader(&window)?;
+    crate::pdf_save::prepare_save(&bytes).map(tauri::ipc::Response::new)
+}

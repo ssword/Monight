@@ -170,6 +170,9 @@ impl PdfSave {
             .get(token)
             .ok_or("Source Document is no longer authorized")?;
         verify_preservation(&source.version.bytes, bytes)?;
+        let normalized = remove_orphaned_supported_popups(bytes)?;
+        let bytes = normalized.as_deref().unwrap_or(bytes);
+        verify_preservation(&source.version.bytes, bytes)?;
         let version = write_pdf(
             &source.path,
             Some(&source.version),
@@ -236,6 +239,9 @@ impl PdfSave {
                 "Save As destination is already open; use Save for the current Document".into(),
             );
         }
+        verify_preservation(original, bytes)?;
+        let normalized = remove_orphaned_supported_popups(bytes)?;
+        let bytes = normalized.as_deref().unwrap_or(bytes);
         verify_preservation(original, bytes)?;
         let reopened = write_pdf(
             &destination.path,
@@ -351,6 +357,82 @@ const PRESERVED_ANNOTATIONS: &[&[u8]] = &[b"Link", b"Underline", b"StrikeOut", b
 
 fn is_supported_annotation(subtype: &[u8]) -> bool {
     EDITABLE_ANNOTATIONS.contains(&subtype) || PRESERVED_ANNOTATIONS.contains(&subtype)
+}
+
+pub fn prepare_save(bytes: &[u8]) -> Result<Vec<u8>, String> {
+    if let Some(normalized) = remove_orphaned_supported_popups(bytes)? {
+        verify_preservation(bytes, &normalized)?;
+        Ok(normalized)
+    } else {
+        Ok(bytes.to_vec())
+    }
+}
+
+// The pinned engine removes markup parents but leaves their Popup children in
+// /Annots. Acrobat follows those children back to the removed parents and lists
+// the deleted comments. Only detach Popups of supported parents that are no
+// longer in this page's annotation array; never touch live or unsupported parents.
+fn remove_orphaned_supported_popups(bytes: &[u8]) -> Result<Option<Vec<u8>>, String> {
+    use lopdf::Object;
+    let mut document = load_editable(bytes)?;
+    let mut changed = false;
+    for page_id in document.get_pages().values() {
+        let page = document
+            .get_dictionary(*page_id)
+            .map_err(|e| e.to_string())?;
+        let Ok(array) = page.get(b"Annots") else {
+            continue;
+        };
+        let (_, array) = document.dereference(array).map_err(|e| e.to_string())?;
+        let annots = array.as_array().map_err(|e| e.to_string())?.clone();
+        let live_ids = annots
+            .iter()
+            .filter_map(|entry| document.dereference(entry).ok().and_then(|(id, _)| id))
+            .collect::<std::collections::HashSet<_>>();
+        let mut retained = Vec::new();
+        for entry in &annots {
+            let (_, object) = document.dereference(entry).map_err(|e| e.to_string())?;
+            let annotation = object.as_dict().map_err(|e| e.to_string())?;
+            let orphaned =
+                if annotation.get(b"Subtype").and_then(Object::as_name).ok() == Some(b"Popup") {
+                    annotation
+                        .get(b"Parent")
+                        .ok()
+                        .and_then(|parent| document.dereference(parent).ok())
+                        .is_some_and(|(id, parent)| {
+                            id.is_some_and(|id| !live_ids.contains(&id))
+                                && parent
+                                    .as_dict()
+                                    .ok()
+                                    .and_then(|parent| parent.get(b"Subtype").ok())
+                                    .and_then(|subtype| subtype.as_name().ok())
+                                    .is_some_and(|subtype| {
+                                        subtype == b"Highlight" || subtype == b"Text"
+                                    })
+                        })
+                } else {
+                    false
+                };
+            if !orphaned {
+                retained.push(entry.clone());
+            }
+        }
+        if retained.len() != annots.len() {
+            document
+                .get_dictionary_mut(*page_id)
+                .map_err(|e| e.to_string())?
+                .set("Annots", Object::Array(retained));
+            changed = true;
+        }
+    }
+    if !changed {
+        return Ok(None);
+    }
+    let mut normalized = Vec::new();
+    document
+        .save_to(&mut normalized)
+        .map_err(|e| e.to_string())?;
+    Ok(Some(normalized))
 }
 
 fn preserved_page_annotations(
@@ -1290,6 +1372,66 @@ mod tests {
         {
             assert_eq!(editing_status(bytes).as_deref(), Some(reason));
         }
+    }
+
+    #[test]
+    fn deleting_acrobat_markup_removes_its_popup_children_on_save_and_save_as() {
+        let original = include_bytes!("../tests/fixtures/external/acrobat-supported.pdf");
+        let deleted =
+            include_bytes!("../tests/fixtures/external/exports/acrobat-reader-26-deleted.pdf");
+        let assert_no_orphan_popups = |bytes: &[u8]| {
+            let document = lopdf::Document::load_mem(bytes).unwrap();
+            let mut popup_count = 0;
+            for page in document.get_pages().values() {
+                let page = document.get_dictionary(*page).unwrap();
+                let Ok(annots) = page.get(b"Annots") else {
+                    continue;
+                };
+                let (_, array) = document.dereference(annots).unwrap();
+                let annots = array.as_array().unwrap();
+                for entry in annots {
+                    let (_, object) = document.dereference(entry).unwrap();
+                    let annotation = object.as_dict().unwrap();
+                    if annotation
+                        .get(b"Subtype")
+                        .and_then(lopdf::Object::as_name)
+                        .ok()
+                        == Some(b"Popup")
+                    {
+                        popup_count += 1;
+                        let parent = annotation.get(b"Parent").unwrap().as_reference().unwrap();
+                        assert!(annots.iter().any(|item| item.as_reference().ok() == Some(parent)),
+                            "Retained Popup points to a removed annotation; Acrobat resurrects its comment");
+                    }
+                }
+            }
+            assert_eq!(
+                popup_count, 1,
+                "The original note's live Popup must survive"
+            );
+        };
+        let prepared = prepare_save(deleted).unwrap();
+        assert_no_orphan_popups(&prepared);
+        assert_eq!(
+            prepare_save(&prepared).unwrap(),
+            prepared,
+            "Preparation must be byte-idempotent"
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("source.pdf");
+        std::fs::write(&path, original).unwrap();
+        let saves = PdfSave::default();
+        let source = saves.capture_source(&path, original).unwrap();
+        let destination = saves.authorize(&dir.path().join("saved-as.pdf")).unwrap();
+        let (_, saved_as) = saves
+            .write_destination(&destination.token, &source, deleted)
+            .unwrap();
+        assert_no_orphan_popups(&saved_as);
+        assert_eq!(std::fs::read(&path).unwrap(), original);
+        let saved = saves.write_original(&source, deleted).unwrap();
+        assert_no_orphan_popups(&saved);
+        verify_preservation(original, &saved).unwrap();
+        verify_preservation(original, &saved_as).unwrap();
     }
 
     #[test]

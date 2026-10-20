@@ -15,6 +15,7 @@ actual observations, reproduced failures, and their verified fixes. Candidate id
 | Source baseline | `5933b7109af46020289bc935372e7ca1c629aa11`, including completed #79 |
 | Fixed local Monight | Release-profile app bundle built from that baseline plus this change; executable SHA-256 `c5eef671aa413f7044db5c4ba94015224900289ba38f4f44832143720ba946b3` |
 | Native-print local candidate | Release-profile app executable SHA-256 `629b971b1028091c381770fcda9fa0d7ea7694d5f7580bdfce411d67d7f2e888`; same annotation fixes plus PDFKit printing in this PR |
+| Final Popup-cleanup candidate | Executable SHA-256 `ebcb2ed694bfd4fdfe11bb78f90ca43d22f6b55e2585ddddb3452b54d4fa0939`; adds pre-write Popup preparation and retains exact-byte verification |
 | Fixed bundle | `src-tauri/target/release/bundle/macos/Monight.app`; Tauri CLI 2.11.2, rustc 1.99.0, Node 24.19.0 |
 | Baseline packaging | [Run 39399798091](https://github.com/ssword/Monight/actions/runs/39399798091), all three platform jobs passed at `5933b71`; does not cover these fixes |
 | Candidate limit | CI artifact download remained incomplete; desktop observations use identified local/installed builds, not that artifact |
@@ -24,7 +25,12 @@ The annotation-fix revision `6455d8fa969b8d29e72690a2edcf65326f96f18e` passed
 three jobs of [candidate packaging 39436497953](https://github.com/ssword/Monight/actions/runs/39436497953).
 Artifact name: `macos-6455d8f`. The desktop observations use the identified locally
 built release-profile `.app` artifacts, not the downloaded universal CI artifact.
-A fresh run covering the subsequent printing fix is required. A green packaging
+The printing revision `84010147cb81561a35c44d77e013863bc27790e3` also passed
+[CI 39440133939](https://github.com/ssword/Monight/actions/runs/39440133939) and all
+three jobs of [candidate packaging 39440124855](https://github.com/ssword/Monight/actions/runs/39440124855).
+Its identified local candidate archive is `local-macos-8401014.app.tar.gz`, SHA-256
+`fc61efb2600cf989c65ba8e73967ef9003980659d27bed34f12967617068028c`.
+Fresh CI/candidate runs for the subsequent Popup fix must be recorded separately. A green packaging
 job alone does not establish cross-reader behavior.
 
 ## Monight objects through Acrobat and back
@@ -117,6 +123,38 @@ The final `acrobat-unsupported-final.pdf` was also opened in the native-print bu
 Save/Save As were disabled with the registered unsupported-content reason. Cmd+P
 opened a native three-page print panel; Cancel retained the read-only protection.
 
+### Monight deletion and Popup bookkeeping (#92)
+
+An additional desktop check initially failed: deleting both new Acrobat objects in
+Monight removed their parent entries from `/Annots`, but their Popup children still
+referenced the removed dictionaries. Acrobat displayed four comments despite the
+vanished appearances. Native inspection limited to direct Highlight/Text entries had
+missed this; the failed output is `evidence/monight-deletion-popup-failure.pdf`.
+[#92](https://github.com/ssword/Monight/issues/92) records the reproduced failure.
+
+The final fix detaches orphan Popup children only for supported Highlight/Text parents
+absent from that page's annotation array. Live Popups survive; unsupported parents are
+not normalized. It runs as explicit native preparation before Reader Actions' exact-byte
+write check, including Recovery Draft export. Native Save also validates this at its
+boundary and verifies unrelated Document Content before and after normalization. No
+byte-verification or protected-document guard is weakened.
+
+The regression first failed on the actual Acrobat fixture/engine export. It now checks
+Save, Save As, preparation byte-idempotence, retained original Popup, and preservation.
+The shared reader contract additionally compares all non-Popup annotation dictionaries
+with the engine export and rejects Popups linked to removed supported parents.
+Frontend tests verify preparation failure stops writes, mismatched reopened bytes still
+fail, and unsaved state is retained.
+
+In the final local candidate (`ebcb2ed…`), opened a fresh supported copy as
+`final-monight-delete-acrobat.pdf`, deleted the new Text and Highlight through the comment
+menus, and saved. The tab became clean. Saved bytes contain the two original Text notes,
+their one live Popup, and both Links; no deleted parents or orphan Popup children remain
+in the page array (`evidence/monight-deleted-acrobat-created.pdf`). Save As to
+`final-popup-cleaned-save-as.pdf` completed and switched the tab identity. Acrobat opened
+that distinct output and displayed exactly two comments: `Monight re-edited Acrobat note 80`
+and Ada's `Attributed comment`. It did not list either deleted comment.
+
 ## Saved and printed transforms
 
 With Sepia active, 150% zoom, and a 90-degree clockwise viewing rotation, performed
@@ -160,8 +198,8 @@ as a successful Save As, and is separate from ordinary round-trip Save As above.
 
 ## Automated validation
 
-- `npm test`: 364 tests in 45 files passed.
-- `cargo test --manifest-path src-tauri/Cargo.toml`: 74 tests passed on macOS (including two real PDFKit print-preparation tests), including final
+- `npm test`: 367 tests in 45 files passed.
+- `cargo test --manifest-path src-tauri/Cargo.toml`: 75 tests passed on macOS (including two real PDFKit print-preparation tests), including final
   Acrobat source/export preservation and strict empty-form cases.
 - `npm run test:embedpdf-offline`: passed native annotation creation/export/reopen,
   deliberate note move/resize, injected geometry-correction failure and retry,
@@ -180,8 +218,8 @@ Every claimed edit/delete was independently inspected in saved bytes; replies we
 not counted as edits. No private user document was modified.
 
 Both desktop annotation directions and saved/printed transforms now have actual
-observations. No additional tool was enabled. The maintainer chose fixes for #86,
-#87, and #88; their local checks pass. The separate conflict/recovery report #91
-is retained for follow-up. Final candidate/CI evidence for the printing revision
+observations. No additional tool was enabled. The maintainer chose to fix interoperability failures and continue, and separately approved fixing printing. Fixes for #86,
+#87, #88, and #92 pass their local checks. The separate conflict/recovery report #91
+is retained for follow-up. Final candidate/CI evidence for the Popup revision
 must be recorded before #80 is accepted; local candidate observations must not be
 represented as tests of the downloaded universal CI bundle.

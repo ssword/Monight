@@ -477,7 +477,11 @@ export function createReaderActions({
   const exportPdf = (
     runtime: DocumentRuntime,
     editing: NonNullable<DocumentRuntime['editing']>,
-  ): Promise<Uint8Array> => prepareDocumentBytes(runtime, () => editing.exportPdf());
+  ): Promise<Uint8Array> =>
+    prepareDocumentBytes(runtime, async () => {
+      const bytes = await editing.exportPdf();
+      return pdfSaveAdapter?.prepareBytes ? pdfSaveAdapter.prepareBytes(bytes) : bytes;
+    });
 
   const revision = (): number => session.snapshot().revision;
   const generation = (filePath: string): number => lanes.get(filePath)?.generation ?? 0;

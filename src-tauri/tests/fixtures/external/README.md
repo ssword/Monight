@@ -54,7 +54,12 @@ checked on each CI run:
 Exports are not byte-for-byte reproducible (PDFium names Annotations and stamps dates), so
 CI does not compare them with the committed copies. Instead the Linux frontend job runs the
 offline contracts with `--write-annotation-fixtures` and then runs the Rust contract on
-that run's exports. The committed exports keep `cargo test` meaningful on every platform.
+that run's exports. The committed exports keep `cargo test` meaningful on every platform. They are raw
+engine exports. Native Save detaches orphan Popup children of removed supported
+parents (#92), then verifies Document Content again and returns the actual bytes on
+disk. The shared native contract verifies every non-Popup annotation value against
+the engine export and rejects retained Popups pointing to deleted supported parents;
+byte equality with the unnormalized engine output is no longer the correct assertion.
 
 `knownGeometryFailures` pins geometry that is known to be broken after a Monight stage,
 instead of the input geometry. The Chromium contract prints each as `KNOWN FAILURE` and

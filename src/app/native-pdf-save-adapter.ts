@@ -6,6 +6,12 @@ export const inspectNativePdfEditing = (bytes: Uint8Array): Promise<string | nul
   invoke('inspect_pdf_editing', { bytes: Array.from(bytes) });
 
 export const nativePdfSaveAdapter: NativePdfSaveAdapter = {
+  async prepareBytes(bytes) {
+    return bytesFromNativeResponse(
+      await invoke('prepare_pdf_save', { bytes: Array.from(bytes) }),
+      'Invalid prepared native PDF response',
+    );
+  },
   captureSource: (filePath, bytes) =>
     invoke('capture_pdf_source', { path: filePath, bytes: Array.from(bytes) }),
   releaseSource: (token) => invoke('release_pdf_source', { token }),
