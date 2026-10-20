@@ -1,4 +1,11 @@
-import { PdfAnnotationName, type PdfDocumentObject, type PdfEngine } from '@embedpdf/models';
+import {
+  PdfAnnotationName,
+  type PdfAnnotationObject,
+  type PdfDocumentObject,
+  type PdfEngine,
+  type PdfTask,
+  Task,
+} from '@embedpdf/models';
 import {
   type AnnotationCapability,
   PdfAnnotationSubtype,
@@ -7,10 +14,23 @@ import {
 import type { NativePdfEditing } from '../reader/native-pdf-editing';
 import { embedPdfAnnotationToolIds } from './embedpdf-offline-configuration';
 
+const verifiedFields = [
+  'id',
+  'type',
+  'pageIndex',
+  'rect',
+  'contents',
+  'author',
+  'strokeColor',
+  'opacity',
+  'segmentRects',
+] as const;
+
 /** Compare the supported editable fields, tolerating PDF float serialization only. */
 function nativeAnnotationMatches(
   expected: TrackedAnnotation['object'],
   actual: TrackedAnnotation['object'],
+  fields: readonly (typeof verifiedFields)[number][] = verifiedFields,
 ): boolean {
   const equal = (a: unknown, b: unknown): boolean => {
     if (typeof a === 'number' && typeof b === 'number') return Math.abs(a - b) < 0.001;
@@ -21,17 +41,6 @@ function nativeAnnotationMatches(
     }
     return a === b;
   };
-  const fields = [
-    'id',
-    'type',
-    'pageIndex',
-    'rect',
-    'contents',
-    'author',
-    'strokeColor',
-    'opacity',
-    'segmentRects',
-  ] as const;
   return fields.every((field) => {
     const value = Reflect.get(expected, field);
     const saved = Reflect.get(actual, field);
@@ -41,28 +50,53 @@ function nativeAnnotationMatches(
     // PDFium represents alpha in 8 bits.
     if (field === 'opacity' && typeof value === 'number' && typeof saved === 'number')
       return Math.round(value * 255) === Math.round(saved * 255);
-    // Keep the existing, separately recorded Preview limitation for icons that
-    // the pinned engine cannot identify. Updating those icons also regenerates
-    // their appearance even with regeneration disabled. Known icons (including
-    // Acrobat's Comment icon) must retain their actual geometry.
-    if (
-      field === 'rect' &&
-      expected.type === PdfAnnotationSubtype.TEXT &&
-      expected.name === PdfAnnotationName.Unknown
-    ) {
-      return equal(
-        {
-          origin: {
-            x: expected.rect.origin.x,
-            y: expected.rect.origin.y + expected.rect.size.height - 20,
-          },
-          size: { width: 20, height: 20 },
-        },
-        saved,
-      );
-    }
     return equal(value, saved);
   });
+}
+
+const preservingEngines = new WeakSet<PdfEngine>();
+
+/** The icon a note displays: an absent or unrecognized /Name means the default /Note. */
+function noteIcon({ name, icon }: { name?: PdfAnnotationName; icon?: PdfAnnotationName }) {
+  const displayed = name ?? icon ?? PdfAnnotationName.Comment;
+  return displayed === PdfAnnotationName.Unknown ? PdfAnnotationName.Note : displayed;
+}
+
+/**
+ * Keep a note's existing appearance stream, such as Preview's or Acrobat's own icon,
+ * when an update leaves that icon unchanged. The pinned engine otherwise replaces it
+ * with PDFium's 20pt icon on every contents edit. Writing an absent icon name (Preview
+ * omits /Name) also deletes the stream, even with appearance regeneration disabled.
+ */
+function preserveNativeNoteAppearances(engine: PdfEngine): void {
+  if (preservingEngines.has(engine)) return;
+  preservingEngines.add(engine);
+  const update = engine.updatePageAnnotation.bind(engine);
+  engine.updatePageAnnotation = (doc, page, annotation, options) => {
+    if (annotation.type !== PdfAnnotationSubtype.TEXT)
+      return update(doc, page, annotation, options);
+    const note: PdfAnnotationObject = { ...annotation, name: noteIcon(annotation) };
+    const task: PdfTask<boolean> = new Task();
+    engine.getPageAnnotations(doc, page).wait(
+      (native) => {
+        const existing = native.find(({ id }) => id === annotation.id);
+        const regenerateAppearance =
+          options?.regenerateAppearance !== false &&
+          !(
+            existing &&
+            existing.type === PdfAnnotationSubtype.TEXT &&
+            noteIcon(existing) === note.name &&
+            nativeAnnotationMatches(annotation, existing, ['rect', 'strokeColor', 'opacity'])
+          );
+        update(doc, page, note, { regenerateAppearance }).wait(
+          (ok) => task.resolve(ok),
+          (error) => task.fail(error),
+        );
+      },
+      (error) => task.fail(error),
+    );
+    return task;
+  };
 }
 
 export function createEmbedPdfNativeAnnotationEditing({
@@ -80,6 +114,7 @@ export function createEmbedPdfNativeAnnotationEditing({
   readOnlyReason: string | null;
   stateChanged: () => void;
 }) {
+  preserveNativeNoteAppearances(engine);
   let editRevision = 0;
   let savedRevision = 0;
   let retryNativeAnnotations = false;
@@ -142,7 +177,7 @@ export function createEmbedPdfNativeAnnotationEditing({
         }
       }
       // PDFium's standard note appearance generator replaces /Rect with a 20pt
-      // icon box. Restore the reader's actual geometry after that generation,
+      // icon box. Restore the reader's actual geometry after any generation,
       // using the public update option that leaves the appearance intact. This
       // also preserves deliberate moves and resizes, rather than snapping to the
       // geometry from when the Document was opened.
