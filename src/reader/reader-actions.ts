@@ -1143,6 +1143,7 @@ export function createReaderActions({
     const save = (async (): Promise<ReaderActionOutcome> => {
       let destination: PdfSaveDestination | null = null;
       let replacementSource: string | undefined;
+      let destinationWritten = false;
       try {
         if (isCancelled()) return { status: 'superseded', revision: revision() };
         if (saveAs) {
@@ -1201,6 +1202,7 @@ export function createReaderActions({
             throw error;
           }
         }
+        destinationWritten = true;
         if (isCancelled()) return { status: 'superseded', revision: revision() };
         if (
           bytes.length !== reopened.length ||
@@ -1268,6 +1270,16 @@ export function createReaderActions({
           );
         });
       } catch (error) {
+        if (destinationWritten && destination) {
+          const reason = error instanceof Error ? error.message : String(error);
+          return {
+            status: 'failure',
+            error: new Error(
+              `${destination.title} was written, but this tab could not switch to it (${reason}). The tab still shows the original Document; check the saved copy or retry Save As.`,
+            ),
+            revision: revision(),
+          };
+        }
         return { status: 'failure', error, revision: revision() };
       } finally {
         if (replacementSource)
