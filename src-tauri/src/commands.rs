@@ -761,3 +761,32 @@ pub fn write_original_pdf(
         writer.write_original(&token, &bytes)?,
     ))
 }
+
+/// The frontend supplies the permission-checked, current prepared PDF bytes.
+#[command]
+pub async fn print_pdf(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+    bytes: Vec<u8>,
+    title: String,
+) -> Result<(), String> {
+    require_main_reader(&window)?;
+    #[cfg(target_os = "macos")]
+    {
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        app.run_on_main_thread(move || {
+            let _ = sender.send(crate::pdf_print::print(&bytes, &title));
+        })
+        .map_err(|error| error.to_string())?;
+        tauri::async_runtime::spawn_blocking(move || {
+            receiver.recv().map_err(|error| error.to_string())?
+        })
+        .await
+        .map_err(|error| error.to_string())?
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (app, bytes, title);
+        Err("Native PDF printing is only used on macOS".into())
+    }
+}

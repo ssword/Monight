@@ -1,6 +1,5 @@
 import { inspectNativePdfEditing, nativePdfSaveAdapter } from './app/native-pdf-save-adapter';
 import 'nouislider/dist/nouislider.css';
-import { browserPrintAdapter } from './app/browser-print-adapter';
 import { createDocumentIntakeRuntime } from './app/document-intake-runtime';
 import { createDocumentWorkspace, type DocumentSurfaceProvider } from './app/document-workspace';
 import { createEmbedPdfDocumentSurfaceFactory } from './app/embedpdf-document-surface';
@@ -8,6 +7,7 @@ import { createReadingSessionStorage } from './app/reading-session-storage';
 import { createRecentDocumentStorage } from './app/recent-document-storage';
 import { nativeRecoveryDraftAdapter } from './app/recovery-draft-adapter';
 import { createTauriExternalLinkAdapter } from './app/tauri-external-link-adapter';
+import { createTauriPrintAdapter } from './app/tauri-print-adapter';
 import { initializeApplication } from './application';
 import { createReaderActions } from './reader/reader-actions';
 import './styles/configurator.css';
@@ -22,7 +22,7 @@ const createDocumentSurface: DocumentSurfaceProvider = (options) =>
 
 const startApplication = () =>
   initializeApplication({
-    browserPrintAdapter,
+    browserPrintAdapter: createTauriPrintAdapter(),
     pdfSaveAdapter: nativePdfSaveAdapter,
     recoveryDraftAdapter: nativeRecoveryDraftAdapter,
     createDocumentIntakeRuntime,
