@@ -30,6 +30,9 @@ describe('native PDF save adapter', () => {
       ),
     ).resolves.toEqual(new Uint8Array([4, 5]));
     await expect(adapter.readSource('/docs/report.pdf')).resolves.toEqual(new Uint8Array([4, 5]));
+    await expect(adapter.prepareBytes(new Uint8Array([1]))).resolves.toEqual(
+      new Uint8Array([4, 5]),
+    );
   });
 
   it('rejects a response that is not PDF bytes', async () => {

@@ -1,4 +1,4 @@
-import type { PdfDocumentObject, PdfEngine } from '@embedpdf/models';
+import { PdfAnnotationName, type PdfDocumentObject, type PdfEngine } from '@embedpdf/models';
 import {
   type AnnotationCapability,
   PdfAnnotationSubtype,
@@ -38,11 +38,18 @@ function nativeAnnotationMatches(
     if (value === undefined) return true;
     if (field === 'strokeColor' && typeof value === 'string' && typeof saved === 'string')
       return value.toLowerCase() === saved.toLowerCase();
-    // PDFium represents alpha in 8 bits and standard note icons as 20pt squares
-    // anchored at the lower-left PDF point, independent of the UI's 24pt hit box.
+    // PDFium represents alpha in 8 bits.
     if (field === 'opacity' && typeof value === 'number' && typeof saved === 'number')
       return Math.round(value * 255) === Math.round(saved * 255);
-    if (field === 'rect' && expected.type === PdfAnnotationSubtype.TEXT) {
+    // Keep the existing, separately recorded Preview limitation for icons that
+    // the pinned engine cannot identify. Updating those icons also regenerates
+    // their appearance even with regeneration disabled. Known icons (including
+    // Acrobat's Comment icon) must retain their actual geometry.
+    if (
+      field === 'rect' &&
+      expected.type === PdfAnnotationSubtype.TEXT &&
+      expected.name === PdfAnnotationName.Unknown
+    ) {
       return equal(
         {
           origin: {
@@ -134,7 +141,37 @@ export function createEmbedPdfNativeAnnotationEditing({
           }
         }
       }
-      const buffer = await engine.saveAsCopy(currentDocument()).toPromise();
+      // PDFium's standard note appearance generator replaces /Rect with a 20pt
+      // icon box. Restore the reader's actual geometry after that generation,
+      // using the public update option that leaves the appearance intact. This
+      // also preserves deliberate moves and resizes, rather than snapping to the
+      // geometry from when the Document was opened.
+      const document = currentDocument();
+      for (const page of document.pages) {
+        const notes = expected.filter(
+          (annotation) =>
+            annotation.type === PdfAnnotationSubtype.TEXT && annotation.pageIndex === page.index,
+        );
+        if (notes.length === 0) continue;
+        const native = await engine.getPageAnnotations(document, page).toPromise();
+        for (const note of notes) {
+          if (revision !== editRevision) throw new Error('Annotations changed; retry Save');
+          const existing = native.find((annotation) => annotation.id === note.id);
+          if (
+            existing &&
+            !nativeAnnotationMatches(note, existing) &&
+            nativeAnnotationMatches({ ...note, rect: existing.rect }, existing)
+          ) {
+            if (
+              !(await engine
+                .updatePageAnnotation(document, page, note, { regenerateAppearance: false })
+                .toPromise())
+            )
+              throw new Error('Native note geometry could not be preserved; retry Save');
+          }
+        }
+      }
+      const buffer = await engine.saveAsCopy(document).toPromise();
       // The pinned plugin can resolve commit() despite a failed individual mutation.
       // Reopen exported bytes and check native fields before permitting a disk write.
       const verification = await engine

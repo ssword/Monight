@@ -14,6 +14,8 @@ mod document_intake;
 #[cfg(test)]
 mod external_reader_contract;
 mod menu;
+#[cfg(target_os = "macos")]
+mod pdf_print;
 mod pdf_replace;
 mod pdf_save;
 mod recovery_drafts;
@@ -319,6 +321,7 @@ pub fn run() {
             commands::reconcile_recovery_draft,
             commands::remove_recovery_draft,
             commands::inspect_pdf_editing,
+            commands::prepare_pdf_save,
             commands::choose_pdf_save_destination,
             commands::release_pdf_save_destination,
             commands::write_pdf_destination,
@@ -332,6 +335,7 @@ pub fn run() {
             commands::get_file_directory,
             commands::open_settings,
             commands::set_print_enabled,
+            commands::print_pdf,
             commands::fit_main_window_for_pdf,
             commands::take_external_open_payloads,
             commands::validate_open_path,

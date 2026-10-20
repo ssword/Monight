@@ -231,6 +231,79 @@ fn save_over(source: &[u8], bytes: &[u8]) -> (Result<Vec<u8>, String>, Vec<u8>) 
     (outcome, std::fs::read(&path).unwrap())
 }
 
+/// Native Save may detach orphan Popup bookkeeping, but must retain every other
+/// annotation value from the engine export and return exactly the bytes on disk.
+fn assert_saved_export(exported: &[u8], saved: &[u8]) {
+    fn values(bytes: &[u8]) -> Vec<String> {
+        let document = lopdf::Document::load_mem(bytes).unwrap();
+        let pages = document.get_pages().into_values().collect::<Vec<_>>();
+        let mut values = Vec::new();
+        for page in &pages {
+            for annotation in document.get_page_annotations(*page).unwrap() {
+                if annotation
+                    .get(b"Subtype")
+                    .and_then(lopdf::Object::as_name)
+                    .ok()
+                    == Some(b"Popup")
+                {
+                    continue;
+                }
+                let mut annotation = annotation.clone();
+                annotation.remove(b"Popup");
+                annotation.remove(b"P");
+                values.push(canonical(
+                    &document,
+                    &pages,
+                    &lopdf::Object::Dictionary(annotation),
+                ));
+            }
+        }
+        values
+    }
+    assert_eq!(
+        values(saved),
+        values(exported),
+        "Native Save changed a non-Popup annotation"
+    );
+    assert_eq!(document_content(saved), document_content(exported));
+    let document = lopdf::Document::load_mem(saved).unwrap();
+    for page in document.get_pages().values() {
+        let Ok(array) = document.get_dictionary(*page).unwrap().get(b"Annots") else {
+            continue;
+        };
+        let (_, array) = document.dereference(array).unwrap();
+        let annots = array.as_array().unwrap();
+        for annotation in document.get_page_annotations(*page).unwrap() {
+            if annotation
+                .get(b"Subtype")
+                .and_then(lopdf::Object::as_name)
+                .ok()
+                != Some(b"Popup")
+            {
+                continue;
+            }
+            let Ok(parent) = annotation.get(b"Parent") else {
+                continue;
+            };
+            let (id, parent) = document.dereference(parent).unwrap();
+            let subtype = parent
+                .as_dict()
+                .unwrap()
+                .get(b"Subtype")
+                .and_then(lopdf::Object::as_name)
+                .unwrap();
+            if subtype == b"Highlight" || subtype == b"Text" {
+                assert!(
+                    annots
+                        .iter()
+                        .any(|entry| document.dereference(entry).unwrap().0 == id),
+                    "Saved Popup still references a deleted supported annotation"
+                );
+            }
+        }
+    }
+}
+
 #[test]
 fn native_save_accepts_monight_exports_without_changing_document_content() {
     for reader in readers() {
@@ -239,10 +312,11 @@ fn native_save_accepts_monight_exports_without_changing_document_content() {
         for stage in ["edited", "deleted"] {
             let exported = export(&reader, stage);
             let (outcome, on_disk) = save_over(&input, &exported);
-            assert_eq!(outcome.as_deref(), Ok(exported.as_slice()), "{id} {stage}");
-            assert_eq!(on_disk, exported, "{id} {stage}");
+            let saved = outcome.unwrap_or_else(|error| panic!("{id} {stage}: {error}"));
+            assert_eq!(on_disk, saved, "{id} {stage}");
+            assert_saved_export(&exported, &saved);
             assert_eq!(
-                document_content(&exported),
+                document_content(&saved),
                 document_content(&input),
                 "{id} {stage}"
             );
@@ -314,15 +388,17 @@ fn unsupported_fixture_outcome_matches_observation() {
             }
             Classification::Editable => {
                 let exported = export(&reader, "unsupported-edited");
-                let (outcome, _) = save_over(&input, &exported);
-                assert_eq!(outcome.as_deref(), Ok(exported.as_slice()), "{id}");
+                let (outcome, on_disk) = save_over(&input, &exported);
+                let saved = outcome.unwrap_or_else(|error| panic!("{id}: {error}"));
+                assert_eq!(on_disk, saved, "{id}");
+                assert_saved_export(&exported, &saved);
                 assert_eq!(
                     document_content(&exported),
                     document_content(&input),
                     "{id}"
                 );
                 assert_eq!(
-                    unsupported_annotations(&exported),
+                    unsupported_annotations(&saved),
                     unsupported_annotations(&input),
                     "{id}: re-save changed the unsupported Annotation"
                 );
