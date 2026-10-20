@@ -30,7 +30,17 @@ The printing revision `84010147cb81561a35c44d77e013863bc27790e3` also passed
 three jobs of [candidate packaging 39440124855](https://github.com/ssword/Monight/actions/runs/39440124855).
 Its identified local candidate archive is `local-macos-8401014.app.tar.gz`, SHA-256
 `fc61efb2600cf989c65ba8e73967ef9003980659d27bed34f12967617068028c`.
-Fresh CI/candidate runs for the subsequent Popup fix must be recorded separately. A green packaging
+Final code revision: `c2d1c8d4a33f6cda7f753bdd221c137c0998d6be`.
+[CI 39443065781](https://github.com/ssword/Monight/actions/runs/39443065781) passed
+every macOS, Windows, Linux, browser-contract, and dependency-audit job.
+Final candidate packaging: [run 39443061858](https://github.com/ssword/Monight/actions/runs/39443061858).
+The exact local candidate archive is `local-macos-c2d1c8d.app.tar.gz`, SHA-256
+`ffd8e6fe7b718343f6a7449f3c6a036b5886f051df8816c4d64c0c7e6619d013`.
+Rebuilding from the committed revision reproduced the tested executable checksum
+`ebcb2ed694bfd4fdfe11bb78f90ca43d22f6b55e2585ddddb3452b54d4fa0939`.
+The archive and machine-readable candidate manifest are retained in the ignored
+evidence directory. These fields identify the tested local candidate independently
+of the CI universal bundle; no download or test of that universal bundle is claimed. A green packaging
 job alone does not establish cross-reader behavior.
 
 ## Monight objects through Acrobat and back
@@ -155,6 +165,11 @@ in the page array (`evidence/monight-deleted-acrobat-created.pdf`). Save As to
 that distinct output and displayed exactly two comments: `Monight re-edited Acrobat note 80`
 and Ada's `Attributed comment`. It did not list either deleted comment.
 
+The same final candidate then printed that deleted result under Sepia, 150% zoom,
+and 90-degree viewing rotation to `final-printed-after-deletion.pdf`. Acrobat and
+PDFium showed upright, white pages with the two retained note icons and no deleted
+highlight/note. Printing did not resurrect either comment.
+
 ## Saved and printed transforms
 
 With Sepia active, 150% zoom, and a 90-degree clockwise viewing rotation, performed
@@ -220,6 +235,8 @@ not counted as edits. No private user document was modified.
 Both desktop annotation directions and saved/printed transforms now have actual
 observations. No additional tool was enabled. The maintainer chose to fix interoperability failures and continue, and separately approved fixing printing. Fixes for #86,
 #87, #88, and #92 pass their local checks. The separate conflict/recovery report #91
-is retained for follow-up. Final candidate/CI evidence for the Popup revision
-must be recorded before #80 is accepted; local candidate observations must not be
-represented as tests of the downloaded universal CI bundle.
+is retained for follow-up. The final code CI passed; candidate packaging is linked above for its recorded
+outcome. All requested Acrobat matrix cells contain actual observations and exact
+local-candidate identity. This closes the interoperability evidence work through PR #89;
+it does not assert that the downloaded universal CI bundle was used, resolve the
+separate #91 fault-injection recovery issue, or complete the broader #66 desktop matrix.

@@ -101,7 +101,7 @@ external-reader round trip.
 
 Acrobat observations: 2026-10-20, Codex with owner assistance, macOS 27.0.1 (26A434),
 Acrobat Reader 26.002.21901. These are installed/local-build observations, not a
-downloaded-CI-artifact pass. Exact local candidate binary identities, green annotation-fix CI/packaging links, fixtures,
+downloaded-CI-artifact pass. Exact local candidate binary identities, green final-code CI and candidate packaging links, fixtures,
 steps, failures, and execution limits are in the [issue-80 record](issue-80-acrobat-verification.md).
 
 ## Existing focused records
