@@ -26,12 +26,22 @@ export interface DocumentViewTransform {
   readonly filterCss: string;
 }
 
+/** Appearance a markup tool gives the Annotations it creates. */
+export interface AnnotationToolDefaults {
+  readonly strokeColor?: string;
+}
+
 export interface DocumentRendering {
   getState(): DocumentRenderingState;
   /** The transient annotation tool in use, or null for text selection. */
   activeAnnotationTool?(): string | null;
   /** Chooses an annotation tool, or null for text selection; refused while editing is unavailable. */
-  setActiveAnnotationTool?(toolId: string | null): void;
+  setActiveAnnotationTool?(toolId: string | null, defaults?: AnnotationToolDefaults): void;
+  /**
+   * Marks the current text selection with a text-markup tool as an unsaved
+   * Annotation edit; false when nothing is selected or editing is unavailable.
+   */
+  markupSelection?(toolId: string, defaults: AnnotationToolDefaults): boolean;
   /** Selects an Annotation already scrolled into view; transient rendering state. */
   revealAnnotation?(annotationId: string): void;
   getScrollPosition(): number;

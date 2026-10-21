@@ -33,6 +33,40 @@ export interface MarkupToolbar {
   destroy(): void;
 }
 
+export interface MarkupEscapeOptions {
+  readonly activeMarkup: () => ActiveMarkupState | null;
+  readonly setActiveTool: (toolId: string | null) => void;
+  /** Presentation mode claims Esc to exit before anything else. */
+  readonly presentationActive: () => boolean;
+}
+
+const isEditableTarget = (target: EventTarget | null): boolean =>
+  target instanceof HTMLElement &&
+  (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName));
+
+/**
+ * Esc returns from any markup tool (highlight mode, the Text note tool) to text
+ * selection. It yields to whatever owns Esc first: presentation mode, a focused
+ * field such as Search, and an open menu or popover. Returns the unbinder.
+ */
+export function leaveMarkupToolOnEscape({
+  activeMarkup,
+  setActiveTool,
+  presentationActive,
+}: MarkupEscapeOptions): () => void {
+  const onKeyDown = (event: KeyboardEvent) => {
+    if (event.key !== 'Escape' || event.defaultPrevented || presentationActive()) return;
+    if (isEditableTarget(event.target)) return;
+    // Capture phase: an open popup has not closed yet and keeps this Esc.
+    if (document.querySelector('[aria-expanded="true"]')) return;
+    if (!activeMarkup()?.activeToolId) return;
+    event.preventDefault();
+    setActiveTool(null);
+  };
+  document.addEventListener('keydown', onKeyDown, true);
+  return () => document.removeEventListener('keydown', onKeyDown, true);
+}
+
 export function createMarkupToolbar({
   elements: { bar, toggle },
   preferences,

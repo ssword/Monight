@@ -6,7 +6,11 @@ import type { DocumentAccess, DocumentPresentation } from '../reader/document-ac
 import type { PdfPasswordRequester } from '../reader/document-content';
 import type { DocumentRuntimeIntake, DocumentRuntimeOpenRequest } from '../reader/document-intake';
 import type { DocumentQuery, DocumentRuntime } from '../reader/document-queries';
-import type { DocumentRendering, DocumentViewTransform } from '../reader/document-rendering';
+import type {
+  AnnotationToolDefaults,
+  DocumentRendering,
+  DocumentViewTransform,
+} from '../reader/document-rendering';
 import type { AnnotationDisplayName } from '../reader/native-pdf-editing';
 import type {
   ReaderAction,
@@ -103,7 +107,9 @@ export interface DocumentWorkspace {
   /** The active Document's markup tool and why editing is unavailable, if it is. */
   activeMarkup(): ActiveMarkupState | null;
   /** Chooses a markup tool on the active Document, or null for text selection. */
-  setActiveAnnotationTool(toolId: string | null): void;
+  setActiveAnnotationTool(toolId: string | null, defaults?: AnnotationToolDefaults): void;
+  /** Marks the active Document's text selection; false when nothing was marked. */
+  markupSelection(toolId: string, defaults: AnnotationToolDefaults): boolean;
   /** Selects an Annotation on its Document's rendering surface. */
   revealAnnotation(filePath: string, annotationId: string): void;
   setAnnotationDisplayName(displayName: AnnotationDisplayName): void;
@@ -850,9 +856,14 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
         readOnlyReason: editing ? editing.readOnlyReason : EDITING_UNAVAILABLE_REASON,
       };
     },
-    setActiveAnnotationTool(toolId) {
+    setActiveAnnotationTool(toolId, defaults) {
       const filePath = options.snapshot().activeDocumentPath;
-      if (filePath) presented.get(filePath)?.rendering.setActiveAnnotationTool?.(toolId);
+      if (filePath) presented.get(filePath)?.rendering.setActiveAnnotationTool?.(toolId, defaults);
+    },
+    markupSelection(toolId, defaults) {
+      const filePath = options.snapshot().activeDocumentPath;
+      const rendering = filePath ? presented.get(filePath)?.rendering : undefined;
+      return rendering?.markupSelection?.(toolId, defaults) ?? false;
     },
     revealAnnotation(filePath, annotationId) {
       presented.get(filePath)?.rendering.revealAnnotation?.(annotationId);

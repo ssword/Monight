@@ -26,6 +26,7 @@ describe('Chrome preferences', () => {
       sidebarMode: 'thumbnails',
       sidebarWidth: 220,
       markupToolbarVisible: false,
+      highlightColor: 'yellow',
     });
     expect(DEFAULT_CHROME_PREFERENCES.sidebarVisible).toBe(false);
   });
@@ -43,6 +44,7 @@ describe('Chrome preferences', () => {
       sidebarMode: 'thumbnails',
       sidebarWidth: 300,
       markupToolbarVisible: false,
+      highlightColor: 'yellow',
     });
     expect(backing.getStored()).toEqual({
       schemaVersion: 1,
@@ -50,6 +52,7 @@ describe('Chrome preferences', () => {
       sidebarMode: 'thumbnails',
       sidebarWidth: 300,
       markupToolbarVisible: false,
+      highlightColor: 'yellow',
     });
   });
 
@@ -69,6 +72,7 @@ describe('Chrome preferences', () => {
       sidebarMode: 'thumbnails',
       sidebarWidth: 220,
       markupToolbarVisible: false,
+      highlightColor: 'yellow',
     });
   });
 
@@ -85,6 +89,18 @@ describe('Chrome preferences', () => {
       markupToolbarVisible: true,
       sidebarVisible: true,
     });
+  });
+
+  it('restores the last highlight colour on the next launch and ignores unknown colours', async () => {
+    const backing = createStorage({ schemaVersion: 1, highlightColor: 'orange' });
+    const firstLaunch = await loadChromePreferences(backing.storage, { debounceMs: 0 });
+    expect(firstLaunch.snapshot().highlightColor).toBe('yellow');
+
+    firstLaunch.update({ highlightColor: 'purple' });
+    await firstLaunch.flush();
+
+    const nextLaunch = await loadChromePreferences(backing.storage);
+    expect(nextLaunch.snapshot().highlightColor).toBe('purple');
   });
 
   it('bounds the sidebar width', async () => {
