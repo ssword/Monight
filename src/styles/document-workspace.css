@@ -101,22 +101,8 @@ body.presentation-mode #pdf-container {
   background: #000;
 }
 
-@media (max-width: 1250px) {
-  .preset-group,
-  .toolbar-group.file-info {
-    display: none;
-  }
-}
-
-@media (max-width: 900px) {
-  #toolbar {
-    justify-content: flex-start;
-    overflow-x: auto;
-    flex-wrap: nowrap;
-    scrollbar-width: none;
-  }
-
-  #toolbar::-webkit-scrollbar {
+@media (max-width: 640px) {
+  .page-status {
     display: none;
   }
 }

@@ -23,8 +23,7 @@
         "visible": false,
         "center": true,
         "decorations": true,
-        "transparent": false,
-        "theme": "Dark"
+        "transparent": false
       }
     ],
     "security": {

@@ -2,6 +2,7 @@ import { getName, getTauriVersion, getVersion } from '@tauri-apps/api/app';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
+import { hydrateChromeIcons } from './app/chrome-icons';
 import {
   requestConfirmation,
   requestPdfPassword,
@@ -620,6 +621,8 @@ export async function initializeApplication(modules: ApplicationModules): Promis
     if (versionElement) {
       versionElement.textContent = `v${info.version} • Tauri ${info.tauriVersion}`;
     }
+
+    hydrateChromeIcons(document);
 
     // Setup event listeners
     setupEventListeners({

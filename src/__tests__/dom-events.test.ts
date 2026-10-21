@@ -2,6 +2,7 @@
 
 import { describe, expect, it, vi } from 'vitest';
 import { setupEventListeners } from '../app/dom-events';
+import { registerKeybindActions } from '../app/keybinds';
 import type { KeybindManager } from '../scripts/keybind-manager';
 
 describe('setupEventListeners', () => {
@@ -9,7 +10,7 @@ describe('setupEventListeners', () => {
     const windowAddEventListener = vi.spyOn(window, 'addEventListener');
     const handleEvent = vi.fn(async () => undefined);
     const keybindManager = {
-      matchEvent: vi.fn(() => 'open'),
+      matchEvent: vi.fn((event: KeyboardEvent) => (event.key === 'o' ? 'open' : null)),
       handleEvent,
     } as unknown as KeybindManager;
 
@@ -104,5 +105,103 @@ describe('setupEventListeners', () => {
         },
       },
     ]);
+  });
+});
+
+describe('toolbar input adapters', () => {
+  const listen = (dispatchReaderAction: (action: unknown) => Promise<void>) =>
+    setupEventListeners({
+      sliderManager: null,
+      keybindManager: null,
+      openPdfAndRefresh: vi.fn(async () => undefined),
+      activateDocument: vi.fn(async () => undefined),
+      openRecentFile: vi.fn(async () => undefined),
+      clearRecentFiles: vi.fn(async () => undefined),
+      dispatchReaderAction,
+    });
+
+  it('dispatches the zoom group as the same Reader Actions as the zoom shortcuts', async () => {
+    const handlers = new Map<string, () => void | Promise<void>>();
+    const shortcutActions: unknown[] = [];
+    registerKeybindActions({
+      keybindManager: {
+        registerAction: (name: string, handler: () => void | Promise<void>) => {
+          handlers.set(name, handler);
+        },
+      } as unknown as KeybindManager,
+      getReadingSessionSnapshot: () => ({
+        schemaVersion: 3,
+        revision: 0,
+        activeDocumentPath: null,
+        documents: [],
+      }),
+      getActivePageCount: async () => 0,
+      openPdfAndRefresh: vi.fn(async () => undefined),
+      openSettings: vi.fn(async () => undefined),
+      updateTabBarVisibility: vi.fn(),
+      updateUI: vi.fn(),
+      openSearch: vi.fn(),
+      togglePresentationMode: vi.fn(async () => undefined),
+      goToPage: vi.fn(async () => undefined),
+      goToRelativePage: vi.fn(async () => undefined),
+      dispatchReaderAction: async (action) => {
+        shortcutActions.push(action);
+      },
+    });
+    for (const name of ['zoomOut', 'fitToPage', 'zoomIn']) await handlers.get(name)?.();
+
+    document.body.innerHTML = `
+      <div class="toolbar-capsule">
+        <button id="zoom-out"></button>
+        <button id="zoom-to-fit"></button>
+        <button id="zoom-in"></button>
+      </div>
+    `;
+    const dispatchReaderAction = vi.fn(async (_action: unknown) => undefined);
+    listen(dispatchReaderAction);
+    for (const id of ['zoom-out', 'zoom-to-fit', 'zoom-in']) document.getElementById(id)?.click();
+
+    await vi.waitFor(() => expect(dispatchReaderAction).toHaveBeenCalledTimes(3));
+    expect(dispatchReaderAction.mock.calls.map(([action]) => action)).toEqual([
+      { type: 'zoomOut' },
+      { type: 'setZoomIntent', zoomIntent: { kind: 'fit-page' } },
+      { type: 'zoomIn' },
+    ]);
+    expect(shortcutActions).toEqual(dispatchReaderAction.mock.calls.map(([action]) => action));
+  });
+
+  it('keeps the filter presets reachable from the toolbar', async () => {
+    document.body.innerHTML = `
+      <button id="appearance-toggle" aria-expanded="false"></button>
+      <div id="preset-menu" class="hidden" role="menu">
+        <button id="preset-default" class="preset-btn active"></button>
+        <button id="preset-sepia" class="preset-btn"></button>
+      </div>
+    `;
+    const dispatchReaderAction = vi.fn(async (_action: unknown) => undefined);
+    listen(dispatchReaderAction);
+    const toggle = document.getElementById('appearance-toggle');
+    const menu = document.getElementById('preset-menu');
+
+    toggle?.click();
+    expect(menu?.classList.contains('hidden')).toBe(false);
+    expect(toggle?.getAttribute('aria-expanded')).toBe('true');
+
+    document.getElementById('preset-sepia')?.click();
+    await vi.waitFor(() => expect(dispatchReaderAction).toHaveBeenCalledOnce());
+    expect(dispatchReaderAction).toHaveBeenCalledWith({
+      type: 'setFilterSettings',
+      filterSettings: expect.objectContaining({ sepia: expect.any(Number) }),
+    });
+    expect(menu?.classList.contains('hidden')).toBe(true);
+    expect(toggle?.getAttribute('aria-expanded')).toBe('false');
+
+    toggle?.click();
+    document.body.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
+    expect(menu?.classList.contains('hidden')).toBe(true);
+
+    toggle?.click();
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    expect(menu?.classList.contains('hidden')).toBe(true);
   });
 });

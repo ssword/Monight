@@ -364,8 +364,25 @@ describe('EmbedPDF Document surface', () => {
         'document-print',
         'document-export',
         'document-protect',
+        // Monight's toolbar zoom group replaces the ready-made zoom controls.
+        'zoom',
+        // View rotation is gone; rotation is a Page Rotation edit of the PDF.
+        'rotate',
       ]),
     );
+    // Only the replaced controls are hidden; every other ready-made control stays.
+    for (const retained of [
+      'panel',
+      'panel-sidebar',
+      'panel-search',
+      'page',
+      'spread',
+      'history',
+      'selection-copy',
+      'document-fullscreen',
+    ]) {
+      expect(config.disabledCategories).not.toContain(retained);
+    }
     expect(config.permissions).toEqual({
       enforceDocumentPermissions: true,
       overrides: {
