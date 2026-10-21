@@ -34,7 +34,6 @@ const createViewerRuntime = (
   currentPage: () => 1,
   currentZoom: () => 1,
   zoomIntent: () => ({ kind: 'manual', scale: 1 }),
-  rotation: () => 0,
   viewMode: () => 'single',
   readingPosition: () => ({ page: 1, location: 0 }),
   goToPage: vi.fn(async () => undefined),
@@ -42,7 +41,6 @@ const createViewerRuntime = (
   setZoomIntent: vi.fn(async () => undefined),
   zoomIn: vi.fn(async () => undefined),
   zoomOut: vi.fn(async () => undefined),
-  setRotation: vi.fn(async () => undefined),
   setViewMode: vi.fn(async () => undefined),
   fitToPage: vi.fn(async () => undefined),
   applyFilter: vi.fn(),
@@ -241,7 +239,6 @@ describe('EmbedPDF Document surface', () => {
       currentPage: () => currentPage,
       currentZoom: () => zoom,
       zoomIntent: () => ({ kind: 'manual', scale: zoom }),
-      rotation: () => 0,
       viewMode: () => 'single',
       readingPosition: () => ({ page: currentPage, location: 0 }),
       goToPage: vi.fn(async (page) => {
@@ -326,7 +323,6 @@ describe('EmbedPDF Document surface', () => {
     const runtime = createViewerRuntime({
       preparePrintDocument,
       currentZoom: () => 1.75,
-      rotation: () => 1,
     });
     const factory = createEmbedPdfDocumentSurfaceFactory({
       createViewer: vi.fn(async () => runtime),
@@ -348,7 +344,6 @@ describe('EmbedPDF Document surface', () => {
     expect(preparePrintDocument).toHaveBeenCalledOnce();
     expect(runtime.applyFilter).not.toHaveBeenCalled();
     expect(runtime.setZoomIntent).not.toHaveBeenCalled();
-    expect(runtime.setRotation).not.toHaveBeenCalled();
   });
 
   it('configures the ready-made viewer as a local, read-only surface', () => {
@@ -375,6 +370,8 @@ describe('EmbedPDF Document surface', () => {
         'document-protect',
         // Monight's toolbar zoom group replaces the ready-made zoom controls.
         'zoom',
+        // View rotation is gone; rotation is a Page Rotation edit of the PDF.
+        'rotate',
       ]),
     );
     // Only the replaced controls are hidden; every other ready-made control stays.
@@ -383,7 +380,6 @@ describe('EmbedPDF Document surface', () => {
       'panel-sidebar',
       'panel-search',
       'page',
-      'rotate',
       'spread',
       'history',
       'selection-copy',
@@ -477,7 +473,7 @@ describe('EmbedPDF Document surface', () => {
       },
     });
     const initialSession = {
-      schemaVersion: 2 as const,
+      schemaVersion: 3 as const,
       activeDocumentPath: null,
       documents: [],
     };
@@ -489,7 +485,6 @@ describe('EmbedPDF Document surface', () => {
       defaultVisualState: () => ({
         filterSettings: PRESETS.default,
         zoomIntent: { kind: 'manual', scale: 1 },
-        rotation: 0,
         viewMode: 'single',
       }),
       createSurface,
@@ -523,13 +518,9 @@ describe('EmbedPDF Document surface', () => {
     expect(reader.query('/docs/report.pdf')).not.toBeNull();
     expect(document.querySelectorAll('.embedpdf-document-surface')).toHaveLength(1);
 
-    await surfaceCallbacks?.rotationRequested?.('clockwise');
     await surfaceCallbacks?.viewModeRequested?.('spread');
 
-    expect(reader.snapshot().documents[0]?.visualState).toMatchObject({
-      rotation: 90,
-      viewMode: 'spread',
-    });
+    expect(reader.snapshot().documents[0]?.visualState).toMatchObject({ viewMode: 'spread' });
   });
 
   it('keeps independent Intake outcomes and removes a failed provisional surface', async () => {
@@ -546,7 +537,7 @@ describe('EmbedPDF Document surface', () => {
         }),
     });
     const initialSession = {
-      schemaVersion: 2 as const,
+      schemaVersion: 3 as const,
       activeDocumentPath: null,
       documents: [],
     };
@@ -558,7 +549,6 @@ describe('EmbedPDF Document surface', () => {
       defaultVisualState: () => ({
         filterSettings: PRESETS.default,
         zoomIntent: { kind: 'manual', scale: 1 },
-        rotation: 0,
         viewMode: 'single',
       }),
       createSurface,
@@ -637,7 +627,7 @@ describe('EmbedPDF Document surface', () => {
     let finishSearch!: (
       matches: { pageNumber: number; pageOccurrence: number; index: number; excerpt: string }[],
     ) => void;
-    const initialSession = { schemaVersion: 2 as const, activeDocumentPath: null, documents: [] };
+    const initialSession = { schemaVersion: 3 as const, activeDocumentPath: null, documents: [] };
     let reader: ReaderActions;
     const workspace = createDocumentWorkspace({
       dispatchReaderAction: (action, options) => reader.dispatch(action, options),
@@ -646,7 +636,6 @@ describe('EmbedPDF Document surface', () => {
       defaultVisualState: () => ({
         filterSettings: PRESETS.default,
         zoomIntent: { kind: 'manual', scale: 1 },
-        rotation: 0,
         viewMode: 'continuous',
       }),
       createSurface: createEmbedPdfDocumentSurfaceFactory({
@@ -700,7 +689,6 @@ describe('EmbedPDF Document surface', () => {
     await callbacks[0].pageNavigationRequested(2);
     callbacks[0].readingPositionSettled({ page: 2, location: 0.8 });
     await callbacks[0].zoomIntentRequested({ kind: 'manual', scale: 4 });
-    await callbacks[0].rotationRequested?.('clockwise');
     await callbacks[0].viewModeRequested?.('spread');
     finishSearch([{ pageNumber: 2, pageOccurrence: 0, index: 0, excerpt: 'moon' }]);
     await expect(pendingSearch).resolves.toEqual([]);
@@ -790,13 +778,11 @@ describe('EmbedPDF Document surface', () => {
     surface.rendering.applyFilter('brightness(0.8)');
     surface.rendering.openSearch?.();
     await surface.rendering.setViewMode('continuous');
-    await surface.rendering.setRotation(90);
     await surface.rendering.setZoomIntent({ kind: 'fit-width' });
 
     expect(runtime.applyFilter).toHaveBeenCalledWith('brightness(0.8)');
     expect(runtime.openSearch).toHaveBeenCalledOnce();
     expect(runtime.setViewMode).toHaveBeenCalledWith('continuous');
-    expect(runtime.setRotation).toHaveBeenCalledWith(90);
     expect(runtime.setZoomIntent).toHaveBeenCalledWith({ kind: 'fit-width' });
     expect(PRESETS.default).toBeDefined();
   });

@@ -17,7 +17,7 @@ import {
   showToast,
 } from './app/dialogs';
 import type { DocumentSurfaceProvider, DocumentWorkspace } from './app/document-workspace';
-import { setupEventListeners } from './app/dom-events';
+import { type ReaderChromeControls, setupEventListeners } from './app/dom-events';
 import {
   ensureMinimumViewingSize,
   openFiles,
@@ -36,7 +36,6 @@ import {
   renderRecentFiles,
   showSplash,
   showViewer,
-  updateActivePresetButton,
   updateKeyboardHints,
   updateTabBarVisibility,
   updateUI,
@@ -53,9 +52,11 @@ import type { DocumentIntake } from './reader/document-intake';
 import { DEFAULT_ANNOTATION_DISPLAY_NAME } from './reader/native-pdf-editing';
 import {
   type PersistedReadingSession,
+  READING_SESSION_SCHEMA_VERSION,
   type ReaderAction,
   type ReaderActionOptions,
   type ReaderActions,
+  type ReadingSessionSnapshot,
   readerAction,
 } from './reader/reader-actions';
 import {
@@ -96,6 +97,19 @@ let applicationShutdown: ApplicationShutdownCoordinator | null = null;
 
 // Global slider manager instance
 let sliderManager: SliderManager | null = null;
+let readerChrome: ReaderChromeControls | null = null;
+
+const showActiveAppearance = (snapshot: ReadingSessionSnapshot): void => {
+  const activeDocument = snapshot.documents.find(
+    ({ filePath }) => filePath === snapshot.activeDocumentPath,
+  );
+  if (activeDocument?.visualState) {
+    readerChrome?.showAppearance(
+      activeDocument.filePath,
+      activeDocument.visualState.filterSettings,
+    );
+  }
+};
 
 // Global settings manager instance
 let settingsManager: SettingsManager | null = null;
@@ -495,7 +509,7 @@ export async function initializeApplication(modules: ApplicationModules): Promis
     } catch (error) {
       console.error('Reading Session migration failed; legacy data was retained:', error);
       restoredReadingSession = {
-        schemaVersion: 2,
+        schemaVersion: READING_SESSION_SCHEMA_VERSION,
         activeDocumentPath: null,
         documents: [],
       };
@@ -508,7 +522,6 @@ export async function initializeApplication(modules: ApplicationModules): Promis
     const defaultVisualState = () => ({
       filterSettings: getInitialFilterSettings(),
       zoomIntent: { kind: 'manual' as const, scale: 1 },
-      rotation: 0,
       viewMode: getInitialViewMode(),
     });
     const initialReadingSession = restoredReadingSession ?? EMPTY_READING_SESSION;
@@ -599,13 +612,7 @@ export async function initializeApplication(modules: ApplicationModules): Promis
       documentWorkspace?.project(snapshot);
       updateUI(snapshot, documentWorkspace?.activeRenderingState() ?? null);
       readerSidebar?.refresh();
-      const activeDocument = snapshot.documents.find(
-        ({ filePath }) => filePath === snapshot.activeDocumentPath,
-      );
-      if (activeDocument?.visualState) {
-        sliderManager?.setPreset(activeDocument.visualState.filterSettings);
-        updateActivePresetButton(activeDocument.visualState.filterSettings);
-      }
+      showActiveAppearance(snapshot);
       const hasDocument = snapshot.documents.length > 0;
       updateTabBarVisibility(hasDocument);
       void updatePrintMenuState(hasDocument);
@@ -697,7 +704,7 @@ export async function initializeApplication(modules: ApplicationModules): Promis
     hydrateChromeIcons(document);
 
     // Setup event listeners
-    setupEventListeners({
+    readerChrome = setupEventListeners({
       sliderManager,
       keybindManager,
       openPdfAndRefresh,
@@ -708,6 +715,7 @@ export async function initializeApplication(modules: ApplicationModules): Promis
       clearRecentFiles,
       dispatchReaderAction,
     });
+    if (readerActions) showActiveAppearance(readerActions.snapshot());
 
     // Update keyboard hints for platform
     updateKeyboardHints(isMac);
@@ -745,7 +753,7 @@ export async function initializeApplication(modules: ApplicationModules): Promis
         if (!updated.general.restorePreviousSession) {
           await settingsManager.clearPersistedReadingSession();
           restoredReadingSession = {
-            schemaVersion: 2,
+            schemaVersion: READING_SESSION_SCHEMA_VERSION,
             activeDocumentPath: null,
             documents: [],
           };
@@ -755,7 +763,7 @@ export async function initializeApplication(modules: ApplicationModules): Promis
         if (!settingsManager || !acceptsReaderWork()) return;
         await settingsManager.clearPersistedReadingSession();
         restoredReadingSession = {
-          schemaVersion: 2,
+          schemaVersion: READING_SESSION_SCHEMA_VERSION,
           activeDocumentPath: null,
           documents: [],
         };

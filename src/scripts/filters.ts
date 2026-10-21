@@ -48,6 +48,38 @@ export const PRESETS: Record<string, FilterSettings> = {
   },
 };
 
+export type AppearancePresetId = 'default' | 'original' | 'redeye' | 'sepia' | 'custom';
+
+/**
+ * The single ordered list of Appearance choices shown by every input adapter
+ * (the Appearance popover, and the View menu). Custom has no fixed settings:
+ * it opens the filter sliders instead.
+ */
+export const APPEARANCE_PRESETS: readonly { id: AppearancePresetId; label: string }[] = [
+  { id: 'default', label: 'Default' },
+  { id: 'original', label: 'Original' },
+  { id: 'redeye', label: 'Redeye' },
+  { id: 'sepia', label: 'Sepia' },
+  { id: 'custom', label: 'Custom' },
+];
+
+const sameFilterSettings = (a: FilterSettings, b: FilterSettings): boolean =>
+  a.brightness === b.brightness &&
+  a.grayscale === b.grayscale &&
+  a.invert === b.invert &&
+  a.sepia === b.sepia &&
+  a.hue === b.hue &&
+  a.extraBrightness === b.extraBrightness;
+
+/** The preset a Document's filter settings correspond to, or Custom when none match. */
+export function presetForFilterSettings(settings: FilterSettings): AppearancePresetId {
+  for (const { id } of APPEARANCE_PRESETS) {
+    const preset = PRESETS[id];
+    if (preset && sameFilterSettings(preset, settings)) return id;
+  }
+  return 'custom';
+}
+
 /**
  * Build CSS filter string from filter settings
  *

@@ -6,7 +6,7 @@ import type { DocumentRenderingState } from '../reader/document-rendering';
 import type { ReadingSessionSnapshot } from '../reader/reader-actions';
 
 const session = (activeDocumentPath: string): ReadingSessionSnapshot => ({
-  schemaVersion: 2,
+  schemaVersion: 3,
   revision: 0,
   activeDocumentPath,
   documents: [
@@ -32,7 +32,6 @@ const rendering = (
   totalPages,
   zoom: 1,
   zoomIntent: { kind: 'manual', scale: 1 },
-  rotation: 0,
   fileName: filePath.split('/').pop() ?? '',
   filePath,
   viewMode: 'continuous',

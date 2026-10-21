@@ -9,7 +9,6 @@ import type { NativePdfEditing } from './native-pdf-editing';
 
 export interface DocumentThumbnailOptions {
   readonly maxWidth?: number;
-  readonly rotation?: number;
 }
 
 export interface DocumentRuntime {

@@ -252,7 +252,7 @@ describe('Recent Documents', () => {
 
   it('does not overwrite an unsupported dedicated schema with legacy history', async () => {
     const unsupported = {
-      schemaVersion: 2,
+      schemaVersion: 3,
       documents: [recentDocument('/docs/dedicated.pdf', 20)],
     };
     const legacy = [recentDocument('/docs/legacy.pdf', 10)];

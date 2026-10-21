@@ -100,7 +100,6 @@ export function createEmbedPdfDocumentSurfaceFactory({
           totalPages: openedViewer.pageCount(),
           zoom: openedViewer.currentZoom(),
           zoomIntent: openedViewer.zoomIntent(),
-          rotation: openedViewer.rotation(),
           fileName: title,
           filePath,
           viewMode: openedViewer.viewMode(),
@@ -116,8 +115,6 @@ export function createEmbedPdfDocumentSurfaceFactory({
         project(() => openedViewer.setZoomIntent(intent), options),
       zoomIn: (options) => project(() => openedViewer.zoomIn(), options),
       zoomOut: (options) => project(() => openedViewer.zoomOut(), options),
-      setRotation: (rotation, options) =>
-        project(() => openedViewer.setRotation(rotation), options),
       setViewMode: (viewMode, options) =>
         project(() => openedViewer.setViewMode(viewMode), options),
       fitToPage: (options) => project(() => openedViewer.fitToPage(), options),

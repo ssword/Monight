@@ -95,12 +95,12 @@ function createLegacyValue(initial: unknown) {
 }
 
 const initialReadingSession: PersistedReadingSession = {
-  schemaVersion: 2,
+  schemaVersion: 3,
   activeDocumentPath: null,
   documents: [],
 };
 const replacementReadingSession: PersistedReadingSession = {
-  schemaVersion: 2,
+  schemaVersion: 3,
   activeDocumentPath: '/docs/report.pdf',
   documents: [
     {

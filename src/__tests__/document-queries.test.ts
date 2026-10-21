@@ -59,7 +59,7 @@ function createRuntime(content = createContent()): DocumentRuntime {
 function createReader() {
   return createReaderActions({
     initialSession: {
-      schemaVersion: 2,
+      schemaVersion: 3,
       activeDocumentPath: FIRST_DOCUMENT.filePath,
       documents: [FIRST_DOCUMENT],
     },
@@ -220,7 +220,7 @@ describe('Document Queries', () => {
   it('keeps old handles invalid after a failed close while allowing a new generation', async () => {
     const reader = createReaderActions({
       initialSession: {
-        schemaVersion: 2,
+        schemaVersion: 3,
         activeDocumentPath: FIRST_DOCUMENT.filePath,
         documents: [FIRST_DOCUMENT],
       },
