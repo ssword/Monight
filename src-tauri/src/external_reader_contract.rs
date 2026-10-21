@@ -393,6 +393,48 @@ fn contents_edits_keep_the_external_readers_note_appearance() {
     }
 }
 
+#[test]
+fn saved_text_notes_have_linked_popups_for_preview_editing() {
+    use crate::pdf_save::prepare_save;
+    use lopdf::Object;
+    let mut inputs = vec![std::fs::read(fixture_path("native-annotations/annotated.pdf")).unwrap()];
+    inputs.extend(readers().iter().map(|reader| export(reader, "edited")));
+    for input in inputs {
+        let prepared = prepare_save(&input).unwrap();
+        assert_eq!(prepare_save(&prepared).unwrap(), prepared);
+        assert_saved_export(&input, &prepared);
+        let document = lopdf::Document::load_mem(&prepared).unwrap();
+        for page_id in document.get_pages().values() {
+            let Ok(array) = document.get_dictionary(*page_id).unwrap().get(b"Annots") else {
+                continue;
+            };
+            let (_, array) = document.dereference(array).unwrap();
+            let annots = array.as_array().unwrap();
+            for entry in annots {
+                let (note_id, note) = document.dereference(entry).unwrap();
+                let note = note.as_dict().unwrap();
+                if note.get(b"Subtype").and_then(Object::as_name).ok() != Some(b"Text") {
+                    continue;
+                }
+                let popup_ref = note
+                    .get(b"Popup")
+                    .expect("Text note needs a Popup to open its editor in Preview");
+                assert!(
+                    annots.contains(popup_ref),
+                    "Popup must belong to the same page"
+                );
+                let (_, popup) = document.dereference(popup_ref).unwrap();
+                let popup = popup.as_dict().unwrap();
+                assert_eq!(popup.get(b"Subtype").unwrap().as_name().unwrap(), b"Popup");
+                assert_eq!(
+                    popup.get(b"Parent").unwrap().as_reference().unwrap(),
+                    note_id.unwrap()
+                );
+            }
+        }
+    }
+}
+
 fn outline_entries(entries: &Value) -> usize {
     entries
         .as_array()
