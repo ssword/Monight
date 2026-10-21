@@ -9,7 +9,7 @@
 // `readerMenuSubmenus` fills the menus built from TypeScript lists.
 //
 // Extending: add an entry to `staticCommands` (and the item in menu.rs), or
-// extend `ReaderCommandStateInput` for new state such as Navigation History.
+// extend `ReaderCommandStateInput` for new reader state.
 
 import type { ViewMode } from '../lib/document-features';
 import {
@@ -42,6 +42,8 @@ export const READER_ACTION_COMMANDS = {
   zoomToWidth: () => readerAction.setZoomIntent({ kind: 'fit-width' }),
   previousPage: (): ReaderAction => ({ type: 'goToPreviousPage' }),
   nextPage: (): ReaderAction => ({ type: 'goToNextPage' }),
+  back: (): ReaderAction => ({ type: 'goBack' }),
+  forward: (): ReaderAction => ({ type: 'goForward' }),
 } as const;
 
 export interface ReaderCommandContext {
@@ -74,6 +76,9 @@ export interface ReaderCommandStateInput {
   readonly preferences: ChromePreferences;
   readonly markup: ActiveMarkupState | null;
   readonly fullScreen: boolean;
+  /** Whether the active Document's Navigation History has somewhere to go. */
+  readonly canGoBack: boolean;
+  readonly canGoForward: boolean;
   /**
    * The effective keybinds; each command's menu item shows its shortcut as
    * its accelerator. Absent: accelerators are left as they are.
@@ -200,9 +205,22 @@ const staticCommands: readonly ReaderCommand[] = [
     id: 'go.page',
     run: async (context) => {
       const page = await context.requestPage();
-      if (page !== null) await context.dispatchReaderAction({ type: 'goToPage', page });
+      // Unlike thumbnails and surface navigation, Go to Page… is a recorded jump.
+      if (page !== null) {
+        await context.dispatchReaderAction({ type: 'goToPage', page, recordHistory: true });
+      }
     },
     state: whenDocument,
+  },
+  {
+    id: 'go.back',
+    run: (context) => context.dispatchReaderAction(READER_ACTION_COMMANDS.back()),
+    state: (input) => ({ enabled: hasDocument(input) && input.canGoBack }),
+  },
+  {
+    id: 'go.forward',
+    run: (context) => context.dispatchReaderAction(READER_ACTION_COMMANDS.forward()),
+    state: (input) => ({ enabled: hasDocument(input) && input.canGoForward }),
   },
   {
     id: 'tools.text-selection',

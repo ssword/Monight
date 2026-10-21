@@ -74,6 +74,8 @@ export const KEYBIND_ACTIONS: Readonly<Record<string, KeybindAction>> = {
   FirstPage: { displayName: 'First Page', action: 'firstPage' },
   LastPage: { displayName: 'Last Page', action: 'lastPage' },
   GoToPage: readerCommand('Go to Page…', 'go.page'),
+  GoBack: readerCommand('Back', 'go.back'),
+  GoForward: readerCommand('Forward', 'go.forward'),
   FitToWidth: { displayName: 'Zoom to Width', action: 'fitToWidth' },
   FitToPage: { displayName: 'Zoom to Fit', action: 'fitToPage' },
   ViewContinuous: readerCommand('Continuous Scroll', 'view.mode.continuous'),
@@ -162,6 +164,14 @@ export const KEYBIND_DEFAULTS_REVISIONS: readonly KeybindDefaultsRevision[] = [
       SwitchToTab7: [],
       SwitchToTab8: [],
       SwitchToTab9: [],
+    },
+  },
+  {
+    // Preview's Go ▸ Back and Forward through Navigation History (#113).
+    version: 3,
+    binds: {
+      GoBack: ['CmdOrCtrl+['],
+      GoForward: ['CmdOrCtrl+]'],
     },
   },
 ];
