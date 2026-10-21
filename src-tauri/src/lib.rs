@@ -541,6 +541,7 @@ mod tests {
             "core:window:allow-unminimize",
             "core:window:allow-set-fullscreen",
             "core:window:allow-destroy",
+            "core:window:allow-start-dragging",
         ] {
             assert!(
                 permissions.iter().any(|permission| permission == required),

@@ -146,6 +146,43 @@ describe('Reading Session store', () => {
     expect(storage.write).toHaveBeenCalledOnce();
   });
 
+  it('never carries sidebar chrome state into the restored Reading Session', async () => {
+    const stored = {
+      schemaVersion: 3,
+      activeDocumentPath: '/docs/report.pdf',
+      sidebarVisible: true,
+      documents: [
+        {
+          filePath: '/docs/report.pdf',
+          title: 'report.pdf',
+          readingPosition: { page: 2, location: 0.25 },
+          sidebarMode: 'thumbnails',
+          sidebarWidth: 300,
+        },
+      ],
+    };
+    const storage: ReadingSessionStorage = {
+      read: vi.fn(async () => stored),
+      write: vi.fn(),
+      readLegacy: vi.fn(async () => undefined),
+      removeLegacy: vi.fn(),
+    };
+
+    const session = await loadReadingSession(storage);
+
+    expect(session).toEqual({
+      schemaVersion: 3,
+      activeDocumentPath: '/docs/report.pdf',
+      documents: [
+        {
+          filePath: '/docs/report.pdf',
+          title: 'report.pdf',
+          readingPosition: { page: 2, location: 0.25 },
+        },
+      ],
+    });
+  });
+
   it('preserves fit Zoom Intent in the current schema', async () => {
     const stored = {
       schemaVersion: 3,

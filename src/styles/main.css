@@ -103,25 +103,63 @@ body.pdf-loaded {
   overflow: hidden;
 }
 
-/* Splash Screen */
+/* Splash Screen — the launch window shares the reader chrome's tokens and icons. */
 #splash-container {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
+  width: 100%;
+  height: 100%;
+  padding: calc(var(--toolbar-height) + 8px) 24px 32px;
   text-align: center;
-  padding: 40px;
+  background-color: var(--bg-primary);
 }
 
 #splash-container:not(.hidden) {
   display: flex;
 }
 
+/* Title-bar strip: a window drag handle that also clears the macOS traffic lights. */
+.splash-titlebar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: var(--toolbar-height);
+}
+
+.splash-brand {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin-bottom: 24px;
+}
+
+.splash-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  margin-bottom: 14px;
+  color: var(--accent-ink);
+  background-color: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 14px;
+}
+
+.splash-mark svg {
+  width: 28px;
+  height: 28px;
+}
+
 .app-title {
   font-size: var(--font-size-xlarge);
   font-weight: 300;
   letter-spacing: 2px;
-  margin-bottom: 8px;
+  margin-bottom: 4px;
   color: var(--text-primary);
 }
 
@@ -129,45 +167,61 @@ body.pdf-loaded {
   font-size: var(--font-size-large);
   font-weight: 300;
   color: var(--text-secondary);
-  margin-bottom: 24px;
+  margin-bottom: 12px;
 }
 
 .app-version {
-  font-size: 14px;
+  font-size: 12px;
   color: var(--text-secondary);
-  margin-bottom: 32px;
-  font-family: "Monaco", "Courier New", monospace;
+  font-variant-numeric: tabular-nums;
 }
 
 /* Splash Open Button */
 .splash-open-btn {
-  padding: 12px 32px;
-  font-size: 16px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  padding: 0 16px;
+  font: inherit;
+  font-size: 13px;
   font-weight: 500;
   color: var(--text-on-accent);
   background-color: var(--accent-color);
   border: none;
-  border-radius: 6px;
+  border-radius: var(--capsule-radius);
   cursor: pointer;
-  margin-bottom: 16px;
-  transition: all 0.2s ease;
+  transition:
+    background-color 0.12s ease,
+    box-shadow 0.12s ease;
 }
 
 .splash-open-btn:hover {
   background-color: var(--accent-color-hover);
-  transform: translateY(-1px);
-  box-shadow: 0 4px 14px var(--accent-glow);
+  box-shadow: 0 2px 10px var(--accent-glow);
 }
 
-.splash-open-btn:active {
-  transform: translateY(0);
+.splash-open-btn:focus-visible {
+  outline: 2px solid var(--accent-color);
+  outline-offset: 2px;
+}
+
+.splash-btn-icon {
+  display: inline-flex;
+  width: 16px;
+  height: 16px;
+  pointer-events: none;
+}
+
+.splash-btn-icon svg {
+  width: 100%;
+  height: 100%;
 }
 
 .hint-text {
-  margin-top: 8px;
-  font-size: 14px;
+  margin-top: 10px;
+  font-size: 12px;
   color: var(--text-secondary);
-  font-family: "Monaco", "Courier New", monospace;
 }
 
 /* Remove loading indicator */
@@ -212,7 +266,7 @@ body.drag-over #viewer-container {
 @media print {
   #toolbar,
   #tab-bar,
-  #darkConfigurator {
+  #appearance-popover {
     display: none !important;
   }
 

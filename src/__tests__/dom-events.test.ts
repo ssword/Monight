@@ -169,39 +169,4 @@ describe('toolbar input adapters', () => {
     ]);
     expect(shortcutActions).toEqual(dispatchReaderAction.mock.calls.map(([action]) => action));
   });
-
-  it('keeps the filter presets reachable from the toolbar', async () => {
-    document.body.innerHTML = `
-      <button id="appearance-toggle" aria-expanded="false"></button>
-      <div id="preset-menu" class="hidden" role="menu">
-        <button id="preset-default" class="preset-btn active"></button>
-        <button id="preset-sepia" class="preset-btn"></button>
-      </div>
-    `;
-    const dispatchReaderAction = vi.fn(async (_action: unknown) => undefined);
-    listen(dispatchReaderAction);
-    const toggle = document.getElementById('appearance-toggle');
-    const menu = document.getElementById('preset-menu');
-
-    toggle?.click();
-    expect(menu?.classList.contains('hidden')).toBe(false);
-    expect(toggle?.getAttribute('aria-expanded')).toBe('true');
-
-    document.getElementById('preset-sepia')?.click();
-    await vi.waitFor(() => expect(dispatchReaderAction).toHaveBeenCalledOnce());
-    expect(dispatchReaderAction).toHaveBeenCalledWith({
-      type: 'setFilterSettings',
-      filterSettings: expect.objectContaining({ sepia: expect.any(Number) }),
-    });
-    expect(menu?.classList.contains('hidden')).toBe(true);
-    expect(toggle?.getAttribute('aria-expanded')).toBe('false');
-
-    toggle?.click();
-    document.body.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
-    expect(menu?.classList.contains('hidden')).toBe(true);
-
-    toggle?.click();
-    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-    expect(menu?.classList.contains('hidden')).toBe(true);
-  });
 });

@@ -42,7 +42,6 @@ import {
   embedPdfLinkGeometries,
   embedPdfLinkTarget,
   embedPdfLinkTargetAtGeometry,
-  embedPdfOutlinePath,
   embedPdfPageNumberForEventPath,
   embedPdfReadingFilterStyle,
   embedPdfZoomLevelFromIntent,
@@ -217,6 +216,7 @@ export async function createEmbedPdfViewerRuntime({
   const spread = requireCapability<SpreadCapability>(registry, 'spread');
   const thumbnails = requireCapability<ThumbnailCapability>(registry, 'thumbnail');
   const ui = requireCapability<UICapability>(registry, 'ui');
+  // Must precede document loading: each document copies the schema when it opens.
   const viewport = requireCapability<ViewportCapability>(registry, 'viewport');
   const engine = registry.getEngine();
   const unsubscribers: Array<() => void> = [];
@@ -319,11 +319,8 @@ export async function createEmbedPdfViewerRuntime({
       pageNumber,
     );
   };
-  const requestLinkTarget = async (
-    target: NonNullable<ReturnType<typeof embedPdfLinkTargetAtGeometry>>,
-  ): Promise<void> => {
-    if (destroyed) return;
-    const monightTarget = embedPdfLinkTarget(target, (destination) => {
+  const monightLinkTarget = (target: Parameters<typeof embedPdfLinkTarget>[0]) =>
+    embedPdfLinkTarget(target, (destination) => {
       const page = currentDocument().pages[destination.pageIndex];
       return embedPdfDestinationReadingPosition(
         destination,
@@ -331,34 +328,21 @@ export async function createEmbedPdfViewerRuntime({
         page?.size.height ?? 0,
       );
     });
+  const requestLinkTarget = async (
+    target: NonNullable<ReturnType<typeof embedPdfLinkTargetAtGeometry>>,
+  ): Promise<void> => {
+    if (destroyed) return;
+    const monightTarget = monightLinkTarget(target);
     if (!monightTarget || !callbacks.linkTargetRequested) return;
     await callbacks.linkTargetRequested(monightTarget);
   };
-  const requestOutlineTarget = async (indices: number[]): Promise<void> => {
-    const result = await engine.getBookmarks(currentDocument()).toPromise();
-    let bookmarks = result.bookmarks;
-    for (const [depth, index] of indices.entries()) {
-      const bookmark = bookmarks[index];
-      if (!bookmark) return;
-      if (depth === indices.length - 1 && bookmark.target) {
-        await requestLinkTarget(bookmark.target);
-      }
-      bookmarks = bookmark.children ?? [];
-    }
-  };
   const interceptEmbedPdfLink = (event: Event): void => {
-    const outlinePath = embedPdfOutlinePath(event);
-    const target = outlinePath ? null : linkTargetForEvent(event);
-    if (!outlinePath && !target) return;
+    const target = linkTargetForEvent(event);
+    if (!target) return;
     event.stopImmediatePropagation();
     if (event.type !== 'click') return;
     event.preventDefault();
-    const activation = outlinePath
-      ? requestOutlineTarget(outlinePath)
-      : target
-        ? requestLinkTarget(target)
-        : Promise.resolve();
-    void activation.catch((error) => {
+    void requestLinkTarget(target).catch((error) => {
       console.error('Failed to activate EmbedPDF link:', error);
     });
   };
@@ -663,10 +647,14 @@ export async function createEmbedPdfViewerRuntime({
           target?.type === 'destination'
             ? target.destination?.pageIndex
             : target?.action?.destination?.pageIndex;
+        const linkTarget = bookmark.target
+          ? monightLinkTarget(bookmark.target as Parameters<typeof monightLinkTarget>[0])
+          : null;
         return {
           title: bookmark.title,
           pageNumber: typeof pageIndex === 'number' ? pageIndex + 1 : null,
           ...(target?.action?.uri ? { url: target.action.uri } : {}),
+          ...(linkTarget ? { target: linkTarget } : {}),
           bold: false,
           italic: false,
           items: (bookmark.children ?? []).map((child) =>

@@ -8,6 +8,7 @@
     <link rel="stylesheet" href="/src/styles/reader-shell.css" />
     <link rel="stylesheet" href="/src/styles/configurator.css" />
     <link rel="stylesheet" href="/src/styles/tabs.css" />
+    <link rel="stylesheet" href="/src/styles/reader-sidebar.css" />
     <meta http-equiv="Content-Security-Policy"
           content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; frame-src blob:; img-src 'self' blob: data:" />
 </head>
@@ -15,10 +16,18 @@
     <div id="app">
         <!-- Splash screen shown when no PDF is loaded -->
         <div id="splash-container">
-            <h1 class="app-title">Monight</h1>
-            <h2 class="app-subtitle">墨页</h2>
-            <p class="app-version" id="version-info">Loading...</p>
-            <button id="splash-open-btn" class="splash-open-btn">Open PDF File</button>
+            <!-- Title-bar strip: drags the window and clears the macOS traffic lights -->
+            <div class="splash-titlebar" data-tauri-drag-region></div>
+            <div class="splash-brand">
+                <span class="splash-mark" data-icon="moon"></span>
+                <h1 class="app-title">Monight</h1>
+                <h2 class="app-subtitle">墨页</h2>
+                <p class="app-version" id="version-info">Loading...</p>
+            </div>
+            <button id="splash-open-btn" class="splash-open-btn" type="button">
+                <span class="splash-btn-icon" data-icon="folder-open"></span>
+                <span>Open PDF File</span>
+            </button>
             <p class="hint-text">Press Cmd+O to open a PDF file</p>
             <section id="recent-files-section" class="recent-files hidden" aria-labelledby="recent-files-title">
                 <div class="recent-files-heading">
@@ -32,7 +41,22 @@
         <!-- PDF viewer container (hidden initially) -->
         <div id="viewer-container" class="hidden">
             <!-- Toolbar with controls -->
-            <div id="toolbar" role="toolbar" aria-label="Reader">
+            <div id="toolbar" role="toolbar" aria-label="Reader" data-tauri-drag-region="deep">
+                <!-- Sidebar toggle and mode dropdown -->
+                <div class="toolbar-capsule sidebar-mode-anchor" role="group" aria-label="Sidebar">
+                    <button id="sidebar-toggle" class="toolbar-btn" type="button" title="Show or Hide Sidebar" aria-label="Sidebar" aria-pressed="false" aria-controls="reader-sidebar">
+                        <span class="toolbar-icon" data-icon="sidebar"></span>
+                    </button>
+                    <button id="sidebar-mode-toggle" class="toolbar-btn toolbar-btn-chevron" type="button" title="Sidebar View" aria-label="Sidebar View" aria-haspopup="menu" aria-expanded="false" aria-controls="sidebar-mode-menu">
+                        <span class="toolbar-icon" data-icon="chevron-down"></span>
+                    </button>
+                    <div id="sidebar-mode-menu" class="sidebar-mode-menu hidden" role="menu" aria-label="Sidebar view" data-tauri-drag-region="false">
+                        <button class="toolbar-menu-item" type="button" role="menuitemradio" aria-checked="true" data-sidebar-mode="hidden">Hide Sidebar</button>
+                        <button class="toolbar-menu-item" type="button" role="menuitemradio" aria-checked="false" data-sidebar-mode="thumbnails">Thumbnails</button>
+                        <button class="toolbar-menu-item" type="button" role="menuitemradio" aria-checked="false" data-sidebar-mode="tableOfContents">Table of Contents</button>
+                    </div>
+                </div>
+
                 <!-- Title block: active Document and Page N of M -->
                 <div class="toolbar-title">
                     <span id="file-name" class="file-name">No file loaded</span>
@@ -54,17 +78,39 @@
                     </button>
                 </div>
 
-                <!-- Interim filter presets until the Appearance popover lands -->
-                <div class="toolbar-capsule toolbar-menu-anchor">
-                    <button id="appearance-toggle" class="toolbar-btn" type="button" title="Appearance" aria-label="Appearance" aria-haspopup="menu" aria-expanded="false" aria-controls="preset-menu">
+                <!-- Appearance: page filter presets for the active Document -->
+                <div class="toolbar-capsule toolbar-popover-anchor">
+                    <button id="appearance-toggle" class="toolbar-btn" type="button" title="Appearance" aria-label="Appearance" aria-haspopup="dialog" aria-expanded="false" aria-controls="appearance-popover">
                         <span class="toolbar-icon" data-icon="palette"></span>
                     </button>
-                    <div id="preset-menu" class="toolbar-menu hidden" role="menu" aria-label="Filter presets">
-                        <button id="preset-default" class="preset-btn active" type="button" role="menuitem" title="Default Dark Mode">Default</button>
-                        <button id="preset-original" class="preset-btn" type="button" role="menuitem" title="Original (No Filter)">Original</button>
-                        <button id="preset-redeye" class="preset-btn" type="button" role="menuitem" title="Redeye Dark Mode">Redeye</button>
-                        <button id="preset-sepia" class="preset-btn" type="button" role="menuitem" title="Sepia Mode">Sepia</button>
-                        <button id="preset-custom" class="preset-btn" type="button" role="menuitem" title="Custom Dark Mode">Custom…</button>
+                    <div id="appearance-popover" class="appearance-popover hidden" role="dialog" aria-label="Appearance" data-tauri-drag-region="false">
+                        <div id="appearance-presets" class="appearance-presets" role="radiogroup" aria-label="Filter presets"></div>
+                        <div id="appearance-sliders" class="appearance-sliders hidden" role="group" aria-label="Custom filter">
+                        <div class="slider-group">
+                            <label id="brightnessSlider-label">Darkness</label>
+                            <div id="brightnessSlider" class="slider" aria-labelledby="brightnessSlider-label"></div>
+                        </div>
+                        <div class="slider-group">
+                            <label id="grayscaleSlider-label">Grayscale</label>
+                            <div id="grayscaleSlider" class="slider" aria-labelledby="grayscaleSlider-label"></div>
+                        </div>
+                        <div class="slider-group">
+                            <label id="invertSlider-label">Inversion</label>
+                            <div id="invertSlider" class="slider" aria-labelledby="invertSlider-label"></div>
+                        </div>
+                        <div class="slider-group">
+                            <label id="sepiaSlider-label">Sepia</label>
+                            <div id="sepiaSlider" class="slider" aria-labelledby="sepiaSlider-label"></div>
+                        </div>
+                        <div class="slider-group">
+                            <label id="hueSlider-label">Hue</label>
+                            <div id="hueSlider" class="slider" aria-labelledby="hueSlider-label"></div>
+                        </div>
+                        <div class="slider-group">
+                            <label id="extraBrightnessSlider-label">Brightness</label>
+                            <div id="extraBrightnessSlider" class="slider" aria-labelledby="extraBrightnessSlider-label"></div>
+                        </div>
+                        </div>
                     </div>
                 </div>
 
@@ -93,44 +139,12 @@
             </div>
 
             <div id="document-workspace" role="tabpanel">
+                <aside id="reader-sidebar" class="reader-sidebar" aria-label="Sidebar" hidden>
+                    <div class="reader-sidebar-content"></div>
+                    <div class="reader-sidebar-resizer" role="separator" tabindex="0"></div>
+                </aside>
                 <!-- PDF canvas container -->
                 <div id="pdf-container"></div>
-            </div>
-        </div>
-
-        <!-- Dark Mode Configurator Overlay -->
-        <div id="darkConfigurator" class="dark-configurator hidden">
-            <div class="configurator-panel">
-                <div class="configurator-header">
-                    <h3>Custom Dark Mode</h3>
-                    <button id="close-configurator" class="close-btn">✕</button>
-                </div>
-                <div class="configurator-content">
-                    <div class="slider-group">
-                        <label>Darkness</label>
-                        <div id="brightnessSlider" class="slider"></div>
-                    </div>
-                    <div class="slider-group">
-                        <label>Grayscale</label>
-                        <div id="grayscaleSlider" class="slider"></div>
-                    </div>
-                    <div class="slider-group">
-                        <label>Inversion</label>
-                        <div id="invertSlider" class="slider"></div>
-                    </div>
-                    <div class="slider-group">
-                        <label>Sepia</label>
-                        <div id="sepiaSlider" class="slider"></div>
-                    </div>
-                    <div class="slider-group">
-                        <label>Hue</label>
-                        <div id="hueSlider" class="slider"></div>
-                    </div>
-                    <div class="slider-group">
-                        <label>Brightness</label>
-                        <div id="extraBrightnessSlider" class="slider"></div>
-                    </div>
-                </div>
             </div>
         </div>
 

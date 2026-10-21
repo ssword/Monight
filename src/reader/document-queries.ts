@@ -59,6 +59,7 @@ interface CreateDocumentQueryOptions {
 const cloneOutline = (items: readonly PdfOutlineItem[]): PdfOutlineItem[] =>
   items.map((item) => ({
     ...item,
+    ...(item.target ? { target: structuredClone(item.target) } : {}),
     items: cloneOutline(item.items),
   }));
 

@@ -368,12 +368,13 @@ describe('EmbedPDF Document surface', () => {
         'zoom',
         // View rotation is gone; rotation is a Page Rotation edit of the PDF.
         'rotate',
+        // Monight's own sidebar replaces the ready-made thumbnails and outline.
+        'panel-sidebar',
       ]),
     );
     // Only the replaced controls are hidden; every other ready-made control stays.
     for (const retained of [
       'panel',
-      'panel-sidebar',
       'panel-search',
       'page',
       'spread',

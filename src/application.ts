@@ -4,6 +4,11 @@ import { listen } from '@tauri-apps/api/event';
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 import { hydrateChromeIcons } from './app/chrome-icons';
 import {
+  type ChromePreferencesAuthority,
+  type ChromePreferencesStorage,
+  loadChromePreferences,
+} from './app/chrome-preferences';
+import {
   requestConfirmation,
   requestPdfPassword,
   requestPdfSaveFailure,
@@ -12,7 +17,7 @@ import {
   showToast,
 } from './app/dialogs';
 import type { DocumentSurfaceProvider, DocumentWorkspace } from './app/document-workspace';
-import { setupEventListeners } from './app/dom-events';
+import { type ReaderChromeControls, setupEventListeners } from './app/dom-events';
 import {
   ensureMinimumViewingSize,
   openFiles,
@@ -24,13 +29,14 @@ import {
 import { registerKeybindActions } from './app/keybinds';
 import { createPersistenceCoordinator } from './app/persistence-coordinator';
 import { PresentationController } from './app/presentation-controller';
+import { createReaderSidebar, type ReaderSidebar } from './app/reader-sidebar';
 import { restoreReadingSessionAtStartup } from './app/startup-restoration';
 import { type ExternalOpenPayload, setupTauriListeners } from './app/tauri-events';
 import {
+  applyWindowChrome,
   renderRecentFiles,
   showSplash,
   showViewer,
-  updateActivePresetButton,
   updateKeyboardHints,
   updateTabBarVisibility,
   updateUI,
@@ -51,6 +57,7 @@ import {
   type ReaderAction,
   type ReaderActionOptions,
   type ReaderActions,
+  type ReadingSessionSnapshot,
   readerAction,
 } from './reader/reader-actions';
 import {
@@ -80,6 +87,7 @@ export interface ApplicationModules {
   createDocumentSurface: DocumentSurfaceProvider;
   createReadingSessionStorage: typeof import('./app/reading-session-storage').createReadingSessionStorage;
   createRecentDocumentStorage: typeof import('./app/recent-document-storage').createRecentDocumentStorage;
+  createChromePreferencesStorage?: () => ChromePreferencesStorage;
   createReaderActions: typeof import('./reader/reader-actions').createReaderActions;
 }
 
@@ -90,6 +98,19 @@ let applicationShutdown: ApplicationShutdownCoordinator | null = null;
 
 // Global slider manager instance
 let sliderManager: SliderManager | null = null;
+let readerChrome: ReaderChromeControls | null = null;
+
+const showActiveAppearance = (snapshot: ReadingSessionSnapshot): void => {
+  const activeDocument = snapshot.documents.find(
+    ({ filePath }) => filePath === snapshot.activeDocumentPath,
+  );
+  if (activeDocument?.visualState) {
+    readerChrome?.showAppearance(
+      activeDocument.filePath,
+      activeDocument.visualState.filterSettings,
+    );
+  }
+};
 
 // Global settings manager instance
 let settingsManager: SettingsManager | null = null;
@@ -98,6 +119,8 @@ let readerActions: ReaderActions | null = null;
 let readingSessionStorage: ReadingSessionStorage | null = null;
 let restoredReadingSession: PersistedReadingSession | null = null;
 let recentDocumentAuthority: RecentDocumentAuthority | null = null;
+let chromePreferences: ChromePreferencesAuthority | null = null;
+let readerSidebar: ReaderSidebar | null = null;
 
 // Global keybind manager instance
 let keybindManager: KeybindManager | null = null;
@@ -173,8 +196,9 @@ const applyWindowAfterOpen = async (): Promise<void> => {
 };
 
 const refreshAfterOpen = async (): Promise<void> => {
-  const hasDocument = (readerActions?.snapshot().documents.length ?? 0) > 0;
-  updateTabBarVisibility(hasDocument);
+  const documentCount = readerActions?.snapshot().documents.length ?? 0;
+  const hasDocument = documentCount > 0;
+  updateTabBarVisibility(documentCount);
   await updatePrintMenuState(hasDocument);
   await applyWindowAfterOpen();
 };
@@ -333,8 +357,9 @@ const restoreStartupReadingSession = async (
     onForegroundReady: async () => {
       if (applicationShutdown?.isShutdownRequested()) return;
       showViewer();
-      const hasDocument = (readerActions?.snapshot().documents.length ?? 0) > 0;
-      updateTabBarVisibility(hasDocument);
+      const documentCount = readerActions?.snapshot().documents.length ?? 0;
+      const hasDocument = documentCount > 0;
+      updateTabBarVisibility(documentCount);
       await updatePrintMenuState(hasDocument);
       await applyWindowAfterOpen();
       const currentWindow = getCurrentWebviewWindow();
@@ -348,12 +373,64 @@ const restoreStartupReadingSession = async (
     reportFailure: (message) => showToast(message, 'error'),
   });
   reportDocumentIntakeOutcomes(result.explicitRequestResult);
-  const hasDocument = (readerActions?.snapshot().documents.length ?? 0) > 0;
-  updateTabBarVisibility(hasDocument);
+  const documentCount = readerActions?.snapshot().documents.length ?? 0;
+  const hasDocument = documentCount > 0;
+  updateTabBarVisibility(documentCount);
   await updatePrintMenuState(hasDocument);
 
   return readerActions?.snapshot().documents.length ?? 0;
 };
+
+function createTransientChromePreferencesStorage(): ChromePreferencesStorage {
+  let stored: unknown;
+  return {
+    read: async () => stored,
+    write: async (preferences) => {
+      stored = preferences;
+    },
+  };
+}
+
+function mountReaderSidebar(
+  preferences: ChromePreferencesAuthority,
+  defaultVisualState: () => { filterSettings: FilterSettings },
+): ReaderSidebar | null {
+  const root = document.getElementById('reader-sidebar');
+  const toggle = document.getElementById('sidebar-toggle');
+  const modeToggle = document.getElementById('sidebar-mode-toggle');
+  const modeMenu = document.getElementById('sidebar-mode-menu');
+  if (
+    !root ||
+    !(toggle instanceof HTMLButtonElement) ||
+    !(modeToggle instanceof HTMLButtonElement) ||
+    !modeMenu
+  ) {
+    return null;
+  }
+  const sidebar = createReaderSidebar({
+    elements: { root, toggle, modeToggle, modeMenu },
+    preferences,
+    dispatchReaderAction,
+    activeDocument: () => {
+      const snapshot = readerActions?.snapshot();
+      const rendering = documentWorkspace?.activeRenderingState();
+      const filePath = snapshot?.activeDocumentPath;
+      if (!snapshot || !filePath || !rendering || rendering.filePath !== filePath) return null;
+      const visualState = snapshot.documents.find(
+        (document) => document.filePath === filePath,
+      )?.visualState;
+      return {
+        filePath,
+        pageCount: rendering.totalPages,
+        currentPage: rendering.currentPage,
+        filterSettings: visualState?.filterSettings ?? defaultVisualState().filterSettings,
+        query: readerActions?.query(filePath) ?? null,
+      };
+    },
+  });
+  sidebar.refresh();
+  return sidebar;
+}
 
 export async function initializeApplication(modules: ApplicationModules): Promise<void> {
   const currentWindow = getCurrentWebviewWindow();
@@ -370,6 +447,8 @@ export async function initializeApplication(modules: ApplicationModules): Promis
     canShutdown: () => readerActions?.isShutdownPrepared() ?? true,
     flush: async () => {
       await documentIntake?.quiesce();
+      // Chrome preferences are best-effort and never hold up quitting.
+      await chromePreferences?.flush().catch(() => undefined);
       await persistence.flush();
     },
     chooseAfterFailure: chooseAfterFinalSaveFailure,
@@ -421,6 +500,13 @@ export async function initializeApplication(modules: ApplicationModules): Promis
       },
     );
     renderRecentFiles(recentDocumentAuthority.snapshot());
+    chromePreferences = await loadChromePreferences(
+      modules.createChromePreferencesStorage?.() ?? createTransientChromePreferencesStorage(),
+      {
+        onPersistenceError: (error) =>
+          console.error('Chrome preferences persistence failed:', error),
+      },
+    );
     readingSessionStorage = modules.createReadingSessionStorage(settingsManager);
     try {
       restoredReadingSession = await loadReadingSession(readingSessionStorage);
@@ -480,6 +566,7 @@ export async function initializeApplication(modules: ApplicationModules): Promis
       renderingStateChanged: () => {
         if (!readerActions || !documentWorkspace) return;
         updateUI(readerActions.snapshot(), documentWorkspace.activeRenderingState());
+        readerSidebar?.refresh();
       },
     });
 
@@ -524,18 +611,14 @@ export async function initializeApplication(modules: ApplicationModules): Promis
       documentIntake.interrupt();
       documentIntake.stopAccepting();
     }
+    readerSidebar = mountReaderSidebar(chromePreferences, defaultVisualState);
     readerActions.observe((snapshot) => {
       documentWorkspace?.project(snapshot);
       updateUI(snapshot, documentWorkspace?.activeRenderingState() ?? null);
-      const activeDocument = snapshot.documents.find(
-        ({ filePath }) => filePath === snapshot.activeDocumentPath,
-      );
-      if (activeDocument?.visualState) {
-        sliderManager?.setPreset(activeDocument.visualState.filterSettings);
-        updateActivePresetButton(activeDocument.visualState.filterSettings);
-      }
+      readerSidebar?.refresh();
+      showActiveAppearance(snapshot);
       const hasDocument = snapshot.documents.length > 0;
-      updateTabBarVisibility(hasDocument);
+      updateTabBarVisibility(snapshot.documents.length);
       void updatePrintMenuState(hasDocument);
     });
     documentWorkspace.project(readerActions.snapshot());
@@ -582,7 +665,7 @@ export async function initializeApplication(modules: ApplicationModules): Promis
       }
     };
     const updateTabBar = () =>
-      updateTabBarVisibility((readerActions?.snapshot().documents.length ?? 0) > 0);
+      updateTabBarVisibility(readerActions?.snapshot().documents.length ?? 0);
 
     // Register all action handlers
     registerKeybindActions({
@@ -622,10 +705,11 @@ export async function initializeApplication(modules: ApplicationModules): Promis
       versionElement.textContent = `v${info.version} • Tauri ${info.tauriVersion}`;
     }
 
+    applyWindowChrome(document, isMac);
     hydrateChromeIcons(document);
 
     // Setup event listeners
-    setupEventListeners({
+    readerChrome = setupEventListeners({
       sliderManager,
       keybindManager,
       openPdfAndRefresh,
@@ -636,6 +720,7 @@ export async function initializeApplication(modules: ApplicationModules): Promis
       clearRecentFiles,
       dispatchReaderAction,
     });
+    if (readerActions) showActiveAppearance(readerActions.snapshot());
 
     // Update keyboard hints for platform
     updateKeyboardHints(isMac);

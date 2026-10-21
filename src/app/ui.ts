@@ -1,7 +1,7 @@
 import type { DocumentRenderingState } from '../reader/document-rendering';
 import type { ReadingSessionSnapshot } from '../reader/reader-actions';
 import type { RecentDocument } from '../reader/recent-documents';
-import { type FilterSettings, PRESETS } from '../scripts/filters';
+import { hydrateChromeIcons } from './chrome-icons';
 
 // Show splash screen
 export function showSplash(): void {
@@ -34,52 +34,35 @@ export function renderRecentFiles(recentFiles: readonly RecentDocument[]): void 
     button.dataset.filePath = recent.filePath;
     button.title = recent.filePath;
 
+    const icon = document.createElement('span');
+    icon.className = 'recent-file-icon';
+    icon.dataset.icon = 'file-text';
     const title = document.createElement('span');
     title.className = 'recent-file-title';
     title.textContent = recent.title;
     const path = document.createElement('span');
     path.className = 'recent-file-path';
     path.textContent = recent.filePath;
-    button.append(title, path);
+    button.append(icon, title, path);
     list.appendChild(button);
   }
+  hydrateChromeIcons(list);
 }
 
-// Update tab bar visibility
-export function updateTabBarVisibility(hasDocument: boolean): void {
-  const tabBar = document.getElementById('tab-bar');
-  if (!tabBar) return;
-
-  if (hasDocument) {
-    tabBar.classList.remove('hidden');
-  } else {
-    tabBar.classList.add('hidden');
-  }
+/**
+ * macOS draws an overlay title bar with the traffic lights inset into the toolbar;
+ * Windows and Linux keep a native title bar above the same toolbar.
+ */
+export function applyWindowChrome(doc: Document, isMac: boolean): void {
+  doc.documentElement.dataset.windowChrome = isMac ? 'overlay' : 'native';
 }
 
-// Update active preset button based on settings
-export function updateActivePresetButton(settings: FilterSettings): void {
-  const buttons = document.querySelectorAll('.preset-btn');
-
-  // Check if settings match any preset
-  let matchedPreset: string | null = null;
-
-  for (const [presetName, presetSettings] of Object.entries(PRESETS)) {
-    if (JSON.stringify(presetSettings) === JSON.stringify(settings)) {
-      matchedPreset = presetName;
-      break;
-    }
-  }
-
-  // Update button states
-  buttons.forEach((btn) => {
-    const presetName = btn.id.replace('preset-', '');
-    if (presetName === matchedPreset) {
-      btn.classList.add('active');
-    } else {
-      btn.classList.remove('active');
-    }
-  });
+/**
+ * The tab bar is shown only while two or more Documents are open, like macOS tabs.
+ * Only visibility changes; the rendered tabs keep Reading Session order.
+ */
+export function updateTabBarVisibility(documentCount: number): void {
+  document.getElementById('tab-bar')?.classList.toggle('hidden', documentCount < 2);
 }
 
 // Update UI based on viewer state
