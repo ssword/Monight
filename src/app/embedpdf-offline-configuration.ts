@@ -1,4 +1,4 @@
-import { LockModeType, type PDFViewerConfig, type SidebarSchema } from '@embedpdf/snippet';
+import { LockModeType, type PDFViewerConfig } from '@embedpdf/snippet';
 import {
   type AnnotationDisplayName,
   DEFAULT_ANNOTATION_DISPLAY_NAME,
@@ -26,37 +26,11 @@ const DISABLED_CATEGORIES = [
   'rotate',
   // Monight's toolbar zoom group replaces the ready-made zoom controls.
   'zoom',
+  // Monight's own sidebar replaces the ready-made thumbnails and outline.
+  'panel-sidebar',
   // Reading Session supports single, continuous, and odd-page spreads.
   'spread-even',
 ] as const;
-
-const READY_MADE_THUMBNAILS_COMPONENT = 'thumbnails-sidebar';
-
-/**
- * Monight's own sidebar replaces the ready-made Thumbnails tab. Returns the
- * ready-made sidebars that carried it, rewritten without it, for
- * `ui.mergeSchema({ sidebars })`; other panels are left untouched.
- */
-export function embedPdfSidebarsWithoutThumbnails(
-  sidebars: Readonly<Record<string, SidebarSchema>>,
-): Record<string, SidebarSchema> {
-  const rewritten: Record<string, SidebarSchema> = {};
-  for (const [id, sidebar] of Object.entries(sidebars)) {
-    if (sidebar.content.type !== 'tabs') continue;
-    const tabs = sidebar.content.tabs.filter(
-      ({ componentId }) => componentId !== READY_MADE_THUMBNAILS_COMPONENT,
-    );
-    if (tabs.length === sidebar.content.tabs.length) continue;
-    rewritten[id] = {
-      ...sidebar,
-      content:
-        tabs.length === 1 && tabs[0]
-          ? { type: 'component', componentId: tabs[0].componentId }
-          : { ...sidebar.content, tabs },
-    };
-  }
-  return rewritten;
-}
 
 const localFontFallback = {
   baseUrl: EMBEDPDF_FONT_BASE_URL,

@@ -89,42 +89,51 @@ export async function verifyNavigation(browser, origin) {
     [],
     'Caret keys inside the ready-made search field must not become Reader Actions',
   );
-  await viewer.getByRole('button', { name: 'Sidebar', exact: true }).click();
-  // Monight's own sidebar replaces the ready-made Thumbnails tab; the outline remains.
-  await viewer.locator('.outline-tree').waitFor({ state: 'visible' });
-  const readyMadeSidebar = viewer.locator('[data-sidebar-id="sidebar-panel"]');
-  assert.equal(await readyMadeSidebar.getByRole('tab').count(), 0);
-  assert.equal(
-    await readyMadeSidebar.locator('img[src^="blob:"]').count(),
-    0,
-    'The ready-made thumbnail panel must not be reachable',
-  );
+  // Monight's own sidebar replaces the ready-made thumbnails and outline entirely.
+  assert.equal(await viewer.getByRole('button', { name: 'Sidebar', exact: true }).count(), 0);
+  assert.equal(await viewer.locator('[data-sidebar-id="sidebar-panel"]').count(), 0);
+  assert.equal(await viewer.locator('.outline-tree').count(), 0);
   let popupOpened = false;
   page.on('popup', async (popup) => {
     popupOpened = true;
     await popup.close();
   });
-  await viewer.getByText('Website', { exact: true }).click();
-  await page.waitForTimeout(300);
+  // The Table of Contents dispatches each outline entry's Document Query target.
+  const activateOutlineEntry = (path) =>
+    page.evaluate(async (indices) => {
+      const { reader } = window.navigationSmoke;
+      let items = await reader.query().outline();
+      let entry;
+      for (const index of indices) {
+        entry = items[index];
+        items = entry.items;
+      }
+      await reader.dispatch({
+        type: 'activateDocumentTarget',
+        filePath: reader.snapshot().activeDocumentPath,
+        target: entry.target,
+      });
+    }, path);
+  await activateOutlineEntry([1]);
   assert.deepEqual(
     await page.evaluate(() => window.navigationSmoke.externalUrls),
     ['https://example.com/outline'],
-    'Outline URLs must go through the captured Document Reader Action and external-link adapter',
+    'Outline URLs must go through the Document Reader Action and external-link adapter',
   );
   assert.equal(popupOpened, false, 'Outline links must not open a browser window directly');
-  await viewer.getByText('Blocked website', { exact: true }).click();
+  await activateOutlineEntry([2]);
   await page.waitForFunction(() => window.navigationSmoke.errors.length === 1);
   assert.equal(popupOpened, false);
-  await viewer.getByText('Chapter', { exact: true }).first().click();
+  await activateOutlineEntry([0]);
   await page.waitForFunction(() => {
     const position = window.navigationSmoke.reader.snapshot().documents[0].readingPosition;
     return position.page === 2 && Math.abs(position.location - 0.5) < 0.02;
   });
-  await viewer.getByText('Nested chapter', { exact: true }).click();
+  await activateOutlineEntry([0, 0]);
   await page.waitForFunction(
     () => window.navigationSmoke.reader.snapshot().documents[0].readingPosition.page === 3,
   );
-  await viewer.getByText('Chapter', { exact: true }).last().click();
+  await activateOutlineEntry([3]);
   await page.waitForFunction(
     () => window.navigationSmoke.reader.snapshot().documents[0].readingPosition.page === 1,
   );
@@ -154,7 +163,6 @@ export async function verifyNavigation(browser, origin) {
   await page.waitForFunction(
     () => window.navigationSmoke.reader.snapshot().documents[0].readingPosition.page === 3,
   );
-  await viewer.getByRole('button', { name: 'Sidebar', exact: true }).click();
   await page.evaluate(() => window.navigationSmoke.access().presentation.openSearch());
   const reopenedInput = viewer.locator('input[type="text"]').last();
   await reopenedInput.fill('');

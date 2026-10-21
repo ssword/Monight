@@ -1,6 +1,5 @@
 // @vitest-environment happy-dom
 
-import type { SidebarSchema } from '@embedpdf/snippet';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createDocumentWorkspace, type DocumentSurfaceCallbacks } from '../app/document-workspace';
 import { createEmbedPdfDocumentSurfaceFactory } from '../app/embedpdf-document-surface';
@@ -13,10 +12,7 @@ import {
   embedPdfPageNumberForEventPath,
   restoreEmbedPdfReadingPositionCoordinates,
 } from '../app/embedpdf-navigation-geometry';
-import {
-  createEmbedPdfViewerConfig,
-  embedPdfSidebarsWithoutThumbnails,
-} from '../app/embedpdf-offline-configuration';
+import { createEmbedPdfViewerConfig } from '../app/embedpdf-offline-configuration';
 import { removeEmbedPdfCommandShortcuts } from '../app/embedpdf-shortcuts';
 import type { EmbedPdfViewerRuntime } from '../app/embedpdf-viewer-runtime';
 import { createDocumentIntake } from '../reader/document-intake';
@@ -372,12 +368,13 @@ describe('EmbedPDF Document surface', () => {
         'zoom',
         // View rotation is gone; rotation is a Page Rotation edit of the PDF.
         'rotate',
+        // Monight's own sidebar replaces the ready-made thumbnails and outline.
+        'panel-sidebar',
       ]),
     );
     // Only the replaced controls are hidden; every other ready-made control stays.
     for (const retained of [
       'panel',
-      'panel-sidebar',
       'panel-search',
       'page',
       'spread',
@@ -818,36 +815,5 @@ describe('EmbedPDF Document surface', () => {
     await surface.runtime.destroy();
     await surface.rendering.setZoomIntent({ kind: 'manual', scale: 3 });
     expect(surface.rendering.getState().zoom).toBe(1);
-  });
-});
-
-describe('ready-made EmbedPDF sidebar', () => {
-  const panel = (id: string, content: SidebarSchema['content']): SidebarSchema => ({
-    id,
-    position: { placement: 'left', slot: 'main', order: 0 },
-    content,
-  });
-
-  it('drops the ready-made Thumbnails tab and keeps the outline and other panels', () => {
-    const sidebars = {
-      'sidebar-panel': panel('sidebar-panel', {
-        type: 'tabs',
-        tabs: [
-          { id: 'thumbnails', label: 'Thumbnails', componentId: 'thumbnails-sidebar' },
-          { id: 'outline', label: 'Outline', componentId: 'outline-sidebar' },
-        ],
-      }),
-      'annotation-panel': panel('annotation-panel', {
-        type: 'component',
-        componentId: 'annotation-sidebar',
-      }),
-    };
-
-    expect(embedPdfSidebarsWithoutThumbnails(sidebars)).toEqual({
-      'sidebar-panel': panel('sidebar-panel', {
-        type: 'component',
-        componentId: 'outline-sidebar',
-      }),
-    });
   });
 });
