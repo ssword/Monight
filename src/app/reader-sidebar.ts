@@ -10,6 +10,9 @@
 // The search takeover (sidebar-search.ts) is one such layer: while the toolbar
 // Search field has text the sidebar shows results; clearing it falls back to
 // the untouched preferences.
+// Thumbnail multi-selection (⇧-click, ⌘/Ctrl-click) is likewise transient: it
+// lives in the Thumbnails view, is cleared on Document switch or when the view
+// closes, and is offered to Rotate through `selectedPages()`.
 
 import type { DocumentQuery } from '../reader/document-queries';
 import type { DispatchReaderAction } from '../reader/reader-actions';
@@ -53,6 +56,8 @@ export interface SidebarModeView {
   readonly element: HTMLElement;
   /** Called whenever the active Document or its rendering state may have changed. */
   update(document: SidebarDocument | null): void;
+  /** Pages the reader selected in this view (1-based, ascending); empty when none. */
+  selectedPages?(): readonly number[];
   destroy(): void;
 }
 
@@ -82,6 +87,11 @@ export interface ReaderSidebar {
   choose(choice: SidebarChoice): void;
   /** Focuses the toolbar Search field (Find). */
   focusSearch(): void;
+  /**
+   * The pages selected in Thumbnails, ascending; empty when none are selected
+   * or Thumbnails is not shown (Rotate then acts on the current page).
+   */
+  selectedPages(): readonly number[];
   destroy(): void;
 }
 
@@ -323,6 +333,7 @@ export function createReaderSidebar({
       search?.focus();
       search?.select();
     },
+    selectedPages: () => view?.view.selectedPages?.() ?? [],
     destroy() {
       cancelSearchTimer();
       for (const cleanup of cleanups.splice(0)) cleanup();
@@ -347,6 +358,22 @@ function createThumbnailsView({
   let currentPage = 0;
   let cancels: Array<() => void> = [];
   let generation = 0;
+  // Transient multi-selection of the shown Document; empty means "the current page".
+  let selection = new Set<number>();
+  let anchor: number | null = null;
+
+  const markSelection = () => {
+    if (selection.size > 0) list.dataset.selecting = 'true';
+    else delete list.dataset.selecting;
+    for (const button of list.querySelectorAll<HTMLElement>('.sidebar-thumbnail')) {
+      if (selection.has(Number(button.dataset.page))) button.dataset.selected = 'true';
+      else delete button.dataset.selected;
+    }
+  };
+  const resetSelection = () => {
+    selection = new Set();
+    anchor = null;
+  };
 
   const clear = () => {
     for (const cancel of cancels) cancel();
@@ -413,7 +440,27 @@ function createThumbnailsView({
         : null;
     const page = Number(button?.dataset.page);
     if (!shown || !Number.isInteger(page) || page < 1) return;
-    void dispatchReaderAction({ type: 'goToPage', page, filePath: shown.filePath });
+    if (event.shiftKey) {
+      // A range from the last page clicked (or the current page) replaces the selection.
+      const from = anchor ?? (currentPage > 0 ? currentPage : page);
+      selection = new Set();
+      for (let next = Math.min(from, page); next <= Math.max(from, page); next += 1)
+        selection.add(next);
+      anchor = from;
+    } else if (event.metaKey || event.ctrlKey) {
+      // Adding to an empty selection keeps the current page, as it is shown selected.
+      if (selection.size === 0 && currentPage > 0) selection.add(currentPage);
+      if (selection.has(page)) selection.delete(page);
+      else selection.add(page);
+      anchor = page;
+    } else {
+      resetSelection();
+      markSelection();
+      void dispatchReaderAction({ type: 'goToPage', page, filePath: shown.filePath });
+      return;
+    }
+    event.preventDefault();
+    markSelection();
   });
 
   return {
@@ -422,10 +469,16 @@ function createThumbnailsView({
       if (!sidebarDocument) {
         shown = null;
         currentPage = 0;
+        resetSelection();
         clear();
         return;
       }
       const { filePath, pageCount, query } = sidebarDocument;
+      if (shown?.filePath !== filePath) resetSelection();
+      else if (shown.pageCount !== pageCount) {
+        selection = new Set([...selection].filter((page) => page <= pageCount));
+        if (anchor !== null && anchor > pageCount) anchor = null;
+      }
       const rebuilt =
         !shown ||
         shown.filePath !== filePath ||
@@ -434,6 +487,7 @@ function createThumbnailsView({
       if (rebuilt) {
         shown = { filePath, pageCount, generation: query?.generation };
         build(sidebarDocument);
+        markSelection();
       }
       list.style.setProperty(
         '--sidebar-thumbnail-filter',
@@ -444,6 +498,10 @@ function createThumbnailsView({
         markCurrent(currentPage, true);
       }
     },
-    destroy: clear,
+    selectedPages: () => [...selection].sort((a, b) => a - b),
+    destroy: () => {
+      resetSelection();
+      clear();
+    },
   };
 }

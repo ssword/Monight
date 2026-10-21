@@ -257,6 +257,117 @@ describe('reader sidebar', () => {
     expect(dispatched).toEqual([{ type: 'goToPage', page: 2, filePath: '/docs/report.pdf' }]);
   });
 
+  describe('thumbnail selection', () => {
+    const click = (page: number, init: MouseEventInit = {}) =>
+      thumbnails()[page - 1]?.dispatchEvent(
+        new MouseEvent('click', { bubbles: true, cancelable: true, ...init }),
+      );
+    const marked = () =>
+      thumbnails()
+        .filter((button) => button.dataset.selected === 'true')
+        .map((button) => Number(button.dataset.page));
+
+    beforeEach(() => {
+      active = { ...(active as SidebarDocument), pageCount: 6, currentPage: 2 };
+    });
+
+    it('selects nothing until the reader extends it, so Rotate acts on the current page', async () => {
+      const sidebar = await mount({ schemaVersion: 1, sidebarVisible: true });
+      expect(sidebar.selectedPages()).toEqual([]);
+
+      click(4);
+
+      expect(sidebar.selectedPages()).toEqual([]);
+      expect(dispatched).toEqual([{ type: 'goToPage', page: 4, filePath: '/docs/report.pdf' }]);
+    });
+
+    it('adds and removes pages with ⌘-click or Ctrl-click, starting from the current page', async () => {
+      const sidebar = await mount({ schemaVersion: 1, sidebarVisible: true });
+
+      click(5, { metaKey: true });
+      expect(sidebar.selectedPages()).toEqual([2, 5]);
+      click(4, { ctrlKey: true });
+      expect(sidebar.selectedPages()).toEqual([2, 4, 5]);
+      click(2, { metaKey: true });
+      expect(sidebar.selectedPages()).toEqual([4, 5]);
+      expect(marked()).toEqual([4, 5]);
+      expect(dispatched).toEqual([]);
+    });
+
+    it('selects a range with ⇧-click from the current page or the last page clicked', async () => {
+      const sidebar = await mount({ schemaVersion: 1, sidebarVisible: true });
+
+      click(4, { shiftKey: true });
+      expect(sidebar.selectedPages()).toEqual([2, 3, 4]);
+      click(6, { metaKey: true });
+      click(5, { shiftKey: true });
+      expect(sidebar.selectedPages()).toEqual([5, 6]);
+      expect(marked()).toEqual([5, 6]);
+    });
+
+    it('a plain click ends the selection', async () => {
+      const sidebar = await mount({ schemaVersion: 1, sidebarVisible: true });
+      click(4, { shiftKey: true });
+
+      click(6);
+
+      expect(sidebar.selectedPages()).toEqual([]);
+      expect(marked()).toEqual([]);
+    });
+
+    it('keeps the selection while the reader scrolls and the thumbnails re-render', async () => {
+      const sidebar = await mount({ schemaVersion: 1, sidebarVisible: true });
+      click(4, { shiftKey: true });
+
+      active = {
+        ...(active as SidebarDocument),
+        currentPage: 6,
+        query: { ...fakeQuery('/docs/report.pdf').query, generation: 2 } as DocumentQuery,
+      };
+      sidebar.refresh();
+
+      expect(sidebar.selectedPages()).toEqual([2, 3, 4]);
+      expect(marked()).toEqual([2, 3, 4]);
+    });
+
+    it('is cleared on Document switch', async () => {
+      const sidebar = await mount({ schemaVersion: 1, sidebarVisible: true });
+      click(4, { shiftKey: true });
+
+      active = { ...(active as SidebarDocument), filePath: '/docs/thesis.pdf' };
+      sidebar.refresh();
+      expect(sidebar.selectedPages()).toEqual([]);
+
+      active = { ...(active as SidebarDocument), filePath: '/docs/report.pdf' };
+      sidebar.refresh();
+      expect(sidebar.selectedPages()).toEqual([]);
+      expect(marked()).toEqual([]);
+    });
+
+    it('is not offered while Thumbnails is not shown', async () => {
+      const sidebar = await mount({ schemaVersion: 1, sidebarVisible: true });
+      click(4, { shiftKey: true });
+
+      sidebar.choose('hidden');
+      expect(sidebar.selectedPages()).toEqual([]);
+      sidebar.choose('thumbnails');
+      expect(sidebar.selectedPages()).toEqual([]);
+    });
+
+    it('is never persisted', async () => {
+      const sidebar = await mount({ schemaVersion: 1, sidebarVisible: true });
+      const before = preferences.snapshot();
+
+      click(4, { shiftKey: true });
+      click(6, { metaKey: true });
+      sidebar.refresh();
+      await preferences.flush();
+
+      expect(preferences.snapshot()).toEqual(before);
+      expect(dispatched).toEqual([]);
+    });
+  });
+
   it('ignores a thumbnail that finishes rendering after a Document switch', async () => {
     let finish!: (canvas: HTMLCanvasElement) => void;
     const slow = vi.fn(
