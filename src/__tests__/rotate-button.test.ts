@@ -69,7 +69,7 @@ describe('toolbar Rotate button', () => {
 
 describe('the shipped Page Rotation gate', () => {
   it('alone decides whether every Rotate control exists', async () => {
-    const { PAGE_ROTATION_VERIFIED } = await import('../app/markup-tools');
+    const { PAGE_ROTATION_VERIFIED } = await import('../lib/verification-gates');
     const { readerCommandStates, readerMenuSubmenus } = await import('../app/reader-commands');
     const { DEFAULT_CHROME_PREFERENCES } = await import('../app/chrome-preferences');
     const { defaultSettings } = await import('../scripts/settings');

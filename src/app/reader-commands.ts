@@ -16,6 +16,7 @@
 // section stays empty), so no shortcut or menu click can reach them.
 
 import type { ViewMode } from '../lib/document-features';
+import { PAGE_ROTATION_VERIFIED } from '../lib/verification-gates';
 import {
   type DispatchReaderAction,
   type ReaderAction,
@@ -31,11 +32,7 @@ import {
 import type { KeybindConfig } from '../scripts/keybind-defaults';
 import type { ChromePreferences, ChromePreferencesAuthority } from './chrome-preferences';
 import type { ActiveMarkupState } from './document-workspace';
-import {
-  PAGE_ROTATION_VERIFIED,
-  VERIFIED_MARKUP_TOOLS,
-  type VerifiedMarkupTool,
-} from './markup-tools';
+import { VERIFIED_MARKUP_TOOLS, type VerifiedMarkupTool } from './markup-tools';
 import type { SidebarChoice } from './reader-sidebar';
 import { tabBarShown } from './tab-bar';
 

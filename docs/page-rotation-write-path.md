@@ -60,7 +60,7 @@ selection (⇧-click range, ⌘/Ctrl-click toggle; a plain click ends it) is tra
 on Document switch or when Thumbnails closes and is never persisted. Protected Documents disable
 the button and menu items with their reason; a shortcut is refused by the Reader Action with it.
 
-Everything is behind `PAGE_ROTATION_VERIFIED` (`src/app/markup-tools.ts`). While it is `false`
+Everything is behind `PAGE_ROTATION_VERIFIED` (`src/lib/verification-gates.ts`). While it is `false`
 the button's toolbar slot is empty, the Tools menu's `tools.rotate` section (filled inline from
 TypeScript; Rust cannot see the constant) has no items, the commands do not exist, and the
 Rotate keybind actions are not defaults, not stored, and not shown in Settings. The browser

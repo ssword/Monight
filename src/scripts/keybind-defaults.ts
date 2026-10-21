@@ -29,7 +29,7 @@
 //   is stored yet. Collisions with the reader's own bindings are dropped as for
 //   any revision. Once stored, a gated action is the reader's like any other.
 
-import { PAGE_ROTATION_VERIFIED } from '../app/markup-tools';
+import { PAGE_ROTATION_VERIFIED } from '../lib/verification-gates';
 import { sameChord } from './accelerators';
 
 export type KeybindPlatform = 'mac' | 'other';
