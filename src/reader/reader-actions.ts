@@ -797,6 +797,29 @@ export function createReaderActions({
       ),
     );
 
+  /**
+   * Applies an edit to a Document's native editing session; protected
+   * Documents refuse with their reason.
+   */
+  const editDocument = (
+    requestedPath: string | undefined,
+    options: ReaderActionOptions | undefined,
+    edit: (editing: DocumentRuntime['editing']) => void,
+  ): Promise<ReaderActionOutcome> =>
+    routeRelativeDocumentAction(requestedPath, async (filePath, expectedGeneration) => {
+      const edited = await runDocumentRuntimeOperation(
+        filePath,
+        expectedGeneration,
+        options,
+        async ({ editing }) => {
+          const readOnlyReason = editing?.state().readOnlyReason;
+          if (readOnlyReason) throw new Error(readOnlyReason);
+          edit(editing);
+        },
+      );
+      return edited.status === 'ready' ? { status: 'performed', revision: revision() } : edited;
+    });
+
   const enqueueSettledUpdate = (
     filePath: string,
     kind: AbsoluteActionKind,
@@ -1843,49 +1866,29 @@ export function createReaderActions({
         );
       }
 
-      if (
-        action.type === 'rotatePages' ||
-        action.type === 'undoEdit' ||
-        action.type === 'redoEdit'
-      ) {
-        const pages =
-          action.type === 'rotatePages' ? [...new Set(action.pages)].sort((a, b) => a - b) : [];
+      if (action.type === 'rotatePages') {
+        const pages = [...new Set(action.pages)].sort((a, b) => a - b);
         if (
-          action.type === 'rotatePages' &&
-          (pages.length === 0 ||
-            !pages.every((page) => Number.isInteger(page) && page >= 1) ||
-            (action.direction !== 'clockwise' && action.direction !== 'counterclockwise'))
+          pages.length === 0 ||
+          !pages.every((page) => Number.isInteger(page) && page >= 1) ||
+          (action.direction !== 'clockwise' && action.direction !== 'counterclockwise')
         ) {
           return { status: 'no-op', revision: revision() };
         }
         // Page Rotation is a Document edit: it shares the native editing undo timeline,
         // unsaved accounting, Recovery Drafts, and Save path with Annotation edits.
-        return routeRelativeDocumentAction(
-          action.filePath,
-          async (filePath, expectedGeneration) => {
-            const edited = await runDocumentRuntimeOperation(
-              filePath,
-              expectedGeneration,
-              options,
-              async ({ editing }) => {
-                const readOnlyReason = editing?.state().readOnlyReason;
-                if (readOnlyReason) throw new Error(readOnlyReason);
-                if (action.type === 'rotatePages') {
-                  if (!editing?.rotatePages)
-                    throw new Error('Page Rotation editing is unavailable');
-                  editing.rotatePages(pages, action.direction);
-                } else {
-                  const edit = action.type === 'undoEdit' ? editing?.undo : editing?.redo;
-                  if (!editing || !edit) throw new Error('Undo is unavailable for this Document');
-                  edit.call(editing);
-                }
-              },
-            );
-            return edited.status === 'ready'
-              ? { status: 'performed', revision: revision() }
-              : edited;
-          },
-        );
+        return editDocument(action.filePath, options, (editing) => {
+          if (!editing?.rotatePages) throw new Error('Page Rotation editing is unavailable');
+          editing.rotatePages(pages, action.direction);
+        });
+      }
+
+      if (action.type === 'undoEdit' || action.type === 'redoEdit') {
+        return editDocument(action.filePath, options, (editing) => {
+          const edit = action.type === 'undoEdit' ? editing?.undo : editing?.redo;
+          if (!editing || !edit) throw new Error('Undo is unavailable for this Document');
+          edit.call(editing);
+        });
       }
 
       if (action.type === 'printDocument') {
