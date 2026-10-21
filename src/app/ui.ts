@@ -91,18 +91,31 @@ export function updateUI(
   }
 }
 
-// Update keyboard shortcut hints based on platform
-export function updateKeyboardHints(isMac: boolean): void {
-  const modKey = isMac ? 'Cmd' : 'Ctrl';
+/** The effective shortcuts shown in tooltips and the splash hint; null when unbound. */
+export interface KeyboardHints {
+  readonly openFile: string | null;
+  readonly print: string | null;
+}
 
-  // Update tooltips
-  const openBtn = document.getElementById('open-file');
-  if (openBtn) openBtn.title = `Open PDF (${modKey}+O)`;
+const withShortcut = (label: string, shortcut: string | null) =>
+  shortcut ? `${label} (${shortcut})` : label;
 
-  const printBtn = document.getElementById('print-file');
-  if (printBtn) printBtn.title = `Print (${modKey}+P)`;
+/** Shows the reader's effective Open and Print bindings, or none when unbound. */
+export function updateKeyboardHints({ openFile, print }: KeyboardHints): void {
+  const titles: [string, string, string | null][] = [
+    ['open-file', 'Open PDF', openFile],
+    ['new-tab-btn', 'Open New PDF', openFile],
+    ['print-file', 'Print', print],
+  ];
+  for (const [id, label, shortcut] of titles) {
+    const element = document.getElementById(id);
+    if (element) element.title = withShortcut(label, shortcut);
+  }
 
-  // Update hint text
   const hintText = document.querySelector('.hint-text');
-  if (hintText) hintText.textContent = `Press ${modKey}+O to open a PDF file`;
+  if (hintText) {
+    hintText.textContent = openFile
+      ? `Press ${openFile} to open a PDF file`
+      : 'Open a PDF file to start reading';
+  }
 }

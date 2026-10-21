@@ -233,6 +233,11 @@ const applyKeybinds = (settings: MoonightSettings): void => {
   }
   keybindManager?.loadFromSettings(settings);
   activeKeybinds = settings.keybinds;
+  const shortcut = (id: string) => {
+    const bind = settings.keybinds[id]?.binds[0];
+    return bind && keybindManager ? keybindManager.formatForDisplay(bind) : null;
+  };
+  updateKeyboardHints({ openFile: shortcut('OpenFile'), print: shortcut('Print') });
   syncReaderMenu();
 };
 
@@ -911,9 +916,6 @@ export async function initializeApplication(modules: ApplicationModules): Promis
       void refreshWindowFullScreen();
     });
     await readerMenu.install();
-
-    // Update keyboard hints for platform
-    updateKeyboardHints(isMac);
 
     // A visible WebView is required for EmbedPDF to publish layout frames during
     // Reading Session restoration. The splash remains interactive while it runs.
