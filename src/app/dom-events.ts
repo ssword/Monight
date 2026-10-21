@@ -1,8 +1,9 @@
 import { debugLog } from '../lib/debug-log';
 import { type DispatchReaderAction, readerAction } from '../reader/reader-actions';
+import type { FilterSettings } from '../scripts/filters';
 import type { KeybindManager } from '../scripts/keybind-manager';
 import type { SliderManager } from '../scripts/sliders';
-import { setupPresetButtons, toggleDarkConfigurator } from './presets';
+import { isWithinAppearancePopover, setupAppearancePopover } from './presets';
 
 interface DomEventContext {
   sliderManager: SliderManager | null;
@@ -14,6 +15,22 @@ interface DomEventContext {
   dispatchReaderAction: DispatchReaderAction;
 }
 
+export interface ReaderChromeControls {
+  /** Shows the active Document's current filter preset in the Appearance popover. */
+  showAppearance(activeDocumentPath: string | null, filterSettings: FilterSettings): void;
+}
+
+const NAVIGATION_KEYS = [
+  'ArrowLeft',
+  'ArrowRight',
+  'ArrowUp',
+  'ArrowDown',
+  'Home',
+  'End',
+  'PageUp',
+  'PageDown',
+];
+
 // Setup event listeners
 export function setupEventListeners({
   sliderManager,
@@ -23,7 +40,7 @@ export function setupEventListeners({
   openRecentFile,
   clearRecentFiles,
   dispatchReaderAction,
-}: DomEventContext): void {
+}: DomEventContext): ReaderChromeControls {
   debugLog('Setting up event listeners...');
 
   // Splash screen open button
@@ -75,34 +92,7 @@ export function setupEventListeners({
     });
   }
 
-  // Interim presets menu, until the Appearance popover replaces it.
-  const appearanceToggle = document.getElementById('appearance-toggle');
-  const presetMenu = document.getElementById('preset-menu');
-  const setPresetMenuOpen = (open: boolean) => {
-    presetMenu?.classList.toggle('hidden', !open);
-    appearanceToggle?.setAttribute('aria-expanded', String(open));
-  };
-  const presetMenuOpen = () => (presetMenu ? !presetMenu.classList.contains('hidden') : false);
-  appearanceToggle?.addEventListener('click', () => setPresetMenuOpen(!presetMenuOpen()));
-  presetMenu?.addEventListener('click', (event) => {
-    if (event.target instanceof Element && event.target.closest('.preset-btn'))
-      setPresetMenuOpen(false);
-  });
-  document.addEventListener('pointerdown', (event) => {
-    if (!presetMenuOpen()) return;
-    const target = event.target instanceof Node ? event.target : null;
-    if (target && (presetMenu?.contains(target) || appearanceToggle?.contains(target))) return;
-    setPresetMenuOpen(false);
-  });
-  document.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape' && presetMenuOpen()) {
-      setPresetMenuOpen(false);
-      appearanceToggle?.focus();
-    }
-  });
-
-  // Setup preset buttons
-  setupPresetButtons(sliderManager, (settings) => {
+  const appearance = setupAppearancePopover(sliderManager, (settings) => {
     void dispatchReaderAction(readerAction.setFilterSettings(settings));
   });
 
@@ -110,12 +100,6 @@ export function setupEventListeners({
   const newTabBtn = document.getElementById('new-tab-btn');
   newTabBtn?.addEventListener('click', () => {
     openPdfAndRefresh();
-  });
-
-  // Close configurator button
-  const closeConfigBtn = document.getElementById('close-configurator');
-  closeConfigBtn?.addEventListener('click', () => {
-    toggleDarkConfigurator(sliderManager);
   });
 
   const tabContainer = document.getElementById('tab-container');
@@ -166,6 +150,8 @@ export function setupEventListeners({
         .some((target) => target instanceof Element && target.getAttribute('role') === 'tab')
     )
       return;
+    // Slider handles in the Appearance popover own their arrow-key adjustment.
+    if (NAVIGATION_KEYS.includes(e.key) && isWithinAppearancePopover(e)) return;
 
     const actionId = keybindManager.matchEvent(e);
     if (actionId) {
@@ -178,4 +164,9 @@ export function setupEventListeners({
 
   document.addEventListener('keydown', handleKeyDown, true);
   debugLog('Keyboard event listeners attached');
+
+  return {
+    showAppearance: (activeDocumentPath, filterSettings) =>
+      appearance.show(activeDocumentPath, filterSettings),
+  };
 }

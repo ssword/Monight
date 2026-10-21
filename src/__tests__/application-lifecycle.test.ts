@@ -250,7 +250,6 @@ vi.mock('../app/ui', () => ({
   renderRecentFiles: vi.fn(),
   showSplash: vi.fn(),
   showViewer: vi.fn(),
-  updateActivePresetButton: vi.fn(),
   updateKeyboardHints: vi.fn(),
   updateTabBarVisibility: vi.fn(),
   updateUI: vi.fn(),

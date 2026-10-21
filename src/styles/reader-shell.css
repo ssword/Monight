@@ -122,29 +122,37 @@
   height: 100%;
 }
 
-/* Interim presets menu, replaced by the Appearance popover. */
-.toolbar-menu-anchor {
+/* Appearance popover: page filter presets, with Custom sliders inline. */
+.toolbar-popover-anchor {
   position: relative;
 }
 
-.toolbar-menu {
+.appearance-popover {
   position: absolute;
   top: calc(100% + 6px);
   right: 0;
   z-index: 50;
   display: flex;
   flex-direction: column;
-  min-width: 160px;
+  width: 260px;
+  max-height: calc(100vh - var(--toolbar-height) - 16px);
   padding: 4px;
   gap: 2px;
+  overflow-y: auto;
   background-color: var(--bg-elevated);
   border: 1px solid var(--border-color);
   border-radius: 8px;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
 }
 
-.toolbar-menu.hidden {
+.appearance-popover.hidden {
   display: none;
+}
+
+.appearance-presets {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 
 .preset-btn {
