@@ -25,6 +25,7 @@ describe('Chrome preferences', () => {
       sidebarVisible: false,
       sidebarMode: 'thumbnails',
       sidebarWidth: 220,
+      markupToolbarVisible: false,
     });
     expect(DEFAULT_CHROME_PREFERENCES.sidebarVisible).toBe(false);
   });
@@ -41,12 +42,14 @@ describe('Chrome preferences', () => {
       sidebarVisible: true,
       sidebarMode: 'thumbnails',
       sidebarWidth: 300,
+      markupToolbarVisible: false,
     });
     expect(backing.getStored()).toEqual({
       schemaVersion: 1,
       sidebarVisible: true,
       sidebarMode: 'thumbnails',
       sidebarWidth: 300,
+      markupToolbarVisible: false,
     });
   });
 
@@ -56,6 +59,7 @@ describe('Chrome preferences', () => {
       sidebarVisible: true,
       sidebarMode: 'contact-sheet',
       sidebarWidth: 'wide',
+      markupToolbarVisible: 'yes',
     });
 
     const preferences = await loadChromePreferences(storage);
@@ -64,6 +68,22 @@ describe('Chrome preferences', () => {
       sidebarVisible: true,
       sidebarMode: 'thumbnails',
       sidebarWidth: 220,
+      markupToolbarVisible: false,
+    });
+  });
+
+  it('restores markup toolbar visibility on the next launch', async () => {
+    const backing = createStorage({ schemaVersion: 1, sidebarVisible: true });
+    const firstLaunch = await loadChromePreferences(backing.storage, { debounceMs: 0 });
+    expect(firstLaunch.snapshot().markupToolbarVisible).toBe(false);
+
+    firstLaunch.update({ markupToolbarVisible: true });
+    await firstLaunch.flush();
+
+    const nextLaunch = await loadChromePreferences(backing.storage);
+    expect(nextLaunch.snapshot()).toMatchObject({
+      markupToolbarVisible: true,
+      sidebarVisible: true,
     });
   });
 

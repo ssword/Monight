@@ -27,6 +27,7 @@ import {
   updatePrintMenuState,
 } from './app/file-actions';
 import { registerKeybindActions } from './app/keybinds';
+import { createMarkupToolbar, type MarkupToolbar } from './app/markup-toolbar';
 import { createPersistenceCoordinator } from './app/persistence-coordinator';
 import { PresentationController } from './app/presentation-controller';
 import { createReaderSidebar, type ReaderSidebar } from './app/reader-sidebar';
@@ -121,6 +122,7 @@ let restoredReadingSession: PersistedReadingSession | null = null;
 let recentDocumentAuthority: RecentDocumentAuthority | null = null;
 let chromePreferences: ChromePreferencesAuthority | null = null;
 let readerSidebar: ReaderSidebar | null = null;
+let markupToolbar: MarkupToolbar | null = null;
 
 // Global keybind manager instance
 let keybindManager: KeybindManager | null = null;
@@ -434,6 +436,18 @@ function mountReaderSidebar(
   return sidebar;
 }
 
+function mountMarkupToolbar(preferences: ChromePreferencesAuthority): MarkupToolbar | null {
+  const bar = document.getElementById('markup-toolbar');
+  const toggle = document.getElementById('markup-toolbar-toggle');
+  if (!bar || !(toggle instanceof HTMLButtonElement)) return null;
+  return createMarkupToolbar({
+    elements: { bar, toggle },
+    preferences,
+    activeMarkup: () => documentWorkspace?.activeMarkup() ?? null,
+    setActiveTool: (toolId) => documentWorkspace?.setActiveAnnotationTool(toolId),
+  });
+}
+
 export async function initializeApplication(modules: ApplicationModules): Promise<void> {
   const currentWindow = getCurrentWebviewWindow();
   const shutdown = createApplicationShutdownCoordinator({
@@ -569,6 +583,7 @@ export async function initializeApplication(modules: ApplicationModules): Promis
         if (!readerActions || !documentWorkspace) return;
         updateUI(readerActions.snapshot(), documentWorkspace.activeRenderingState());
         readerSidebar?.refresh();
+        markupToolbar?.refresh();
       },
     });
 
@@ -614,10 +629,12 @@ export async function initializeApplication(modules: ApplicationModules): Promis
       documentIntake.stopAccepting();
     }
     readerSidebar = mountReaderSidebar(chromePreferences, defaultVisualState);
+    markupToolbar = mountMarkupToolbar(chromePreferences);
     readerActions.observe((snapshot) => {
       documentWorkspace?.project(snapshot);
       updateUI(snapshot, documentWorkspace?.activeRenderingState() ?? null);
       readerSidebar?.refresh();
+      markupToolbar?.refresh();
       showActiveAppearance(snapshot);
       const hasDocument = snapshot.documents.length > 0;
       updateTabBarVisibility(snapshot.documents.length);

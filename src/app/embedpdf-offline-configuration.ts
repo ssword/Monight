@@ -1,15 +1,16 @@
-import { LockModeType, type PDFViewerConfig, type SidebarSchema } from '@embedpdf/snippet';
+import { LockModeType, type PDFViewerConfig } from '@embedpdf/snippet';
 import {
   type AnnotationDisplayName,
   DEFAULT_ANNOTATION_DISPLAY_NAME,
 } from '../reader/native-pdf-editing';
+import { VERIFIED_MARKUP_TOOLS } from './markup-tools';
 
 const EMBEDPDF_WASM_URL = '/embedpdf/pdfium.wasm';
 const EMBEDPDF_FONT_BASE_URL = '/embedpdf/fonts';
-const ENABLED_ANNOTATION_TOOL_IDS = ['highlight', 'textComment'] as const;
 
-export function embedPdfAnnotationToolIds(): typeof ENABLED_ANNOTATION_TOOL_IDS {
-  return ENABLED_ANNOTATION_TOOL_IDS;
+/** EmbedPDF tools Monight enables: exactly the verified markup tools. */
+export function embedPdfAnnotationToolIds(): readonly string[] {
+  return VERIFIED_MARKUP_TOOLS.map(({ id }) => id);
 }
 
 const DISABLED_CATEGORIES = [
@@ -26,37 +27,13 @@ const DISABLED_CATEGORIES = [
   'rotate',
   // Monight's toolbar zoom group replaces the ready-made zoom controls.
   'zoom',
+  // Monight's own sidebar replaces the ready-made thumbnails and outline.
+  'panel-sidebar',
   // Reading Session supports single, continuous, and odd-page spreads.
   'spread-even',
+  // Monight's markup toolbar replaces the ready-made Annotate mode and toolbar.
+  'mode-annotate',
 ] as const;
-
-const READY_MADE_THUMBNAILS_COMPONENT = 'thumbnails-sidebar';
-
-/**
- * Monight's own sidebar replaces the ready-made Thumbnails tab. Returns the
- * ready-made sidebars that carried it, rewritten without it, for
- * `ui.mergeSchema({ sidebars })`; other panels are left untouched.
- */
-export function embedPdfSidebarsWithoutThumbnails(
-  sidebars: Readonly<Record<string, SidebarSchema>>,
-): Record<string, SidebarSchema> {
-  const rewritten: Record<string, SidebarSchema> = {};
-  for (const [id, sidebar] of Object.entries(sidebars)) {
-    if (sidebar.content.type !== 'tabs') continue;
-    const tabs = sidebar.content.tabs.filter(
-      ({ componentId }) => componentId !== READY_MADE_THUMBNAILS_COMPONENT,
-    );
-    if (tabs.length === sidebar.content.tabs.length) continue;
-    rewritten[id] = {
-      ...sidebar,
-      content:
-        tabs.length === 1 && tabs[0]
-          ? { type: 'component', componentId: tabs[0].componentId }
-          : { ...sidebar.content, tabs },
-    };
-  }
-  return rewritten;
-}
 
 const localFontFallback = {
   baseUrl: EMBEDPDF_FONT_BASE_URL,
@@ -148,7 +125,7 @@ export function createEmbedPdfViewerConfig(
       autoOpenLinks: false,
       annotationAuthor: annotationDisplayName,
       autoCommit: false,
-      tools: ENABLED_ANNOTATION_TOOL_IDS.map((id) => ({
+      tools: embedPdfAnnotationToolIds().map((id) => ({
         id,
         categories: ['monight-native'],
       })),

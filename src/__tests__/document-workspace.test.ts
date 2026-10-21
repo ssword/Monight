@@ -131,6 +131,55 @@ describe('Document workspace adapter', () => {
     );
   });
 
+  it('routes markup tool choice to the active Document and reports whether it can be edited', async () => {
+    const reason = 'Digitally signed PDFs are read-only to preserve their signatures';
+    const tools = new Map<string, string | null>();
+    let activePath = '/editable.pdf';
+    const workspace = createDocumentWorkspace({
+      dispatchReaderAction: vi.fn(async () => ({ status: 'committed' as const, revision: 1 })),
+      snapshot: () => snapshot([], activePath),
+      isDocumentOpen: () => false,
+      defaultVisualState: () => ({
+        filterSettings: PRESETS.default,
+        zoomIntent: { kind: 'fit-width' },
+        viewMode: 'single',
+      }),
+      createSurface: async ({ filePath }) => {
+        const surface = createControllableSurface(filePath);
+        tools.set(filePath, null);
+        surface.rendering.activeAnnotationTool = () => tools.get(filePath) ?? null;
+        surface.rendering.setActiveAnnotationTool = (toolId) => tools.set(filePath, toolId);
+        surface.runtime.editing = {
+          state: () => ({
+            revision: 0,
+            dirty: false,
+            readOnlyReason: filePath === '/signed.pdf' ? reason : null,
+          }),
+          exportPdf: async () => new Uint8Array([1]),
+          markSaved: vi.fn(),
+        };
+        return surface;
+      },
+    });
+    for (const filePath of ['/editable.pdf', '/signed.pdf']) {
+      await workspace.intakeRuntime.open({
+        document: { canonicalPath: filePath, title: filePath.slice(1) },
+        bytes: new Uint8Array([1]),
+        activate: false,
+      });
+    }
+
+    workspace.setActiveAnnotationTool('textComment');
+    expect(workspace.activeMarkup()).toEqual({ activeToolId: 'textComment', readOnlyReason: null });
+    expect(tools.get('/signed.pdf')).toBeNull();
+
+    activePath = '/signed.pdf';
+    expect(workspace.activeMarkup()).toEqual({ activeToolId: null, readOnlyReason: reason });
+
+    activePath = '/missing.pdf';
+    expect(workspace.activeMarkup()).toBeNull();
+  });
+
   it('reveals an Annotation on the rendering surface of the Document that owns it', async () => {
     const reveals = new Map<string, ReturnType<typeof vi.fn>>();
     const workspace = createDocumentWorkspace({

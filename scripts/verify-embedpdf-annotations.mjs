@@ -19,7 +19,7 @@ export async function verifyAnnotations(page, origin) {
   if (process.argv.includes('--write-annotation-fixtures')) {
     const destination = 'src-tauri/tests/fixtures/native-annotations';
     await mkdir(destination, { recursive: true });
-    for (const name of ['original', 'annotated', 'deleted'])
+    for (const name of ['original', 'annotated', 'deleted', 'rotated'])
       await writeFile(`${destination}/${name}.pdf`, new Uint8Array(result[name]));
   }
   console.log('EmbedPDF protected printing and native annotated print round trips: PASS');

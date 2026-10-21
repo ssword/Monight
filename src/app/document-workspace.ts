@@ -101,10 +101,21 @@ export interface DocumentWorkspace {
   activeReadingPosition(): { filePath: string; readingPosition: ReadingPosition } | null;
   viewTransform(filePath: string): DocumentViewTransform | null;
   openActiveSearch(): void;
+  /** The active Document's markup tool and why editing is unavailable, if it is. */
+  activeMarkup(): ActiveMarkupState | null;
+  /** Chooses a markup tool on the active Document, or null for text selection. */
+  setActiveAnnotationTool(toolId: string | null): void;
   /** Selects an Annotation on its Document's rendering surface. */
   revealAnnotation(filePath: string, annotationId: string): void;
   setAnnotationDisplayName(displayName: AnnotationDisplayName): void;
 }
+
+export interface ActiveMarkupState {
+  readonly activeToolId: string | null;
+  readonly readOnlyReason: string | null;
+}
+
+const EDITING_UNAVAILABLE_REASON = 'Native editing safety inspection is unavailable';
 
 interface PresentedDocument {
   readonly identity: { filePath: string; title: string };
@@ -836,6 +847,20 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
     openActiveSearch() {
       const filePath = options.snapshot().activeDocumentPath;
       if (filePath) presented.get(filePath)?.rendering.openSearch?.();
+    },
+    activeMarkup() {
+      const filePath = options.snapshot().activeDocumentPath;
+      const documentState = filePath ? presented.get(filePath) : undefined;
+      if (!documentState) return null;
+      const editing = documentState.runtime.editing?.state();
+      return {
+        activeToolId: documentState.rendering.activeAnnotationTool?.() ?? null,
+        readOnlyReason: editing ? editing.readOnlyReason : EDITING_UNAVAILABLE_REASON,
+      };
+    },
+    setActiveAnnotationTool(toolId) {
+      const filePath = options.snapshot().activeDocumentPath;
+      if (filePath) presented.get(filePath)?.rendering.setActiveAnnotationTool?.(toolId);
     },
     revealAnnotation(filePath, annotationId) {
       presented.get(filePath)?.rendering.revealAnnotation?.(annotationId);

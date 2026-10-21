@@ -168,27 +168,6 @@ export function embedPdfReadingFilterStyle(): string {
   `;
 }
 
-// EmbedPDF 2.15.0 has no bookmark activation hook. Capture its ready-made rows,
-// preserving tree indices (titles need not be unique) and leaving expand buttons
-// alone. Actual-runtime contracts guard this pinned DOM integration; revalidate on upgrade.
-export function embedPdfOutlinePath(event: Event): number[] | null {
-  const path = event.composedPath();
-  const origin = path[0];
-  if (!(origin instanceof Element) || origin.closest('button')) return null;
-  const tree = origin.closest('.outline-tree');
-  let item = origin.closest('.select-none');
-  if (!tree || !item || !tree.contains(item)) return null;
-  const indices: number[] = [];
-  while (item && tree.contains(item)) {
-    const parent: HTMLElement | null = item.parentElement;
-    if (!parent) return null;
-    indices.unshift([...parent.children].indexOf(item));
-    if (parent === tree) return indices;
-    item = parent.closest('.select-none');
-  }
-  return null;
-}
-
 export function zoomIntentFromEmbedPdfLevel(level: ZoomLevel): ZoomIntent {
   if (typeof level === 'number') return { kind: 'manual', scale: level };
   return level === ZoomMode.FitWidth ? { kind: 'fit-width' } : { kind: 'fit-page' };

@@ -18,6 +18,7 @@ import {
   type SidebarMode,
 } from './chrome-preferences';
 import { createAnnotationsView } from './sidebar-annotations-view';
+import { createTableOfContentsView } from './sidebar-table-of-contents';
 
 /** What the sidebar needs to know about the active Document. */
 export interface SidebarDocument {
@@ -76,6 +77,7 @@ const THUMBNAIL_INSET = 40;
 const MODE_VIEWS: Readonly<Record<SidebarMode, (context: SidebarModeContext) => SidebarModeView>> =
   {
     thumbnails: createThumbnailsView,
+    tableOfContents: createTableOfContentsView,
     annotations: createAnnotationsView,
   };
 

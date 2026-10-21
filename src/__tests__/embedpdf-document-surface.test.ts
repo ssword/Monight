@@ -1,6 +1,5 @@
 // @vitest-environment happy-dom
 
-import type { SidebarSchema } from '@embedpdf/snippet';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createDocumentWorkspace, type DocumentSurfaceCallbacks } from '../app/document-workspace';
 import { createEmbedPdfDocumentSurfaceFactory } from '../app/embedpdf-document-surface';
@@ -13,12 +12,10 @@ import {
   embedPdfPageNumberForEventPath,
   restoreEmbedPdfReadingPositionCoordinates,
 } from '../app/embedpdf-navigation-geometry';
-import {
-  createEmbedPdfViewerConfig,
-  embedPdfSidebarsWithoutThumbnails,
-} from '../app/embedpdf-offline-configuration';
+import { createEmbedPdfViewerConfig } from '../app/embedpdf-offline-configuration';
 import { removeEmbedPdfCommandShortcuts } from '../app/embedpdf-shortcuts';
 import type { EmbedPdfViewerRuntime } from '../app/embedpdf-viewer-runtime';
+import { VERIFIED_MARKUP_TOOLS } from '../app/markup-tools';
 import { createDocumentIntake } from '../reader/document-intake';
 import { normalizeAnnotationDisplayName } from '../reader/native-pdf-editing';
 import { createReaderActions, type ReaderActions } from '../reader/reader-actions';
@@ -50,6 +47,8 @@ const createViewerRuntime = (
   metadata: vi.fn(async () => null),
   resolveLinkTarget: vi.fn(async () => null),
   renderThumbnail: vi.fn(async () => document.createElement('canvas')),
+  activeAnnotationTool: () => null,
+  setActiveAnnotationTool: vi.fn(),
   annotations: () => [],
   revealAnnotation: vi.fn(),
   destroy: vi.fn(async () => undefined),
@@ -374,12 +373,13 @@ describe('EmbedPDF Document surface', () => {
         'zoom',
         // View rotation is gone; rotation is a Page Rotation edit of the PDF.
         'rotate',
+        // Monight's own sidebar replaces the ready-made thumbnails and outline.
+        'panel-sidebar',
       ]),
     );
     // Only the replaced controls are hidden; every other ready-made control stays.
     for (const retained of [
       'panel',
-      'panel-sidebar',
       'panel-search',
       'page',
       'spread',
@@ -445,6 +445,59 @@ describe('EmbedPDF Document surface', () => {
     });
     await expect(surface.runtime.editing?.exportPdf()).rejects.toThrow(reason);
     expect(exportPdf).toHaveBeenCalledOnce();
+  });
+
+  it('enables exactly the verified markup tools and never the ready-made annotation toolbar', () => {
+    for (const editable of [true, false]) {
+      const config = createEmbedPdfViewerConfig(undefined, editable);
+
+      expect(config.annotations?.tools?.map(({ id }) => id)).toEqual(
+        VERIFIED_MARKUP_TOOLS.map(({ id }) => id),
+      );
+      // Monight's markup toolbar replaces the ready-made Annotate mode and its toolbar.
+      expect(config.disabledCategories).toContain('mode-annotate');
+    }
+  });
+
+  it('selects markup tools only on editable Documents', async () => {
+    const callbacks = {
+      readingPositionObserved: vi.fn(),
+      readingPositionSettled: vi.fn(),
+      stateChanged: vi.fn(),
+      pageNavigationRequested: vi.fn(async () => undefined),
+      zoomIntentRequested: vi.fn(async () => undefined),
+    };
+    const open = async (readOnlyReason: string | null) => {
+      let activeTool: string | null = null;
+      const viewer = createViewerRuntime({
+        editing: {
+          state: () => ({ revision: 0, dirty: false, readOnlyReason }),
+          exportPdf: vi.fn(async () => new Uint8Array()),
+          markSaved: vi.fn(),
+        },
+        activeAnnotationTool: () => activeTool,
+        setActiveAnnotationTool: vi.fn((toolId: string | null) => {
+          activeTool = toolId;
+        }),
+      });
+      const surface = await createEmbedPdfDocumentSurfaceFactory({
+        createViewer: async () => viewer,
+        assessEditing: async () => readOnlyReason,
+      })({ filePath: '/docs/a.pdf', title: 'a.pdf', bytes: new Uint8Array([1]), callbacks });
+      return { viewer, surface };
+    };
+
+    const editable = await open(null);
+    editable.surface.rendering.setActiveAnnotationTool?.('textComment');
+    expect(editable.surface.rendering.activeAnnotationTool?.()).toBe('textComment');
+    editable.surface.rendering.setActiveAnnotationTool?.(null);
+    expect(editable.surface.rendering.activeAnnotationTool?.()).toBeNull();
+
+    const reason = 'PDF permissions prohibit annotation editing; this Document is read-only';
+    const protectedDocument = await open(reason);
+    protectedDocument.surface.rendering.setActiveAnnotationTool?.('textComment');
+    expect(protectedDocument.viewer.setActiveAnnotationTool).not.toHaveBeenCalled();
+    expect(protectedDocument.surface.rendering.activeAnnotationTool?.()).toBeNull();
   });
 
   it('configures newly authored annotations with the selected display name', () => {
@@ -820,36 +873,5 @@ describe('EmbedPDF Document surface', () => {
     await surface.runtime.destroy();
     await surface.rendering.setZoomIntent({ kind: 'manual', scale: 3 });
     expect(surface.rendering.getState().zoom).toBe(1);
-  });
-});
-
-describe('ready-made EmbedPDF sidebar', () => {
-  const panel = (id: string, content: SidebarSchema['content']): SidebarSchema => ({
-    id,
-    position: { placement: 'left', slot: 'main', order: 0 },
-    content,
-  });
-
-  it('drops the ready-made Thumbnails tab and keeps the outline and other panels', () => {
-    const sidebars = {
-      'sidebar-panel': panel('sidebar-panel', {
-        type: 'tabs',
-        tabs: [
-          { id: 'thumbnails', label: 'Thumbnails', componentId: 'thumbnails-sidebar' },
-          { id: 'outline', label: 'Outline', componentId: 'outline-sidebar' },
-        ],
-      }),
-      'annotation-panel': panel('annotation-panel', {
-        type: 'component',
-        componentId: 'annotation-sidebar',
-      }),
-    };
-
-    expect(embedPdfSidebarsWithoutThumbnails(sidebars)).toEqual({
-      'sidebar-panel': panel('sidebar-panel', {
-        type: 'component',
-        componentId: 'outline-sidebar',
-      }),
-    });
   });
 });
