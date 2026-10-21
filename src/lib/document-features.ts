@@ -1,3 +1,5 @@
+import type { PdfLinkTarget } from './pdf-links';
+
 export type ViewMode = 'single' | 'continuous' | 'spread';
 
 export const VIEW_MODE_SEQUENCE: readonly ViewMode[] = ['single', 'continuous', 'spread'];
@@ -133,6 +135,8 @@ export interface PdfOutlineItem {
   title: string;
   pageNumber: number | null;
   url?: string;
+  /** Where activating the entry goes; absent when the entry has no destination or action. */
+  target?: PdfLinkTarget;
   bold: boolean;
   italic: boolean;
   items: PdfOutlineItem[];

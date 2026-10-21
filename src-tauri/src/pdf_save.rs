@@ -734,18 +734,28 @@ fn verify_preservation(original: &[u8], bytes: &[u8]) -> Result<(), String> {
                         && !a.has(key)
                         && [b"NM".as_slice(), b"AP", b"PDFIUM_HasGeneratedAP"].contains(&key)
                 };
+                // Page Rotation is a Document edit: a page's own /Rotate may change to
+                // any quarter turn (or be removed to inherit again), never to anything else.
+                let rotation_edit = |key: &[u8]| {
+                    page && key == b"Rotate"
+                        && b.get(key).map_or(true, |rotation| {
+                            rotation.as_i64().is_ok_and(|degrees| degrees % 90 == 0)
+                        })
+                };
                 let keys = a.iter().map(|(k, _)| k).chain(b.iter().map(|(k, _)| k));
-                keys.filter(|k| !(page && k.as_slice() == b"Annots") && !generated(k))
-                    .all(|key| {
-                        let segment = format!("/{}", String::from_utf8_lossy(key));
-                        match (a.get(key), b.get(key)) {
-                            (Ok(a), Ok(b)) => within(segment, a, b, before, after, seen, path),
-                            _ => {
-                                path.push(segment);
-                                false
-                            }
+                keys.filter(|k| {
+                    !(page && k.as_slice() == b"Annots") && !generated(k) && !rotation_edit(k)
+                })
+                .all(|key| {
+                    let segment = format!("/{}", String::from_utf8_lossy(key));
+                    match (a.get(key), b.get(key)) {
+                        (Ok(a), Ok(b)) => within(segment, a, b, before, after, seen, path),
+                        _ => {
+                            path.push(segment);
+                            false
                         }
-                    })
+                    }
+                })
             }
             (Object::Array(a), Object::Array(b)) => {
                 if a.len() != b.len() {
@@ -1209,7 +1219,7 @@ mod tests {
             .unwrap()
             .as_dict_mut()
             .unwrap()
-            .set("Rotate", 90);
+            .set("MediaBox", vec![0.into(), 0.into(), 300.into(), 300.into()]);
         let mut bytes = Vec::new();
         damaged.save_to(&mut bytes).unwrap();
         let selected = writer.authorize(&dir.join("damaged.pdf")).unwrap();
@@ -1218,6 +1228,120 @@ mod tests {
             .is_err());
         assert!(!dir.join("damaged.pdf").exists());
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    fn with_page_rotation(
+        original: &[u8],
+        pages_rotation: Option<i64>,
+        page: lopdf::Object,
+    ) -> Vec<u8> {
+        let mut document = lopdf::Document::load_mem(original).unwrap();
+        let id = *document.get_pages().values().next().unwrap();
+        if let Some(inherited) = pages_rotation {
+            let parent = document
+                .get_dictionary(id)
+                .unwrap()
+                .get(b"Parent")
+                .unwrap()
+                .as_reference()
+                .unwrap();
+            document
+                .get_object_mut(parent)
+                .unwrap()
+                .as_dict_mut()
+                .unwrap()
+                .set("Rotate", inherited);
+        }
+        document
+            .get_object_mut(id)
+            .unwrap()
+            .as_dict_mut()
+            .unwrap()
+            .set("Rotate", page);
+        let mut bytes = Vec::new();
+        document.save_to(&mut bytes).unwrap();
+        bytes
+    }
+
+    fn first_page_rotation(bytes: &[u8]) -> Option<i64> {
+        let document = lopdf::Document::load_mem(bytes).unwrap();
+        let id = *document.get_pages().values().next().unwrap();
+        document
+            .get_dictionary(id)
+            .unwrap()
+            .get(b"Rotate")
+            .ok()
+            .map(|rotation| rotation.as_i64().unwrap())
+    }
+
+    #[test]
+    fn page_rotation_is_saved_like_an_annotation_edit_with_conflict_detection() {
+        let dir = directory();
+        let source = dir.join("source.pdf");
+        let original = pdf();
+        std::fs::write(&source, &original).unwrap();
+        let writer = PdfSave::default();
+        let token = writer.capture_source(&source, &original).unwrap();
+        let rotated = with_page_rotation(&original, None, 90.into());
+        let reopened = writer.write_original(&token, &rotated).unwrap();
+        assert_eq!(first_page_rotation(&reopened), Some(90));
+        assert_eq!(
+            first_page_rotation(&std::fs::read(&source).unwrap()),
+            Some(90)
+        );
+        // Rotating back is a further edit of the saved version.
+        let restored = with_page_rotation(&reopened, None, 0.into());
+        assert_eq!(
+            first_page_rotation(&writer.write_original(&token, &restored).unwrap()),
+            Some(0)
+        );
+        std::fs::write(&source, b"external changes").unwrap();
+        assert!(writer
+            .write_original(&token, &rotated)
+            .unwrap_err()
+            .contains("conflict"));
+        assert_eq!(std::fs::read(&source).unwrap(), b"external changes");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn page_rotation_edits_accept_only_quarter_turns_including_over_inherited_rotation() {
+        let original = with_page_rotation(&pdf(), Some(90), lopdf::Object::Null);
+        let mut document = lopdf::Document::load_mem(&original).unwrap();
+        let id = *document.get_pages().values().next().unwrap();
+        document
+            .get_object_mut(id)
+            .unwrap()
+            .as_dict_mut()
+            .unwrap()
+            .remove(b"Rotate");
+        let mut inherited = Vec::new();
+        document.save_to(&mut inherited).unwrap();
+        for rotation in [0, 180, 270, -90, 450] {
+            verify_preservation(
+                &inherited,
+                &with_page_rotation(&inherited, None, rotation.into()),
+            )
+            .unwrap();
+        }
+        for rotation in [
+            lopdf::Object::from(45),
+            lopdf::Object::Real(90.5),
+            "90".into(),
+        ] {
+            assert!(verify_preservation(
+                &inherited,
+                &with_page_rotation(&inherited, None, rotation)
+            )
+            .unwrap_err()
+            .ends_with("/Rotate"));
+        }
+        // The inherited value itself is Document structure, not a Page Rotation edit.
+        assert!(verify_preservation(
+            &inherited,
+            &with_page_rotation(&inherited, Some(180), 90.into())
+        )
+        .is_err());
     }
 
     #[test]
@@ -1773,6 +1897,58 @@ mod tests {
             PathBuf::from(alias_selection.canonical_path),
             source.canonicalize().unwrap()
         );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn real_embedpdf_page_rotation_saves_with_its_annotations_unchanged() {
+        let original = include_bytes!("../tests/fixtures/native-annotations/original.pdf");
+        let rotated = include_bytes!("../tests/fixtures/native-annotations/rotated.pdf");
+        let dir = directory();
+        let source = dir.join("source.pdf");
+        std::fs::write(&source, original).unwrap();
+        let writer = PdfSave::default();
+        let token = writer.capture_source(&source, original).unwrap();
+        let reopened = writer
+            .write_original(&token, &prepare_save(rotated).unwrap())
+            .unwrap();
+        let document = lopdf::Document::load_mem(&reopened).unwrap();
+        let rotations: Vec<_> = document
+            .get_pages()
+            .values()
+            .map(|id| {
+                document
+                    .get_dictionary(*id)
+                    .unwrap()
+                    .get(b"Rotate")
+                    .map_or(0, |rotation| rotation.as_i64().unwrap())
+            })
+            .collect();
+        assert_eq!(rotations, vec![90, 0, 0]);
+        let page = document
+            .get_dictionary(*document.get_pages().get(&1).unwrap())
+            .unwrap();
+        let (_, annots) = document.dereference(page.get(b"Annots").unwrap()).unwrap();
+        let subtypes: Vec<_> = annots
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|entry| {
+                let (_, annotation) = document.dereference(entry).unwrap();
+                annotation
+                    .as_dict()
+                    .unwrap()
+                    .get(b"Subtype")
+                    .unwrap()
+                    .as_name()
+                    .unwrap()
+                    .to_vec()
+            })
+            .collect();
+        for subtype in [b"Highlight".as_slice(), b"Text"] {
+            assert!(subtypes.iter().any(|s| s == subtype));
+        }
+        assert_eq!(subtypes.iter().filter(|s| *s == b"Link").count(), 2);
         std::fs::remove_dir_all(dir).unwrap();
     }
 

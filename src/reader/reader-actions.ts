@@ -2,7 +2,11 @@ import type { ViewMode } from '../lib/document-features';
 import type { PdfLinkTarget } from '../lib/pdf-links';
 import { type FilterSettings, PRESETS } from '../scripts/filters';
 import { createDocumentQuery, type DocumentQuery, type DocumentRuntime } from './document-queries';
-import type { NativePdfSaveAdapter, PdfSaveDestination } from './native-pdf-editing';
+import type {
+  NativePdfSaveAdapter,
+  PageRotationDirection,
+  PdfSaveDestination,
+} from './native-pdf-editing';
 import {
   createReadingSession,
   type DocumentPathReconciliation,
@@ -141,6 +145,15 @@ export type ReaderAction =
     }
   | { type: 'activateDocumentTarget'; filePath: string; target: PdfLinkTarget }
   | { type: 'printDocument'; filePath?: string }
+  | {
+      type: 'rotatePages';
+      /** 1-based page numbers whose Page Rotation turns by a quarter turn. */
+      pages: readonly number[];
+      direction: PageRotationDirection;
+      filePath?: string;
+    }
+  | { type: 'undoEdit'; filePath?: string }
+  | { type: 'redoEdit'; filePath?: string }
   | { type: 'discardAndReloadDocument'; filePath?: string }
   | { type: 'saveDocument'; filePath?: string }
   | { type: 'saveDocumentAs'; filePath?: string }
@@ -165,6 +178,11 @@ export const readerAction = {
     withOptionalFilePath({ type: 'setViewMode', viewMode }, filePath),
   setFilterSettings: (filterSettings: FilterSettings, filePath?: string): ReaderAction =>
     withOptionalFilePath({ type: 'setFilterSettings', filterSettings }, filePath),
+  rotatePages: (
+    pages: readonly number[],
+    direction: PageRotationDirection,
+    filePath?: string,
+  ): ReaderAction => withOptionalFilePath({ type: 'rotatePages', pages, direction }, filePath),
 };
 
 export type DispatchReaderAction = (action: ReaderAction) => Promise<void>;
@@ -1737,6 +1755,51 @@ export function createReaderActions({
               },
               'deferred',
             );
+          },
+        );
+      }
+
+      if (
+        action.type === 'rotatePages' ||
+        action.type === 'undoEdit' ||
+        action.type === 'redoEdit'
+      ) {
+        const pages =
+          action.type === 'rotatePages' ? [...new Set(action.pages)].sort((a, b) => a - b) : [];
+        if (
+          action.type === 'rotatePages' &&
+          (pages.length === 0 ||
+            !pages.every((page) => Number.isInteger(page) && page >= 1) ||
+            (action.direction !== 'clockwise' && action.direction !== 'counterclockwise'))
+        ) {
+          return { status: 'no-op', revision: revision() };
+        }
+        // Page Rotation is a Document edit: it shares the native editing undo timeline,
+        // unsaved accounting, Recovery Drafts, and Save path with Annotation edits.
+        return routeRelativeDocumentAction(
+          action.filePath,
+          async (filePath, expectedGeneration) => {
+            const edited = await runDocumentRuntimeOperation(
+              filePath,
+              expectedGeneration,
+              options,
+              async ({ editing }) => {
+                const readOnlyReason = editing?.state().readOnlyReason;
+                if (readOnlyReason) throw new Error(readOnlyReason);
+                if (action.type === 'rotatePages') {
+                  if (!editing?.rotatePages)
+                    throw new Error('Page Rotation editing is unavailable');
+                  editing.rotatePages(pages, action.direction);
+                } else {
+                  const edit = action.type === 'undoEdit' ? editing?.undo : editing?.redo;
+                  if (!editing || !edit) throw new Error('Undo is unavailable for this Document');
+                  edit.call(editing);
+                }
+              },
+            );
+            return edited.status === 'ready'
+              ? { status: 'performed', revision: revision() }
+              : edited;
           },
         );
       }

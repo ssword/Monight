@@ -8,10 +8,12 @@ import {
 } from '@embedpdf/models';
 import {
   type AnnotationCapability,
+  type HistoryScope,
   PdfAnnotationSubtype,
+  type Rotation,
   type TrackedAnnotation,
 } from '@embedpdf/snippet';
-import type { NativePdfEditing } from '../reader/native-pdf-editing';
+import type { NativePdfEditing, PageRotationDirection } from '../reader/native-pdf-editing';
 import { embedPdfAnnotationToolIds } from './embedpdf-offline-configuration';
 
 const verifiedFields = [
@@ -99,11 +101,44 @@ function preserveNativeNoteAppearances(engine: PdfEngine): void {
   };
 }
 
+type SetPageRotation = (document: PdfDocumentObject, pageIndex: number, rotation: Rotation) => void;
+
+/**
+ * The single Page Rotation write mechanism: PDFium's own page-rotation setter on the live
+ * Document. The pinned engine exposes no API for it, so this narrow adapter reaches the
+ * direct (main-thread) executor. Everything that serializes the live Document (Save, Save
+ * As, Recovery Drafts, printing) then carries the rotation through `saveAsCopy`.
+ */
+function pdfiumPageRotationSetter(engine: PdfEngine): SetPageRotation | null {
+  const executor: unknown = Reflect.get(engine, 'executor');
+  if (!executor || typeof executor !== 'object') return null;
+  const pdfium: unknown = Reflect.get(executor, 'pdfiumModule');
+  const cache: unknown = Reflect.get(executor, 'cache');
+  const setRotation =
+    pdfium && typeof pdfium === 'object' && Reflect.get(pdfium, 'FPDFPage_SetRotation');
+  const getContext = cache && typeof cache === 'object' && Reflect.get(cache, 'getContext');
+  if (typeof setRotation !== 'function' || typeof getContext !== 'function') return null;
+  return (document, pageIndex, rotation) => {
+    const context = getContext.call(cache, document.id) as
+      | { acquirePage(index: number): { pagePtr: number; release(): void } }
+      | undefined;
+    if (!context) throw new Error('Page Rotation is unavailable: the Document is not open');
+    const page = context.acquirePage(pageIndex);
+    try {
+      setRotation.call(pdfium, page.pagePtr, rotation);
+    } finally {
+      page.release();
+    }
+  };
+}
+
 export function createEmbedPdfNativeAnnotationEditing({
   annotations,
   annotationScope,
   currentDocument,
   engine,
+  history,
+  pageRotationChanged,
   readOnlyReason,
   stateChanged,
 }: {
@@ -111,10 +146,32 @@ export function createEmbedPdfNativeAnnotationEditing({
   annotationScope: ReturnType<AnnotationCapability['forDocument']>;
   currentDocument: () => PdfDocumentObject;
   engine: PdfEngine;
+  /** The viewer's undo timeline, shared with Annotation edits. */
+  history?: HistoryScope;
+  /** Re-lays out and re-renders pages whose live Page Rotation changed. */
+  pageRotationChanged?: (pageIndexes: readonly number[]) => void;
   readOnlyReason: string | null;
   stateChanged: () => void;
 }) {
   preserveNativeNoteAppearances(engine);
+  const setPageRotation = pdfiumPageRotationSetter(engine);
+  // The viewer opens Documents with normalized rotation: Annotation geometry stays in
+  // unrotated page space and each page's rotation is applied when laying it out. A Page
+  // Rotation therefore changes only the page, never its Annotations' coordinates.
+  const turnPages = (pageIndexes: readonly number[], quarterTurns: number): void => {
+    const document = currentDocument();
+    if (!setPageRotation) throw new Error('Page Rotation editing is unavailable');
+    for (const index of pageIndexes) {
+      const page = document.pages[index];
+      if (!page) throw new Error(`Page ${index + 1} does not exist`);
+      const rotation = ((((page.rotation + quarterTurns) % 4) + 4) % 4) as Rotation;
+      setPageRotation(document, index, rotation);
+      page.rotation = rotation;
+    }
+    editRevision += 1;
+    pageRotationChanged?.(pageIndexes);
+    stateChanged();
+  };
   let editRevision = 0;
   let savedRevision = 0;
   let retryNativeAnnotations = false;
@@ -210,9 +267,21 @@ export function createEmbedPdfNativeAnnotationEditing({
       // The pinned plugin can resolve commit() despite a failed individual mutation.
       // Reopen exported bytes and check native fields before permitting a disk write.
       const verification = await engine
-        .openDocumentBuffer({ id: `verify-${crypto.randomUUID()}`, content: buffer })
+        // The viewer's own (normalized) geometry, so markup on rotated pages compares exactly.
+        .openDocumentBuffer(
+          { id: `verify-${crypto.randomUUID()}`, content: buffer },
+          { normalizeRotation: true },
+        )
         .toPromise();
       try {
+        if (
+          verification.pages.length !== document.pages.length ||
+          verification.pages.some(
+            (page, index) => page.rotation !== document.pages[index]?.rotation,
+          )
+        ) {
+          throw new Error('Page Rotation verification failed; unsaved edits were retained');
+        }
         const actual = (
           await Promise.all(
             verification.pages.map((page) =>
@@ -246,6 +315,35 @@ export function createEmbedPdfNativeAnnotationEditing({
       editRevision = Math.max(editRevision, revision);
       savedRevision = 0;
       stateChanged();
+    },
+    rotatePages(pages: readonly number[], direction: PageRotationDirection) {
+      if (readOnlyReason) throw new Error(readOnlyReason);
+      const document = currentDocument();
+      const pageIndexes = [...new Set(pages)].map((page) => page - 1);
+      if (
+        pageIndexes.length === 0 ||
+        pageIndexes.some((index) => !Number.isInteger(index) || !document.pages[index])
+      )
+        throw new Error('Choose pages that exist in this Document to rotate');
+      if (!setPageRotation) throw new Error('Page Rotation editing is unavailable');
+      const turn = direction === 'clockwise' ? 1 : -1;
+      const command = {
+        execute: () => turnPages(pageIndexes, turn),
+        undo: () => turnPages(pageIndexes, -turn),
+        metadata: { pageRotation: pageIndexes },
+      };
+      if (history) history.register(command, 'page-rotation');
+      else command.execute();
+    },
+    undo() {
+      if (readOnlyReason) throw new Error(readOnlyReason);
+      if (!history) throw new Error('Undo is unavailable for this Document');
+      history.undo();
+    },
+    redo() {
+      if (readOnlyReason) throw new Error(readOnlyReason);
+      if (!history) throw new Error('Redo is unavailable for this Document');
+      history.redo();
     },
     setAnnotationDisplayName(displayName) {
       for (const toolId of embedPdfAnnotationToolIds()) {
