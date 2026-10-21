@@ -92,6 +92,8 @@ export const KEYBIND_ACTIONS: Readonly<Record<string, KeybindAction>> = {
   PreviousTab: { displayName: 'Previous Tab', action: 'previousTab' },
   Print: { displayName: 'Print', action: 'print' },
   Find: { displayName: 'Find in Document', action: 'find' },
+  Undo: readerCommand('Undo', 'edit.undo'),
+  Redo: readerCommand('Redo', 'edit.redo'),
   ZoomIn: { displayName: 'Zoom In', action: 'zoomIn' },
   ZoomOut: { displayName: 'Zoom Out', action: 'zoomOut' },
   ResetZoom: { displayName: 'Actual Size', action: 'resetZoom' },
@@ -217,6 +219,14 @@ export const KEYBIND_DEFAULTS_REVISIONS: readonly KeybindDefaultsRevision[] = [
     binds: {
       RotateLeft: ['CmdOrCtrl+L'],
       RotateRight: ['CmdOrCtrl+R'],
+    },
+  },
+  {
+    // Edit ▸ Undo and Redo as Reader Actions (#99), replacing EmbedPDF's own shortcuts.
+    version: 5,
+    binds: {
+      Undo: ['CmdOrCtrl+Z'],
+      Redo: { mac: ['Cmd+Shift+Z'], other: ['Ctrl+Shift+Z', 'Ctrl+Y'] },
     },
   },
 ];

@@ -14,7 +14,10 @@ import {
   restoreEmbedPdfReadingPositionCoordinates,
 } from '../app/embedpdf-navigation-geometry';
 import { createEmbedPdfViewerConfig } from '../app/embedpdf-offline-configuration';
-import { removeEmbedPdfCommandShortcuts } from '../app/embedpdf-shortcuts';
+import {
+  monightOwnsEmbedPdfCommand,
+  removeEmbedPdfCommandShortcuts,
+} from '../app/embedpdf-shortcuts';
 import type { EmbedPdfViewerRuntime } from '../app/embedpdf-viewer-runtime';
 import { VERIFIED_MARKUP_TOOLS } from '../app/markup-tools';
 import { createDocumentIntake } from '../reader/document-intake';
@@ -55,6 +58,25 @@ const createViewerRuntime = (
   revealAnnotation: vi.fn(),
   destroy: vi.fn(async () => undefined),
   ...overrides,
+});
+
+describe('EmbedPDF shortcuts', () => {
+  it('leaves Undo, Redo, zoom, scrolling and search to Monight, which owns those commands', () => {
+    for (const id of [
+      'history:undo',
+      'history:redo',
+      'zoom:in',
+      'rotate:clockwise',
+      'scroll:next-page',
+      'document:print',
+      'panel:toggle-search',
+    ]) {
+      expect(monightOwnsEmbedPdfCommand(id), id).toBe(true);
+    }
+    for (const id of ['selection:copy', 'mode:pan', 'panel:toggle-sidebar']) {
+      expect(monightOwnsEmbedPdfCommand(id), id).toBe(false);
+    }
+  });
 });
 
 describe('EmbedPDF Document surface', () => {

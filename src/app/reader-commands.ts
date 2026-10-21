@@ -75,6 +75,11 @@ export interface ReaderCommandContext {
   readonly currentPage: () => number | null;
   /** View ▸ Show/Hide Tab Bar: keeps the tab bar shown for one Document, for this app run. */
   readonly toggleTabBar: () => void;
+  /**
+   * Undoes or redoes typing in the focused text field (Search, dialogs, a note);
+   * false when focus is not in an editable element.
+   */
+  readonly editTextField: (kind: 'undo' | 'redo') => boolean;
 }
 
 export interface ReaderCommandStateInput {
@@ -93,6 +98,8 @@ export interface ReaderCommandStateInput {
   readonly canGoForward: boolean;
   /** Whether View ▸ Show Tab Bar keeps the tab bar shown (transient, never persisted). */
   readonly tabBarKeptShown: boolean;
+  /** Whether focus is in an editable element, whose own typing Undo and Redo then edit. */
+  readonly textFieldFocused: boolean;
   /**
    * The effective keybinds; each command's menu item shows its shortcut as
    * its accelerator. Absent: accelerators are left as they are.
@@ -170,7 +177,30 @@ const viewModeCommand = <Mode extends ViewMode>(
   state: (input) => checkedWithDocument(input, input.activeDocument?.viewMode === viewMode),
 });
 
+/**
+ * Edit ▸ Undo and Redo: the Document's edits (Annotations, Page Rotation) as
+ * Reader Actions, or a focused text field's own typing.
+ */
+const historyCommand = <Id extends 'edit.undo' | 'edit.redo'>(
+  id: Id,
+  kind: 'undo' | 'redo',
+): ReaderCommand<Id> => ({
+  id,
+  run: (context) => {
+    if (context.editTextField(kind)) return;
+    return context.dispatchReaderAction({ type: kind === 'undo' ? 'undoEdit' : 'redoEdit' });
+  },
+  state: (input) => ({
+    enabled:
+      input.textFieldFocused ||
+      (editableDocument(input) &&
+        Boolean(kind === 'undo' ? input.markup?.canUndo : input.markup?.canRedo)),
+  }),
+});
+
 const staticCommands = [
+  historyCommand('edit.undo', 'undo'),
+  historyCommand('edit.redo', 'redo'),
   {
     id: 'view.tab-bar',
     run: (context) => context.toggleTabBar(),

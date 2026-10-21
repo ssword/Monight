@@ -49,6 +49,12 @@ dispatch:
 `readerAction.rotatePages(pages, direction, filePath?)` builds the first action. On read-only,
 signed, or protected Documents these actions are refused with the existing explanation.
 
+⌘Z / ⇧⌘Z (Ctrl+Z / Ctrl+Shift+Z or Ctrl+Y elsewhere) and Edit ▸ Undo/Redo are the reader
+commands `edit.undo` / `edit.redo`, which dispatch `undoEdit` / `redoEdit`; EmbedPDF's own
+`history:` shortcuts are removed so there is one path. With focus in a text field (Search,
+a dialog, a note) they undo that field's typing instead. Cut, Copy, Paste and Select All stay
+the platform's predefined items.
+
 ## Rotate controls and the verification gate (issue #114)
 
 Rotate is offered by the toolbar Rotate button (click: Rotate Left, Option/Alt-click: Rotate

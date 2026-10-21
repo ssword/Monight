@@ -64,6 +64,7 @@ import {
 } from './app/window-lifecycle';
 import { debugLog } from './lib/debug-log';
 import type { ViewMode } from './lib/document-features';
+import { isEditableTarget } from './lib/editable-target';
 import { isMacPlatform } from './lib/platform';
 import type { DocumentIntake } from './reader/document-intake';
 import { DEFAULT_ANNOTATION_DISPLAY_NAME } from './reader/native-pdf-editing';
@@ -185,6 +186,7 @@ const readerMenuState = (): ReaderCommandStateInput => {
     canGoBack: readerActions?.canGoBack() ?? false,
     canGoForward: readerActions?.canGoForward() ?? false,
     tabBarKeptShown,
+    textFieldFocused: isEditableTarget(document.activeElement),
     keybinds: activeKeybinds,
   };
 };
@@ -907,6 +909,12 @@ export async function initializeApplication(modules: ApplicationModules): Promis
       },
       selectedPages: () => readerSidebar?.selectedPages() ?? [],
       currentPage: () => readerMenuState().activeDocument?.currentPage || null,
+      editTextField: (kind) => {
+        if (!isEditableTarget(document.activeElement)) return false;
+        // The native Edit menu takes ⌘Z from the WebView; hand it back to the field.
+        document.execCommand(kind);
+        return true;
+      },
       toggleTabBar: () => {
         tabBarKeptShown = !tabBarKeptShown;
         showTabBar(readerActions?.snapshot().documents.length ?? 0);
@@ -917,6 +925,9 @@ export async function initializeApplication(modules: ApplicationModules): Promis
       void refreshWindowFullScreen();
     });
     await readerMenu.install();
+    // Edit ▸ Undo and Redo also apply to a focused text field's own typing.
+    document.addEventListener('focusin', syncReaderMenu);
+    document.addEventListener('focusout', syncReaderMenu);
 
     // A visible WebView is required for EmbedPDF to publish layout frames during
     // Reading Session restoration. The splash remains interactive while it runs.

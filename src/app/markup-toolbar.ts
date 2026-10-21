@@ -3,6 +3,7 @@
 // by the toolbar's Markup toggle. Visibility is a chrome preference; the chosen
 // tool is transient and lives on the active Document's rendering.
 
+import { isEditableTarget } from '../lib/editable-target';
 import { hydrateChromeIcons } from './chrome-icons';
 import type { ChromePreferencesAuthority } from './chrome-preferences';
 import type { ActiveMarkupState } from './document-workspace';
@@ -45,10 +46,6 @@ export interface MarkupEscapeOptions {
   /** Presentation mode claims Esc to exit before anything else. */
   readonly presentationActive: () => boolean;
 }
-
-const isEditableTarget = (target: EventTarget | null): boolean =>
-  target instanceof HTMLElement &&
-  (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName));
 
 /**
  * Esc returns from any markup tool (highlight mode, the Text note tool) to text

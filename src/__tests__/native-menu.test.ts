@@ -137,6 +137,7 @@ describe('native menu state sync', () => {
         canGoBack: false,
         canGoForward: false,
         tabBarKeptShown: false,
+        textFieldFocused: false,
       }),
       context: () =>
         ({
