@@ -50,6 +50,8 @@ const createViewerRuntime = (
   metadata: vi.fn(async () => null),
   resolveLinkTarget: vi.fn(async () => null),
   renderThumbnail: vi.fn(async () => document.createElement('canvas')),
+  annotations: () => [],
+  revealAnnotation: vi.fn(),
   destroy: vi.fn(async () => undefined),
   ...overrides,
 });

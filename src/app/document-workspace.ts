@@ -101,6 +101,8 @@ export interface DocumentWorkspace {
   activeReadingPosition(): { filePath: string; readingPosition: ReadingPosition } | null;
   viewTransform(filePath: string): DocumentViewTransform | null;
   openActiveSearch(): void;
+  /** Selects an Annotation on its Document's rendering surface. */
+  revealAnnotation(filePath: string, annotationId: string): void;
   setAnnotationDisplayName(displayName: AnnotationDisplayName): void;
 }
 
@@ -834,6 +836,9 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
     openActiveSearch() {
       const filePath = options.snapshot().activeDocumentPath;
       if (filePath) presented.get(filePath)?.rendering.openSearch?.();
+    },
+    revealAnnotation(filePath, annotationId) {
+      presented.get(filePath)?.rendering.revealAnnotation?.(annotationId);
     },
     setAnnotationDisplayName(displayName) {
       for (const documentState of presented.values()) {

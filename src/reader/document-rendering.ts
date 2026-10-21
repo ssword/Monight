@@ -29,6 +29,8 @@ export interface DocumentViewTransform {
 export interface DocumentRendering {
   getState(): DocumentRenderingState;
   openSearch?(): void;
+  /** Selects an Annotation already scrolled into view; transient rendering state. */
+  revealAnnotation?(annotationId: string): void;
   getScrollPosition(): number;
   getReadingPosition(): ReadingPosition;
   goToPage(pageNumber: number, options?: ReaderActionOptions): Promise<void>;

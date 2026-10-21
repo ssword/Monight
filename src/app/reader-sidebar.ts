@@ -17,6 +17,7 @@ import {
   SIDEBAR_WIDTH_BOUNDS,
   type SidebarMode,
 } from './chrome-preferences';
+import { createAnnotationsView } from './sidebar-annotations-view';
 
 /** What the sidebar needs to know about the active Document. */
 export interface SidebarDocument {
@@ -34,7 +35,11 @@ export interface SidebarModeContext {
   readonly dispatchReaderAction: DispatchReaderAction;
   readonly whenVisible: WhenVisible;
   readonly width: () => number;
+  /** Selects an Annotation on the rendering surface; transient, never Reading Session state. */
+  readonly revealAnnotation: RevealAnnotation;
 }
+
+export type RevealAnnotation = (filePath: string, annotationId: string) => void;
 
 export interface SidebarModeView {
   readonly element: HTMLElement;
@@ -56,6 +61,7 @@ export interface ReaderSidebarOptions {
   readonly activeDocument: () => SidebarDocument | null;
   readonly dispatchReaderAction: DispatchReaderAction;
   readonly whenVisible?: WhenVisible;
+  readonly revealAnnotation?: RevealAnnotation;
 }
 
 export interface ReaderSidebar {
@@ -70,6 +76,7 @@ const THUMBNAIL_INSET = 40;
 const MODE_VIEWS: Readonly<Record<SidebarMode, (context: SidebarModeContext) => SidebarModeView>> =
   {
     thumbnails: createThumbnailsView,
+    annotations: createAnnotationsView,
   };
 
 function observeVisibility(root: Element | null): WhenVisible {
@@ -98,6 +105,7 @@ export function createReaderSidebar({
   activeDocument,
   dispatchReaderAction,
   whenVisible,
+  revealAnnotation = () => undefined,
 }: ReaderSidebarOptions): ReaderSidebar {
   const content = root.querySelector<HTMLElement>('.reader-sidebar-content') ?? root;
   const resizer = root.querySelector<HTMLElement>('.reader-sidebar-resizer');
@@ -105,6 +113,7 @@ export function createReaderSidebar({
     dispatchReaderAction,
     whenVisible: whenVisible ?? observeVisibility(content),
     width: () => preferences.snapshot().sidebarWidth,
+    revealAnnotation,
   };
   let view: { mode: SidebarMode; view: SidebarModeView } | null = null;
   const cleanups: Array<() => void> = [];

@@ -11,6 +11,23 @@ export interface DocumentThumbnailOptions {
   readonly maxWidth?: number;
 }
 
+/** The Annotation kinds the Highlights and Notes sidebar lists. */
+export type DocumentAnnotationKind = 'highlight' | 'underline' | 'strikeout' | 'squiggly' | 'note';
+
+/** A read-only snapshot of one text-markup or note Annotation, by any author. */
+export interface DocumentAnnotationSnapshot {
+  readonly id: string;
+  readonly kind: DocumentAnnotationKind;
+  readonly pageNumber: number;
+  /** Where the Annotation's top edge sits on its page. */
+  readonly readingPosition: { readonly page: number; readonly location: number };
+  readonly author: string;
+  readonly contents: string;
+  readonly color: string | null;
+  /** ISO 8601 modification (or creation) time, when the PDF records one. */
+  readonly modified: string | null;
+}
+
 export interface DocumentRuntime {
   editing?: NativePdfEditing;
   preparePrintDocument?: () => Promise<Uint8Array>;
@@ -22,6 +39,8 @@ export interface DocumentRuntime {
     pageNumber: number,
     options?: DocumentThumbnailOptions,
   ): Promise<HTMLCanvasElement>;
+  /** Live text-markup and note Annotations, ordered by page and position. */
+  annotations?(): readonly DocumentAnnotationSnapshot[];
 }
 
 export interface DocumentQueryOptions {
@@ -47,6 +66,7 @@ export interface DocumentQuery {
     pageNumber: number,
     options?: DocumentThumbnailOptions & DocumentQueryOptions,
   ): Promise<HTMLCanvasElement>;
+  annotations(options?: DocumentQueryOptions): Promise<readonly DocumentAnnotationSnapshot[]>;
 }
 
 interface CreateDocumentQueryOptions {
@@ -124,6 +144,14 @@ export function createDocumentQuery({
       const canvas = await runtime.renderThumbnail(pageNumber, options);
       if (cancelled(options)) throw new Error('Document Query generation is no longer current');
       return canvas;
+    },
+    async annotations(options = {}) {
+      if (cancelled(options)) return [];
+      const annotations = runtime.annotations?.() ?? [];
+      return annotations.map((annotation) => ({
+        ...annotation,
+        readingPosition: { ...annotation.readingPosition },
+      }));
     },
   };
 }

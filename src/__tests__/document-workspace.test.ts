@@ -131,6 +131,39 @@ describe('Document workspace adapter', () => {
     );
   });
 
+  it('reveals an Annotation on the rendering surface of the Document that owns it', async () => {
+    const reveals = new Map<string, ReturnType<typeof vi.fn>>();
+    const workspace = createDocumentWorkspace({
+      dispatchReaderAction: vi.fn(async () => ({ status: 'committed' as const, revision: 1 })),
+      snapshot: () => snapshot([], null),
+      isDocumentOpen: () => false,
+      defaultVisualState: () => ({
+        filterSettings: PRESETS.default,
+        zoomIntent: { kind: 'fit-width' },
+        viewMode: 'single',
+      }),
+      createSurface: async ({ filePath }) => {
+        const surface = createControllableSurface(filePath);
+        const revealAnnotation = vi.fn();
+        reveals.set(filePath, revealAnnotation);
+        return { ...surface, rendering: { ...surface.rendering, revealAnnotation } };
+      },
+    });
+    for (const filePath of ['/first.pdf', '/second.pdf']) {
+      await workspace.intakeRuntime.open({
+        document: { canonicalPath: filePath, title: filePath.slice(1) },
+        bytes: new Uint8Array([1]),
+        activate: false,
+      });
+    }
+
+    workspace.revealAnnotation('/second.pdf', 'note-7');
+    workspace.revealAnnotation('/closed.pdf', 'note-1');
+
+    expect(reveals.get('/first.pdf')).not.toHaveBeenCalled();
+    expect(reveals.get('/second.pdf')).toHaveBeenCalledExactlyOnceWith('note-7');
+  });
+
   it('routes edited tab close through Cancel and Discard and retires viewer callbacks on reopen', async () => {
     let reader: ReaderActions;
     let choice: 'cancel' | 'discard' = 'cancel';

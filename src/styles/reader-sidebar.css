@@ -201,3 +201,98 @@
 body.presentation-mode .reader-sidebar {
   display: none;
 }
+
+/* Highlights and Notes */
+
+.sidebar-annotations {
+  padding: 8px 0 16px;
+}
+
+.sidebar-annotations-empty {
+  margin: 24px 16px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  text-align: center;
+}
+
+.sidebar-annotation-page-heading {
+  margin: 10px 14px 4px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.sidebar-annotation-list {
+  margin: 0;
+  padding: 0 6px;
+  list-style: none;
+}
+
+.sidebar-annotation {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 12px;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.sidebar-annotation:hover {
+  background-color: var(--chrome-hover);
+}
+
+.sidebar-annotation:focus-visible {
+  outline: 2px solid var(--accent-color);
+  outline-offset: -2px;
+}
+
+.sidebar-annotation-swatch {
+  flex: 0 0 auto;
+  width: 10px;
+  height: 10px;
+  margin-top: 3px;
+  background-color: var(--sidebar-annotation-color, #ffcd45);
+  border-radius: 2px;
+}
+
+.sidebar-annotation[data-annotation-kind="note"] .sidebar-annotation-swatch {
+  border-radius: 50%;
+}
+
+.sidebar-annotation[data-annotation-kind="underline"] .sidebar-annotation-swatch,
+.sidebar-annotation[data-annotation-kind="squiggly"] .sidebar-annotation-swatch {
+  height: 3px;
+  margin-top: 9px;
+}
+
+.sidebar-annotation[data-annotation-kind="strikeout"] .sidebar-annotation-swatch {
+  height: 2px;
+  margin-top: 7px;
+}
+
+.sidebar-annotation-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.sidebar-annotation-text {
+  display: -webkit-box;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.sidebar-annotation-meta {
+  color: var(--text-secondary);
+  font-size: 11px;
+}

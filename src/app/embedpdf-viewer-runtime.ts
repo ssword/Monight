@@ -26,6 +26,7 @@ import type {
   PdfPasswordRequester,
   ResolvedDocumentLinkTarget,
 } from '../reader/document-content';
+import type { DocumentAnnotationSnapshot } from '../reader/document-queries';
 import type { AnnotationDisplayName, NativePdfEditing } from '../reader/native-pdf-editing';
 import type {
   ReadingPosition,
@@ -36,6 +37,7 @@ import type { DocumentSurfaceCallbacks } from './document-workspace';
 import { createEmbedPdfNativeAnnotationEditing } from './embedpdf-native-annotation-editing';
 import {
   captureEmbedPdfReadingPosition,
+  embedPdfAnnotationSnapshots,
   embedPdfDestinationReadingPosition,
   embedPdfLayoutForViewMode,
   embedPdfLinkGeometries,
@@ -104,6 +106,10 @@ export interface EmbedPdfViewerRuntime {
     options: { isCancelled: () => boolean },
   ): Promise<ResolvedDocumentLinkTarget | null>;
   renderThumbnail(pageNumber: number, maxWidth?: number): Promise<HTMLCanvasElement>;
+  /** Live text-markup and note Annotations of any author. */
+  annotations(): readonly DocumentAnnotationSnapshot[];
+  /** Selects an Annotation so its ready-made selection and note affordances appear. */
+  revealAnnotation(annotationId: string): void;
   destroy(): Promise<void>;
 }
 
@@ -260,7 +266,14 @@ export async function createEmbedPdfViewerRuntime({
     readOnlyReason,
     stateChanged: callbacks.stateChanged,
   });
-  unsubscribers.push(annotationScope.onAnnotationEvent(onAnnotationEvent));
+  unsubscribers.push(
+    annotationScope.onAnnotationEvent(onAnnotationEvent),
+    // Edits already report a state change; loading the PDF's Annotations must too,
+    // so listings such as Highlights and Notes see them once they arrive.
+    annotationScope.onAnnotationEvent((event) => {
+      if (event.type === 'loaded' && !destroyed) callbacks.stateChanged();
+    }),
+  );
   const currentPageNumber = () => scrollScope.getCurrentPage();
   const currentReadingPosition = (metrics = scrollScope.getMetrics()): ReadingPosition =>
     captureEmbedPdfReadingPosition(
@@ -691,6 +704,16 @@ export async function createEmbedPdfViewerRuntime({
         .renderThumb(pageNumber - 1, window.devicePixelRatio || 1)
         .toPromise();
       return blobToCanvas(blob, maxWidth);
+    },
+    annotations: () =>
+      documentObject
+        ? embedPdfAnnotationSnapshots(annotationScope.getAnnotations(), documentObject.pages)
+        : [],
+    revealAnnotation(annotationId) {
+      if (destroyed) return;
+      const annotation = annotationScope.getAnnotationById(annotationId);
+      if (!annotation || annotation.commitState === 'deleted') return;
+      annotationScope.selectAnnotation(annotation.object.pageIndex, annotationId);
     },
     async destroy() {
       if (destroyed) return;
