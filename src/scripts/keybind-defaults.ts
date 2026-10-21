@@ -8,7 +8,7 @@
 // table is append-only (never edit a released revision).
 //
 // Adding a default (e.g. Back/Forward, Rotate): describe the action in
-// KEYBIND_ACTIONS if it is new (a native menu command is
+// KEYBIND_ACTIONS if it is new (a Reader Command is
 // `readerCommand(name, commandId)`, which also gives its menu item the
 // binding as accelerator), then append a revision
 //   { version: N + 1, binds: { GoBack: ['CmdOrCtrl+['], ... } }

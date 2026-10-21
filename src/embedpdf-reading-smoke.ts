@@ -77,7 +77,7 @@ async function run() {
   const goToPage = async (page: number) => {
     await dispatch({ type: 'goToPage', page });
   };
-  // Zoom shortcuts run their View menu commands; this page has no other chrome.
+  // Zoom shortcuts run their Reader Commands; this page has no other chrome.
   const commandContext: ReaderCommandContext = {
     dispatchReaderAction: async (action) => {
       await dispatch(action);

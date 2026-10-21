@@ -18,7 +18,7 @@ const readingSession = (activeDocumentPath: string | null = null) => ({
 });
 
 describe('reader visual input adapters', () => {
-  it('runs zoom, page-step, slideshow and full screen keybinds as their native menu commands', async () => {
+  it('runs zoom, page-step, slideshow and full screen keybinds as their Reader Commands', async () => {
     const handlers = new Map<string, () => void | Promise<void>>();
     const keybindManager = {
       registerAction: (name: string, handler: () => void | Promise<void>) => {
@@ -130,7 +130,7 @@ describe('reader visual input adapters', () => {
     expect(dispatchReaderAction).toHaveBeenCalledWith({ type: 'printDocument' });
   });
 
-  it('runs reader-command shortcuts as the native menu command they name', async () => {
+  it('runs reader-command shortcuts as the Reader Command they name', async () => {
     const handlers = new Map<string, (event: unknown, data?: string) => void | Promise<void>>();
     const runReaderCommand = vi.fn(async () => true);
     registerKeybindActions({

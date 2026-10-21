@@ -129,7 +129,7 @@ export function registerKeybindActions({
     });
   }
 
-  // Shortcuts for native menu commands (view modes, sidebar modes, markup
+  // Shortcuts for Reader Commands (view modes, sidebar modes, markup
   // toolbar, Go to Page…) name the command in their data.
   keybindManager.registerAction('readerCommand', async (_e, commandId) => {
     if (commandId) await runReaderCommand(commandId);

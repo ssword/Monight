@@ -1,11 +1,12 @@
-// Reader commands: the one table behind the native View, Go and Tools menus.
-// Each command names the typed Reader Action or chrome-preference change its
-// toolbar control makes (or calls that control's own entry point), and how its
-// menu item's enabled, checked and title state follows the reader.
+// Reader Commands (CONTEXT.md): the one table behind the native Edit ▸ Undo/Redo,
+// View, Go and Tools menus, the toolbar controls and the shortcuts. Each command
+// names the typed Reader Action or chrome-preference change its toolbar control
+// makes (or calls that control's own entry point), and how its menu item's
+// enabled, checked and title state follows the reader.
 //
 // Command ids are the native menu item ids (src-tauri/src/menu.rs). Rust
-// forwards every `view.*`, `go.*` and `tools.*` click as a `menu-command`
-// event; `readerCommandStates` feeds `set_menu_item_states` and
+// forwards every `edit.*`, `view.*`, `go.*` and `tools.*` click as a
+// `reader-command` event; `readerCommandStates` feeds `set_menu_item_states` and
 // `readerMenuSubmenus` fills the menus built from TypeScript lists.
 //
 // Extending: add an entry to `staticCommands` (and the item in menu.rs), or
@@ -356,7 +357,7 @@ function readerCommands(
   return commands;
 }
 
-/** Runs a native menu command; false when the id names no command. */
+/** Runs a Reader Command; false when the id names no command. */
 export async function runReaderCommand(
   id: string,
   context: ReaderCommandContext,

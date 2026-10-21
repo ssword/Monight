@@ -579,7 +579,7 @@ describe('Undo and Redo shortcuts', () => {
     store.reset();
   });
 
-  it('gives ⌘Z Undo and ⇧⌘Z Redo on macOS, and Ctrl+Y Redo elsewhere, as Edit menu commands', async () => {
+  it('gives ⌘Z Undo and ⇧⌘Z Redo on macOS, and Ctrl+Y Redo elsewhere, as Reader Commands', async () => {
     const mac = await new SettingsManager('main', { platform: 'mac' }).load();
     expect(mac.keybinds.Undo).toEqual({
       displayName: 'Undo',

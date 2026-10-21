@@ -143,7 +143,7 @@ describe('toolbar input adapters', () => {
       updateUI: vi.fn(),
       openSearch: vi.fn(),
       goToPage: vi.fn(async () => undefined),
-      // Zoom shortcuts run their View menu commands, which dispatch the action.
+      // Zoom shortcuts run their Reader Commands, which dispatch the action.
       runReaderCommand: (id) =>
         runReaderCommand(id, {
           dispatchReaderAction: async (action: unknown) => {

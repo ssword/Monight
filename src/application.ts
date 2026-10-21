@@ -984,7 +984,7 @@ export async function initializeApplication(modules: ApplicationModules): Promis
       updatePrintMenuState: () =>
         updatePrintMenuState((readerActions?.snapshot().documents.length ?? 0) > 0),
       dispatchReaderAction,
-      runMenuCommand: (id) => readerMenu.run(id),
+      runReaderCommand: (id) => readerMenu.run(id),
     });
 
     shutdown.markReady();

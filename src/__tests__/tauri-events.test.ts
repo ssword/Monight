@@ -96,7 +96,7 @@ describe('Tauri drag and drop events', () => {
     updateTabBarVisibility: vi.fn(),
     updatePrintMenuState: vi.fn(async () => undefined),
     dispatchReaderAction: vi.fn(async () => undefined),
-    runMenuCommand: vi.fn(async () => true),
+    runReaderCommand: vi.fn(async () => true),
     ...overrides,
   });
 
@@ -264,13 +264,13 @@ describe('Tauri drag and drop events', () => {
   });
 
   it('runs View, Go and Tools menu items as reader commands', async () => {
-    const runMenuCommand = vi.fn(async () => true);
-    await setupTauriListeners(context({ runMenuCommand }));
+    const runReaderCommand = vi.fn(async () => true);
+    await setupTauriListeners(context({ runReaderCommand }));
 
-    await mocks.getListener('menu-command')?.({ payload: 'view.zoom.in' });
-    await mocks.getListener('menu-command')?.({ payload: 'go.page' });
+    await mocks.getListener('reader-command')?.({ payload: 'view.zoom.in' });
+    await mocks.getListener('reader-command')?.({ payload: 'go.page' });
 
-    expect(runMenuCommand.mock.calls).toEqual([['view.zoom.in'], ['go.page']]);
+    expect(runReaderCommand.mock.calls).toEqual([['view.zoom.in'], ['go.page']]);
     expect(mocks.getListener('menu-zoom-in')).toBeUndefined();
   });
 
@@ -283,13 +283,13 @@ describe('Tauri drag and drop events', () => {
     expect(reloadKeybinds).toHaveBeenCalledOnce();
   });
 
-  it('ignores a malformed menu command', async () => {
-    const runMenuCommand = vi.fn(async () => true);
-    await setupTauriListeners(context({ runMenuCommand }));
+  it('ignores a malformed Reader Command', async () => {
+    const runReaderCommand = vi.fn(async () => true);
+    await setupTauriListeners(context({ runReaderCommand }));
 
-    await mocks.getListener('menu-command')?.({ payload: 42 });
+    await mocks.getListener('reader-command')?.({ payload: 42 });
 
-    expect(runMenuCommand).not.toHaveBeenCalled();
+    expect(runReaderCommand).not.toHaveBeenCalled();
   });
 
   it('dispatches native menu printing as a semantic Reader Action', async () => {

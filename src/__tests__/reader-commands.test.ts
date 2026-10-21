@@ -69,7 +69,7 @@ function fakeContext(overrides: Partial<ReaderCommandContext> = {}) {
   };
 }
 
-describe('native menu commands', () => {
+describe('Reader Commands', () => {
   it.each([
     ['view.zoom.in', { type: 'zoomIn' }],
     ['view.zoom.out', { type: 'zoomOut' }],

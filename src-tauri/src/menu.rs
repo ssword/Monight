@@ -195,7 +195,7 @@ const TOOLS_MENU: &[ReaderMenuEntry] = &[
 
 const READER_MENUS: [&[ReaderMenuEntry]; 4] = [EDIT_MENU, VIEW_MENU, GO_MENU, TOOLS_MENU];
 
-/// Reader commands are forwarded to the WebView, which owns reader state.
+/// Reader Commands (CONTEXT.md) are forwarded to the WebView, which owns reader state.
 const READER_COMMAND_PREFIXES: [&str; 4] = ["edit.", "view.", "go.", "tools."];
 
 fn reader_command(event_id: &str) -> Option<&str> {
@@ -579,7 +579,7 @@ pub fn handle_menu_event(app: &AppHandle, event_id: &str) {
 
     if let Some(command) = reader_command(event_id) {
         if let Some(window) = app.get_webview_window("main") {
-            window.emit("menu-command", command).ok();
+            window.emit("reader-command", command).ok();
         }
         return;
     }
