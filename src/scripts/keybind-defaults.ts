@@ -8,7 +8,7 @@
 // table is append-only (never edit a released revision).
 //
 // Adding a default (e.g. Back/Forward, Rotate): describe the action in
-// KEYBIND_ACTIONS if it is new (a native menu command is
+// KEYBIND_ACTIONS if it is new (a Reader Command is
 // `readerCommand(name, commandId)`, which also gives its menu item the
 // binding as accelerator), then append a revision
 //   { version: N + 1, binds: { GoBack: ['CmdOrCtrl+['], ... } }
@@ -29,7 +29,9 @@
 //   is stored yet. Collisions with the reader's own bindings are dropped as for
 //   any revision. Once stored, a gated action is the reader's like any other.
 
-import { PAGE_ROTATION_VERIFIED } from '../app/markup-tools';
+import type { ReaderCommandId } from '../app/reader-commands';
+import { isMacPlatform } from '../lib/platform';
+import { PAGE_ROTATION_VERIFIED } from '../lib/verification-gates';
 import { sameChord } from './accelerators';
 
 export type KeybindPlatform = 'mac' | 'other';
@@ -69,7 +71,7 @@ interface KeybindDefaultsRevision {
 
 type KeybindAction = Omit<KeybindConfig, 'binds'>;
 
-const readerCommand = (displayName: string, commandId: string): KeybindAction => ({
+const readerCommand = (displayName: string, commandId: ReaderCommandId): KeybindAction => ({
   displayName,
   action: 'readerCommand',
   data: commandId,
@@ -90,6 +92,8 @@ export const KEYBIND_ACTIONS: Readonly<Record<string, KeybindAction>> = {
   PreviousTab: { displayName: 'Previous Tab', action: 'previousTab' },
   Print: { displayName: 'Print', action: 'print' },
   Find: { displayName: 'Find in Document', action: 'find' },
+  Undo: readerCommand('Undo', 'edit.undo'),
+  Redo: readerCommand('Redo', 'edit.redo'),
   ZoomIn: { displayName: 'Zoom In', action: 'zoomIn' },
   ZoomOut: { displayName: 'Zoom Out', action: 'zoomOut' },
   ResetZoom: { displayName: 'Actual Size', action: 'resetZoom' },
@@ -217,6 +221,14 @@ export const KEYBIND_DEFAULTS_REVISIONS: readonly KeybindDefaultsRevision[] = [
       RotateRight: ['CmdOrCtrl+R'],
     },
   },
+  {
+    // Edit ▸ Undo and Redo as Reader Actions (#99), replacing EmbedPDF's own shortcuts.
+    version: 5,
+    binds: {
+      Undo: ['CmdOrCtrl+Z'],
+      Redo: { mac: ['Cmd+Shift+Z'], other: ['Ctrl+Shift+Z', 'Ctrl+Y'] },
+    },
+  },
 ];
 
 const gateOpen = (gate: KeybindGate | undefined, gates: KeybindGates) =>
@@ -280,8 +292,7 @@ export function defaultKeybinds(
 
 /** The platform this window runs on, for platform-dependent defaults. */
 export function currentKeybindPlatform(): KeybindPlatform {
-  const platform = globalThis.navigator?.platform ?? '';
-  return platform.toUpperCase().includes('MAC') ? 'mac' : 'other';
+  return isMacPlatform() ? 'mac' : 'other';
 }
 
 const sameBinds = (a: readonly string[], b: readonly string[], isMac: boolean): boolean =>

@@ -1,11 +1,12 @@
-// Reader commands: the one table behind the native View, Go and Tools menus.
-// Each command names the typed Reader Action or chrome-preference change its
-// toolbar control makes (or calls that control's own entry point), and how its
-// menu item's enabled, checked and title state follows the reader.
+// Reader Commands (CONTEXT.md): the one table behind the native Edit ▸ Undo/Redo,
+// View, Go and Tools menus, the toolbar controls and the shortcuts. Each command
+// names the typed Reader Action or chrome-preference change its toolbar control
+// makes (or calls that control's own entry point), and how its menu item's
+// enabled, checked and title state follows the reader.
 //
 // Command ids are the native menu item ids (src-tauri/src/menu.rs). Rust
-// forwards every `view.*`, `go.*` and `tools.*` click as a `menu-command`
-// event; `readerCommandStates` feeds `set_menu_item_states` and
+// forwards every `edit.*`, `view.*`, `go.*` and `tools.*` click as a
+// `reader-command` event; `readerCommandStates` feeds `set_menu_item_states` and
 // `readerMenuSubmenus` fills the menus built from TypeScript lists.
 //
 // Extending: add an entry to `staticCommands` (and the item in menu.rs), or
@@ -16,6 +17,7 @@
 // section stays empty), so no shortcut or menu click can reach them.
 
 import type { ViewMode } from '../lib/document-features';
+import { PAGE_ROTATION_VERIFIED } from '../lib/verification-gates';
 import {
   type DispatchReaderAction,
   type ReaderAction,
@@ -31,12 +33,9 @@ import {
 import type { KeybindConfig } from '../scripts/keybind-defaults';
 import type { ChromePreferences, ChromePreferencesAuthority } from './chrome-preferences';
 import type { ActiveMarkupState } from './document-workspace';
-import {
-  PAGE_ROTATION_VERIFIED,
-  VERIFIED_MARKUP_TOOLS,
-  type VerifiedMarkupTool,
-} from './markup-tools';
+import { isEditableMarkup, VERIFIED_MARKUP_TOOLS, type VerifiedMarkupTool } from './markup-tools';
 import type { SidebarChoice } from './reader-sidebar';
+import { tabBarShown } from './tab-bar';
 
 /**
  * Reader Actions shared by every input adapter (toolbar, shortcuts, menus) so
@@ -75,6 +74,13 @@ export interface ReaderCommandContext {
   readonly selectedPages: () => readonly number[];
   /** The active Document's current page; null without one. */
   readonly currentPage: () => number | null;
+  /** View ▸ Show/Hide Tab Bar: keeps the tab bar shown for one Document, for this app run. */
+  readonly toggleTabBar: () => void;
+  /**
+   * Undoes or redoes typing in the focused text field (Search, dialogs, a note);
+   * false when focus is not in an editable element.
+   */
+  readonly editTextField: (kind: 'undo' | 'redo') => boolean;
 }
 
 export interface ReaderCommandStateInput {
@@ -91,6 +97,10 @@ export interface ReaderCommandStateInput {
   /** Whether the active Document's Navigation History has somewhere to go. */
   readonly canGoBack: boolean;
   readonly canGoForward: boolean;
+  /** Whether View ▸ Show Tab Bar keeps the tab bar shown (transient, never persisted). */
+  readonly tabBarKeptShown: boolean;
+  /** Whether focus is in an editable element, whose own typing Undo and Redo then edit. */
+  readonly textFieldFocused: boolean;
   /**
    * The effective keybinds; each command's menu item shows its shortcut as
    * its accelerator. Absent: accelerators are left as they are.
@@ -114,8 +124,8 @@ export interface ReaderMenuSubmenu {
   readonly items: readonly { readonly id: string; readonly text: string }[];
 }
 
-interface ReaderCommand {
-  readonly id: string;
+interface ReaderCommand<Id extends string = string> {
+  readonly id: Id;
   run(context: ReaderCommandContext): void | Promise<void>;
   state(input: ReaderCommandStateInput): Omit<ReaderCommandState, 'id'>;
 }
@@ -131,19 +141,24 @@ const ROTATE_ITEMS = [
 ] as const;
 
 const hasDocument = (input: ReaderCommandStateInput) => input.activeDocument !== null;
+/** The active Document takes edits; protected Documents refuse with their reason. */
+const editableDocument = (input: ReaderCommandStateInput) =>
+  hasDocument(input) && isEditableMarkup(input.markup);
 const whenDocument = (input: ReaderCommandStateInput) => ({ enabled: hasDocument(input) });
 const checkedWithDocument = (input: ReaderCommandStateInput, checked: boolean) => ({
   enabled: hasDocument(input),
   checked: hasDocument(input) && checked,
 });
 
-const dispatching = (id: string, action: () => ReaderAction): ReaderCommand => ({
+const dispatching = <Id extends string>(id: Id, action: () => ReaderAction): ReaderCommand<Id> => ({
   id,
   run: (context) => context.dispatchReaderAction(action()),
   state: whenDocument,
 });
 
-const sidebarCommand = (choice: SidebarChoice): ReaderCommand => ({
+const sidebarCommand = <Choice extends SidebarChoice>(
+  choice: Choice,
+): ReaderCommand<`view.sidebar.${Choice}`> => ({
   id: `view.sidebar.${choice}`,
   run: (context) => context.sidebar?.choose(choice),
   state: (input) => {
@@ -155,19 +170,43 @@ const sidebarCommand = (choice: SidebarChoice): ReaderCommand => ({
   },
 });
 
-const viewModeCommand = (viewMode: ViewMode): ReaderCommand => ({
+const viewModeCommand = <Mode extends ViewMode>(
+  viewMode: Mode,
+): ReaderCommand<`view.mode.${Mode}`> => ({
   id: `view.mode.${viewMode}`,
   run: (context) => context.dispatchReaderAction(readerAction.setViewMode(viewMode)),
   state: (input) => checkedWithDocument(input, input.activeDocument?.viewMode === viewMode),
 });
 
-const staticCommands: readonly ReaderCommand[] = [
+/**
+ * Edit ▸ Undo and Redo: the Document's edits (Annotations, Page Rotation) as
+ * Reader Actions, or a focused text field's own typing.
+ */
+const historyCommand = <Id extends 'edit.undo' | 'edit.redo'>(
+  id: Id,
+  kind: 'undo' | 'redo',
+): ReaderCommand<Id> => ({
+  id,
+  run: (context) => {
+    if (context.editTextField(kind)) return;
+    return context.dispatchReaderAction({ type: kind === 'undo' ? 'undoEdit' : 'redoEdit' });
+  },
+  state: (input) => ({
+    enabled:
+      input.textFieldFocused ||
+      (editableDocument(input) &&
+        Boolean(kind === 'undo' ? input.markup?.canUndo : input.markup?.canRedo)),
+  }),
+});
+
+const staticCommands = [
+  historyCommand('edit.undo', 'undo'),
+  historyCommand('edit.redo', 'redo'),
   {
     id: 'view.tab-bar',
-    run: ({ preferences }) =>
-      preferences.update({ tabBarVisible: !preferences.snapshot().tabBarVisible }),
+    run: (context) => context.toggleTabBar(),
     state: (input) => {
-      const shown = input.preferences.tabBarVisible || input.documentCount > 1;
+      const shown = tabBarShown(input.documentCount, input.tabBarKeptShown);
       return {
         // Several open Documents always show their tabs.
         enabled: hasDocument(input) && input.documentCount < 2,
@@ -247,7 +286,18 @@ const staticCommands: readonly ReaderCommand[] = [
     state: (input) =>
       checkedWithDocument(input, input.markup !== null && input.markup.activeToolId === null),
   },
-];
+] as const satisfies readonly ReaderCommand[];
+
+/**
+ * Every command id: the static table's, plus the items listed from the presets,
+ * the verified tools and (behind the gate) Rotate. Native menu ids and stored
+ * keybind data arrive as plain strings; the menu.rs id test keeps them in step.
+ */
+export type ReaderCommandId =
+  | (typeof staticCommands)[number]['id']
+  | `${typeof APPEARANCE_SUBMENU}.${AppearancePresetId}`
+  | `${typeof ANNOTATE_SUBMENU}.${string}`
+  | (typeof ROTATE_ITEMS)[number]['id'];
 
 const appearanceCommands = (): ReaderCommand[] =>
   APPEARANCE_PRESETS.map(({ id }) => ({
@@ -271,7 +321,7 @@ const annotateCommands = (tools: readonly VerifiedMarkupTool[]): ReaderCommand[]
         ? context.highlightButton?.activate(tool.id)
         : context.markupToolbar?.chooseTool(tool.id),
     state: (input) => ({
-      enabled: hasDocument(input) && input.markup !== null && input.markup.readOnlyReason === null,
+      enabled: editableDocument(input),
       checked: hasDocument(input) && input.markup?.activeToolId === tool.id,
     }),
   }));
@@ -291,9 +341,7 @@ const rotateCommands = (): ReaderCommand[] =>
       if (pages.length === 0) return;
       return context.dispatchReaderAction(readerAction.rotatePages(pages, direction));
     },
-    state: (input) => ({
-      enabled: hasDocument(input) && input.markup !== null && input.markup.readOnlyReason === null,
-    }),
+    state: (input) => ({ enabled: editableDocument(input) }),
   }));
 
 function readerCommands(
@@ -309,7 +357,7 @@ function readerCommands(
   return commands;
 }
 
-/** Runs a native menu command; false when the id names no command. */
+/** Runs a Reader Command; false when the id names no command. */
 export async function runReaderCommand(
   id: string,
   context: ReaderCommandContext,
@@ -323,10 +371,11 @@ export async function runReaderCommand(
 }
 
 /**
- * Keybind actions that predate the `readerCommand` action, and the menu
- * command each one performs.
+ * Keybind actions that predate the `readerCommand` action, and the command
+ * each one runs: the shortcut handler (keybinds.ts) and the menu accelerator
+ * both read this one map.
  */
-const KEYBIND_ACTION_COMMANDS: Readonly<Record<string, string>> = {
+export const LEGACY_KEYBIND_COMMANDS: Readonly<Record<string, ReaderCommandId>> = {
   resetZoom: 'view.zoom.actual-size',
   fitToPage: 'view.zoom.fit',
   fitToWidth: 'view.zoom.width',
@@ -344,7 +393,7 @@ function commandAccelerators(
 ): Map<string, string> {
   const accelerators = new Map<string, string>();
   for (const { action, data, binds } of Object.values(keybinds)) {
-    const commandId = action === 'readerCommand' ? data : KEYBIND_ACTION_COMMANDS[action];
+    const commandId = action === 'readerCommand' ? data : LEGACY_KEYBIND_COMMANDS[action];
     if (!commandId || accelerators.has(commandId)) continue;
     const accelerator = binds.map(menuAccelerator).find((candidate) => candidate !== null);
     if (accelerator) accelerators.set(commandId, accelerator);

@@ -3,10 +3,12 @@
 // by the toolbar's Markup toggle. Visibility is a chrome preference; the chosen
 // tool is transient and lives on the active Document's rendering.
 
+import { isEditableTarget } from '../lib/editable-target';
 import { hydrateChromeIcons } from './chrome-icons';
 import type { ChromePreferencesAuthority } from './chrome-preferences';
 import type { ActiveMarkupState } from './document-workspace';
 import {
+  isEditableMarkup,
   toolAfterChoosing,
   VERIFIED_MARKUP_TOOLS,
   type VerifiedMarkupTool,
@@ -44,10 +46,6 @@ export interface MarkupEscapeOptions {
   /** Presentation mode claims Esc to exit before anything else. */
   readonly presentationActive: () => boolean;
 }
-
-const isEditableTarget = (target: EventTarget | null): boolean =>
-  target instanceof HTMLElement &&
-  (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName));
 
 /**
  * Esc returns from any markup tool (highlight mode, the Text note tool) to text
@@ -112,7 +110,7 @@ export function createMarkupToolbar({
     const markup = activeMarkup();
     const reason = markup?.readOnlyReason ?? null;
     for (const { tool, button } of buttons) {
-      button.disabled = !markup || reason !== null;
+      button.disabled = !isEditableMarkup(markup);
       button.title = reason ?? tool.label;
       button.setAttribute('aria-pressed', String(markup?.activeToolId === tool.id));
     }
@@ -128,7 +126,7 @@ export function createMarkupToolbar({
   /** A tool button's choice; choosing the active tool returns to text selection. */
   const chooseTool = (toolId: string) => {
     const markup = activeMarkup();
-    if (!markupToolIds.has(toolId) || !markup || markup.readOnlyReason !== null) return;
+    if (!markupToolIds.has(toolId) || !isEditableMarkup(markup)) return;
     setActiveTool(toolAfterChoosing(markup.activeToolId, toolId));
     render();
   };

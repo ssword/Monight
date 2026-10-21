@@ -52,6 +52,10 @@ function fakeContext(overrides: Partial<ReaderCommandContext> = {}) {
     requestPage: async () => 12,
     selectedPages: () => [],
     currentPage: () => 3,
+    toggleTabBar: () => {
+      calls.push('tab-bar');
+    },
+    editTextField: () => false,
     ...overrides,
   };
   return {
@@ -65,7 +69,7 @@ function fakeContext(overrides: Partial<ReaderCommandContext> = {}) {
   };
 }
 
-describe('native menu commands', () => {
+describe('Reader Commands', () => {
   it.each([
     ['view.zoom.in', { type: 'zoomIn' }],
     ['view.zoom.out', { type: 'zoomOut' }],
@@ -79,6 +83,8 @@ describe('native menu commands', () => {
     ['go.next-page', { type: 'goToNextPage' }],
     ['go.back', { type: 'goBack' }],
     ['go.forward', { type: 'goForward' }],
+    ['edit.undo', { type: 'undoEdit' }],
+    ['edit.redo', { type: 'redoEdit' }],
   ])('%s dispatches its typed Reader Action', async (id, action) => {
     const { context, dispatched } = fakeContext();
     expect(await runReaderCommand(id, context)).toBe(true);
@@ -89,6 +95,20 @@ describe('native menu commands', () => {
     const { context, dispatched } = fakeContext();
     await runReaderCommand('go.page', context);
     expect(dispatched).toEqual([{ type: 'goToPage', page: 12, recordHistory: true }]);
+  });
+
+  it('Undo and Redo in a focused text field undo its typing instead of a Document edit', async () => {
+    const edited: string[] = [];
+    const { context, dispatched } = fakeContext({
+      editTextField: (kind) => {
+        edited.push(kind);
+        return true;
+      },
+    });
+    await runReaderCommand('edit.undo', context);
+    await runReaderCommand('edit.redo', context);
+    expect(edited).toEqual(['undo', 'redo']);
+    expect(dispatched).toEqual([]);
   });
 
   it('Go to Page… does nothing when the request is cancelled', async () => {
@@ -114,12 +134,11 @@ describe('native menu commands', () => {
     expect(dispatched).toEqual([]);
   });
 
-  it('Show Tab Bar toggles the tab bar chrome preference', async () => {
-    const { context, preferences } = fakeContext();
+  it('Show Tab Bar toggles the tab bar for this app run, not as a chrome preference', async () => {
+    const { context, calls, preferences } = fakeContext();
     await runReaderCommand('view.tab-bar', context);
-    expect(preferences().tabBarVisible).toBe(true);
-    await runReaderCommand('view.tab-bar', context);
-    expect(preferences().tabBarVisible).toBe(false);
+    expect(calls).toEqual(['tab-bar']);
+    expect(preferences()).toEqual(DEFAULT_CHROME_PREFERENCES);
   });
 
   it('Tools ▸ Annotate goes through the control that offers each verified tool', async () => {
@@ -163,6 +182,8 @@ const input = (overrides: Partial<ReaderCommandStateInput> = {}): ReaderCommandS
   fullScreen: false,
   canGoBack: false,
   canGoForward: false,
+  tabBarKeptShown: false,
+  textFieldFocused: false,
   ...overrides,
 });
 
@@ -236,6 +257,24 @@ describe('native menu state', () => {
     expect(stateOf(states, 'view.markup-toolbar')?.enabled).toBe(true);
   });
 
+  it('enables Undo and Redo when the Document has an edit to undo or redo, or a text field is focused', () => {
+    const none = readerCommandStates(input());
+    expect(stateOf(none, 'edit.undo')?.enabled).toBe(false);
+    expect(stateOf(none, 'edit.redo')?.enabled).toBe(false);
+
+    const undoable = readerCommandStates(
+      input({
+        markup: { activeToolId: null, readOnlyReason: null, canUndo: true, canRedo: false },
+      }),
+    );
+    expect(stateOf(undoable, 'edit.undo')?.enabled).toBe(true);
+    expect(stateOf(undoable, 'edit.redo')?.enabled).toBe(false);
+
+    const typing = readerCommandStates(input({ activeDocument: null, textFieldFocused: true }));
+    expect(stateOf(typing, 'edit.undo')?.enabled).toBe(true);
+    expect(stateOf(typing, 'edit.redo')?.enabled).toBe(true);
+  });
+
   it('disables page steps at the first and last page', () => {
     const first = readerCommandStates(
       input({
@@ -283,11 +322,8 @@ describe('native menu state', () => {
     const shown = readerCommandStates(
       input({
         documentCount: 1,
-        preferences: {
-          ...DEFAULT_CHROME_PREFERENCES,
-          tabBarVisible: true,
-          markupToolbarVisible: true,
-        },
+        tabBarKeptShown: true,
+        preferences: { ...DEFAULT_CHROME_PREFERENCES, markupToolbarVisible: true },
         fullScreen: true,
       }),
     );
@@ -364,7 +400,7 @@ describe('native menu ids', () => {
     const { readerMenuSubmenus } = await import('../app/reader-commands');
     const menuSource = readFileSync('src-tauri/src/menu.rs', 'utf8');
     const definitions = menuSource.slice(0, menuSource.indexOf('#[cfg(test)]'));
-    const rustIds = [...definitions.matchAll(/"((?:view|go|tools)\.[A-Za-z.-]+)"/g)].map(
+    const rustIds = [...definitions.matchAll(/"((?:edit|view|go|tools)\.[A-Za-z.-]+)"/g)].map(
       ([, id]) => id,
     );
 

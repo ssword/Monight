@@ -230,6 +230,28 @@ describe('reader sidebar', () => {
     expect(thumbnail).toHaveBeenCalledTimes(3);
   });
 
+  it('re-renders only the thumbnails of pages whose Page Rotation changed', async () => {
+    const { query, thumbnail } = fakeQuery('/docs/report.pdf');
+    active = { ...(active as SidebarDocument), query, pageRotations: [0, 0, 0] };
+    const sidebar = await mount({ schemaVersion: 1, sidebarVisible: true });
+    await flush();
+    expect(thumbnail.mock.calls.map(([page]) => page)).toEqual([1, 2, 3]);
+
+    // Rotating page 2 (and later undoing it) changes only that page's rotation.
+    active = { ...(active as SidebarDocument), query: { ...query }, pageRotations: [0, 1, 0] };
+    sidebar.refresh();
+    await flush();
+    active = { ...(active as SidebarDocument), query: { ...query }, pageRotations: [0, 0, 0] };
+    sidebar.refresh();
+    await flush();
+
+    expect(thumbnail.mock.calls.map(([page]) => page)).toEqual([1, 2, 3, 2, 2]);
+    expect(thumbnails().map((button) => button.dataset.page)).toEqual(['1', '2', '3']);
+    expect(
+      document.querySelectorAll('#reader-sidebar [data-page="2"] canvas[data-page="2"]'),
+    ).toHaveLength(1);
+  });
+
   it('labels thumbnails with page numbers and highlights the current page as the reader scrolls', async () => {
     const sidebar = await mount({ schemaVersion: 1, sidebarVisible: true });
     expect(thumbnails().map((button) => button.textContent?.trim())).toEqual(['1', '2', '3']);

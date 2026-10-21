@@ -573,6 +573,51 @@ describe('Back and Forward shortcut defaults', () => {
   });
 });
 
+describe('Undo and Redo shortcuts', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    store.reset();
+  });
+
+  it('gives ⌘Z Undo and ⇧⌘Z Redo on macOS, and Ctrl+Y Redo elsewhere, as Reader Commands', async () => {
+    const mac = await new SettingsManager('main', { platform: 'mac' }).load();
+    expect(mac.keybinds.Undo).toEqual({
+      displayName: 'Undo',
+      binds: ['CmdOrCtrl+Z'],
+      action: 'readerCommand',
+      data: 'edit.undo',
+    });
+    expect(mac.keybinds.Redo).toEqual({
+      displayName: 'Redo',
+      binds: ['Cmd+Shift+Z'],
+      action: 'readerCommand',
+      data: 'edit.redo',
+    });
+
+    store.reset();
+    const other = await new SettingsManager('main', { platform: 'other' }).load();
+    expect(other.keybinds.Redo.binds).toEqual(['Ctrl+Shift+Z', 'Ctrl+Y']);
+  });
+
+  it('adds Undo and Redo to an install stored before them', async () => {
+    const stored = structuredClone(
+      (await new SettingsManager('main', { platform: 'mac' }).load()).keybinds,
+    );
+    delete stored.Undo;
+    delete stored.Redo;
+    store.reset({
+      storageSchemaVersion: SETTINGS_SCHEMA_VERSION,
+      keybinds: stored,
+      keybindDefaultsVersion: 3,
+    });
+
+    const settings = await new SettingsManager('main', { platform: 'mac' }).load();
+
+    expect(settings.keybinds.Undo.binds).toEqual(['CmdOrCtrl+Z']);
+    expect(settings.keybinds.Redo.binds).toEqual(['Cmd+Shift+Z']);
+  });
+});
+
 describe('Rotate shortcuts behind the Page Rotation gate', () => {
   beforeEach(() => {
     vi.clearAllMocks();

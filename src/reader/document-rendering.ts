@@ -9,6 +9,11 @@ import type {
 export interface DocumentRenderingState {
   readonly currentPage: number;
   readonly totalPages: number;
+  /**
+   * Each page's Page Rotation (quarter turns) from Document Content, in page
+   * order; it changes when a Page Rotation or its undo applies. Absent when unknown.
+   */
+  readonly pageRotations?: readonly number[];
   readonly zoom: number;
   readonly zoomIntent: ZoomIntent;
   readonly fileName: string;

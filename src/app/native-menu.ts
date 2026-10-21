@@ -24,10 +24,7 @@ export interface NativeMenuItemState {
   readonly accelerator?: string | null;
 }
 
-export type InvokeMenuCommand = (
-  command: string,
-  args: Record<string, unknown>,
-) => Promise<unknown>;
+export type InvokeNativeMenu = (command: string, args: Record<string, unknown>) => Promise<unknown>;
 
 export interface NativeMenuSync {
   /** Applies item states, sending only those that changed since the last sync. */
@@ -49,7 +46,7 @@ const sameState = (left: NativeMenuItemState | undefined, right: NativeMenuItemS
   left.accelerator === right.accelerator;
 
 export function createNativeMenuSync(
-  invoke: InvokeMenuCommand,
+  invoke: InvokeNativeMenu,
   {
     onError = (error: unknown) => console.error('Native menu sync failed:', error),
   }: { onError?: (error: unknown) => void } = {},

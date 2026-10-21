@@ -166,6 +166,8 @@ describe('Document workspace adapter', () => {
           }),
           exportPdf: async () => new Uint8Array([1]),
           markSaved: vi.fn(),
+          canUndo: () => filePath === '/editable.pdf',
+          canRedo: () => false,
         };
         return surface;
       },
@@ -179,7 +181,12 @@ describe('Document workspace adapter', () => {
     }
 
     workspace.setActiveAnnotationTool('textComment');
-    expect(workspace.activeMarkup()).toEqual({ activeToolId: 'textComment', readOnlyReason: null });
+    expect(workspace.activeMarkup()).toEqual({
+      activeToolId: 'textComment',
+      readOnlyReason: null,
+      canUndo: true,
+      canRedo: false,
+    });
     expect(tools.get('/signed.pdf')).toBeNull();
     workspace.setActiveAnnotationTool('highlight', { strokeColor: '#7ED957' });
     expect(toolDefaults.get('/editable.pdf')).toEqual({ strokeColor: '#7ED957' });
@@ -189,7 +196,12 @@ describe('Document workspace adapter', () => {
     ]);
 
     activePath = '/signed.pdf';
-    expect(workspace.activeMarkup()).toEqual({ activeToolId: null, readOnlyReason: reason });
+    expect(workspace.activeMarkup()).toEqual({
+      activeToolId: null,
+      readOnlyReason: reason,
+      canUndo: false,
+      canRedo: false,
+    });
 
     activePath = '/missing.pdf';
     expect(workspace.activeMarkup()).toBeNull();

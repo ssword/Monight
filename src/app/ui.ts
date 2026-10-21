@@ -2,6 +2,7 @@ import type { DocumentRenderingState } from '../reader/document-rendering';
 import type { ReadingSessionSnapshot } from '../reader/reader-actions';
 import type { RecentDocument } from '../reader/recent-documents';
 import { hydrateChromeIcons } from './chrome-icons';
+import { tabBarShown } from './tab-bar';
 
 // Show splash screen
 export function showSplash(): void {
@@ -58,13 +59,13 @@ export function applyWindowChrome(doc: Document, isMac: boolean): void {
 }
 
 /**
- * The tab bar is shown only while two or more Documents are open, like macOS tabs.
- * Only visibility changes; the rendered tabs keep Reading Session order.
- * `alwaysShown` (View ▸ Show Tab Bar) keeps it shown for a single Document.
+ * Shows or hides the tab bar by `tabBarShown`. Only visibility changes; the
+ * rendered tabs keep Reading Session order.
  */
-export function updateTabBarVisibility(documentCount: number, alwaysShown = false): void {
-  const shown = documentCount >= 2 || (alwaysShown && documentCount > 0);
-  document.getElementById('tab-bar')?.classList.toggle('hidden', !shown);
+export function updateTabBarVisibility(documentCount: number, keptShown = false): void {
+  document
+    .getElementById('tab-bar')
+    ?.classList.toggle('hidden', !tabBarShown(documentCount, keptShown));
 }
 
 // Update UI based on viewer state
@@ -90,18 +91,31 @@ export function updateUI(
   }
 }
 
-// Update keyboard shortcut hints based on platform
-export function updateKeyboardHints(isMac: boolean): void {
-  const modKey = isMac ? 'Cmd' : 'Ctrl';
+/** The effective shortcuts shown in tooltips and the splash hint; null when unbound. */
+export interface KeyboardHints {
+  readonly openFile: string | null;
+  readonly print: string | null;
+}
 
-  // Update tooltips
-  const openBtn = document.getElementById('open-file');
-  if (openBtn) openBtn.title = `Open PDF (${modKey}+O)`;
+const withShortcut = (label: string, shortcut: string | null) =>
+  shortcut ? `${label} (${shortcut})` : label;
 
-  const printBtn = document.getElementById('print-file');
-  if (printBtn) printBtn.title = `Print (${modKey}+P)`;
+/** Shows the reader's effective Open and Print bindings, or none when unbound. */
+export function updateKeyboardHints({ openFile, print }: KeyboardHints): void {
+  const titles: [string, string, string | null][] = [
+    ['open-file', 'Open PDF', openFile],
+    ['new-tab-btn', 'Open New PDF', openFile],
+    ['print-file', 'Print', print],
+  ];
+  for (const [id, label, shortcut] of titles) {
+    const element = document.getElementById(id);
+    if (element) element.title = withShortcut(label, shortcut);
+  }
 
-  // Update hint text
   const hintText = document.querySelector('.hint-text');
-  if (hintText) hintText.textContent = `Press ${modKey}+O to open a PDF file`;
+  if (hintText) {
+    hintText.textContent = openFile
+      ? `Press ${openFile} to open a PDF file`
+      : 'Open a PDF file to start reading';
+  }
 }

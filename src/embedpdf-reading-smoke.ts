@@ -1,9 +1,11 @@
 import { navigationPdf } from './__fixtures__/navigation-pdf';
+import { loadChromePreferences } from './app/chrome-preferences';
 import { createDocumentIntakeRuntime } from './app/document-intake-runtime';
 import { createDocumentWorkspace } from './app/document-workspace';
 import { setupEventListeners } from './app/dom-events';
 import { createEmbedPdfDocumentSurfaceFactory } from './app/embedpdf-document-surface';
 import { registerKeybindActions } from './app/keybinds';
+import { type ReaderCommandContext, runReaderCommand } from './app/reader-commands';
 import { restoreReadingSessionAtStartup } from './app/startup-restoration';
 import type { DocumentContent } from './reader/document-content';
 import {
@@ -75,8 +77,27 @@ async function run() {
   const goToPage = async (page: number) => {
     await dispatch({ type: 'goToPage', page });
   };
-  const goToRelativePage = async (direction: 'next' | 'previous') => {
-    await dispatch({ type: direction === 'next' ? 'goToNextPage' : 'goToPreviousPage' });
+  // Zoom shortcuts run their Reader Commands; this page has no other chrome.
+  const commandContext: ReaderCommandContext = {
+    dispatchReaderAction: async (action) => {
+      await dispatch(action);
+    },
+    preferences: await loadChromePreferences({
+      read: async () => undefined,
+      write: async () => {},
+    }),
+    sidebar: null,
+    markupToolbar: null,
+    highlightButton: null,
+    appearance: null,
+    setActiveTool: () => {},
+    toggleSlideshow: async () => {},
+    toggleFullScreen: async () => {},
+    requestPage: async () => null,
+    selectedPages: () => [],
+    currentPage: () => null,
+    toggleTabBar: () => {},
+    editTextField: () => false,
   };
   registerKeybindActions({
     keybindManager: manager,
@@ -87,10 +108,8 @@ async function run() {
     updateTabBarVisibility: () => {},
     updateUI: () => {},
     openSearch: () => {},
-    togglePresentationMode: async () => {},
     goToPage,
-    goToRelativePage,
-    runReaderCommand: async () => false,
+    runReaderCommand: (id) => runReaderCommand(id, commandContext),
     dispatchReaderAction: async (action) => {
       await dispatch(action);
     },

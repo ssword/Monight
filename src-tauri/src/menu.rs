@@ -87,21 +87,21 @@ fn build_app_menu(app: &AppHandle) -> Result<Submenu<Wry>, tauri::Error> {
     )
 }
 
+/// Undo and Redo are reader commands (Reader Actions on the Document's edits,
+/// or a focused text field's own typing); Cut, Copy, Paste and Select All stay
+/// the platform's own.
 fn build_edit_menu(app: &AppHandle) -> Result<Submenu<Wry>, tauri::Error> {
-    Submenu::with_items(
-        app,
-        "Edit",
-        true,
-        &[
-            &PredefinedMenuItem::undo(app, None)?,
-            &PredefinedMenuItem::redo(app, None)?,
-            &PredefinedMenuItem::separator(app)?,
-            &PredefinedMenuItem::cut(app, None)?,
-            &PredefinedMenuItem::copy(app, None)?,
-            &PredefinedMenuItem::paste(app, None)?,
-            &PredefinedMenuItem::select_all(app, None)?,
-        ],
-    )
+    let submenu = build_reader_menu(app, "Edit", EDIT_MENU)?;
+    for item in [
+        PredefinedMenuItem::separator(app)?,
+        PredefinedMenuItem::cut(app, None)?,
+        PredefinedMenuItem::copy(app, None)?,
+        PredefinedMenuItem::paste(app, None)?,
+        PredefinedMenuItem::select_all(app, None)?,
+    ] {
+        submenu.append(&item)?;
+    }
+    Ok(submenu)
 }
 
 /// One entry of the reader menus (View, Go, Tools). Ids are the reader command
@@ -143,6 +143,8 @@ const fn command(id: &'static str, text: &'static str) -> ReaderMenuEntry {
 const fn check(id: &'static str, text: &'static str) -> ReaderMenuEntry {
     Check { id, text }
 }
+
+const EDIT_MENU: &[ReaderMenuEntry] = &[command("edit.undo", "Undo"), command("edit.redo", "Redo")];
 
 const VIEW_MENU: &[ReaderMenuEntry] = &[
     command("view.tab-bar", "Show Tab Bar"),
@@ -191,10 +193,10 @@ const TOOLS_MENU: &[ReaderMenuEntry] = &[
     Section { id: "tools.rotate" },
 ];
 
-const READER_MENUS: [&[ReaderMenuEntry]; 3] = [VIEW_MENU, GO_MENU, TOOLS_MENU];
+const READER_MENUS: [&[ReaderMenuEntry]; 4] = [EDIT_MENU, VIEW_MENU, GO_MENU, TOOLS_MENU];
 
-/// Reader commands are forwarded to the WebView, which owns reader state.
-const READER_COMMAND_PREFIXES: [&str; 3] = ["view.", "go.", "tools."];
+/// Reader Commands (CONTEXT.md) are forwarded to the WebView, which owns reader state.
+const READER_COMMAND_PREFIXES: [&str; 4] = ["edit.", "view.", "go.", "tools."];
 
 fn reader_command(event_id: &str) -> Option<&str> {
     READER_COMMAND_PREFIXES
@@ -577,7 +579,7 @@ pub fn handle_menu_event(app: &AppHandle, event_id: &str) {
 
     if let Some(command) = reader_command(event_id) {
         if let Some(window) = app.get_webview_window("main") {
-            window.emit("menu-command", command).ok();
+            window.emit("reader-command", command).ok();
         }
         return;
     }
@@ -637,7 +639,7 @@ mod tests {
 
     fn reader_menu_tables() -> &'static str {
         let source = include_str!("menu.rs");
-        let start = source.find("const VIEW_MENU").unwrap();
+        let start = source.find("const EDIT_MENU").unwrap();
         let end = source.find("const READER_MENUS").unwrap();
         &source[start..end]
     }
@@ -711,6 +713,13 @@ mod tests {
             titles(TOOLS_MENU),
             ["Text Selection", "Annotate", "[section]"]
         );
+    }
+
+    #[test]
+    fn edit_undo_and_redo_are_reader_commands() {
+        assert_eq!(titles(EDIT_MENU), ["Undo", "Redo"]);
+        assert_eq!(reader_command("edit.undo"), Some("edit.undo"));
+        assert_eq!(reader_command("edit.redo"), Some("edit.redo"));
     }
 
     #[test]

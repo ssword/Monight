@@ -6,9 +6,12 @@
 // The button exists only once Page Rotation is verified (PAGE_ROTATION_VERIFIED,
 // ADR 0003); until then its toolbar slot stays empty and hidden.
 
+import { isMacPlatform } from '../lib/platform';
+import { PAGE_ROTATION_VERIFIED } from '../lib/verification-gates';
 import { hydrateChromeIcons } from './chrome-icons';
 import type { ActiveMarkupState } from './document-workspace';
-import { PAGE_ROTATION_VERIFIED } from './markup-tools';
+import { isEditableMarkup } from './markup-tools';
+import type { ReaderCommandId } from './reader-commands';
 
 export interface RotateButtonOptions {
   /** The toolbar capsule the button is placed in. */
@@ -19,7 +22,7 @@ export interface RotateButtonOptions {
   /** The active Document's editing state; protected Documents carry their reason. */
   readonly activeMarkup: () => ActiveMarkupState | null;
   /** Runs a reader command by id (the native menu's Tools ▸ Rotate items). */
-  readonly runCommand: (id: string) => Promise<boolean>;
+  readonly runCommand: (id: ReaderCommandId) => Promise<boolean>;
 }
 
 export interface RotateButton {
@@ -28,10 +31,8 @@ export interface RotateButton {
   destroy(): void;
 }
 
-const ROTATE_LEFT = 'tools.rotate.left';
-const ROTATE_RIGHT = 'tools.rotate.right';
-
-const isMacPlatform = () => (globalThis.navigator?.platform ?? '').toUpperCase().includes('MAC');
+const ROTATE_LEFT: ReaderCommandId = 'tools.rotate.left';
+const ROTATE_RIGHT: ReaderCommandId = 'tools.rotate.right';
 
 /** Mounts the Rotate button; null (and nothing shown) while Page Rotation is unverified. */
 export function createRotateButton({
@@ -63,9 +64,8 @@ export function createRotateButton({
   const label = `Rotate Left (${isMac ? 'Option' : 'Alt'}-click to Rotate Right)`;
   const render = () => {
     const markup = activeMarkup();
-    const reason = markup?.readOnlyReason ?? null;
-    button.disabled = markup === null || reason !== null;
-    button.title = reason ?? label;
+    button.disabled = !isEditableMarkup(markup);
+    button.title = markup?.readOnlyReason ?? label;
   };
 
   const onClick = (event: MouseEvent) => {

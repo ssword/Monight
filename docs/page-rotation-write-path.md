@@ -49,6 +49,12 @@ dispatch:
 `readerAction.rotatePages(pages, direction, filePath?)` builds the first action. On read-only,
 signed, or protected Documents these actions are refused with the existing explanation.
 
+⌘Z / ⇧⌘Z (Ctrl+Z / Ctrl+Shift+Z or Ctrl+Y elsewhere) and Edit ▸ Undo/Redo are the reader
+commands `edit.undo` / `edit.redo`, which dispatch `undoEdit` / `redoEdit`; EmbedPDF's own
+`history:` shortcuts are removed so there is one path. With focus in a text field (Search,
+a dialog, a note) they undo that field's typing instead. Cut, Copy, Paste and Select All stay
+the platform's predefined items.
+
 ## Rotate controls and the verification gate (issue #114)
 
 Rotate is offered by the toolbar Rotate button (click: Rotate Left, Option/Alt-click: Rotate
@@ -60,7 +66,7 @@ selection (⇧-click range, ⌘/Ctrl-click toggle; a plain click ends it) is tra
 on Document switch or when Thumbnails closes and is never persisted. Protected Documents disable
 the button and menu items with their reason; a shortcut is refused by the Reader Action with it.
 
-Everything is behind `PAGE_ROTATION_VERIFIED` (`src/app/markup-tools.ts`). While it is `false`
+Everything is behind `PAGE_ROTATION_VERIFIED` (`src/lib/verification-gates.ts`). While it is `false`
 the button's toolbar slot is empty, the Tools menu's `tools.rotate` section (filled inline from
 TypeScript; Rust cannot see the constant) has no items, the commands do not exist, and the
 Rotate keybind actions are not defaults, not stored, and not shown in Settings. The browser
@@ -74,4 +80,7 @@ stamped with a later version while the gate was closed still applies it, because
 actions is stored yet. As with every revision, a default that collides with a chord the reader
 chose is dropped, and once stored the Rotate bindings are the reader's.
 
-Deferred: the Thumbnails sidebar does not yet re-render a page's thumbnail after it is rotated.
+The Thumbnails sidebar re-renders a page's thumbnail whenever its Page Rotation changes (a
+rotation or its undo/redo): the rendering state carries each page's live rotation
+(`DocumentRenderingState.pageRotations`), and the Thumbnails view re-renders only the pages
+whose rotation differs from the last refresh.

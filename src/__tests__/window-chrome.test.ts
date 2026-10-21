@@ -4,7 +4,12 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { hydrateChromeIcons } from '../app/chrome-icons';
-import { applyWindowChrome, renderRecentFiles, updateTabBarVisibility } from '../app/ui';
+import {
+  applyWindowChrome,
+  renderRecentFiles,
+  updateKeyboardHints,
+  updateTabBarVisibility,
+} from '../app/ui';
 
 const projectFile = (path: string) => readFileSync(resolve(process.cwd(), path), 'utf8');
 
@@ -220,5 +225,34 @@ describe('platform title bar', () => {
     expect(css).toMatch(
       /:root\[data-window-chrome="overlay"\]\s*#toolbar\s*\{[^}]*padding-left:[^;]*--traffic-light-inset/,
     );
+  });
+});
+
+describe('shortcut hints', () => {
+  const titleOf = (id: string) => document.getElementById(id)?.title;
+  const hint = () => document.querySelector('.hint-text')?.textContent;
+
+  it('carry no hard-coded shortcut in the app shell', () => {
+    loadAppShell();
+    const titled = Array.from(document.querySelectorAll<HTMLElement>('[title]'));
+    for (const element of titled) {
+      expect(element.title, element.id).not.toMatch(/(Ctrl|Cmd|⌘)\s*\+/);
+    }
+    expect(hint()).not.toMatch(/(Ctrl|Cmd|⌘)\s*\+/);
+  });
+
+  it('show the effective Open and Print bindings, or none when unbound', () => {
+    loadAppShell();
+    updateKeyboardHints({ openFile: 'Ctrl + Shift + O', print: null });
+    expect(titleOf('open-file')).toBe('Open PDF (Ctrl + Shift + O)');
+    expect(titleOf('new-tab-btn')).toBe('Open New PDF (Ctrl + Shift + O)');
+    expect(titleOf('print-file')).toBe('Print');
+    expect(hint()).toBe('Press Ctrl + Shift + O to open a PDF file');
+
+    updateKeyboardHints({ openFile: null, print: 'Cmd + P' });
+    expect(titleOf('open-file')).toBe('Open PDF');
+    expect(titleOf('new-tab-btn')).toBe('Open New PDF');
+    expect(titleOf('print-file')).toBe('Print (Cmd + P)');
+    expect(hint()).toBe('Open a PDF file to start reading');
   });
 });

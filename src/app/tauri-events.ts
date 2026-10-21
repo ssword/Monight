@@ -30,7 +30,7 @@ interface TauriListenerContext {
   updatePrintMenuState: () => Promise<void>;
   dispatchReaderAction: DispatchReaderAction;
   /** Runs a native View, Go or Tools menu item; see reader-commands.ts. */
-  runMenuCommand: (id: string) => Promise<boolean>;
+  runReaderCommand: (id: string) => Promise<boolean>;
 }
 
 export async function setupTauriListeners({
@@ -45,7 +45,7 @@ export async function setupTauriListeners({
   updateTabBarVisibility,
   updatePrintMenuState,
   dispatchReaderAction,
-  runMenuCommand,
+  runReaderCommand,
 }: TauriListenerContext): Promise<void> {
   const handleExternalOpenPayload = async (payload: ExternalOpenPayload) => {
     debugLog('External Document request:', payload);
@@ -143,8 +143,8 @@ export async function setupTauriListeners({
   });
 
   // View, Go and Tools items arrive as reader command ids (reader-commands.ts).
-  await listen<unknown>('menu-command', async (event) => {
-    if (typeof event.payload === 'string') await runMenuCommand(event.payload);
+  await listen<unknown>('reader-command', async (event) => {
+    if (typeof event.payload === 'string') await runReaderCommand(event.payload);
   });
 
   await listen('menu-close-tab', async () => {

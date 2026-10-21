@@ -118,6 +118,9 @@ export interface DocumentWorkspace {
 export interface ActiveMarkupState {
   readonly activeToolId: string | null;
   readonly readOnlyReason: string | null;
+  /** Whether the Document has an edit to undo or redo (Edit ▸ Undo/Redo). */
+  readonly canUndo?: boolean;
+  readonly canRedo?: boolean;
 }
 
 const EDITING_UNAVAILABLE_REASON = 'Native editing safety inspection is unavailable';
@@ -852,10 +855,13 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
       const filePath = options.snapshot().activeDocumentPath;
       const documentState = filePath ? presented.get(filePath) : undefined;
       if (!documentState) return null;
-      const editing = documentState.runtime.editing?.state();
+      const runtimeEditing = documentState.runtime.editing;
+      const editing = runtimeEditing?.state();
       return {
         activeToolId: documentState.rendering.activeAnnotationTool?.() ?? null,
         readOnlyReason: editing ? editing.readOnlyReason : EDITING_UNAVAILABLE_REASON,
+        canUndo: runtimeEditing?.canUndo?.() ?? false,
+        canRedo: runtimeEditing?.canRedo?.() ?? false,
       };
     },
     setActiveAnnotationTool(toolId, defaults) {

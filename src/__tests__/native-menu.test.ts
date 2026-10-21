@@ -118,7 +118,7 @@ describe('native menu state sync', () => {
     expect(calls).toEqual([['set_menu_item_states', { items: states }]]);
   });
 
-  it('runs a reader menu command and then reflects the new reader state', async () => {
+  it('runs a Reader Command clicked in the menu and then reflects the new reader state', async () => {
     const { invoke, calls } = recordInvoke();
     let viewMode: 'single' | 'continuous' = 'single';
     const readerMenu = createReaderMenu({
@@ -136,6 +136,8 @@ describe('native menu state sync', () => {
         fullScreen: false,
         canGoBack: false,
         canGoForward: false,
+        tabBarKeptShown: false,
+        textFieldFocused: false,
       }),
       context: () =>
         ({

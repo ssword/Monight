@@ -38,7 +38,11 @@ import {
 import { createNativeMenuSync, createReaderMenu } from './app/native-menu';
 import { createPersistenceCoordinator } from './app/persistence-coordinator';
 import { PresentationController } from './app/presentation-controller';
-import type { ReaderCommandContext, ReaderCommandStateInput } from './app/reader-commands';
+import {
+  type ReaderCommandContext,
+  type ReaderCommandStateInput,
+  runReaderCommand,
+} from './app/reader-commands';
 import { createReaderSidebar, type ReaderSidebar } from './app/reader-sidebar';
 import { createRotateButton, type RotateButton } from './app/rotate-button';
 import { restoreReadingSessionAtStartup } from './app/startup-restoration';
@@ -60,6 +64,8 @@ import {
 } from './app/window-lifecycle';
 import { debugLog } from './lib/debug-log';
 import type { ViewMode } from './lib/document-features';
+import { isEditableTarget } from './lib/editable-target';
+import { isMacPlatform } from './lib/platform';
 import type { DocumentIntake } from './reader/document-intake';
 import { DEFAULT_ANNOTATION_DISPLAY_NAME } from './reader/native-pdf-editing';
 import {
@@ -111,10 +117,12 @@ let applicationShutdown: ApplicationShutdownCoordinator | null = null;
 let sliderManager: SliderManager | null = null;
 let readerChrome: ReaderChromeControls | null = null;
 
+/** The Reading Session's active Document, if one is open. */
+const activeSessionDocument = (snapshot: ReadingSessionSnapshot | undefined) =>
+  snapshot?.documents.find(({ filePath }) => filePath === snapshot.activeDocumentPath);
+
 const showActiveAppearance = (snapshot: ReadingSessionSnapshot): void => {
-  const activeDocument = snapshot.documents.find(
-    ({ filePath }) => filePath === snapshot.activeDocumentPath,
-  );
+  const activeDocument = activeSessionDocument(snapshot);
   if (activeDocument?.visualState) {
     readerChrome?.showAppearance(
       activeDocument.filePath,
@@ -136,6 +144,13 @@ let markupToolbar: MarkupToolbar | null = null;
 let highlightButton: HighlightButton | null = null;
 let rotateButton: RotateButton | null = null;
 
+/** The toolbar controls that re-read the active Document on session and rendering changes. */
+const refreshReaderControls = (): void => {
+  for (const control of [readerSidebar, markupToolbar, highlightButton, rotateButton]) {
+    control?.refresh();
+  }
+};
+
 // Global keybind manager instance
 let keybindManager: KeybindManager | null = null;
 /** The effective keybinds, which the native menu shows as accelerators. */
@@ -143,16 +158,16 @@ let activeKeybinds: MoonightSettings['keybinds'] | undefined;
 let presentationController: PresentationController | null = null;
 let readerCommandContext: ReaderCommandContext | null = null;
 let windowFullScreen = false;
+/** View ▸ Show Tab Bar: app-run state, never persisted. */
+let tabBarKeptShown = false;
 
 /** Shows the tab bar for two or more Documents, or for one after View ▸ Show Tab Bar. */
 const showTabBar = (documentCount: number): void =>
-  updateTabBarVisibility(documentCount, chromePreferences?.snapshot().tabBarVisible ?? false);
+  updateTabBarVisibility(documentCount, tabBarKeptShown);
 
 const readerMenuState = (): ReaderCommandStateInput => {
   const snapshot = readerActions?.snapshot();
-  const activeDocument = snapshot?.documents.find(
-    ({ filePath }) => filePath === snapshot.activeDocumentPath,
-  );
+  const activeDocument = activeSessionDocument(snapshot);
   const rendering = documentWorkspace?.activeRenderingState() ?? null;
   const live = rendering && rendering.filePath === activeDocument?.filePath ? rendering : null;
   return {
@@ -170,6 +185,8 @@ const readerMenuState = (): ReaderCommandStateInput => {
     fullScreen: windowFullScreen,
     canGoBack: readerActions?.canGoBack() ?? false,
     canGoForward: readerActions?.canGoForward() ?? false,
+    tabBarKeptShown,
+    textFieldFocused: isEditableTarget(document.activeElement),
     keybinds: activeKeybinds,
   };
 };
@@ -184,6 +201,20 @@ const syncReaderMenu = (): void => {
   void readerMenu.sync();
 };
 
+/**
+ * Runs a command for the toolbar or a shortcut. Only native menu clicks go
+ * through `readerMenu.run`, which also accounts for the clicked item's own mark.
+ */
+const runCommand = async (id: string): Promise<boolean> => {
+  const context = readerCommandContext;
+  if (!context) return false;
+  try {
+    return await runReaderCommand(id, context);
+  } finally {
+    syncReaderMenu();
+  }
+};
+
 const refreshWindowFullScreen = async (): Promise<void> => {
   try {
     windowFullScreen = await getCurrentWebviewWindow().isFullscreen();
@@ -194,7 +225,7 @@ const refreshWindowFullScreen = async (): Promise<void> => {
 };
 
 // Detect if we're on macOS
-const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
+const isMac = isMacPlatform();
 
 /** Loads the effective keybinds into the shortcuts and the native menu accelerators. */
 const applyKeybinds = (settings: MoonightSettings): void => {
@@ -204,6 +235,11 @@ const applyKeybinds = (settings: MoonightSettings): void => {
   }
   keybindManager?.loadFromSettings(settings);
   activeKeybinds = settings.keybinds;
+  const shortcut = (id: string) => {
+    const bind = settings.keybinds[id]?.binds[0];
+    return bind && keybindManager ? keybindManager.formatForDisplay(bind) : null;
+  };
+  updateKeyboardHints({ openFile: shortcut('OpenFile'), print: shortcut('Print') });
   syncReaderMenu();
 };
 
@@ -315,13 +351,6 @@ const getActivePresentation = () => documentWorkspace?.activePresentation() ?? n
 
 const goToPage = async (page: number, options?: ReaderActionOptions): Promise<void> => {
   const outcome = await dispatchReaderActionOutcome({ type: 'goToPage', page }, options);
-  if (outcome?.status === 'failure') throw outcome.error;
-};
-
-const goToRelativePage = async (direction: 'next' | 'previous'): Promise<void> => {
-  const outcome = await dispatchReaderActionOutcome({
-    type: direction === 'next' ? 'goToNextPage' : 'goToPreviousPage',
-  });
   if (outcome?.status === 'failure') throw outcome.error;
 };
 
@@ -499,19 +528,17 @@ function mountReaderSidebar(
     revealAnnotation: (filePath, annotationId) =>
       documentWorkspace?.revealAnnotation(filePath, annotationId),
     activeDocument: () => {
-      const snapshot = readerActions?.snapshot();
+      const active = activeSessionDocument(readerActions?.snapshot());
       const rendering = documentWorkspace?.activeRenderingState();
-      const filePath = snapshot?.activeDocumentPath;
-      if (!snapshot || !filePath || !rendering || rendering.filePath !== filePath) return null;
-      const visualState = snapshot.documents.find(
-        (document) => document.filePath === filePath,
-      )?.visualState;
+      if (!active || !rendering || rendering.filePath !== active.filePath) return null;
+      const { filePath, visualState } = active;
       return {
         filePath,
         pageCount: rendering.totalPages,
         currentPage: rendering.currentPage,
         filterSettings: visualState?.filterSettings ?? defaultVisualState().filterSettings,
         query: readerActions?.query(filePath) ?? null,
+        ...(rendering.pageRotations ? { pageRotations: rendering.pageRotations } : {}),
       };
     },
   });
@@ -542,7 +569,7 @@ function mountRotateButton(): RotateButton | null {
   return createRotateButton({
     slot,
     activeMarkup: () => documentWorkspace?.activeMarkup() ?? null,
-    runCommand: (id) => readerMenu.run(id),
+    runCommand: runCommand,
   });
 }
 
@@ -696,10 +723,7 @@ export async function initializeApplication(modules: ApplicationModules): Promis
       renderingStateChanged: () => {
         if (!readerActions || !documentWorkspace) return;
         updateUI(readerActions.snapshot(), documentWorkspace.activeRenderingState());
-        readerSidebar?.refresh();
-        markupToolbar?.refresh();
-        highlightButton?.refresh();
-        rotateButton?.refresh();
+        refreshReaderControls();
         syncReaderMenu();
       },
     });
@@ -757,10 +781,7 @@ export async function initializeApplication(modules: ApplicationModules): Promis
     readerActions.observe((snapshot) => {
       documentWorkspace?.project(snapshot);
       updateUI(snapshot, documentWorkspace?.activeRenderingState() ?? null);
-      readerSidebar?.refresh();
-      markupToolbar?.refresh();
-      highlightButton?.refresh();
-      rotateButton?.refresh();
+      refreshReaderControls();
       showActiveAppearance(snapshot);
       const hasDocument = snapshot.documents.length > 0;
       showTabBar(snapshot.documents.length);
@@ -826,12 +847,8 @@ export async function initializeApplication(modules: ApplicationModules): Promis
       updateTabBarVisibility: updateTabBar,
       updateUI: updateReaderUI,
       openSearch: () => readerSidebar?.focusSearch(),
-      togglePresentationMode: async () => {
-        await presentationController?.toggle();
-      },
       goToPage,
-      goToRelativePage,
-      runReaderCommand: (id) => readerMenu.run(id),
+      runReaderCommand: runCommand,
       dispatchReaderAction,
     });
 
@@ -892,14 +909,25 @@ export async function initializeApplication(modules: ApplicationModules): Promis
       },
       selectedPages: () => readerSidebar?.selectedPages() ?? [],
       currentPage: () => readerMenuState().activeDocument?.currentPage || null,
+      editTextField: (kind) => {
+        if (!isEditableTarget(document.activeElement)) return false;
+        // The native Edit menu takes ⌘Z from the WebView; hand it back to the field.
+        document.execCommand(kind);
+        return true;
+      },
+      toggleTabBar: () => {
+        tabBarKeptShown = !tabBarKeptShown;
+        showTabBar(readerActions?.snapshot().documents.length ?? 0);
+        syncReaderMenu();
+      },
     };
     await currentWindow.onResized(() => {
       void refreshWindowFullScreen();
     });
     await readerMenu.install();
-
-    // Update keyboard hints for platform
-    updateKeyboardHints(isMac);
+    // Edit ▸ Undo and Redo also apply to a focused text field's own typing.
+    document.addEventListener('focusin', syncReaderMenu);
+    document.addEventListener('focusout', syncReaderMenu);
 
     // A visible WebView is required for EmbedPDF to publish layout frames during
     // Reading Session restoration. The splash remains interactive while it runs.
@@ -956,7 +984,7 @@ export async function initializeApplication(modules: ApplicationModules): Promis
       updatePrintMenuState: () =>
         updatePrintMenuState((readerActions?.snapshot().documents.length ?? 0) > 0),
       dispatchReaderAction,
-      runMenuCommand: (id) => readerMenu.run(id),
+      runReaderCommand: (id) => readerMenu.run(id),
     });
 
     shutdown.markReady();

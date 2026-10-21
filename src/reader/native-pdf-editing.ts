@@ -34,6 +34,9 @@ export interface NativePdfEditing {
   undo?(): void;
   /** Reapplies the most recently undone edit. */
   redo?(): void;
+  /** Whether there is an edit to undo or redo. */
+  canUndo?(): boolean;
+  canRedo?(): boolean;
 }
 
 export interface PdfSaveDestination {

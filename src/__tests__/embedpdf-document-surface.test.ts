@@ -14,7 +14,10 @@ import {
   restoreEmbedPdfReadingPositionCoordinates,
 } from '../app/embedpdf-navigation-geometry';
 import { createEmbedPdfViewerConfig } from '../app/embedpdf-offline-configuration';
-import { removeEmbedPdfCommandShortcuts } from '../app/embedpdf-shortcuts';
+import {
+  monightOwnsEmbedPdfCommand,
+  removeEmbedPdfCommandShortcuts,
+} from '../app/embedpdf-shortcuts';
 import type { EmbedPdfViewerRuntime } from '../app/embedpdf-viewer-runtime';
 import { VERIFIED_MARKUP_TOOLS } from '../app/markup-tools';
 import { createDocumentIntake } from '../reader/document-intake';
@@ -28,6 +31,7 @@ const createViewerRuntime = (
   preparePrintDocument: vi.fn(async () => new Uint8Array([1, 2, 3])),
   open: vi.fn(async () => undefined),
   pageCount: () => 2,
+  pageRotations: () => [0, 0],
   currentPage: () => 1,
   currentZoom: () => 1,
   zoomIntent: () => ({ kind: 'manual', scale: 1 }),
@@ -54,6 +58,25 @@ const createViewerRuntime = (
   revealAnnotation: vi.fn(),
   destroy: vi.fn(async () => undefined),
   ...overrides,
+});
+
+describe('EmbedPDF shortcuts', () => {
+  it('leaves Undo, Redo, zoom, scrolling and search to Monight, which owns those commands', () => {
+    for (const id of [
+      'history:undo',
+      'history:redo',
+      'zoom:in',
+      'rotate:clockwise',
+      'scroll:next-page',
+      'document:print',
+      'panel:toggle-search',
+    ]) {
+      expect(monightOwnsEmbedPdfCommand(id), id).toBe(true);
+    }
+    for (const id of ['selection:copy', 'mode:pan', 'panel:toggle-sidebar']) {
+      expect(monightOwnsEmbedPdfCommand(id), id).toBe(false);
+    }
+  });
 });
 
 describe('EmbedPDF Document surface', () => {
@@ -251,6 +274,7 @@ describe('EmbedPDF Document surface', () => {
     let callbacks: DocumentSurfaceCallbacks | undefined;
     const runtime = createViewerRuntime({
       pageCount: () => 2,
+      pageRotations: () => [0, 1],
       currentPage: () => currentPage,
       currentZoom: () => zoom,
       zoomIntent: () => ({ kind: 'manual', scale: zoom }),
@@ -324,6 +348,7 @@ describe('EmbedPDF Document surface', () => {
       zoom: 1.5,
       fileName: 'report.pdf',
       filePath: '/docs/report.pdf',
+      pageRotations: [0, 1],
     });
     expect(surface.rendering.getReadingPosition()).toEqual({ page: 2, location: 0 });
     expect(callbacks).toBeDefined();

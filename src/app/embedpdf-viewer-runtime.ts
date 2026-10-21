@@ -61,7 +61,7 @@ import {
   preloadEmbedPdfLocalFonts,
 } from './embedpdf-offline-configuration';
 import { prepareEmbedPdfPrintDocument } from './embedpdf-print-preparation';
-import { removeEmbedPdfCommandShortcuts } from './embedpdf-shortcuts';
+import { monightOwnsEmbedPdfCommand, removeEmbedPdfCommandShortcuts } from './embedpdf-shortcuts';
 
 interface EmbedPdfOpenRequest {
   readonly bytes: Uint8Array;
@@ -87,6 +87,8 @@ export interface EmbedPdfViewerRuntime {
   /** Marks the text selection with a text-markup tool; false when nothing is selected. */
   markupSelection(toolId: string, defaults: AnnotationToolDefaults): boolean;
   pageCount(): number;
+  /** Each page's live Page Rotation (quarter turns), in page order. */
+  pageRotations(): readonly number[];
   currentPage(): number;
   currentZoom(): number;
   zoomIntent(): ZoomIntent;
@@ -217,7 +219,7 @@ export async function createEmbedPdfViewerRuntime({
   for (const [shortcut, commandId] of [...commands.getAllShortcuts()]) {
     if (configuredCommands.has(commandId)) continue;
     configuredCommands.add(commandId);
-    if (/^(zoom:|rotate:|scroll:|document:|panel:toggle-search$)/.test(commandId)) {
+    if (monightOwnsEmbedPdfCommand(commandId)) {
       removeEmbedPdfCommandShortcuts(commands, commandId, [shortcut]);
     } else {
       const original = commands.getCommandByShortcut(shortcut);
@@ -275,12 +277,15 @@ export async function createEmbedPdfViewerRuntime({
   const thumbnailScope = thumbnails.forDocument(documentId);
   const zoomScope = zoom.forDocument(documentId);
   const store = registry.getStore();
+  const historyScope = requireCapability<HistoryCapability>(registry, 'history').forDocument(
+    documentId,
+  );
   const { editing, onAnnotationEvent } = createEmbedPdfNativeAnnotationEditing({
     annotations,
     annotationScope,
     currentDocument,
     engine,
-    history: requireCapability<HistoryCapability>(registry, 'history').forDocument(documentId),
+    history: historyScope,
     pageRotationChanged(pageIndexes) {
       // Keep the viewer's copy of each page in step, then re-lay out (SET_ROTATION with
       // the unchanged view rotation) and re-render the turned pages.
@@ -306,6 +311,10 @@ export async function createEmbedPdfViewerRuntime({
   });
   unsubscribers.push(
     annotationScope.onAnnotationEvent(onAnnotationEvent),
+    // Edit ▸ Undo and Redo follow whether there is an edit to undo or redo.
+    historyScope.onHistoryChange(() => {
+      if (!destroyed) callbacks.stateChanged();
+    }),
     // Edits already report a state change; loading the PDF's Annotations must too,
     // so listings such as Highlights and Notes see them once they arrive.
     annotationScope.onAnnotationEvent((event) => {
@@ -634,6 +643,7 @@ export async function createEmbedPdfViewerRuntime({
       return true;
     },
     pageCount: () => documentObject?.pageCount ?? 0,
+    pageRotations: () => documentObject?.pages.map(({ rotation }) => rotation) ?? [],
     currentPage: currentPageNumber,
     currentZoom: () => zoomScope.getState().currentZoomLevel,
     zoomIntent: () => zoomIntentFromEmbedPdfLevel(zoomScope.getState().zoomLevel),

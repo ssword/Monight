@@ -1,4 +1,5 @@
 import { debugLog } from '../lib/debug-log';
+import { isEditableTarget } from '../lib/editable-target';
 import {
   baseKeyFromCode,
   keybindsMatch,
@@ -139,20 +140,7 @@ export class KeybindManager {
   }
 
   private isEditableTarget(target: EventTarget | null): boolean {
-    if (!target || typeof target !== 'object') return false;
-
-    const element = target as {
-      tagName?: string;
-      isContentEditable?: boolean;
-    };
-    const tagName = element.tagName?.toLowerCase();
-
-    return (
-      tagName === 'input' ||
-      tagName === 'textarea' ||
-      tagName === 'select' ||
-      element.isContentEditable === true
-    );
+    return isEditableTarget(target);
   }
 
   /**

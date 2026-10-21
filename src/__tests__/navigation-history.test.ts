@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { DocumentContent } from '../reader/document-content';
 import type { DocumentRuntime } from '../reader/document-queries';
+import { createNavigationHistories } from '../reader/navigation-history';
 import {
   createReaderActions,
   type ReaderProjection,
@@ -292,5 +293,18 @@ describe('Navigation History', () => {
       filePath: '/docs/copy.pdf',
       readingPosition: { page: 2, location: 0.25 },
     });
+  });
+
+  it('Back and Forward still step when the position they leave is unknown', () => {
+    const histories = createNavigationHistories();
+    histories.record(FIRST, { page: 3, location: 0 });
+    histories.record(FIRST, { page: 9, location: 0 });
+
+    histories.stepped(FIRST, 'back', null);
+    expect(histories.target(FIRST, 'back')).toEqual({ page: 3, location: 0 });
+    expect(histories.canGo(FIRST, 'forward')).toBe(false);
+
+    histories.stepped(FIRST, 'back', null);
+    expect(histories.canGo(FIRST, 'back')).toBe(false);
   });
 });

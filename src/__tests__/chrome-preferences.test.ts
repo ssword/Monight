@@ -26,7 +26,6 @@ describe('Chrome preferences', () => {
       sidebarMode: 'thumbnails',
       sidebarWidth: 220,
       markupToolbarVisible: false,
-      tabBarVisible: false,
       highlightColor: 'yellow',
     });
     expect(DEFAULT_CHROME_PREFERENCES.sidebarVisible).toBe(false);
@@ -45,7 +44,6 @@ describe('Chrome preferences', () => {
       sidebarMode: 'thumbnails',
       sidebarWidth: 300,
       markupToolbarVisible: false,
-      tabBarVisible: false,
       highlightColor: 'yellow',
     });
     expect(backing.getStored()).toEqual({
@@ -54,7 +52,6 @@ describe('Chrome preferences', () => {
       sidebarMode: 'thumbnails',
       sidebarWidth: 300,
       markupToolbarVisible: false,
-      tabBarVisible: false,
       highlightColor: 'yellow',
     });
   });
@@ -66,7 +63,6 @@ describe('Chrome preferences', () => {
       sidebarMode: 'contact-sheet',
       sidebarWidth: 'wide',
       markupToolbarVisible: 'yes',
-      tabBarVisible: 'yes',
     });
 
     const preferences = await loadChromePreferences(storage);
@@ -76,9 +72,18 @@ describe('Chrome preferences', () => {
       sidebarMode: 'thumbnails',
       sidebarWidth: 220,
       markupToolbarVisible: false,
-      tabBarVisible: false,
       highlightColor: 'yellow',
     });
+  });
+
+  it('never keeps the tab bar choice; a value stored by an earlier build is dropped', async () => {
+    const backing = createStorage({ schemaVersion: 1, sidebarVisible: true, tabBarVisible: true });
+    const preferences = await loadChromePreferences(backing.storage, { debounceMs: 0 });
+    expect(preferences.snapshot()).not.toHaveProperty('tabBarVisible');
+
+    preferences.update({ sidebarWidth: 300 });
+    await preferences.flush();
+    expect(backing.getStored()).not.toHaveProperty('tabBarVisible');
   });
 
   it('restores markup toolbar visibility on the next launch', async () => {

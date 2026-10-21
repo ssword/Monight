@@ -37,6 +37,11 @@ export interface SidebarDocument {
   readonly currentPage: number;
   readonly filterSettings: FilterSettings;
   readonly query: DocumentQuery | null;
+  /**
+   * Each page's Page Rotation (quarter turns), in page order; a change
+   * re-renders that page's thumbnail. Absent when unknown.
+   */
+  readonly pageRotations?: readonly number[];
 }
 
 /** Defers work until an element scrolls into view; returns a cancel function. */
@@ -358,6 +363,11 @@ function createThumbnailsView({
   let currentPage = 0;
   let cancels: Array<() => void> = [];
   let generation = 0;
+  // Pages whose thumbnail has been requested, with the request in effect (a
+  // newer request for the page supersedes an older one still in flight).
+  let requested = new Map<number, number>();
+  let requests = 0;
+  let rotations: readonly number[] = [];
   // Transient multi-selection of the shown Document; empty means "the current page".
   let selection = new Set<number>();
   let anchor: number | null = null;
@@ -379,13 +389,50 @@ function createThumbnailsView({
     for (const cancel of cancels) cancel();
     cancels = [];
     generation += 1;
+    requested = new Map();
     list.replaceChildren();
+  };
+
+  const renderThumbnail = (query: DocumentQuery, page: number, image: HTMLElement) => {
+    const buildGeneration = generation;
+    const request = ++requests;
+    requested.set(page, request);
+    const maxWidth = Math.round(
+      Math.max(1, width() - THUMBNAIL_INSET) * (window.devicePixelRatio || 1),
+    );
+    void query
+      .thumbnail(page, { maxWidth })
+      .then((canvas) => {
+        if (generation !== buildGeneration || requested.get(page) !== request) return;
+        if (!query.isCurrent()) return;
+        image.replaceChildren(canvas);
+        image.classList.add('rendered');
+      })
+      .catch((error: unknown) => {
+        if (generation === buildGeneration) console.error('Thumbnail failed:', error);
+      });
+  };
+
+  /** Re-renders requested thumbnails of pages whose Page Rotation changed. */
+  const rerenderRotated = (sidebarDocument: SidebarDocument) => {
+    const next = sidebarDocument.pageRotations ?? [];
+    const { query } = sidebarDocument;
+    if (query) {
+      for (const page of requested.keys()) {
+        if ((next[page - 1] ?? 0) === (rotations[page - 1] ?? 0)) continue;
+        const image = list.querySelector<HTMLElement>(
+          `.sidebar-thumbnail[data-page="${page}"] .sidebar-thumbnail-image`,
+        );
+        if (image) renderThumbnail(query, page, image);
+      }
+    }
+    rotations = next;
   };
 
   const build = (sidebarDocument: SidebarDocument) => {
     clear();
-    const buildGeneration = generation;
     const { pageCount, query } = sidebarDocument;
+    rotations = sidebarDocument.pageRotations ?? [];
     for (let page = 1; page <= pageCount; page += 1) {
       const item = document.createElement('li');
       const button = document.createElement('button');
@@ -402,23 +449,7 @@ function createThumbnailsView({
       item.append(button);
       list.append(item);
       if (!query) continue;
-      cancels.push(
-        whenVisible(button, () => {
-          const maxWidth = Math.round(
-            Math.max(1, width() - THUMBNAIL_INSET) * (window.devicePixelRatio || 1),
-          );
-          void query
-            .thumbnail(page, { maxWidth })
-            .then((canvas) => {
-              if (generation !== buildGeneration || !query.isCurrent()) return;
-              image.replaceChildren(canvas);
-              image.classList.add('rendered');
-            })
-            .catch((error: unknown) => {
-              if (generation === buildGeneration) console.error('Thumbnail failed:', error);
-            });
-        }),
-      );
+      cancels.push(whenVisible(button, () => renderThumbnail(query, page, image)));
     }
   };
 
@@ -488,6 +519,8 @@ function createThumbnailsView({
         shown = { filePath, pageCount, generation: query?.generation };
         build(sidebarDocument);
         markSelection();
+      } else {
+        rerenderRotated(sidebarDocument);
       }
       list.style.setProperty(
         '--sidebar-thumbnail-filter',

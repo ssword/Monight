@@ -335,6 +335,8 @@ export function createEmbedPdfNativeAnnotationEditing({
       if (history) history.register(command, 'page-rotation');
       else command.execute();
     },
+    canUndo: () => !readOnlyReason && (history?.canUndo() ?? false),
+    canRedo: () => !readOnlyReason && (history?.canRedo() ?? false),
     undo() {
       if (readOnlyReason) throw new Error(readOnlyReason);
       if (!history) throw new Error('Undo is unavailable for this Document');
