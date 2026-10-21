@@ -78,6 +78,8 @@ export interface EmbedPdfViewerRuntime {
   preparePrintDocument(): Promise<Uint8Array>;
   open(request: EmbedPdfOpenRequest): Promise<void>;
   openSearch(): void;
+  activeAnnotationTool(): string | null;
+  setActiveAnnotationTool(toolId: string | null): void;
   pageCount(): number;
   currentPage(): number;
   currentZoom(): number;
@@ -106,6 +108,8 @@ export interface EmbedPdfViewerRuntime {
   renderThumbnail(pageNumber: number, maxWidth?: number): Promise<HTMLCanvasElement>;
   destroy(): Promise<void>;
 }
+
+const READY_MADE_ANNOTATION_TOOLBAR = 'annotation-toolbar';
 
 const requireCapability = <T>(registry: PluginRegistry, pluginId: string): T => {
   const capability = registry.getPlugin(pluginId)?.provides?.() as T | undefined;
@@ -354,7 +358,18 @@ export async function createEmbedPdfViewerRuntime({
     () => shadowRoot.removeEventListener('click', interceptEmbedPdfLink, { capture: true }),
   );
 
+  // Monight's markup toolbar replaces the ready-made annotation toolbar. Ready-made
+  // commands that remain (selection-menu Highlight) open it; close it at once.
+  const closeReadyMadeAnnotationToolbar = () => {
+    if (uiScope.isToolbarOpen('top', 'secondary', READY_MADE_ANNOTATION_TOOLBAR)) {
+      uiScope.closeToolbarSlot('top', 'secondary');
+    }
+  };
   unsubscribers.push(
+    uiScope.onToolbarChanged(({ toolbarId }) => {
+      if (toolbarId === READY_MADE_ANNOTATION_TOOLBAR) closeReadyMadeAnnotationToolbar();
+    }),
+    annotationScope.onActiveToolChange(() => callbacks.stateChanged()),
     scroll.onPageChange((event) => {
       if (event.documentId !== documentId) return;
       callbacks.stateChanged();
@@ -551,6 +566,12 @@ export async function createEmbedPdfViewerRuntime({
       if (!uiScope.isSidebarOpen('right', 'main', 'search-panel')) {
         uiScope.setActiveSidebar('right', 'main', 'search-panel');
       }
+    },
+    activeAnnotationTool: () => annotationScope.getActiveTool()?.id ?? null,
+    setActiveAnnotationTool(toolId) {
+      if (destroyed) return;
+      annotationScope.setActiveTool(toolId);
+      closeReadyMadeAnnotationToolbar();
     },
     pageCount: () => documentObject?.pageCount ?? 0,
     currentPage: currentPageNumber,

@@ -106,6 +106,16 @@ export function createEmbedPdfDocumentSurfaceFactory({
         };
       },
       openSearch: () => openedViewer.openSearch(),
+      activeAnnotationTool: () => openedViewer.activeAnnotationTool(),
+      setActiveAnnotationTool: (toolId) => {
+        if (destroyPromise) return;
+        if (
+          toolId !== null &&
+          (!openedViewer.editing || openedViewer.editing.state().readOnlyReason)
+        )
+          return;
+        openedViewer.setActiveAnnotationTool(toolId);
+      },
       getScrollPosition: () => 0,
       getReadingPosition: () => openedViewer.readingPosition(),
       goToPage: (pageNumber, options) => project(() => openedViewer.goToPage(pageNumber), options),

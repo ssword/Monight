@@ -91,6 +91,11 @@ async function verifyProtectedDocuments(): Promise<void> {
       `Printable protected Document failed: ${fixture.name}`,
     );
     check(!surface.runtime.editing?.state().dirty, 'Printing made a protected Document dirty');
+    surface.rendering.setActiveAnnotationTool?.('textComment');
+    check(
+      surface.rendering.activeAnnotationTool?.() === null,
+      'Protected Document accepted a markup tool',
+    );
     const container = document.querySelector<EmbedPdfContainer>('embedpdf-container');
     if (!container) throw new Error('Missing protected ready-made viewer');
     const registry = await container.registry;
@@ -207,7 +212,39 @@ async function open(
     const command = commands.resolve(id);
     check(!command.visible || command.disabled, `Unsafe viewer command is available: ${id}`);
   }
+  verifyReadyMadeAnnotationToolbarUnreachable(registry, manager.getActiveDocumentId() ?? '');
+  if (readOnlyReason === null) {
+    surface.rendering.setActiveAnnotationTool?.('textComment');
+    check(
+      annotations.getActiveTool()?.id === 'textComment' &&
+        surface.rendering.activeAnnotationTool?.() === 'textComment',
+      'Markup toolbar could not choose the Text note tool',
+    );
+    verifyReadyMadeAnnotationToolbarUnreachable(registry, manager.getActiveDocumentId() ?? '');
+    surface.rendering.setActiveAnnotationTool?.(null);
+    check(annotations.getActiveTool() === null, 'Text selection was not restored');
+  }
   return { surface, annotations, history, engine: registry.getEngine() };
+}
+
+/** Monight's markup toolbar replaces the ready-made Annotate mode and toolbar. */
+function verifyReadyMadeAnnotationToolbarUnreachable(
+  registry: import('@embedpdf/snippet').PluginRegistry,
+  documentId: string,
+): void {
+  const commands = registry
+    .getPlugin<import('@embedpdf/snippet').CommandsPlugin>('commands')
+    ?.provides();
+  const ui = registry.getPlugin<import('@embedpdf/snippet').UIPlugin>('ui')?.provides();
+  if (!commands || !ui) throw new Error('Missing ready-made viewer UI');
+  const annotate = commands.resolve('mode:annotate');
+  check(!annotate.visible || annotate.disabled, 'Ready-made Annotate mode is reachable');
+  const scope = ui.forDocument(documentId);
+  scope.setActiveToolbar('top', 'secondary', 'annotation-toolbar');
+  check(
+    !scope.isToolbarOpen('top', 'secondary', 'annotation-toolbar'),
+    'Ready-made annotation toolbar is reachable',
+  );
 }
 
 async function printedPageRotations(
