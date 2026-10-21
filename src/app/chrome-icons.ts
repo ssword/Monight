@@ -2,8 +2,10 @@
 // (Lucide, ISC). Icons are compiled into the app bundle, never fetched.
 import {
   createElement,
+  FileText,
   FolderOpen,
   type IconNode,
+  Moon,
   Palette,
   Presentation,
   Printer,
@@ -13,7 +15,9 @@ import {
 } from 'lucide';
 
 const CHROME_ICONS: Readonly<Record<string, IconNode>> = {
+  'file-text': FileText,
   'folder-open': FolderOpen,
+  moon: Moon,
   palette: Palette,
   presentation: Presentation,
   printer: Printer,
