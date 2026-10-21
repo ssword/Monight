@@ -17,12 +17,14 @@ import {
   type ReaderAction,
   readerAction,
 } from '../reader/reader-actions';
+import { menuAccelerator } from '../scripts/accelerators';
 import {
   APPEARANCE_PRESETS,
   type AppearancePresetId,
   type FilterSettings,
   presetForFilterSettings,
 } from '../scripts/filters';
+import type { KeybindConfig } from '../scripts/keybind-defaults';
 import type { ChromePreferences, ChromePreferencesAuthority } from './chrome-preferences';
 import type { ActiveMarkupState } from './document-workspace';
 import { VERIFIED_MARKUP_TOOLS, type VerifiedMarkupTool } from './markup-tools';
@@ -72,6 +74,11 @@ export interface ReaderCommandStateInput {
   readonly preferences: ChromePreferences;
   readonly markup: ActiveMarkupState | null;
   readonly fullScreen: boolean;
+  /**
+   * The effective keybinds; each command's menu item shows its shortcut as
+   * its accelerator. Absent: accelerators are left as they are.
+   */
+  readonly keybinds?: Readonly<Record<string, Pick<KeybindConfig, 'binds' | 'action' | 'data'>>>;
 }
 
 /** One native menu item's state; `text` is set only for items whose title changes. */
@@ -80,6 +87,8 @@ export interface ReaderCommandState {
   readonly enabled: boolean;
   readonly checked?: boolean;
   readonly text?: string;
+  /** The shortcut shown beside the item; null shows none. */
+  readonly accelerator?: string | null;
 }
 
 /** A native submenu whose items come from a TypeScript list. */
@@ -252,12 +261,47 @@ export async function runReaderCommand(
   return true;
 }
 
-/** Enabled, checked and title state for every reader command's menu item. */
+/**
+ * Keybind actions that predate the `readerCommand` action, and the menu
+ * command each one performs.
+ */
+const KEYBIND_ACTION_COMMANDS: Readonly<Record<string, string>> = {
+  resetZoom: 'view.zoom.actual-size',
+  fitToPage: 'view.zoom.fit',
+  fitToWidth: 'view.zoom.width',
+  zoomIn: 'view.zoom.in',
+  zoomOut: 'view.zoom.out',
+  presentationMode: 'view.slideshow',
+  toggleFullscreen: 'view.full-screen',
+  previousPage: 'go.previous-page',
+  nextPage: 'go.next-page',
+};
+
+/** Each command's menu accelerator: its first binding the native menu can show. */
+function commandAccelerators(
+  keybinds: NonNullable<ReaderCommandStateInput['keybinds']>,
+): Map<string, string> {
+  const accelerators = new Map<string, string>();
+  for (const { action, data, binds } of Object.values(keybinds)) {
+    const commandId = action === 'readerCommand' ? data : KEYBIND_ACTION_COMMANDS[action];
+    if (!commandId || accelerators.has(commandId)) continue;
+    const accelerator = binds.map(menuAccelerator).find((candidate) => candidate !== null);
+    if (accelerator) accelerators.set(commandId, accelerator);
+  }
+  return accelerators;
+}
+
+/** Enabled, checked, title and accelerator state for every reader command's menu item. */
 export function readerCommandStates(
   input: ReaderCommandStateInput,
   tools: readonly VerifiedMarkupTool[] = VERIFIED_MARKUP_TOOLS,
 ): ReaderCommandState[] {
-  return readerCommands(tools).map((command) => ({ id: command.id, ...command.state(input) }));
+  const accelerators = input.keybinds ? commandAccelerators(input.keybinds) : null;
+  return readerCommands(tools).map((command) => ({
+    id: command.id,
+    ...command.state(input),
+    ...(accelerators ? { accelerator: accelerators.get(command.id) ?? null } : {}),
+  }));
 }
 
 /** The native submenus whose items come from the presets and verified-tools lists. */

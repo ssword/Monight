@@ -136,6 +136,8 @@ let highlightButton: HighlightButton | null = null;
 
 // Global keybind manager instance
 let keybindManager: KeybindManager | null = null;
+/** The effective keybinds, which the native menu shows as accelerators. */
+let activeKeybinds: MoonightSettings['keybinds'] | undefined;
 let presentationController: PresentationController | null = null;
 let readerCommandContext: ReaderCommandContext | null = null;
 let windowFullScreen = false;
@@ -164,6 +166,7 @@ const readerMenuState = (): ReaderCommandStateInput => {
     preferences: chromePreferences?.snapshot() ?? DEFAULT_CHROME_PREFERENCES,
     markup: documentWorkspace?.activeMarkup() ?? null,
     fullScreen: windowFullScreen,
+    keybinds: activeKeybinds,
   };
 };
 
@@ -188,6 +191,17 @@ const refreshWindowFullScreen = async (): Promise<void> => {
 
 // Detect if we're on macOS
 const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
+
+/** Loads the effective keybinds into the shortcuts and the native menu accelerators. */
+const applyKeybinds = (settings: MoonightSettings): void => {
+  // Override Settings keybind for macOS with Cmd+,
+  if (isMac && settings.keybinds.Settings) {
+    settings.keybinds.Settings.binds = ['Cmd+,'];
+  }
+  keybindManager?.loadFromSettings(settings);
+  activeKeybinds = settings.keybinds;
+  syncReaderMenu();
+};
 
 debugLog('Platform:', navigator.platform, 'isMac:', isMac);
 
@@ -800,15 +814,11 @@ export async function initializeApplication(modules: ApplicationModules): Promis
       },
       goToPage,
       goToRelativePage,
+      runReaderCommand: (id) => readerMenu.run(id),
       dispatchReaderAction,
     });
 
-    // Load keybinds from settings
-    // Override Settings keybind for macOS with Cmd+,
-    if (isMac && settings.keybinds.Settings) {
-      settings.keybinds.Settings.binds = ['Cmd+,'];
-    }
-    keybindManager.loadFromSettings(settings);
+    applyKeybinds(settings);
     debugLog('KeybindManager initialized with settings keybinds');
 
     // Get app information
@@ -883,9 +893,9 @@ export async function initializeApplication(modules: ApplicationModules): Promis
     await setupTauriListeners({
       intake: documentIntake,
       getActiveDocumentPath: () => readerActions?.snapshot().activeDocumentPath ?? null,
-      settingsManager,
-      keybindManager,
-      isMac,
+      reloadKeybinds: async () => {
+        if (settingsManager) applyKeybinds(await settingsManager.load());
+      },
       openPdfAndRefresh,
       handleStartupExternalOpenPayloads: async (payloads) => {
         await restoreStartupReadingSession(payloads);

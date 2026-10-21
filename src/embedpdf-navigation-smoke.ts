@@ -14,7 +14,7 @@ import {
 } from './reader/reader-actions';
 import { PRESETS } from './scripts/filters';
 import { KeybindManager } from './scripts/keybind-manager';
-import { DEFAULT_SETTINGS } from './scripts/settings';
+import { defaultSettings } from './scripts/settings';
 import './styles/document-workspace.css';
 import './styles/reader-shell.css';
 import './styles/reader-sidebar.css';
@@ -105,7 +105,7 @@ async function run() {
       activate: true,
     });
   const manager = new KeybindManager(true);
-  manager.loadFromSettings(DEFAULT_SETTINGS);
+  manager.loadFromSettings(defaultSettings('mac'));
   const shortcuts: string[] = [];
   document.addEventListener('keydown', (event) => {
     const action = manager.matchEvent(event);

@@ -14,7 +14,7 @@ import {
 import { loadReadingSession } from './reader/reading-session-store';
 import { PRESETS } from './scripts/filters';
 import { KeybindManager } from './scripts/keybind-manager';
-import { DEFAULT_SETTINGS } from './scripts/settings';
+import { defaultSettings } from './scripts/settings';
 import './styles/document-workspace.css';
 import './styles/reader-shell.css';
 
@@ -71,7 +71,7 @@ async function run() {
     runtime: workspace.intakeRuntime,
   });
   const manager = new KeybindManager(false);
-  manager.loadFromSettings(DEFAULT_SETTINGS);
+  manager.loadFromSettings(defaultSettings('other'));
   const goToPage = async (page: number) => {
     await dispatch({ type: 'goToPage', page });
   };
@@ -90,6 +90,7 @@ async function run() {
     togglePresentationMode: async () => {},
     goToPage,
     goToRelativePage,
+    runReaderCommand: async () => false,
     dispatchReaderAction: async (action) => {
       await dispatch(action);
     },

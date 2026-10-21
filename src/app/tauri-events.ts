@@ -5,8 +5,6 @@ import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 import { debugLog } from '../lib/debug-log';
 import type { DocumentIntake } from '../reader/document-intake';
 import type { DispatchReaderAction } from '../reader/reader-actions';
-import type { KeybindManager } from '../scripts/keybind-manager';
-import type { SettingsManager } from '../scripts/settings';
 import { showToast } from './dialogs';
 import { intakeFiles, reportDocumentIntakeOutcomes } from './file-actions';
 
@@ -21,9 +19,8 @@ export interface ExternalOpenPayload {
 interface TauriListenerContext {
   intake: DocumentIntake | null;
   getActiveDocumentPath: () => string | null;
-  settingsManager: SettingsManager | null;
-  keybindManager: KeybindManager | null;
-  isMac: boolean;
+  /** Reloads the effective keybinds into shortcuts and menu accelerators. */
+  reloadKeybinds: () => Promise<void>;
   openPdfAndRefresh: () => Promise<void>;
   handleStartupExternalOpenPayloads: (payloads: readonly ExternalOpenPayload[]) => Promise<void>;
   reloadSettings: () => Promise<void>;
@@ -39,9 +36,7 @@ interface TauriListenerContext {
 export async function setupTauriListeners({
   intake,
   getActiveDocumentPath,
-  settingsManager,
-  keybindManager,
-  isMac,
+  reloadKeybinds,
   openPdfAndRefresh,
   handleStartupExternalOpenPayloads,
   reloadSettings,
@@ -168,15 +163,7 @@ export async function setupTauriListeners({
   // Listen for keybinds changed event from settings window
   await listen('keybinds-changed', async () => {
     debugLog('Keybinds changed event received, reloading keybinds...');
-    if (settingsManager && keybindManager) {
-      const settings = await settingsManager.load();
-      // Override Settings keybind for macOS with Cmd+,
-      if (isMac && settings.keybinds.Settings) {
-        settings.keybinds.Settings.binds = ['Cmd+,'];
-      }
-      keybindManager.loadFromSettings(settings);
-      debugLog('Keybinds reloaded successfully');
-    }
+    await reloadKeybinds();
   });
 
   await listen('settings-changed', async () => {
