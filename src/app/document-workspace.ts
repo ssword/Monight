@@ -650,6 +650,8 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
     goToReadingPosition: (filePath, position, actionOptions) =>
       requireRendering(filePath).goToReadingPosition(position, actionOptions),
     getPageCount: (filePath) => requireRendering(filePath).getState().totalPages,
+    currentReadingPosition: (filePath) =>
+      presented.get(filePath)?.rendering.getReadingPosition() ?? null,
     async applyZoomIntent(filePath, zoomIntent, actionOptions) {
       const rendering = requireRendering(filePath);
       await rendering.setZoomIntent(zoomIntent, actionOptions);

@@ -341,6 +341,8 @@ function createModules(
     isDocumentOpen: vi.fn(() => true),
     snapshot: vi.fn(() => session),
     observe: vi.fn(() => vi.fn()),
+    canGoBack: vi.fn(() => false),
+    canGoForward: vi.fn(() => false),
     quiesce: vi.fn(async () => {
       mocks.events.push('flush:actions-quiesce');
     }),

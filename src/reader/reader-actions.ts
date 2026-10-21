@@ -7,6 +7,7 @@ import type {
   PageRotationDirection,
   PdfSaveDestination,
 } from './native-pdf-editing';
+import { createNavigationHistories, type NavigationDirection } from './navigation-history';
 import {
   createReadingSession,
   type DocumentPathReconciliation,
@@ -92,6 +93,11 @@ export interface ReaderProjection {
     options?: ReaderActionOptions,
   ): Promise<void>;
   getPageCount?(filePath: string): number | Promise<number>;
+  /**
+   * Where the reader is in a Document right now, which may not have settled into
+   * the Reading Session yet; null when the projection cannot tell.
+   */
+  currentReadingPosition?(filePath: string): ReadingPosition | null;
   closeDocument?(filePath: string, nextActiveDocumentPath: string | null): Promise<void>;
   exitPresentation?(options?: PresentationExitOptions): Promise<RestorePresentation | undefined>;
   applyZoomIntent?(
@@ -126,7 +132,15 @@ export type ReaderAction =
       filePath: string;
       readingPosition?: RestorableReadingPosition;
     }
-  | { type: 'goToPage'; page: number; filePath?: string }
+  | {
+      type: 'goToPage';
+      page: number;
+      filePath?: string;
+      /** Go to Page… is a jump recorded in Navigation History; thumbnails and surface navigation are not. */
+      recordHistory?: boolean;
+    }
+  | { type: 'goBack'; filePath?: string }
+  | { type: 'goForward'; filePath?: string }
   | { type: 'goToNextPage'; filePath?: string }
   | { type: 'goToPreviousPage'; filePath?: string }
   | { type: 'settleReadingPosition'; filePath: string; readingPosition: ReadingPosition }
@@ -242,6 +256,9 @@ export interface ReaderActions {
   isDocumentOpen(filePath: string): boolean;
   snapshot(): ReadingSessionSnapshot;
   observe(observer: (snapshot: ReadingSessionSnapshot) => void): () => void;
+  /** Navigation History for a Document (default: the active one); observers run on snapshot commits. */
+  canGoBack(filePath?: string): boolean;
+  canGoForward(filePath?: string): boolean;
   quiesce(): Promise<void>;
   flush(): Promise<void>;
   captureRecoveryDraft(filePath: string): Promise<ReaderActionOutcome>;
@@ -568,6 +585,57 @@ export function createReaderActions({
     return { status: 'committed', revision: committed.revision };
   };
 
+  const navigationHistories = createNavigationHistories();
+  /** How a move to a Reading Position affects Navigation History. */
+  type HistoryEffect = 'none' | 'record' | NavigationDirection;
+  /**
+   * Projects a Document to a Reading Position and settles it. A recorded jump
+   * remembers where the reader was, live, just before it; Back and Forward
+   * remember it on the opposite side.
+   */
+  const moveToReadingPosition = async (
+    filePath: string,
+    expectedGeneration: number,
+    readingPosition: ReadingPosition,
+    options: ReaderActionOptions | undefined,
+    history: HistoryEffect = 'none',
+  ): Promise<ReaderActionOutcome> => {
+    const origin =
+      projection.currentReadingPosition?.(filePath) ??
+      session.snapshot().documents.find((item) => item.filePath === filePath)?.readingPosition;
+    try {
+      await projection.goToReadingPosition(filePath, readingPosition, {
+        isCancelled: () => cancelled(filePath, expectedGeneration, options),
+      });
+    } catch (error) {
+      if (cancelled(filePath, expectedGeneration, options)) {
+        return { status: 'no-op', revision: revision() };
+      }
+      return { status: 'failure', error, revision: revision() };
+    }
+    if (cancelled(filePath, expectedGeneration, options)) {
+      return { status: 'no-op', revision: revision() };
+    }
+    // History changes before the commit so snapshot observers see it.
+    if (origin && history === 'record' && !readingPositionsEqual(origin, readingPosition)) {
+      navigationHistories.record(filePath, origin);
+    } else if (origin && (history === 'back' || history === 'forward')) {
+      navigationHistories.stepped(filePath, history, origin);
+    }
+    const latest = session.snapshot();
+    const documents = latest.documents.map((document) =>
+      document.filePath === filePath ? { ...document, readingPosition } : document,
+    );
+    return commit(
+      {
+        schemaVersion: READING_SESSION_SCHEMA_VERSION,
+        activeDocumentPath: latest.activeDocumentPath,
+        documents,
+      },
+      'deferred',
+    );
+  };
+
   const projectActivation = async (
     document: ReadingSessionDocument,
     readingPosition: RestorableReadingPosition,
@@ -884,6 +952,9 @@ export function createReaderActions({
       if (activeDocumentPath !== current.activeDocumentPath) changed = true;
       if (!changed) return { status: 'no-op', revision: current.revision };
 
+      for (const [requestedPath, canonicalPath] of canonicalByRequestedPath) {
+        navigationHistories.rename(requestedPath, canonicalPath);
+      }
       return commit(
         { schemaVersion: READING_SESSION_SCHEMA_VERSION, activeDocumentPath, documents },
         'immediate',
@@ -971,6 +1042,7 @@ export function createReaderActions({
           const latest = session.snapshot();
           const latestTransition = closeDocumentTransition(latest, action.filePath);
           if (!latestTransition) return { status: 'no-op', revision: latest.revision };
+          navigationHistories.discard(action.filePath);
           const outcome = await commit(
             { schemaVersion: READING_SESSION_SCHEMA_VERSION, ...latestTransition },
             'immediate',
@@ -1276,6 +1348,7 @@ export function createReaderActions({
           replacementSource = undefined;
           if (oldSource) void pdfSaveAdapter.releaseSource?.(oldSource).catch(() => undefined);
           editing.markSaved(exportedRevision);
+          navigationHistories.rename(filePath, selected.canonicalPath);
           const latest = session.snapshot();
           return commit(
             {
@@ -1393,6 +1466,11 @@ export function createReaderActions({
     pendingReloads.size === 0 &&
     pendingCloses.size === 0 &&
     [...runtimes.keys()].every(mayDestroy);
+
+  const canGo = (filePath: string | undefined, direction: NavigationDirection): boolean => {
+    const targetPath = filePath ?? session.snapshot().activeDocumentPath;
+    return targetPath !== null && navigationHistories.canGo(targetPath, direction);
+  };
 
   const reader: ReaderActions = {
     async dispatch(action, options) {
@@ -1730,30 +1808,36 @@ export function createReaderActions({
               page: resolved.pageNumber,
               location: resolved.location ?? 0,
             };
-            try {
-              await projection.goToReadingPosition(filePath, readingPosition, {
-                isCancelled: () => cancelled(filePath, expectedGeneration, options),
-              });
-            } catch (error) {
-              if (cancelled(filePath, expectedGeneration, options)) {
-                return { status: 'no-op', revision: revision() };
-              }
-              return { status: 'failure', error, revision: revision() };
-            }
+            // Links, outline entries, search results and Annotations are jumps.
+            return moveToReadingPosition(
+              filePath,
+              expectedGeneration,
+              readingPosition,
+              options,
+              'record',
+            );
+          },
+        );
+      }
+
+      if (action.type === 'goBack' || action.type === 'goForward') {
+        const direction: NavigationDirection = action.type === 'goBack' ? 'back' : 'forward';
+        return routeRelativeDocumentAction(
+          action.filePath,
+          async (filePath, expectedGeneration) => {
             if (cancelled(filePath, expectedGeneration, options)) {
               return { status: 'no-op', revision: revision() };
             }
-            const latest = session.snapshot();
-            const documents = latest.documents.map((document) =>
-              document.filePath === filePath ? { ...document, readingPosition } : document,
-            );
-            return commit(
-              {
-                schemaVersion: READING_SESSION_SCHEMA_VERSION,
-                activeDocumentPath: latest.activeDocumentPath,
-                documents,
-              },
-              'deferred',
+            const target = navigationHistories.target(filePath, direction);
+            if (!target) return { status: 'no-op', revision: revision() };
+            const readingPosition =
+              'location' in target ? target : { page: target.page, location: 0 };
+            return moveToReadingPosition(
+              filePath,
+              expectedGeneration,
+              readingPosition,
+              options,
+              direction,
             );
           },
         );
@@ -1991,31 +2075,11 @@ export function createReaderActions({
             if (page === document.readingPosition.page) {
               return { status: 'no-op', revision: current.revision };
             }
-            const readingPosition = { page, location: 0 };
-            try {
-              await projection.goToReadingPosition(filePath, readingPosition, {
-                isCancelled: () => cancelled(filePath, expectedGeneration, options),
-              });
-            } catch (error) {
-              if (cancelled(filePath, expectedGeneration, options)) {
-                return { status: 'no-op', revision: revision() };
-              }
-              return { status: 'failure', error, revision: revision() };
-            }
-            if (cancelled(filePath, expectedGeneration, options)) {
-              return { status: 'no-op', revision: revision() };
-            }
-            const latest = session.snapshot();
-            const documents = latest.documents.map((item) =>
-              item.filePath === filePath ? { ...item, readingPosition } : item,
-            );
-            return commit(
-              {
-                schemaVersion: READING_SESSION_SCHEMA_VERSION,
-                activeDocumentPath: latest.activeDocumentPath,
-                documents,
-              },
-              'deferred',
+            return moveToReadingPosition(
+              filePath,
+              expectedGeneration,
+              { page, location: 0 },
+              options,
             );
           },
         );
@@ -2032,31 +2096,12 @@ export function createReaderActions({
           if (cancelled(filePath, expectedGeneration, options)) {
             return { status: 'no-op', revision: revision() };
           }
-          const readingPosition = { page: action.page, location: 0 };
-          try {
-            await projection.goToReadingPosition(filePath, readingPosition, {
-              isCancelled: () => cancelled(filePath, expectedGeneration, options),
-            });
-          } catch (error) {
-            if (cancelled(filePath, expectedGeneration, options)) {
-              return { status: 'no-op', revision: revision() };
-            }
-            return { status: 'failure', error, revision: revision() };
-          }
-          if (cancelled(filePath, expectedGeneration, options)) {
-            return { status: 'no-op', revision: revision() };
-          }
-          const latest = session.snapshot();
-          const documents = latest.documents.map((item) =>
-            item.filePath === filePath ? { ...item, readingPosition } : item,
-          );
-          return commit(
-            {
-              schemaVersion: READING_SESSION_SCHEMA_VERSION,
-              activeDocumentPath: latest.activeDocumentPath,
-              documents,
-            },
-            'deferred',
+          return moveToReadingPosition(
+            filePath,
+            expectedGeneration,
+            { page: action.page, location: 0 },
+            options,
+            action.recordHistory ? 'record' : 'none',
           );
         },
       );
@@ -2117,6 +2162,8 @@ export function createReaderActions({
     },
     snapshot: session.snapshot,
     observe: session.observe,
+    canGoBack: (filePath) => canGo(filePath, 'back'),
+    canGoForward: (filePath) => canGo(filePath, 'forward'),
     quiesce,
     flush: session.flush,
     hasUnsavedPdfWork: () =>
