@@ -1,9 +1,10 @@
 # Issue #94: Preview Text Annotation geometry and editing
 
-Status: the geometry symptom is fixed and verified in the pinned engine. The Preview
-editor symptom is **not verified**: no macOS/Preview session has run against this
-change. This record does not claim Preview acceptance. The original #75 failure and its
-provenance limits ([record](issue-75-preview-verification.md)) remain unchanged.
+Status (2026-10-21): both the geometry and Preview Text editor symptoms pass the
+native round trips below on the identified local release candidate. The original #75
+failure and its provenance limits ([record](issue-75-preview-verification.md)) remain
+unchanged. This verifies #94 on macOS/Preview; it does not establish acceptance of the
+entire migration or Windows/Linux native execution.
 
 ## Root cause: geometry (reproduced on Linux with the pinned engine)
 
@@ -45,18 +46,30 @@ Fresh engine export of the Preview note
 stream (BBox `[0 0 24 24]`) unchanged. The Acrobat note now also keeps Acrobat's own
 `/N` and `/R` streams. Before this change both were replaced by PDFium's icon.
 
-## Editor symptom: unresolved
+## Editor symptom: linked native Popups
 
-Not established. The failing notes (the Preview note after Monight save and a fresh
-Monight Guest note) share a PDFium-generated appearance (page-coordinate BBox with an
-identity Matrix), `/NM`, and dates without a time zone. Preview's working note has none
-of these. After this fix, an edited Preview note keeps Preview's own appearance stream.
-That may restore its editor, but this is unverified. Notes that Monight creates still
-carry PDFium's appearance, and nothing here changes them.
+On macOS 27.0.1 / Preview 11.0, retaining the appearance alone did not restore the
+editor. Neither removing `/NM`, restoring the date's time zone, removing `/Name`, nor
+removing `/AP` alone made the lower Text note open. A disposable fresh Preview-created
+note also stopped opening its editor after save/close/reopen without a Popup.
 
-Single-variable diagnostic PDFs for a Preview session are in the ignored archive
-`artifacts/issue-94/2026-10-20/preview-editor-diagnostics/` (see its README). Change the
-creation path only after a Preview run identifies the decisive difference.
+Adding a native `/Popup` reference to the Text note and a `/Popup` annotation with a
+reciprocal `/Parent` reference in the same page's `/Annots` restored the editor. The
+same note then survived Preview edit/save/close/reopen. This is an observed reader
+compatibility requirement, not a claim that PDF requires Popups for every Text note.
+The isolated diagnostic files are retained under
+`artifacts/issue-94/2026-10-21/diagnostics/`; those diagnostic variants were synthesized
+with pypdf and are not externally authored fixtures.
+
+`pdf_save::prepare_supported_popups` now adds a closed native Popup only to Text notes
+that lack one. It preserves existing live Popup dictionaries/references, note IDs,
+authors, contents, Rects and appearance streams. Direct Text dictionaries receive an
+indirect reference so `/Parent` can refer to them. The existing orphan-Popup cleanup
+still removes children of deleted supported annotations. Preparation is byte-idempotent,
+runs before the frontend's exact-byte write verification (including Recovery Drafts),
+and is checked again at the native Save/Save As boundary. Protected/unsupported PDF
+checks and unrelated-content verification remain in force. No tool was disabled,
+no note was flattened, and the geometry tolerance remains 0.01 points.
 
 ## Automated checks run (Linux, 2026-10-20)
 
@@ -66,10 +79,80 @@ creation path only after a Preview run identifies the decisive difference.
 | `cargo test` (`src-tauri`) | 76 passed, including new `contents_edits_keep_the_external_readers_note_appearance`. The test fails against the previous exports. |
 | `npm test`, `npx tsc --noEmit`, `npm run lint` | Passed (368 tests); lint reports 5 warnings in files outside this change. |
 
-## Still required for acceptance
+## Native candidate and verification (2026-10-21)
 
-On macOS with Preview, using a candidate with identified revision, CI, and packaging:
-Preview → Monight → Preview and Monight → Preview → Monight note edit/save/delete/reopen
-cycles. Also rerun the Save/Save As and Preview interoperability checks, then record the
-candidate identity, OS and reader versions, tester, and outcomes. Run the diagnostics
-first to resolve the editor symptom for Monight-created notes.
+Operator: Codex through native computer control, explicitly requested by the owner.
+The owner manually confirmed the initial lower-note failure, moved Monight to the
+MacBook screen when its custom menu lacked a move command, and restarted Preview
+after the interrupted attempt described below. Counted edit/save/delete operations
+were performed by Codex on disposable copies on the built-in display.
+
+| Evidence | Value |
+| --- | --- |
+| OS | macOS 27.0.1, build 26A434 |
+| Reader | Preview 11.0 |
+| Monight | 0.6.0, EmbedPDF 2.15.0, Tauri 2.11.2 |
+| Tested code revision | `934b7cb8cdff4a9d991923cc1afdc2721315d8ef` |
+| Local build | `npm run tauri -- build --bundles app`; Node 24.19.0, rustc 1.99.0 |
+| Executable | `src-tauri/target/release/bundle/macos/Monight.app/Contents/MacOS/monight` |
+| Executable SHA-256 | `93785170c3360ef22fd0a0955afdf93f7a814097d142c5eb8a15618403c04da7` |
+| Local archive | `artifacts/issue-94/2026-10-21/local-macos-934b7cb.app.tar.gz` |
+| Archive SHA-256 | `b3bc811ac9cc52c0269384fb9e23280bee855a242cc2476fc5e567a075af4fb2` |
+| CI | [39529663774](https://github.com/ssword/Monight/actions/runs/39529663774), all jobs passed |
+| Candidate packaging | [39529661391](https://github.com/ssword/Monight/actions/runs/39529661391), macOS/Windows/Linux passed |
+
+Desktop tests used the identified local `.app`, not a downloaded universal CI bundle.
+The initial code revision `1dfdd20` passed application checks/packaging but failed the
+npm audit on the existing Vite 7.3.6 lockfile. Revision `934b7cb` updates that dev
+dependency to 7.3.7 ([advisory](https://github.com/advisories/GHSA-698v-4r3x-3vcv));
+`npm audit --audit-level=high` now passes. Rebuilding reproduced the same executable
+checksum. Documentation-only follow-ups do not change the tested code.
+
+All following evidence paths are relative to `artifacts/issue-94/2026-10-21/evidence/`.
+
+| Direction / operation | Native observations and evidence |
+| --- | --- |
+| Preview → Monight → Preview, first pass | Opened a copy of `preview-supported.pdf`. Monight comment menu → Edit → `Monight edited Preview note 94 first`; Save became clean. Preview double-click opened the Text editor, then saved `Preview returned note 94 first`. Snapshots: `preview-origin-monight-first.pdf`, `preview-origin-preview-first.pdf`; screenshot `preview-origin-editor.png`. |
+| Same Preview note, second pass | Monight reopened the returned text, edited/saved `Monight edited Preview note 94 second`. Preview reopened its editor and saved `Preview returned note 94 second`. Snapshots: `preview-origin-monight-second.pdf`, `preview-origin-preview-second.pdf`. ID `3be3c5f7-1aef-4152-abbb-47a8f47d3b6d` remained stable after its first engine load; original author Andrew Chen retained; no `/IRT` reply. |
+| Preview deletion and return | Preview → Remove Note → Save removed that Text and its Popup. Monight reopened the result and listed exactly the retained Guest note and Preview Highlight. `preview-origin-preview-deleted.pdf` retains one Text and no orphan Popup. |
+| Fresh Monight Guest creation | In a copy of `native-annotations/original.pdf`, used Annotate → Comment, placed the note and posted `Monight fresh Guest note 94 first`, then Save. `guest-monight-first.pdf` records author Guest, native Text ID `8d946a8f-fb12-4199-b4f6-e441f4b48b03`, Rect `[373, 558, 397, 582]` (24pt). |
+| Save As under viewing transforms | With Sepia, 150% zoom and clockwise 90° viewing rotation, Save As created `monight-guest-save-as.pdf` and switched the active Document path. Original `monight-created.pdf` retained the first contents. Preview showed upright white pages and opened the Guest note editor. Screenshot: `guest-preview-editor.png`. |
+| Monight → Preview → Monight, repeated | Preview edited/saved `Preview edited fresh Guest note 94 first`; Monight reopened and edited/saved `Monight fresh Guest note 94 second`; Preview reopened its editor and edited/saved `Preview edited fresh Guest note 94 second`; Monight reopened that exact text. Snapshots: `guest-preview-first.pdf`, `guest-monight-second.pdf`, `guest-preview-second.pdf`. Same ID, author Guest and 24pt Rect throughout; no `/IRT`. |
+| Monight deletion and Preview reopen | Deleted the returned Guest note through Monight's comment menu and saved. Monight showed empty comments. Preview reopened the result with no note in Highlights and Notes. `guest-monight-deleted.pdf` contains only the two original Links; no Text/Popup remains. Screenshot: `guest-deleted-preview.png`. |
+| Unsupported Preview content | Opened a disposable `preview-unsupported.pdf`. Monight reported `Unsupported embedded annotations; saving is blocked`, with Save and Save As disabled. SHA-256 remains identical to the original fixture. Screenshot: `preview-unsupported-monight.png`. |
+
+Native inspection confirms the Preview note keeps Rect
+`[220.6667, 372.0833, 244.6667, 396.0833]` (the second engine save serializes the y
+coordinates as `372.08331` / `396.08331`, within 0.01pt). The newly created Guest note
+keeps its intentional 24pt Rect. Both kinds remain Text annotations rather than page
+content. Existing note appearances survive Monight contents edits.
+
+`inspect-evidence.py` and `evidence-inventory.json` in the ignored archive record every
+PDF checksum and assert stable IDs, authors, no reply substitution, 0.01pt geometry,
+reciprocal Popup relationships, deletion and absence of orphan Popups. For each
+Monight stage, decoded page-content hashes, extracted text, page boxes/rotation,
+Links, outline and document metadata equal its immediate input. Original Save As
+source and unsupported input are retained. Five representative first pages were
+rendered with PDFium and visually inspected; the saved pages remain upright,
+unfiltered and legible, with the intended annotations/deletions.
+
+One early scripted Preview save stopped responding. A read-only stack sample showed
+its main thread waiting in macOS `NSDocument` save serialization; causation was not
+established. It is retained as `preview-hang-sample.txt`, not counted as a pass.
+After the owner restarted Preview, the same candidate/PDF passed both full repeated
+cycles using separate, verified editor-commit and Save steps. No speculative PDF
+normalization was added in response to that interruption.
+
+## Final automated checks
+
+- `cargo test --offline --manifest-path src-tauri/Cargo.toml`: **80 passed** on macOS,
+  including regressions for missing Popup links, existing Popup preservation, direct
+  Text dictionaries, byte-idempotence and orphan cleanup on Save/Save As. The new
+  missing-Popup regression failed before the implementation.
+- `npm test`: **368 passed**; `npm run build` and `npm run lint` pass (five existing
+  warnings in `design/`).
+- `node scripts/verify-embedpdf-offline.mjs`: all contracts pass, including Preview and
+  Acrobat geometry with no known failure, protected/annotated printing, and Chromium
+  **and WebKit** scrolling.
+- `npm audit --audit-level=high`, Rust formatting and `git diff --check`: pass.
+- CI and all three candidate packaging jobs pass for the exact tested code revision.

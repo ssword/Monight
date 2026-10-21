@@ -99,3 +99,11 @@ the saved document upright on white pages with native annotations.
 Expected: a print panel that can Save as PDF, with current annotations and no viewing
 transforms. Actual: no panel or output. Reproduce against a provenance-verified candidate
 before treating the installed-build result as candidate evidence.
+
+## Subsequent #94 verification
+
+On 2026-10-21, PR #97's identified local candidate `934b7cb` passed the Preview Text
+editor and geometry round trips, repeated edits and deletion in both directions, and
+Save/Save As checks. See the [#94 record](issue-94-preview-text-annotations.md) for
+exact candidate identity, CI/packaging, evidence and the interrupted first attempt.
+This later result does not alter the original failed observations above.
