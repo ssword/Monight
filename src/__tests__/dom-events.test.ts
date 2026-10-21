@@ -144,6 +144,7 @@ describe('toolbar input adapters', () => {
       togglePresentationMode: vi.fn(async () => undefined),
       goToPage: vi.fn(async () => undefined),
       goToRelativePage: vi.fn(async () => undefined),
+      runReaderCommand: vi.fn(async () => true),
       dispatchReaderAction: async (action) => {
         shortcutActions.push(action);
       },

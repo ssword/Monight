@@ -1,6 +1,6 @@
 // The TypeScript → Rust path for native menu item state. Reader state lives in
 // the WebView, so the WebView tells the native menu which items are enabled,
-// checked or retitled (`set_menu_item_states`) and which items fill the
+// checked, retitled or given an accelerator (`set_menu_item_states`) and which items fill the
 // submenus built from TypeScript lists (`set_menu_submenu_items`).
 //
 // Extending: add an optional field to NativeMenuItemState and to Rust's
@@ -20,6 +20,8 @@ export interface NativeMenuItemState {
   readonly enabled?: boolean;
   readonly checked?: boolean;
   readonly text?: string;
+  /** The shortcut shown beside the item; null removes it. */
+  readonly accelerator?: string | null;
 }
 
 export type InvokeMenuCommand = (
@@ -43,7 +45,8 @@ const sameState = (left: NativeMenuItemState | undefined, right: NativeMenuItemS
   left !== undefined &&
   left.enabled === right.enabled &&
   left.checked === right.checked &&
-  left.text === right.text;
+  left.text === right.text &&
+  left.accelerator === right.accelerator;
 
 export function createNativeMenuSync(
   invoke: InvokeMenuCommand,

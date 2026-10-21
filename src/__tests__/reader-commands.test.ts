@@ -12,6 +12,7 @@ import {
   runReaderCommand,
 } from '../app/reader-commands';
 import type { ReaderAction } from '../reader/reader-actions';
+import { defaultSettings } from '../scripts/settings';
 
 function fakeContext(overrides: Partial<ReaderCommandContext> = {}) {
   const dispatched: ReaderAction[] = [];
@@ -272,6 +273,52 @@ describe('native menu state', () => {
     expect(stateOf(hidden, 'view.tab-bar')?.text).toBe('Show Tab Bar');
     expect(stateOf(hidden, 'view.markup-toolbar')?.text).toBe('Show Markup Toolbar');
     expect(stateOf(hidden, 'view.full-screen')?.text).toBe('Enter Full Screen');
+  });
+
+  it('shows each command’s effective shortcut as its menu accelerator', () => {
+    const keybinds = defaultSettings('mac').keybinds;
+    keybinds.Fullscreen.binds = ['Ctrl+Alt+Enter'];
+    keybinds.ViewSinglePage.binds = [];
+    keybinds.SwitchToTab1.binds = ['Cmd+Alt+Shift+1'];
+    const accelerators = Object.fromEntries(
+      readerCommandStates(input({ keybinds }))
+        .filter(({ accelerator }) => accelerator !== undefined)
+        .map(({ id, accelerator }) => [id, accelerator]),
+    );
+
+    expect(accelerators).toMatchObject({
+      'view.mode.continuous': 'CmdOrCtrl+1',
+      'view.mode.single': null,
+      'view.mode.spread': 'CmdOrCtrl+3',
+      'view.sidebar.hidden': 'CmdOrCtrl+Alt+1',
+      'view.sidebar.annotations': 'CmdOrCtrl+Alt+4',
+      'view.zoom.actual-size': 'CmdOrCtrl+0',
+      'view.zoom.fit': 'CmdOrCtrl+9',
+      'view.zoom.width': 'CmdOrCtrl+Shift+W',
+      'view.zoom.in': 'CmdOrCtrl+=',
+      'view.zoom.out': 'CmdOrCtrl+-',
+      'view.markup-toolbar': 'CmdOrCtrl+Shift+A',
+      'view.slideshow': 'CmdOrCtrl+Shift+F',
+      'view.full-screen': 'Ctrl+Alt+Enter',
+      'go.page': 'CmdOrCtrl+Alt+G',
+      // Unmodified keys stay with the page so the menu never takes them from text fields.
+      'go.next-page': null,
+      'go.previous-page': null,
+      'view.tab-bar': null,
+    });
+  });
+
+  it('shows a menu accelerator only for keys the native menu can show', () => {
+    const keybinds = defaultSettings('other').keybinds;
+    keybinds.ZoomIn.binds = ['CmdOrCtrl+Plus', 'Alt+='];
+    keybinds.NextPage.binds = ['ArrowRight', 'Alt+ArrowDown'];
+    keybinds.PresentationMode.binds = ['Shift+F5'];
+    const states = readerCommandStates(input({ keybinds }));
+
+    expect(stateOf(states, 'view.zoom.in')?.accelerator).toBe('Alt+=');
+    expect(stateOf(states, 'go.next-page')?.accelerator).toBe('Alt+ArrowDown');
+    expect(stateOf(states, 'view.slideshow')?.accelerator).toBe('Shift+F5');
+    expect(stateOf(states, 'view.full-screen')?.accelerator).toBe('F11');
   });
 
   it('cannot hide the tab bar while several Documents are open', () => {

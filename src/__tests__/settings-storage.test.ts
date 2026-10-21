@@ -315,3 +315,202 @@ describe('settings storage', () => {
     expect(store.writes).toContain('delete:recentFiles');
   });
 });
+
+const bindsOf = (keybinds: Record<string, { binds: string[] }>) =>
+  Object.fromEntries(Object.entries(keybinds).map(([id, { binds }]) => [id, binds]));
+
+describe('Preview shortcut defaults', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    store.reset();
+  });
+
+  it('gives a fresh macOS install the Preview shortcuts', async () => {
+    const settings = await new SettingsManager('main', { platform: 'mac' }).load();
+
+    expect(bindsOf(settings.keybinds)).toMatchObject({
+      ViewContinuous: ['CmdOrCtrl+1'],
+      ViewSinglePage: ['CmdOrCtrl+2'],
+      ViewTwoPages: ['CmdOrCtrl+3'],
+      ResetZoom: ['CmdOrCtrl+0'],
+      FitToPage: ['CmdOrCtrl+9'],
+      FitToWidth: ['CmdOrCtrl+Shift+W'],
+      SidebarHidden: ['CmdOrCtrl+Alt+1'],
+      SidebarThumbnails: ['CmdOrCtrl+Alt+2'],
+      SidebarTableOfContents: ['CmdOrCtrl+Alt+3'],
+      SidebarAnnotations: ['CmdOrCtrl+Alt+4'],
+      MarkupToolbar: ['CmdOrCtrl+Shift+A'],
+      GoToPage: ['CmdOrCtrl+Alt+G'],
+      PresentationMode: ['CmdOrCtrl+Shift+F'],
+      Fullscreen: ['Ctrl+Cmd+F'],
+      NextTab: ['Ctrl+Tab', 'Cmd+Shift+]'],
+      PreviousTab: ['Ctrl+Shift+Tab', 'Cmd+Shift+['],
+    });
+    for (let position = 1; position <= 9; position += 1) {
+      expect(settings.keybinds[`SwitchToTab${position}`]).toMatchObject({
+        action: 'switchToTab',
+        data: String(position),
+        binds: [],
+      });
+    }
+  });
+
+  it('gives a fresh Windows or Linux install F11 Full Screen and Ctrl+Tab tab switching', async () => {
+    const settings = await new SettingsManager('main', { platform: 'other' }).load();
+
+    expect(bindsOf(settings.keybinds)).toMatchObject({
+      ViewSinglePage: ['CmdOrCtrl+2'],
+      SidebarThumbnails: ['CmdOrCtrl+Alt+2'],
+      Fullscreen: ['F11'],
+      NextTab: ['Ctrl+Tab', 'Ctrl+PageDown'],
+      PreviousTab: ['Ctrl+Shift+Tab', 'Ctrl+PageUp'],
+      SwitchToTab1: [],
+    });
+  });
+
+  // The keybind map an install stored before Preview's shortcuts.
+  const storedBeforePreview = (changes: Record<string, string[]> = {}) => {
+    const v1: Record<string, [string[], string, string?]> = {
+      OpenFile: [['CmdOrCtrl+O'], 'openFile'],
+      CloseTab: [['CmdOrCtrl+W'], 'closeTab'],
+      ReopenTab: [['CmdOrCtrl+Shift+T'], 'reopenTab'],
+      NextTab: [['CmdOrCtrl+Tab', 'CmdOrCtrl+PageDown'], 'nextTab'],
+      PreviousTab: [['CmdOrCtrl+Shift+Tab', 'CmdOrCtrl+PageUp'], 'previousTab'],
+      Print: [['CmdOrCtrl+P'], 'print'],
+      Find: [['CmdOrCtrl+F'], 'find'],
+      ZoomIn: [['CmdOrCtrl+=', 'CmdOrCtrl+Plus'], 'zoomIn'],
+      ZoomOut: [['CmdOrCtrl+-'], 'zoomOut'],
+      ResetZoom: [['CmdOrCtrl+0'], 'resetZoom'],
+      Settings: [['Alt+S'], 'openSettings'],
+      NextPage: [['ArrowRight', 'ArrowDown'], 'nextPage'],
+      PreviousPage: [['ArrowLeft', 'ArrowUp'], 'previousPage'],
+      FirstPage: [['Home'], 'firstPage'],
+      LastPage: [['End'], 'lastPage'],
+      FitToWidth: [['CmdOrCtrl+Shift+W'], 'fitToWidth'],
+      FitToPage: [['CmdOrCtrl+Shift+P'], 'fitToPage'],
+      ...Object.fromEntries(
+        [1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => [
+          `SwitchToTab${n}`,
+          [[`CmdOrCtrl+${n}`], 'switchToTab', String(n)],
+        ]),
+      ),
+      Fullscreen: [['F11'], 'toggleFullscreen'],
+      PresentationMode: [['Shift+F11'], 'presentationMode'],
+    };
+    return Object.fromEntries(
+      Object.entries(v1).map(([id, [binds, action, data]]) => [
+        id,
+        { displayName: id, binds: changes[id] ?? binds, action, ...(data ? { data } : {}) },
+      ]),
+    );
+  };
+
+  it('upgrades the shortcuts a reader never rebound to Preview defaults', async () => {
+    store.reset({ storageSchemaVersion: SETTINGS_SCHEMA_VERSION, keybinds: storedBeforePreview() });
+
+    const settings = await new SettingsManager('main', { platform: 'mac' }).load();
+
+    expect(bindsOf(settings.keybinds)).toMatchObject({
+      OpenFile: ['CmdOrCtrl+O'],
+      FitToPage: ['CmdOrCtrl+9'],
+      ViewContinuous: ['CmdOrCtrl+1'],
+      SidebarThumbnails: ['CmdOrCtrl+Alt+2'],
+      Fullscreen: ['Ctrl+Cmd+F'],
+      PresentationMode: ['CmdOrCtrl+Shift+F'],
+      NextTab: ['Ctrl+Tab', 'Cmd+Shift+]'],
+      SwitchToTab1: [],
+      SwitchToTab9: [],
+    });
+    expect(settings.keybinds.FitToPage.displayName).toBe('Zoom to Fit');
+  });
+
+  it('keeps every shortcut the reader rebound across the upgrade', async () => {
+    store.reset({
+      storageSchemaVersion: SETTINGS_SCHEMA_VERSION,
+      keybinds: storedBeforePreview({
+        Fullscreen: ['Ctrl+Alt+Enter'],
+        FitToPage: [],
+        SwitchToTab2: ['Alt+2'],
+      }),
+    });
+
+    const settings = await new SettingsManager('main', { platform: 'mac' }).load();
+
+    expect(bindsOf(settings.keybinds)).toMatchObject({
+      Fullscreen: ['Ctrl+Alt+Enter'],
+      FitToPage: [],
+      SwitchToTab2: ['Alt+2'],
+      SwitchToTab3: [],
+      ViewSinglePage: ['CmdOrCtrl+2'],
+    });
+  });
+
+  it('drops a new default that collides with a binding the reader chose', async () => {
+    store.reset({
+      storageSchemaVersion: SETTINGS_SCHEMA_VERSION,
+      keybinds: storedBeforePreview({
+        // Kept on purpose alongside another binding: the reader chose ⌘1 for tab 1.
+        SwitchToTab1: ['CmdOrCtrl+1', 'Alt+1'],
+        // The same chord written differently is still the reader's.
+        Find: ['CmdOrCtrl+F', 'Cmd+Shift+A'],
+        Print: ['Ctrl+Cmd+F'],
+      }),
+    });
+
+    const settings = await new SettingsManager('main', { platform: 'mac' }).load();
+
+    expect(bindsOf(settings.keybinds)).toMatchObject({
+      SwitchToTab1: ['CmdOrCtrl+1', 'Alt+1'],
+      ViewContinuous: [],
+      Find: ['CmdOrCtrl+F', 'Cmd+Shift+A'],
+      MarkupToolbar: [],
+      Print: ['Ctrl+Cmd+F'],
+      Fullscreen: [],
+      ViewSinglePage: ['CmdOrCtrl+2'],
+    });
+  });
+
+  it('migrates once in the main window and remembers dropped defaults', async () => {
+    store.reset({
+      storageSchemaVersion: SETTINGS_SCHEMA_VERSION,
+      keybinds: storedBeforePreview({ SwitchToTab1: ['CmdOrCtrl+1', 'Alt+1'] }),
+    });
+
+    await new SettingsManager('main', { platform: 'mac' }).load();
+    store.writes.length = 0;
+    const settingsWindow = await new SettingsManager('settings', { platform: 'mac' }).load();
+    const mainAgain = await new SettingsManager('main', { platform: 'mac' }).load();
+
+    expect(store.writes).toEqual([]);
+    expect(settingsWindow.keybinds.ViewContinuous.binds).toEqual([]);
+    expect(mainAgain.keybinds.ViewContinuous.binds).toEqual([]);
+    expect(mainAgain.keybinds.ViewSinglePage.binds).toEqual(['CmdOrCtrl+2']);
+  });
+
+  it('shows the upgrade to the Settings window before the main window stores it', async () => {
+    store.reset({ storageSchemaVersion: SETTINGS_SCHEMA_VERSION, keybinds: storedBeforePreview() });
+
+    const settings = await new SettingsManager('settings', { platform: 'other' }).load();
+
+    expect(store.writes).toEqual([]);
+    expect(settings.keybinds.FitToPage.binds).toEqual(['CmdOrCtrl+9']);
+  });
+
+  it('lets retired view-rotation bindings block no new default', async () => {
+    store.reset({
+      storageSchemaVersion: SETTINGS_SCHEMA_VERSION,
+      keybinds: {
+        ...storedBeforePreview(),
+        RotateClockwise: {
+          displayName: 'Rotate Right',
+          binds: ['CmdOrCtrl+2'],
+          action: 'rotateRight',
+        },
+      },
+    });
+
+    const settings = await new SettingsManager('main', { platform: 'mac' }).load();
+
+    expect(settings.keybinds.ViewSinglePage.binds).toEqual(['CmdOrCtrl+2']);
+  });
+});

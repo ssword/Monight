@@ -69,6 +69,27 @@ describe('native menu state sync', () => {
     ]);
   });
 
+  it('sends a changed accelerator, including its removal', async () => {
+    const { invoke, calls } = recordInvoke();
+    const menu = createNativeMenuSync(invoke);
+    await menu.setItemStates([
+      { id: 'view.mode.single', enabled: true, accelerator: 'CmdOrCtrl+2' },
+    ]);
+    calls.length = 0;
+
+    await menu.setItemStates([
+      { id: 'view.mode.single', enabled: true, accelerator: 'CmdOrCtrl+2' },
+    ]);
+    await menu.setItemStates([{ id: 'view.mode.single', enabled: true, accelerator: null }]);
+
+    expect(calls).toEqual([
+      [
+        'set_menu_item_states',
+        { items: [{ id: 'view.mode.single', enabled: true, accelerator: null }] },
+      ],
+    ]);
+  });
+
   it('resends state the native menu failed to apply', async () => {
     const invoke = vi
       .fn<(command: string, args: unknown) => Promise<void>>()

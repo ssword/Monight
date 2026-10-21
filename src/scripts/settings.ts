@@ -13,6 +13,15 @@ import {
 } from '../reader/reader-actions';
 import type { RecentDocument } from '../reader/recent-documents';
 import type { FilterSettings } from './filters';
+import {
+  currentKeybindPlatform,
+  defaultKeybinds,
+  effectiveKeybinds,
+  KEYBIND_DEFAULTS_VERSION,
+  type KeybindConfig,
+  type KeybindPlatform,
+  migrateKeybinds,
+} from './keybind-defaults';
 
 export { normalizeAnnotationDisplayName } from '../reader/native-pdf-editing';
 
@@ -34,15 +43,7 @@ export interface ReadingSession {
   tabs: SavedTabSession[];
 }
 
-/**
- * Keybind configuration interface
- */
-export interface KeybindConfig {
-  displayName: string;
-  binds: string[];
-  action: string;
-  data?: string;
-}
+export type { KeybindConfig, KeybindPlatform } from './keybind-defaults';
 
 /**
  * Main settings interface
@@ -61,6 +62,8 @@ export interface MoonightSettings {
 }
 
 export const SETTINGS_SCHEMA_VERSION = 1;
+/** Store key of the keybind defaults version the stored keybinds were upgraded to. */
+const KEYBIND_DEFAULTS_VERSION_KEY = 'keybindDefaultsVersion';
 
 export type SettingsOwner = 'main' | 'settings';
 type SettingsWindowKey = 'general' | 'keybinds';
@@ -76,200 +79,28 @@ interface LegacyMoonightSettings extends Partial<MoonightSettings> {
   annotations?: unknown;
 }
 
-/**
- * Default settings
- */
-export const DEFAULT_SETTINGS: MoonightSettings = {
-  general: {
-    maximizeOnOpen: true,
-    defaultDarkMode: 'default',
-    rememberLastFilter: true,
-    restorePreviousSession: true,
-    defaultViewMode: 'continuous',
-    annotationDisplayName: DEFAULT_ANNOTATION_DISPLAY_NAME,
-  },
-  keybinds: {
-    OpenFile: {
-      displayName: 'Open PDF',
-      binds: ['CmdOrCtrl+O'],
-      action: 'openFile',
-    },
-    CloseTab: {
-      displayName: 'Close Tab',
-      binds: ['CmdOrCtrl+W'],
-      action: 'closeTab',
-    },
-    ReopenTab: {
-      displayName: 'Reopen Tab',
-      binds: ['CmdOrCtrl+Shift+T'],
-      action: 'reopenTab',
-    },
-    NextTab: {
-      displayName: 'Next Tab',
-      binds: ['CmdOrCtrl+Tab', 'CmdOrCtrl+PageDown'],
-      action: 'nextTab',
-    },
-    PreviousTab: {
-      displayName: 'Previous Tab',
-      binds: ['CmdOrCtrl+Shift+Tab', 'CmdOrCtrl+PageUp'],
-      action: 'previousTab',
-    },
-    Print: {
-      displayName: 'Print',
-      binds: ['CmdOrCtrl+P'],
-      action: 'print',
-    },
-    Find: {
-      displayName: 'Find in Document',
-      binds: ['CmdOrCtrl+F'],
-      action: 'find',
-    },
-    ZoomIn: {
-      displayName: 'Zoom In',
-      binds: ['CmdOrCtrl+=', 'CmdOrCtrl+Plus'],
-      action: 'zoomIn',
-    },
-    ZoomOut: {
-      displayName: 'Zoom Out',
-      binds: ['CmdOrCtrl+-'],
-      action: 'zoomOut',
-    },
-    ResetZoom: {
-      displayName: 'Reset Zoom',
-      binds: ['CmdOrCtrl+0'],
-      action: 'resetZoom',
-    },
-    Settings: {
-      displayName: 'Open Settings',
-      binds: ['Alt+S'], // Default to Alt+S, will be overridden with Cmd+, on Mac during init
-      action: 'openSettings',
-    },
-    NextPage: {
-      displayName: 'Next Page',
-      binds: ['ArrowRight', 'ArrowDown'],
-      action: 'nextPage',
-    },
-    PreviousPage: {
-      displayName: 'Previous Page',
-      binds: ['ArrowLeft', 'ArrowUp'],
-      action: 'previousPage',
-    },
-    FirstPage: {
-      displayName: 'First Page',
-      binds: ['Home'],
-      action: 'firstPage',
-    },
-    LastPage: {
-      displayName: 'Last Page',
-      binds: ['End'],
-      action: 'lastPage',
-    },
-    FitToWidth: {
-      displayName: 'Fit to Width',
-      binds: ['CmdOrCtrl+Shift+W'],
-      action: 'fitToWidth',
-    },
-    FitToPage: {
-      displayName: 'Fit to Page',
-      binds: ['CmdOrCtrl+Shift+P'],
-      action: 'fitToPage',
-    },
-    SwitchToTab1: {
-      displayName: 'Switch to Tab 1',
-      binds: ['CmdOrCtrl+1'],
-      action: 'switchToTab',
-      data: '1',
-    },
-    SwitchToTab2: {
-      displayName: 'Switch to Tab 2',
-      binds: ['CmdOrCtrl+2'],
-      action: 'switchToTab',
-      data: '2',
-    },
-    SwitchToTab3: {
-      displayName: 'Switch to Tab 3',
-      binds: ['CmdOrCtrl+3'],
-      action: 'switchToTab',
-      data: '3',
-    },
-    SwitchToTab4: {
-      displayName: 'Switch to Tab 4',
-      binds: ['CmdOrCtrl+4'],
-      action: 'switchToTab',
-      data: '4',
-    },
-    SwitchToTab5: {
-      displayName: 'Switch to Tab 5',
-      binds: ['CmdOrCtrl+5'],
-      action: 'switchToTab',
-      data: '5',
-    },
-    SwitchToTab6: {
-      displayName: 'Switch to Tab 6',
-      binds: ['CmdOrCtrl+6'],
-      action: 'switchToTab',
-      data: '6',
-    },
-    SwitchToTab7: {
-      displayName: 'Switch to Tab 7',
-      binds: ['CmdOrCtrl+7'],
-      action: 'switchToTab',
-      data: '7',
-    },
-    SwitchToTab8: {
-      displayName: 'Switch to Tab 8',
-      binds: ['CmdOrCtrl+8'],
-      action: 'switchToTab',
-      data: '8',
-    },
-    SwitchToTab9: {
-      displayName: 'Switch to Last Tab',
-      binds: ['CmdOrCtrl+9'],
-      action: 'switchToTab',
-      data: '9',
-    },
-    Fullscreen: {
-      displayName: 'Toggle Fullscreen',
-      binds: ['F11'],
-      action: 'toggleFullscreen',
-    },
-    PresentationMode: {
-      displayName: 'Slideshow',
-      binds: ['Shift+F11'],
-      action: 'presentationMode',
-    },
-  },
+const DEFAULT_GENERAL: MoonightSettings['general'] = {
+  maximizeOnOpen: true,
+  defaultDarkMode: 'default',
+  rememberLastFilter: true,
+  restorePreviousSession: true,
+  defaultViewMode: 'continuous',
+  annotationDisplayName: DEFAULT_ANNOTATION_DISPLAY_NAME,
 };
 
-/** View-rotation shortcuts removed when rotation became a Page Rotation edit. */
-const RETIRED_KEYBIND_IDS: ReadonlySet<string> = new Set([
-  'RotateClockwise',
-  'RotateCounterClockwise',
-]);
-
-function withoutRetiredKeybinds(
-  keybinds: MoonightSettings['keybinds'] | undefined,
-): MoonightSettings['keybinds'] {
-  return Object.fromEntries(
-    Object.entries(keybinds ?? {})
-      .filter(([id]) => !RETIRED_KEYBIND_IDS.has(id))
-      // Command names follow the current defaults (e.g. Presentation Mode → Slideshow).
-      .map(([id, config]) => {
-        const displayName = DEFAULT_SETTINGS.keybinds[id]?.displayName;
-        return [id, displayName ? { ...config, displayName } : config];
-      }),
-  );
+/** Default settings for a platform; shortcuts differ between macOS and the others. */
+export function defaultSettings(platform: KeybindPlatform): MoonightSettings {
+  return { general: { ...DEFAULT_GENERAL }, keybinds: defaultKeybinds(platform) };
 }
+
+/** Default settings for the platform this window runs on. */
+export const DEFAULT_SETTINGS: MoonightSettings = defaultSettings(currentKeybindPlatform());
 
 const EMPTY_READING_SESSION: PersistedReadingSession = {
   schemaVersion: READING_SESSION_SCHEMA_VERSION,
   activeDocumentPath: null,
   documents: [],
 };
-
-function cloneDefaults(): MoonightSettings {
-  return structuredClone(DEFAULT_SETTINGS);
-}
 
 function migrateLegacyReadingSession(session: ReadingSession | undefined): PersistedReadingSession {
   if (!session) return structuredClone(EMPTY_READING_SESSION);
@@ -297,12 +128,24 @@ function migrateLegacyReadingSession(session: ReadingSession | undefined): Persi
   };
 }
 
+export interface SettingsManagerOptions {
+  /** Selects the platform-dependent default shortcuts; detected when omitted. */
+  readonly platform?: KeybindPlatform;
+}
+
 /** Persistent storage split by concern and constrained by window ownership. */
 export class SettingsManager<Owner extends SettingsOwner = 'main'> {
   private store: Store | null = null;
-  private settings: MoonightSettings = cloneDefaults();
+  private readonly platform: KeybindPlatform;
+  private settings: MoonightSettings;
 
-  constructor(private readonly owner: Owner = 'main' as Owner) {}
+  constructor(
+    private readonly owner: Owner = 'main' as Owner,
+    { platform = currentKeybindPlatform() }: SettingsManagerOptions = {},
+  ) {
+    this.platform = platform;
+    this.settings = defaultSettings(platform);
+  }
 
   private async initStore(): Promise<Store> {
     if (!this.store) this.store = await Store.load('settings.json');
@@ -310,6 +153,39 @@ export class SettingsManager<Owner extends SettingsOwner = 'main'> {
   }
 
   private async ensureMigrated(store: Store): Promise<void> {
+    await this.ensureStorageMigrated(store);
+    await this.ensureKeybindDefaults(store);
+  }
+
+  /**
+   * Upgrades stored keybinds to the current defaults (keybind-defaults.ts);
+   * only the main window writes the upgrade, the Settings window applies it
+   * on load until then.
+   */
+  private async ensureKeybindDefaults(store: Store): Promise<void> {
+    if (this.owner !== 'main') return;
+    const { keybinds, version } = await this.storedKeybinds(store);
+    if (version >= KEYBIND_DEFAULTS_VERSION) return;
+    await store.set(
+      'keybinds',
+      keybinds ? migrateKeybinds(keybinds, version, this.platform) : defaultKeybinds(this.platform),
+    );
+    await store.set(KEYBIND_DEFAULTS_VERSION_KEY, KEYBIND_DEFAULTS_VERSION);
+    await store.save();
+  }
+
+  private async storedKeybinds(
+    store: Store,
+  ): Promise<{ keybinds: MoonightSettings['keybinds'] | undefined; version: number }> {
+    const [keybinds, version] = await Promise.all([
+      store.get<MoonightSettings['keybinds']>('keybinds'),
+      store.get<number>(KEYBIND_DEFAULTS_VERSION_KEY),
+    ]);
+    // Keybinds stored before defaults were versioned hold the first defaults.
+    return { keybinds, version: version ?? 1 };
+  }
+
+  private async ensureStorageMigrated(store: Store): Promise<void> {
     if ((await store.get<number>('storageSchemaVersion')) === SETTINGS_SCHEMA_VERSION) return;
     if (this.owner !== 'main') {
       throw new Error('The main window must complete settings storage migration');
@@ -320,15 +196,14 @@ export class SettingsManager<Owner extends SettingsOwner = 'main'> {
       legacy?.version === '1.0.0'
         ? { ...legacy.general, maximizeOnOpen: true, defaultViewMode: 'continuous' as const }
         : legacy?.general;
+    const storedKeybinds = await store.get<MoonightSettings['keybinds']>('keybinds');
     const values = {
       general: (await store.get<MoonightSettings['general']>('general')) ?? {
-        ...DEFAULT_SETTINGS.general,
+        ...DEFAULT_GENERAL,
         ...legacyGeneral,
       },
-      keybinds: (await store.get<MoonightSettings['keybinds']>('keybinds')) ?? {
-        ...DEFAULT_SETTINGS.keybinds,
-        ...legacy?.keybinds,
-      },
+      // Legacy keybinds hold the first defaults; ensureKeybindDefaults upgrades them.
+      keybinds: storedKeybinds ?? legacy?.keybinds ?? defaultKeybinds(this.platform),
       readingSession:
         (await store.get<PersistedReadingSession>('readingSession')) ??
         migrateLegacyReadingSession(legacy?.lastSession),
@@ -339,6 +214,9 @@ export class SettingsManager<Owner extends SettingsOwner = 'main'> {
 
     await store.set('general', values.general);
     await store.set('keybinds', values.keybinds);
+    if (!storedKeybinds && !legacy?.keybinds) {
+      await store.set(KEYBIND_DEFAULTS_VERSION_KEY, KEYBIND_DEFAULTS_VERSION);
+    }
     await store.set('readingSession', values.readingSession);
     await store.set('recentFiles', values.recentFiles);
     await store.set('lastFilter', values.lastFilter);
@@ -351,12 +229,12 @@ export class SettingsManager<Owner extends SettingsOwner = 'main'> {
     try {
       const store = await this.initStore();
       await this.ensureMigrated(store);
-      const [general, keybinds, lastFilter] = await Promise.all([
+      const [general, { keybinds, version }, lastFilter] = await Promise.all([
         store.get<MoonightSettings['general']>('general'),
-        store.get<MoonightSettings['keybinds']>('keybinds'),
+        this.storedKeybinds(store),
         store.get<FilterSettings | null>('lastFilter'),
       ]);
-      const mergedGeneral = { ...DEFAULT_SETTINGS.general, ...general };
+      const mergedGeneral = { ...DEFAULT_GENERAL, ...general };
       this.settings = {
         general: {
           ...mergedGeneral,
@@ -364,13 +242,13 @@ export class SettingsManager<Owner extends SettingsOwner = 'main'> {
             mergedGeneral.annotationDisplayName,
           ),
         },
-        keybinds: { ...DEFAULT_SETTINGS.keybinds, ...withoutRetiredKeybinds(keybinds) },
+        keybinds: effectiveKeybinds(keybinds, version, this.platform),
         ...(lastFilter ? { lastFilter } : {}),
       };
       return structuredClone(this.settings);
     } catch (error) {
       console.error('Error loading settings:', error);
-      return cloneDefaults();
+      return defaultSettings(this.platform);
     }
   }
 
@@ -431,7 +309,7 @@ export class SettingsManager<Owner extends SettingsOwner = 'main'> {
 
   async reset(): Promise<void> {
     if (this.owner !== 'settings') throw new Error('Only the Settings window can reset settings');
-    const defaults = cloneDefaults();
+    const defaults = defaultSettings(this.platform);
     await this.writeConcern('general', defaults.general);
     await this.writeConcern('keybinds', defaults.keybinds);
     this.settings = defaults;

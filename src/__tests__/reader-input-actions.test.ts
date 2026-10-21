@@ -39,6 +39,7 @@ describe('reader visual input adapters', () => {
       togglePresentationMode: vi.fn(async () => undefined),
       goToPage: vi.fn(async () => undefined),
       goToRelativePage: vi.fn(async () => undefined),
+      runReaderCommand: vi.fn(async () => true),
       dispatchReaderAction,
     });
 
@@ -68,6 +69,7 @@ describe('reader visual input adapters', () => {
       togglePresentationMode: vi.fn(async () => undefined),
       goToPage: vi.fn(async () => undefined),
       goToRelativePage: vi.fn(async () => undefined),
+      runReaderCommand: vi.fn(async () => true),
       dispatchReaderAction,
     });
 
@@ -101,11 +103,41 @@ describe('reader visual input adapters', () => {
       togglePresentationMode: vi.fn(async () => undefined),
       goToPage: vi.fn(async () => undefined),
       goToRelativePage: vi.fn(async () => undefined),
+      runReaderCommand: vi.fn(async () => true),
       dispatchReaderAction,
     });
 
     await handlers.get('print')?.();
 
     expect(dispatchReaderAction).toHaveBeenCalledWith({ type: 'printDocument' });
+  });
+
+  it('runs reader-command shortcuts as the native menu command they name', async () => {
+    const handlers = new Map<string, (event: unknown, data?: string) => void | Promise<void>>();
+    const runReaderCommand = vi.fn(async () => true);
+    registerKeybindActions({
+      keybindManager: {
+        registerAction: (name: string, handler: () => void | Promise<void>) => {
+          handlers.set(name, handler);
+        },
+      } as unknown as KeybindManager,
+      getReadingSessionSnapshot: () => readingSession(),
+      getActivePageCount: async () => 0,
+      openPdfAndRefresh: vi.fn(async () => undefined),
+      openSettings: vi.fn(async () => undefined),
+      updateTabBarVisibility: vi.fn(),
+      updateUI: vi.fn(),
+      openSearch: vi.fn(),
+      togglePresentationMode: vi.fn(async () => undefined),
+      goToPage: vi.fn(async () => undefined),
+      goToRelativePage: vi.fn(async () => undefined),
+      runReaderCommand,
+      dispatchReaderAction: vi.fn(async () => undefined),
+    });
+
+    await handlers.get('readerCommand')?.({}, 'view.sidebar.thumbnails');
+    await handlers.get('readerCommand')?.({});
+
+    expect(runReaderCommand.mock.calls).toEqual([['view.sidebar.thumbnails']]);
   });
 });

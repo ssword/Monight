@@ -105,14 +105,14 @@ fn build_edit_menu(app: &AppHandle) -> Result<Submenu<Wry>, tauri::Error> {
 }
 
 /// One entry of the reader menus (View, Go, Tools). Ids are the reader command
-/// ids of src/app/reader-commands.ts; their enabled, checked and title state
-/// is set from TypeScript through `set_menu_item_states`.
+/// ids of src/app/reader-commands.ts; their enabled, checked, title and
+/// accelerator state is set from TypeScript through `set_menu_item_states`, so
+/// accelerators always show the reader's effective keybinds.
 #[derive(Clone, Copy, Debug)]
 enum ReaderMenuEntry {
     Command {
         id: &'static str,
         text: &'static str,
-        accelerator: Option<&'static str>,
     },
     Check {
         id: &'static str,
@@ -130,19 +130,13 @@ enum ReaderMenuEntry {
 use ReaderMenuEntry::{Check, Command, Listed, Separator};
 
 const fn command(id: &'static str, text: &'static str) -> ReaderMenuEntry {
-    Command {
-        id,
-        text,
-        accelerator: None,
-    }
+    Command { id, text }
 }
 
 const fn check(id: &'static str, text: &'static str) -> ReaderMenuEntry {
     Check { id, text }
 }
 
-// Shortcut defaults are unchanged here: only the accelerators the View menu
-// already had are kept (Preview's defaults arrive with the keybind migration).
 const VIEW_MENU: &[ReaderMenuEntry] = &[
     command("view.tab-bar", "Show Tab Bar"),
     Separator,
@@ -155,23 +149,11 @@ const VIEW_MENU: &[ReaderMenuEntry] = &[
     check("view.mode.single", "Single Page"),
     check("view.mode.spread", "Two Pages"),
     Separator,
-    Command {
-        id: "view.zoom.actual-size",
-        text: "Actual Size",
-        accelerator: Some("CmdOrCtrl+0"),
-    },
+    command("view.zoom.actual-size", "Actual Size"),
     command("view.zoom.fit", "Zoom to Fit"),
     command("view.zoom.width", "Zoom to Width"),
-    Command {
-        id: "view.zoom.in",
-        text: "Zoom In",
-        accelerator: Some("CmdOrCtrl+Plus"),
-    },
-    Command {
-        id: "view.zoom.out",
-        text: "Zoom Out",
-        accelerator: Some("CmdOrCtrl+-"),
-    },
+    command("view.zoom.in", "Zoom In"),
+    command("view.zoom.out", "Zoom Out"),
     Separator,
     command("view.markup-toolbar", "Show Markup Toolbar"),
     Listed {
@@ -180,11 +162,7 @@ const VIEW_MENU: &[ReaderMenuEntry] = &[
     },
     Separator,
     command("view.slideshow", "Slideshow"),
-    Command {
-        id: "view.full-screen",
-        text: "Enter Full Screen",
-        accelerator: Some("F11"),
-    },
+    command("view.full-screen", "Enter Full Screen"),
 ];
 
 const GO_MENU: &[ReaderMenuEntry] = &[
@@ -228,16 +206,12 @@ fn build_reader_menu(
     let submenu = Submenu::new(app, text, true)?;
     for entry in entries {
         match *entry {
-            Command {
-                id,
-                text,
-                accelerator,
-            } => submenu.append(&MenuItem::with_id(
+            Command { id, text } => submenu.append(&MenuItem::with_id(
                 app,
                 id,
                 text,
                 initially_enabled(id),
-                accelerator,
+                None::<&str>,
             )?)?,
             Check { id, text } => submenu.append(&CheckMenuItem::with_id(
                 app,
@@ -267,7 +241,6 @@ fn build_tools_menu(app: &AppHandle) -> Result<Submenu<Wry>, tauri::Error> {
 }
 
 /// A native menu item's state as reported by the WebView; absent fields are kept.
-/// Extend with further optional fields (e.g. an accelerator) as needed.
 #[derive(Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct MenuItemState {
@@ -275,6 +248,18 @@ pub struct MenuItemState {
     enabled: Option<bool>,
     checked: Option<bool>,
     text: Option<String>,
+    /// Absent: kept; `null`: removed; a string: shown (a Tauri accelerator).
+    #[serde(default, deserialize_with = "present")]
+    accelerator: Option<Option<String>>,
+}
+
+/// Tells a field sent as `null` apart from an absent one.
+fn present<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    T::deserialize(deserializer).map(Some)
 }
 
 /// An item of a submenu filled from a TypeScript list.
@@ -312,6 +297,9 @@ fn apply_menu_item_state(item: &MenuItemKind<Wry>, state: &MenuItemState) {
             if let Some(text) = &state.text {
                 item.set_text(text).ok();
             }
+            if let Some(accelerator) = &state.accelerator {
+                item.set_accelerator(accelerator.as_deref()).ok();
+            }
         }
         MenuItemKind::Check(item) => {
             if let Some(enabled) = state.enabled {
@@ -322,6 +310,9 @@ fn apply_menu_item_state(item: &MenuItemKind<Wry>, state: &MenuItemState) {
             }
             if let Some(text) = &state.text {
                 item.set_text(text).ok();
+            }
+            if let Some(accelerator) = &state.accelerator {
+                item.set_accelerator(accelerator.as_deref()).ok();
             }
         }
         MenuItemKind::Submenu(item) => {
@@ -565,6 +556,13 @@ mod tests {
         assert_eq!(help_url("contact"), Some("https://github.com/ssword"));
     }
 
+    fn reader_menu_tables() -> &'static str {
+        let source = include_str!("menu.rs");
+        let start = source.find("const VIEW_MENU").unwrap();
+        let end = source.find("const READER_MENUS").unwrap();
+        &source[start..end]
+    }
+
     fn titles(entries: &[ReaderMenuEntry]) -> Vec<&'static str> {
         entries
             .iter()
@@ -648,28 +646,11 @@ mod tests {
     }
 
     #[test]
-    fn keeps_the_existing_view_accelerators_only() {
-        let accelerators: Vec<_> = READER_MENUS
-            .iter()
-            .flat_map(|entries| entries.iter())
-            .filter_map(|entry| match *entry {
-                Command {
-                    id,
-                    accelerator: Some(accelerator),
-                    ..
-                } => Some((id, accelerator)),
-                _ => None,
-            })
-            .collect();
-        assert_eq!(
-            accelerators,
-            [
-                ("view.zoom.actual-size", "CmdOrCtrl+0"),
-                ("view.zoom.in", "CmdOrCtrl+Plus"),
-                ("view.zoom.out", "CmdOrCtrl+-"),
-                ("view.full-screen", "F11"),
-            ]
-        );
+    fn reader_menu_accelerators_come_from_the_effective_keybinds() {
+        // Accelerators follow the reader's keybinds, which the WebView sends
+        // through set_menu_item_states; the menu tables fix none of their own.
+        assert!(!reader_menu_tables().contains("Some(\"CmdOrCtrl"));
+        assert!(!reader_menu_tables().contains("Some(\"F11\")"));
     }
 
     #[test]
@@ -712,14 +693,31 @@ mod tests {
                     enabled: Some(true),
                     checked: Some(false),
                     text: None,
+                    accelerator: None,
                 },
                 MenuItemState {
                     id: "view.full-screen".into(),
                     enabled: None,
                     checked: None,
                     text: Some("Exit Full Screen".into()),
+                    accelerator: None,
                 },
             ]
+        );
+    }
+
+    #[test]
+    fn reads_set_and_removed_accelerators_from_the_webview() {
+        let states: Vec<MenuItemState> = serde_json::from_value(serde_json::json!([
+            { "id": "view.mode.single", "accelerator": "CmdOrCtrl+2" },
+            { "id": "view.mode.spread", "accelerator": null },
+            { "id": "view.mode.continuous" }
+        ]))
+        .unwrap();
+        let accelerators: Vec<_> = states.iter().map(|state| &state.accelerator).collect();
+        assert_eq!(
+            accelerators,
+            [&Some(Some("CmdOrCtrl+2".into())), &Some(None), &None]
         );
     }
 

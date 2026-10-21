@@ -16,6 +16,8 @@ interface KeybindContext {
   togglePresentationMode: () => Promise<void>;
   goToPage: (page: number) => Promise<void>;
   goToRelativePage: (direction: 'next' | 'previous') => Promise<void>;
+  /** Runs a native View, Go or Tools command (reader-commands.ts) by id. */
+  runReaderCommand: (id: string) => Promise<boolean>;
   dispatchReaderAction: DispatchReaderAction;
 }
 
@@ -38,6 +40,7 @@ export function registerKeybindActions({
   togglePresentationMode,
   goToPage,
   goToRelativePage,
+  runReaderCommand,
   dispatchReaderAction,
 }: KeybindContext): void {
   if (!keybindManager) {
@@ -152,6 +155,12 @@ export function registerKeybindActions({
 
   keybindManager.registerAction('fitToPage', async () => {
     await dispatchReaderAction(READER_ACTION_COMMANDS.zoomToFit());
+  });
+
+  // Shortcuts for native menu commands (view modes, sidebar modes, markup
+  // toolbar, Go to Page…) name the command in their data.
+  keybindManager.registerAction('readerCommand', async (_e, commandId) => {
+    if (commandId) await runReaderCommand(commandId);
   });
 
   // Fullscreen
