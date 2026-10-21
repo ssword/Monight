@@ -151,15 +151,6 @@ export function registerKeybindActions({
     await dispatchReaderAction(readerAction.setZoomIntent({ kind: 'fit-page' }));
   });
 
-  // Rotation
-  keybindManager.registerAction('rotateRight', async () => {
-    await dispatchReaderAction(readerAction.rotateClockwise());
-  });
-
-  keybindManager.registerAction('rotateLeft', async () => {
-    await dispatchReaderAction(readerAction.rotateCounterClockwise());
-  });
-
   // Fullscreen
   keybindManager.registerAction('toggleFullscreen', async () => {
     const currentWindow = getCurrentWebviewWindow();

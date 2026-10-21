@@ -22,6 +22,8 @@ const DISABLED_CATEGORIES = [
   'document-export',
   'document-protect',
   'document-capture',
+  // Rotation is a Page Rotation edit of the PDF, never a view setting.
+  'rotate',
   // Reading Session supports single, continuous, and odd-page spreads.
   'spread-even',
 ] as const;

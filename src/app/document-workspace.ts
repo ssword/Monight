@@ -40,7 +40,6 @@ export interface DocumentSurfaceCallbacks {
   readonly stateChanged: () => void;
   readonly pageNavigationRequested: (page: number, options?: ReaderActionOptions) => Promise<void>;
   readonly zoomIntentRequested: (zoomIntent: ZoomIntent) => Promise<void>;
-  readonly rotationRequested?: (direction: 'clockwise' | 'counter-clockwise') => Promise<void>;
   readonly viewModeRequested?: (viewMode: ViewMode) => Promise<void>;
   readonly linkTargetRequested?: (
     target: PdfLinkTarget,
@@ -136,7 +135,6 @@ async function projectDocumentState(
 ): Promise<void> {
   if (documentState.visualState) {
     rendering.applyFilter(buildFilterCSS(documentState.visualState.filterSettings), options);
-    await rendering.setRotation(documentState.visualState.rotation, options);
     await rendering.setViewMode(documentState.visualState.viewMode, options);
     await rendering.setZoomIntent(documentState.visualState.zoomIntent, options);
   }
@@ -505,11 +503,6 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
           filePath: identity.filePath,
           zoomIntent,
         }),
-      rotationRequested: (direction) =>
-        dispatchSurfaceAction({
-          type: direction === 'clockwise' ? 'rotateClockwise' : 'rotateCounterClockwise',
-          filePath: identity.filePath,
-        }),
       viewModeRequested: (viewMode) =>
         dispatchSurfaceAction({
           type: 'setViewMode',
@@ -654,8 +647,6 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
         : rendering.zoomOut(actionOptions));
       return cloneZoomIntent(rendering.getState().zoomIntent);
     },
-    applyRotation: (filePath, rotation, actionOptions) =>
-      requireRendering(filePath).setRotation(rotation, actionOptions),
     applyViewMode: (filePath, viewMode, actionOptions) =>
       requireRendering(filePath).setViewMode(viewMode, actionOptions),
     async applyFilterSettings(filePath, filterSettings, actionOptions) {
@@ -836,7 +827,6 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
       return {
         scale: state.zoom,
         zoomIntent: cloneZoomIntent(state.zoomIntent),
-        viewingRotation: state.rotation,
         viewMode: state.viewMode,
         filterCss: buildFilterCSS(visualState.filterSettings),
       };

@@ -195,23 +195,6 @@ export function embedPdfZoomLevelFromIntent(intent: ZoomIntent): ZoomLevel {
   return intent.kind === 'fit-width' ? ZoomMode.FitWidth : ZoomMode.FitPage;
 }
 
-export function embedPdfRotationFromDegrees(degrees: number): Rotation {
-  switch (((degrees % 360) + 360) % 360) {
-    case 90:
-      return Rotation.Degree90;
-    case 180:
-      return Rotation.Degree180;
-    case 270:
-      return Rotation.Degree270;
-    default:
-      return Rotation.Degree0;
-  }
-}
-
-export function degreesFromEmbedPdfRotation(rotation: Rotation): number {
-  return rotation * 90;
-}
-
 interface EmbedPdfScrollMetrics {
   readonly pageVisibilityMetrics: readonly {
     readonly pageNumber: number;

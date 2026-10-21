@@ -5,10 +5,11 @@ import {
   DEFAULT_ANNOTATION_DISPLAY_NAME,
   normalizeAnnotationDisplayName,
 } from '../reader/native-pdf-editing';
-import type {
-  PersistedReadingSession,
-  RestorableReadingPosition,
-  ZoomIntent,
+import {
+  type PersistedReadingSession,
+  READING_SESSION_SCHEMA_VERSION,
+  type RestorableReadingPosition,
+  type ZoomIntent,
 } from '../reader/reader-actions';
 import type { RecentDocument } from '../reader/recent-documents';
 import type { FilterSettings } from './filters';
@@ -22,7 +23,6 @@ export interface SavedTabSession {
   currentPage: number;
   zoom: number;
   zoomIntent?: ZoomIntent;
-  rotation?: number;
   scrollPosition?: number;
   readingPosition?: RestorableReadingPosition;
   viewMode: ViewMode;
@@ -174,16 +174,6 @@ export const DEFAULT_SETTINGS: MoonightSettings = {
       binds: ['CmdOrCtrl+Shift+P'],
       action: 'fitToPage',
     },
-    RotateClockwise: {
-      displayName: 'Rotate Right',
-      binds: ['CmdOrCtrl+R'],
-      action: 'rotateRight',
-    },
-    RotateCounterClockwise: {
-      displayName: 'Rotate Left',
-      binds: ['CmdOrCtrl+Shift+R'],
-      action: 'rotateLeft',
-    },
     SwitchToTab1: {
       displayName: 'Switch to Tab 1',
       binds: ['CmdOrCtrl+1'],
@@ -251,8 +241,22 @@ export const DEFAULT_SETTINGS: MoonightSettings = {
   },
 };
 
+/** View-rotation shortcuts removed when rotation became a Page Rotation edit. */
+const RETIRED_KEYBIND_IDS: ReadonlySet<string> = new Set([
+  'RotateClockwise',
+  'RotateCounterClockwise',
+]);
+
+function withoutRetiredKeybinds(
+  keybinds: MoonightSettings['keybinds'] | undefined,
+): MoonightSettings['keybinds'] {
+  return Object.fromEntries(
+    Object.entries(keybinds ?? {}).filter(([id]) => !RETIRED_KEYBIND_IDS.has(id)),
+  );
+}
+
 const EMPTY_READING_SESSION: PersistedReadingSession = {
-  schemaVersion: 2,
+  schemaVersion: READING_SESSION_SCHEMA_VERSION,
   activeDocumentPath: null,
   documents: [],
 };
@@ -274,13 +278,12 @@ function migrateLegacyReadingSession(session: ReadingSession | undefined): Persi
     visualState: {
       filterSettings: tab.filterSettings,
       zoomIntent: tab.zoomIntent ?? { kind: 'manual' as const, scale: tab.zoom },
-      rotation: tab.rotation ?? 0,
       viewMode: tab.viewMode,
     },
   }));
 
   return {
-    schemaVersion: 2,
+    schemaVersion: READING_SESSION_SCHEMA_VERSION,
     activeDocumentPath: documents.some((document) => document.filePath === session.activeFilePath)
       ? session.activeFilePath
       : null,
@@ -355,7 +358,7 @@ export class SettingsManager<Owner extends SettingsOwner = 'main'> {
             mergedGeneral.annotationDisplayName,
           ),
         },
-        keybinds: { ...DEFAULT_SETTINGS.keybinds, ...keybinds },
+        keybinds: { ...DEFAULT_SETTINGS.keybinds, ...withoutRetiredKeybinds(keybinds) },
         ...(lastFilter ? { lastFilter } : {}),
       };
       return structuredClone(this.settings);

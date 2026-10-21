@@ -46,6 +46,7 @@ import type { DocumentIntake } from './reader/document-intake';
 import { DEFAULT_ANNOTATION_DISPLAY_NAME } from './reader/native-pdf-editing';
 import {
   type PersistedReadingSession,
+  READING_SESSION_SCHEMA_VERSION,
   type ReaderAction,
   type ReaderActionOptions,
   type ReaderActions,
@@ -425,7 +426,7 @@ export async function initializeApplication(modules: ApplicationModules): Promis
     } catch (error) {
       console.error('Reading Session migration failed; legacy data was retained:', error);
       restoredReadingSession = {
-        schemaVersion: 2,
+        schemaVersion: READING_SESSION_SCHEMA_VERSION,
         activeDocumentPath: null,
         documents: [],
       };
@@ -438,7 +439,6 @@ export async function initializeApplication(modules: ApplicationModules): Promis
     const defaultVisualState = () => ({
       filterSettings: getInitialFilterSettings(),
       zoomIntent: { kind: 'manual' as const, scale: 1 },
-      rotation: 0,
       viewMode: getInitialViewMode(),
     });
     const initialReadingSession = restoredReadingSession ?? EMPTY_READING_SESSION;
@@ -670,7 +670,7 @@ export async function initializeApplication(modules: ApplicationModules): Promis
         if (!updated.general.restorePreviousSession) {
           await settingsManager.clearPersistedReadingSession();
           restoredReadingSession = {
-            schemaVersion: 2,
+            schemaVersion: READING_SESSION_SCHEMA_VERSION,
             activeDocumentPath: null,
             documents: [],
           };
@@ -680,7 +680,7 @@ export async function initializeApplication(modules: ApplicationModules): Promis
         if (!settingsManager || !acceptsReaderWork()) return;
         await settingsManager.clearPersistedReadingSession();
         restoredReadingSession = {
-          schemaVersion: 2,
+          schemaVersion: READING_SESSION_SCHEMA_VERSION,
           activeDocumentPath: null,
           documents: [],
         };
