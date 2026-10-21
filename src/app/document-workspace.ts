@@ -100,7 +100,6 @@ export interface DocumentWorkspace {
   activeRenderingState(): ReturnType<DocumentRendering['getState']> | null;
   activeReadingPosition(): { filePath: string; readingPosition: ReadingPosition } | null;
   viewTransform(filePath: string): DocumentViewTransform | null;
-  openActiveSearch(): void;
   setAnnotationDisplayName(displayName: AnnotationDisplayName): void;
 }
 
@@ -540,9 +539,6 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
       rendering: surface.rendering,
       presentation: {
         snapshot: () => surface.rendering.getState(),
-        ...(surface.rendering.openSearch
-          ? { openSearch: () => surface.rendering.openSearch?.() }
-          : {}),
       },
     };
   };
@@ -830,10 +826,6 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
         viewMode: state.viewMode,
         filterCss: buildFilterCSS(visualState.filterSettings),
       };
-    },
-    openActiveSearch() {
-      const filePath = options.snapshot().activeDocumentPath;
-      if (filePath) presented.get(filePath)?.rendering.openSearch?.();
     },
     setAnnotationDisplayName(displayName) {
       for (const documentState of presented.values()) {

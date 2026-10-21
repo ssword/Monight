@@ -127,6 +127,12 @@
                         <span class="toolbar-icon" data-icon="folder-open"></span>
                     </button>
                 </div>
+
+                <!-- Search: typing takes over the sidebar with results -->
+                <div class="toolbar-search" role="search" data-tauri-drag-region="false">
+                    <span class="toolbar-icon toolbar-search-icon" data-icon="search"></span>
+                    <input id="toolbar-search" type="search" placeholder="Search" aria-label="Search" aria-controls="reader-sidebar" autocomplete="off" spellcheck="false">
+                </div>
             </div>
 
             <!-- Tab Bar -->

@@ -12,6 +12,7 @@ import {
   Presentation,
   Printer,
   Scan,
+  Search,
   ZoomIn,
   ZoomOut,
 } from 'lucide';
@@ -24,6 +25,7 @@ const CHROME_ICONS: Readonly<Record<string, IconNode>> = {
   palette: Palette,
   presentation: Presentation,
   printer: Printer,
+  search: Search,
   sidebar: PanelLeft,
   'zoom-in': ZoomIn,
   'zoom-out': ZoomOut,

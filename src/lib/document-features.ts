@@ -34,6 +34,8 @@ export interface PdfSearchMatch {
   pageOccurrence: number;
   index: number;
   excerpt: string;
+  /** Normalized position of the hit within its page (0 = top), when known. */
+  location?: number;
 }
 
 export function findPageTextMatches(

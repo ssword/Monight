@@ -26,6 +26,8 @@ const DISABLED_CATEGORIES = [
   'rotate',
   // Monight's toolbar zoom group replaces the ready-made zoom controls.
   'zoom',
+  // Monight's toolbar Search field and sidebar replace the ready-made search panel.
+  'panel-search',
   // Reading Session supports single, continuous, and odd-page spreads.
   'spread-even',
 ] as const;

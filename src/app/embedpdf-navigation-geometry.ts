@@ -246,6 +246,41 @@ export function restoreEmbedPdfReadingPositionCoordinates(
   }
 }
 
+interface EmbedPdfRect {
+  readonly origin: { readonly x: number; readonly y: number };
+  readonly size: { readonly width: number; readonly height: number };
+}
+
+/**
+ * The normalized Reading Position location of a search hit: the reading-order
+ * leading edge of its highlight rects, in the same convention that
+ * restoreEmbedPdfReadingPositionCoordinates maps back to page coordinates.
+ */
+export function embedPdfSearchHitLocation(
+  pageSize: { readonly width: number; readonly height: number },
+  rotation: Rotation,
+  rects: readonly EmbedPdfRect[],
+): number {
+  if (rects.length === 0 || pageSize.width <= 0 || pageSize.height <= 0) return 0;
+  const left = Math.min(...rects.map((rect) => rect.origin.x));
+  const top = Math.min(...rects.map((rect) => rect.origin.y));
+  const right = Math.max(...rects.map((rect) => rect.origin.x + rect.size.width));
+  const bottom = Math.max(...rects.map((rect) => rect.origin.y + rect.size.height));
+  const location = (() => {
+    switch (rotation) {
+      case Rotation.Degree90:
+        return left / pageSize.width;
+      case Rotation.Degree180:
+        return 1 - bottom / pageSize.height;
+      case Rotation.Degree270:
+        return 1 - right / pageSize.width;
+      default:
+        return top / pageSize.height;
+    }
+  })();
+  return Math.min(1, Math.max(0, location));
+}
+
 export function embedPdfLayoutForViewMode(viewMode: ViewMode): {
   scrollStrategy: ScrollStrategy;
   spreadMode: SpreadMode;

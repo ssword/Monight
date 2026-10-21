@@ -44,6 +44,7 @@ import {
   embedPdfOutlinePath,
   embedPdfPageNumberForEventPath,
   embedPdfReadingFilterStyle,
+  embedPdfSearchHitLocation,
   embedPdfZoomLevelFromIntent,
   isEmbedPdfLinkHitArea,
   restoreEmbedPdfReadingPositionCoordinates,
@@ -77,7 +78,6 @@ export interface EmbedPdfViewerRuntime {
   readonly editing?: NativePdfEditing;
   preparePrintDocument(): Promise<Uint8Array>;
   open(request: EmbedPdfOpenRequest): Promise<void>;
-  openSearch(): void;
   pageCount(): number;
   currentPage(): number;
   currentZoom(): number;
@@ -141,14 +141,21 @@ const createSearchMatch = (
   result: {
     readonly charIndex: number;
     readonly context: Parameters<typeof searchExcerpt>[0];
+    readonly rects?: Parameters<typeof embedPdfSearchHitLocation>[2];
   },
   pageNumber: number,
   pageOccurrence: number,
+  page:
+    | { readonly size: { width: number; height: number }; readonly rotation?: Rotation }
+    | undefined,
 ): PdfSearchMatch => ({
   pageNumber,
   pageOccurrence,
   index: result.charIndex,
   excerpt: searchExcerpt(result.context),
+  ...(page && result.rects
+    ? { location: embedPdfSearchHitLocation(page.size, page.rotation ?? 0, result.rects) }
+    : {}),
 });
 
 async function blobToCanvas(blob: Blob, maxWidth?: number): Promise<HTMLCanvasElement> {
@@ -223,7 +230,6 @@ export async function createEmbedPdfViewerRuntime({
   const engine = registry.getEngine();
   const unsubscribers: Array<() => void> = [];
   const documentId = `monight-${crypto.randomUUID()}`;
-  const uiScope = ui.forDocument(documentId);
   let sourceBytes = new Uint8Array();
   let fileName = '';
   let documentObject: ReturnType<DocumentManagerCapability['getDocument']> = null;
@@ -547,11 +553,6 @@ export async function createEmbedPdfViewerRuntime({
       await waitForInitialLayout(request.signal);
       if (request.signal?.aborted) throw new Error('Document Intake interrupted');
     },
-    openSearch() {
-      if (!uiScope.isSidebarOpen('right', 'main', 'search-panel')) {
-        uiScope.setActiveSidebar('right', 'main', 'search-panel');
-      }
-    },
     pageCount: () => documentObject?.pageCount ?? 0,
     currentPage: currentPageNumber,
     currentZoom: () => zoomScope.getState().currentZoomLevel,
@@ -604,7 +605,12 @@ export async function createEmbedPdfViewerRuntime({
           const pageNumber = page + 1;
           const pageOccurrence = pageOccurrences.get(pageNumber) ?? 0;
           pageOccurrences.set(pageNumber, pageOccurrence + 1);
-          return createSearchMatch(result, pageNumber, pageOccurrence);
+          return createSearchMatch(
+            result,
+            pageNumber,
+            pageOccurrence,
+            currentDocument().pages[page],
+          );
         });
         progressMatches.push(...pageMatches);
         options.onProgress?.({
@@ -621,7 +627,12 @@ export async function createEmbedPdfViewerRuntime({
         const pageNumber = match.pageIndex + 1;
         const pageOccurrence = occurrences.get(pageNumber) ?? 0;
         occurrences.set(pageNumber, pageOccurrence + 1);
-        return createSearchMatch(match, pageNumber, pageOccurrence);
+        return createSearchMatch(
+          match,
+          pageNumber,
+          pageOccurrence,
+          currentDocument().pages[match.pageIndex],
+        );
       });
     },
     async outline(options) {

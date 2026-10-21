@@ -28,7 +28,6 @@ export interface DocumentViewTransform {
 
 export interface DocumentRendering {
   getState(): DocumentRenderingState;
-  openSearch?(): void;
   getScrollPosition(): number;
   getReadingPosition(): ReadingPosition;
   goToPage(pageNumber: number, options?: ReaderActionOptions): Promise<void>;

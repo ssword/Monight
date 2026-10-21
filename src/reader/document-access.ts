@@ -3,7 +3,6 @@ import type { DocumentRenderingState } from './document-rendering';
 
 export interface DocumentPresentation {
   snapshot(): DocumentRenderingState;
-  openSearch?(): void;
 }
 
 export interface DocumentAccess {

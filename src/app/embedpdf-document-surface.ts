@@ -105,7 +105,6 @@ export function createEmbedPdfDocumentSurfaceFactory({
           viewMode: openedViewer.viewMode(),
         };
       },
-      openSearch: () => openedViewer.openSearch(),
       getScrollPosition: () => 0,
       getReadingPosition: () => openedViewer.readingPosition(),
       goToPage: (pageNumber, options) => project(() => openedViewer.goToPage(pageNumber), options),

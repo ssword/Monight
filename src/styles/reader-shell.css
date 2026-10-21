@@ -219,3 +219,43 @@
   font-family: "Monaco", "Courier New", monospace;
   font-size: 14px;
 }
+
+/* Search field at the trailing edge; typing takes over the sidebar. */
+.toolbar-search {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: 0 1 200px;
+  min-width: 120px;
+  height: 28px;
+}
+
+.toolbar-search-icon {
+  position: absolute;
+  left: 7px;
+  width: 14px;
+  height: 14px;
+  color: var(--chrome-icon-color);
+}
+
+.toolbar-search input {
+  width: 100%;
+  height: 100%;
+  padding: 0 8px 0 26px;
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 13px;
+  background-color: var(--capsule-bg);
+  border: 1px solid var(--border-color);
+  border-radius: var(--capsule-radius);
+  outline: none;
+}
+
+.toolbar-search input::placeholder {
+  color: var(--text-secondary);
+}
+
+.toolbar-search input:focus-visible {
+  border-color: var(--accent-color);
+  box-shadow: 0 0 0 2px var(--accent-glow);
+}

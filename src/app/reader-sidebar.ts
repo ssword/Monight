@@ -7,6 +7,9 @@
 // `[data-sidebar-mode]` menu item, and a SidebarModeView factory in
 // MODE_VIEWS. Transient presentation (e.g. a search takeover) belongs in
 // `presentation()`, layered over the persisted preferences without writing them.
+// The search takeover (sidebar-search.ts) is one such layer: while the toolbar
+// Search field has text the sidebar shows results; clearing it falls back to
+// the untouched preferences.
 
 import type { DocumentQuery } from '../reader/document-queries';
 import type { DispatchReaderAction } from '../reader/reader-actions';
@@ -17,6 +20,7 @@ import {
   SIDEBAR_WIDTH_BOUNDS,
   type SidebarMode,
 } from './chrome-preferences';
+import { createSearchResultsView, type SearchResultsView } from './sidebar-search';
 
 /** What the sidebar needs to know about the active Document. */
 export interface SidebarDocument {
@@ -48,6 +52,8 @@ export interface ReaderSidebarElements {
   readonly toggle: HTMLButtonElement;
   readonly modeToggle: HTMLButtonElement;
   readonly modeMenu: HTMLElement;
+  /** The toolbar Search field; typing in it takes over the sidebar. */
+  readonly search?: HTMLInputElement;
 }
 
 export interface ReaderSidebarOptions {
@@ -56,14 +62,18 @@ export interface ReaderSidebarOptions {
   readonly activeDocument: () => SidebarDocument | null;
   readonly dispatchReaderAction: DispatchReaderAction;
   readonly whenVisible?: WhenVisible;
+  readonly searchDebounceMs?: number;
 }
 
 export interface ReaderSidebar {
   /** Re-reads the active Document; call on Reading Session and rendering changes. */
   refresh(): void;
+  /** Focuses the toolbar Search field (Find). */
+  focusSearch(): void;
   destroy(): void;
 }
 
+const SEARCH_DEBOUNCE_MS = 150;
 const RESIZE_STEP = 10;
 const THUMBNAIL_INSET = 40;
 
@@ -93,11 +103,12 @@ function observeVisibility(root: Element | null): WhenVisible {
 }
 
 export function createReaderSidebar({
-  elements: { root, toggle, modeToggle, modeMenu },
+  elements: { root, toggle, modeToggle, modeMenu, search },
   preferences,
   activeDocument,
   dispatchReaderAction,
   whenVisible,
+  searchDebounceMs = SEARCH_DEBOUNCE_MS,
 }: ReaderSidebarOptions): ReaderSidebar {
   const content = root.querySelector<HTMLElement>('.reader-sidebar-content') ?? root;
   const resizer = root.querySelector<HTMLElement>('.reader-sidebar-resizer');
@@ -107,6 +118,10 @@ export function createReaderSidebar({
     width: () => preferences.snapshot().sidebarWidth,
   };
   let view: { mode: SidebarMode; view: SidebarModeView } | null = null;
+  // Transient search takeover: never written to preferences.
+  let searchText = '';
+  let searchView: SearchResultsView | null = null;
+  let searchTimer: ReturnType<typeof setTimeout> | null = null;
   const cleanups: Array<() => void> = [];
   const listen = <K extends keyof HTMLElementEventMap>(
     target: HTMLElement | Document,
@@ -117,9 +132,10 @@ export function createReaderSidebar({
     cleanups.push(() => target.removeEventListener(type, listener as EventListener));
   };
 
-  /** Effective presentation; transient overrides would layer over preferences here. */
-  const presentation = () => {
+  /** Effective presentation: the search takeover layered over the preferences. */
+  const presentation = (): { visible: boolean; mode: SidebarMode | 'search'; width: number } => {
     const { sidebarVisible, sidebarMode, sidebarWidth } = preferences.snapshot();
+    if (searchText.trim()) return { visible: true, mode: 'search', width: sidebarWidth };
     return { visible: sidebarVisible, mode: sidebarMode, width: sidebarWidth };
   };
 
@@ -141,9 +157,18 @@ export function createReaderSidebar({
         String(visible ? itemMode === mode : itemMode === 'hidden'),
       );
     }
-    if (!visible) {
+    if (mode !== 'search') searchView?.destroy();
+    if (!visible || mode === 'search') {
       view?.view.destroy();
       view = null;
+    }
+    if (!visible) return;
+    if (mode === 'search') {
+      searchView ??= createSearchResultsView(dispatchReaderAction);
+      if (content.firstElementChild !== searchView.element) {
+        content.replaceChildren(searchView.element);
+      }
+      searchView.show(activeDocument(), searchText);
       return;
     }
     if (view?.mode !== mode) {
@@ -160,8 +185,24 @@ export function createReaderSidebar({
     modeToggle.setAttribute('aria-expanded', String(open));
   };
 
+  const cancelSearchTimer = () => {
+    if (searchTimer !== null) clearTimeout(searchTimer);
+    searchTimer = null;
+  };
+  /** Ends the takeover without touching preferences; returns whether one was active. */
+  const endSearch = () => {
+    cancelSearchTimer();
+    const wasActive = Boolean(searchText.trim());
+    searchText = '';
+    if (search) search.value = '';
+    return wasActive;
+  };
+
   listen(toggle, 'click', () => {
-    preferences.update({ sidebarVisible: !preferences.snapshot().sidebarVisible });
+    // Hiding a search takeover ends the search and hides the sidebar.
+    if (endSearch()) preferences.update({ sidebarVisible: false });
+    else preferences.update({ sidebarVisible: !preferences.snapshot().sidebarVisible });
+    render();
   });
   listen(modeToggle, 'click', () => setMenuOpen(!menuOpen()));
   listen(modeMenu, 'click', (event) => {
@@ -171,11 +212,33 @@ export function createReaderSidebar({
         : null;
     if (!item) return;
     const mode = SIDEBAR_MODES.find((candidate) => candidate === item.dataset.sidebarMode);
+    endSearch();
     preferences.update(
       mode ? { sidebarVisible: true, sidebarMode: mode } : { sidebarVisible: false },
     );
     setMenuOpen(false);
+    render();
   });
+  if (search) {
+    listen(search, 'input', () => {
+      cancelSearchTimer();
+      const apply = () => {
+        searchTimer = null;
+        searchText = search.value;
+        render();
+      };
+      // Clearing restores the sidebar immediately; typing waits for a pause.
+      if (!search.value.trim() || searchDebounceMs <= 0) apply();
+      else searchTimer = setTimeout(apply, searchDebounceMs);
+    });
+    listen(search, 'keydown', (event) => {
+      if (event.key !== 'Escape' || !search.value) return;
+      event.preventDefault();
+      event.stopPropagation();
+      endSearch();
+      render();
+    });
+  }
   listen(document, 'pointerdown', (event) => {
     if (!menuOpen()) return;
     const target = event.target instanceof Node ? event.target : null;
@@ -232,10 +295,17 @@ export function createReaderSidebar({
 
   return {
     refresh: render,
+    focusSearch() {
+      search?.focus();
+      search?.select();
+    },
     destroy() {
+      cancelSearchTimer();
       for (const cleanup of cleanups.splice(0)) cleanup();
       view?.view.destroy();
       view = null;
+      searchView?.destroy();
+      searchView = null;
     },
   };
 }
