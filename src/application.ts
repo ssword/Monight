@@ -38,7 +38,11 @@ import {
 import { createNativeMenuSync, createReaderMenu } from './app/native-menu';
 import { createPersistenceCoordinator } from './app/persistence-coordinator';
 import { PresentationController } from './app/presentation-controller';
-import type { ReaderCommandContext, ReaderCommandStateInput } from './app/reader-commands';
+import {
+  type ReaderCommandContext,
+  type ReaderCommandStateInput,
+  runReaderCommand,
+} from './app/reader-commands';
 import { createReaderSidebar, type ReaderSidebar } from './app/reader-sidebar';
 import { createRotateButton, type RotateButton } from './app/rotate-button';
 import { restoreReadingSessionAtStartup } from './app/startup-restoration';
@@ -193,6 +197,20 @@ const readerMenu = createReaderMenu({
 });
 const syncReaderMenu = (): void => {
   void readerMenu.sync();
+};
+
+/**
+ * Runs a command for the toolbar or a shortcut. Only native menu clicks go
+ * through `readerMenu.run`, which also accounts for the clicked item's own mark.
+ */
+const runCommand = async (id: string): Promise<boolean> => {
+  const context = readerCommandContext;
+  if (!context) return false;
+  try {
+    return await runReaderCommand(id, context);
+  } finally {
+    syncReaderMenu();
+  }
 };
 
 const refreshWindowFullScreen = async (): Promise<void> => {
@@ -543,7 +561,7 @@ function mountRotateButton(): RotateButton | null {
   return createRotateButton({
     slot,
     activeMarkup: () => documentWorkspace?.activeMarkup() ?? null,
-    runCommand: (id) => readerMenu.run(id),
+    runCommand: runCommand,
   });
 }
 
@@ -822,7 +840,7 @@ export async function initializeApplication(modules: ApplicationModules): Promis
       updateUI: updateReaderUI,
       openSearch: () => readerSidebar?.focusSearch(),
       goToPage,
-      runReaderCommand: (id) => readerMenu.run(id),
+      runReaderCommand: runCommand,
       dispatchReaderAction,
     });
 
