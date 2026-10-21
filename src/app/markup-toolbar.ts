@@ -33,7 +33,43 @@ export interface MarkupToolbar {
   refresh(): void;
   /** Shows or hides the markup toolbar, as the toolbar's Markup toggle does. */
   toggle(): void;
+  /** Chooses a markup-toolbar tool as its button does. */
+  chooseTool(toolId: string): void;
   destroy(): void;
+}
+
+export interface MarkupEscapeOptions {
+  readonly activeMarkup: () => ActiveMarkupState | null;
+  readonly setActiveTool: (toolId: string | null) => void;
+  /** Presentation mode claims Esc to exit before anything else. */
+  readonly presentationActive: () => boolean;
+}
+
+const isEditableTarget = (target: EventTarget | null): boolean =>
+  target instanceof HTMLElement &&
+  (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName));
+
+/**
+ * Esc returns from any markup tool (highlight mode, the Text note tool) to text
+ * selection. It yields to whatever owns Esc first: presentation mode, a focused
+ * field such as Search, and an open menu or popover. Returns the unbinder.
+ */
+export function leaveMarkupToolOnEscape({
+  activeMarkup,
+  setActiveTool,
+  presentationActive,
+}: MarkupEscapeOptions): () => void {
+  const onKeyDown = (event: KeyboardEvent) => {
+    if (event.key !== 'Escape' || event.defaultPrevented || presentationActive()) return;
+    if (isEditableTarget(event.target)) return;
+    // Capture phase: an open popup has not closed yet and keeps this Esc.
+    if (document.querySelector('[aria-expanded="true"]')) return;
+    if (!activeMarkup()?.activeToolId) return;
+    event.preventDefault();
+    setActiveTool(null);
+  };
+  document.addEventListener('keydown', onKeyDown, true);
+  return () => document.removeEventListener('keydown', onKeyDown, true);
 }
 
 export function createMarkupToolbar({
@@ -89,15 +125,20 @@ export function createMarkupToolbar({
     if (!visible && activeToolId && markupToolIds.has(activeToolId)) setActiveTool(null);
     preferences.update({ markupToolbarVisible: visible });
   };
+  /** A tool button's choice; choosing the active tool returns to text selection. */
+  const chooseTool = (toolId: string) => {
+    const markup = activeMarkup();
+    if (!markupToolIds.has(toolId) || !markup || markup.readOnlyReason !== null) return;
+    setActiveTool(toolAfterChoosing(markup.activeToolId, toolId));
+    render();
+  };
   const onToolClick = (event: MouseEvent) => {
     const button = (event.target as Element | null)?.closest<HTMLButtonElement>(
       '[data-markup-tool]',
     );
     const toolId = button?.dataset.markupTool;
-    const markup = activeMarkup();
-    if (!button || button.disabled || !toolId || !markup || markup.readOnlyReason !== null) return;
-    setActiveTool(toolAfterChoosing(markup.activeToolId, toolId));
-    render();
+    if (!button || button.disabled || !toolId) return;
+    chooseTool(toolId);
   };
 
   toggle.addEventListener('click', onToggle);
@@ -108,6 +149,7 @@ export function createMarkupToolbar({
   return {
     refresh: render,
     toggle: onToggle,
+    chooseTool,
     destroy() {
       toggle.removeEventListener('click', onToggle);
       group.removeEventListener('click', onToolClick);

@@ -1,13 +1,13 @@
 // @vitest-environment happy-dom
 
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   type ChromePreferencesAuthority,
   type ChromePreferencesStorage,
   loadChromePreferences,
 } from '../app/chrome-preferences';
 import type { ActiveMarkupState } from '../app/document-workspace';
-import { createMarkupToolbar } from '../app/markup-toolbar';
+import { createMarkupToolbar, leaveMarkupToolOnEscape } from '../app/markup-toolbar';
 import { VERIFIED_MARKUP_TOOLS, type VerifiedMarkupTool } from '../app/markup-tools';
 
 function createStorage(initial?: unknown): ChromePreferencesStorage {
@@ -125,6 +125,20 @@ describe('markup toolbar', () => {
     expect(chosen).toEqual([null]);
   });
 
+  it('offers its tools to other input adapters such as Tools ▸ Annotate', async () => {
+    const toolbar = await mount();
+
+    toolbar.chooseTool('textComment');
+    toolbar.chooseTool('textComment');
+    toolbar.chooseTool('highlight');
+
+    expect(chosen).toEqual(['textComment', null]);
+
+    active = { activeToolId: null, readOnlyReason: PROTECTED };
+    toolbar.chooseTool('textComment');
+    expect(chosen).toEqual(['textComment', null]);
+  });
+
   it('offers the toggle to other input adapters such as the View menu', async () => {
     active = { activeToolId: 'textComment', readOnlyReason: null };
     const toolbar = await mount(createStorage({ schemaVersion: 1, markupToolbarVisible: true }));
@@ -164,5 +178,68 @@ describe('markup toolbar', () => {
     toolbar.refresh();
     expect(textNote?.disabled).toBe(true);
     expect(bar().querySelector('[role="status"]')?.textContent).toBe('');
+  });
+});
+
+describe('Esc leaves the markup tool', () => {
+  let active: ActiveMarkupState | null;
+  let chosen: Array<string | null>;
+  let presenting: boolean;
+  let release: () => void;
+
+  const pressEscape = (target: EventTarget = document.body) => {
+    const event = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
+    target.dispatchEvent(event);
+    return event;
+  };
+
+  beforeEach(() => {
+    document.body.innerHTML = `
+      <input id="toolbar-search" type="search">
+      <button id="sidebar-mode-toggle" aria-expanded="false"></button>
+    `;
+    active = { activeToolId: 'highlight', readOnlyReason: null };
+    chosen = [];
+    presenting = false;
+    release = leaveMarkupToolOnEscape({
+      activeMarkup: () => active,
+      setActiveTool: (toolId) => {
+        chosen.push(toolId);
+        if (active) active = { ...active, activeToolId: toolId };
+      },
+      presentationActive: () => presenting,
+    });
+  });
+  afterEach(() => release());
+
+  it('leaves highlight mode and the Text note tool for text selection', () => {
+    expect(pressEscape().defaultPrevented).toBe(true);
+    expect(chosen).toEqual([null]);
+
+    active = { activeToolId: 'textComment', readOnlyReason: null };
+    pressEscape();
+    expect(chosen).toEqual([null, null]);
+  });
+
+  it('leaves Esc alone when no markup tool is chosen', () => {
+    active = { activeToolId: null, readOnlyReason: null };
+    expect(pressEscape().defaultPrevented).toBe(false);
+    expect(chosen).toEqual([]);
+  });
+
+  it('lets presentation mode take Esc first', () => {
+    presenting = true;
+    pressEscape();
+    expect(chosen).toEqual([]);
+  });
+
+  it('lets the search field and open menus take Esc first', () => {
+    const search = document.getElementById('toolbar-search') as HTMLInputElement;
+    pressEscape(search);
+    expect(chosen).toEqual([]);
+
+    document.getElementById('sidebar-mode-toggle')?.setAttribute('aria-expanded', 'true');
+    pressEscape();
+    expect(chosen).toEqual([]);
   });
 });

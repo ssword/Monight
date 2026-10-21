@@ -91,6 +91,8 @@ export function createEmbedPdfDocumentSurfaceFactory({
       resolveLinkTarget: (target, options) => openedViewer.resolveLinkTarget(target, options),
       destroy,
     };
+    const editable = (): boolean =>
+      Boolean(openedViewer.editing && !openedViewer.editing.state().readOnlyReason);
     const project = (work: () => Promise<void>, options?: ReaderActionOptions): Promise<void> =>
       destroyPromise || options?.isCancelled?.() ? Promise.resolve() : work();
     const rendering: DocumentRendering = {
@@ -106,15 +108,13 @@ export function createEmbedPdfDocumentSurfaceFactory({
         };
       },
       activeAnnotationTool: () => openedViewer.activeAnnotationTool(),
-      setActiveAnnotationTool: (toolId) => {
+      setActiveAnnotationTool: (toolId, defaults) => {
         if (destroyPromise) return;
-        if (
-          toolId !== null &&
-          (!openedViewer.editing || openedViewer.editing.state().readOnlyReason)
-        )
-          return;
-        openedViewer.setActiveAnnotationTool(toolId);
+        if (toolId !== null && !editable()) return;
+        openedViewer.setActiveAnnotationTool(toolId, defaults);
       },
+      markupSelection: (toolId, defaults) =>
+        !destroyPromise && editable() && openedViewer.markupSelection(toolId, defaults),
       revealAnnotation: (annotationId) => {
         if (!destroyPromise) openedViewer.revealAnnotation(annotationId);
       },

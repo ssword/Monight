@@ -3,10 +3,12 @@ import EmbedPDF, {
   type CommandsCapability,
   type DocumentManagerCapability,
   type HistoryCapability,
+  type PdfAnnotationObject,
   type PluginRegistry,
   type Rotation,
   type ScrollCapability,
   ScrollStrategy,
+  type SelectionCapability,
   type SpreadCapability,
   SpreadMode,
   type ThumbnailCapability,
@@ -28,6 +30,7 @@ import type {
   ResolvedDocumentLinkTarget,
 } from '../reader/document-content';
 import type { DocumentAnnotationSnapshot } from '../reader/document-queries';
+import type { AnnotationToolDefaults } from '../reader/document-rendering';
 import type { AnnotationDisplayName, NativePdfEditing } from '../reader/native-pdf-editing';
 import type {
   ReadingPosition,
@@ -80,7 +83,9 @@ export interface EmbedPdfViewerRuntime {
   preparePrintDocument(): Promise<Uint8Array>;
   open(request: EmbedPdfOpenRequest): Promise<void>;
   activeAnnotationTool(): string | null;
-  setActiveAnnotationTool(toolId: string | null): void;
+  setActiveAnnotationTool(toolId: string | null, defaults?: AnnotationToolDefaults): void;
+  /** Marks the text selection with a text-markup tool; false when nothing is selected. */
+  markupSelection(toolId: string, defaults: AnnotationToolDefaults): boolean;
   pageCount(): number;
   currentPage(): number;
   currentZoom(): number;
@@ -263,6 +268,9 @@ export async function createEmbedPdfViewerRuntime({
   };
   const scrollScope = scroll.forDocument(documentId);
   const annotationScope = annotations.forDocument(documentId);
+  const selectionScope = requireCapability<SelectionCapability>(registry, 'selection').forDocument(
+    documentId,
+  );
   const spreadScope = spread.forDocument(documentId);
   const thumbnailScope = thumbnails.forDocument(documentId);
   const zoomScope = zoom.forDocument(documentId);
@@ -586,10 +594,44 @@ export async function createEmbedPdfViewerRuntime({
       if (request.signal?.aborted) throw new Error('Document Intake interrupted');
     },
     activeAnnotationTool: () => annotationScope.getActiveTool()?.id ?? null,
-    setActiveAnnotationTool(toolId) {
+    setActiveAnnotationTool(toolId, defaults) {
       if (destroyed) return;
+      if (toolId !== null && defaults) annotations.setToolDefaults(toolId, { ...defaults });
       annotationScope.setActiveTool(toolId);
       closeReadyMadeAnnotationToolbar();
+    },
+    markupSelection(toolId, defaults) {
+      if (destroyed || readOnlyReason !== null) return false;
+      const tool = annotations.getTool(toolId);
+      const segments = selectionScope.getFormattedSelection();
+      if (!tool?.interaction.textSelection || segments.length === 0) return false;
+      annotations.setToolDefaults(toolId, { ...defaults });
+      const toolDefaults = annotations.getTool(toolId)?.defaults ?? tool.defaults;
+      // As EmbedPDF's own text-markup tools do: one native markup per page, with
+      // the marked text kept alongside for listings such as Highlights and Notes.
+      const text = new Promise<string | undefined>((resolve) =>
+        selectionScope.getSelectedText().wait(
+          (lines) => resolve(lines.join('\n')),
+          () => resolve(undefined),
+        ),
+      );
+      for (const segment of segments) {
+        const id = crypto.randomUUID();
+        void text.then((selectedText) => {
+          if (destroyed) return;
+          annotationScope.createAnnotation(segment.pageIndex, {
+            ...toolDefaults,
+            rect: segment.rect,
+            segmentRects: segment.segmentRects,
+            pageIndex: segment.pageIndex,
+            created: new Date(),
+            id,
+            ...(selectedText != null ? { custom: { text: selectedText } } : {}),
+          } as PdfAnnotationObject);
+        });
+      }
+      selectionScope.clear();
+      return true;
     },
     pageCount: () => documentObject?.pageCount ?? 0,
     currentPage: currentPageNumber,

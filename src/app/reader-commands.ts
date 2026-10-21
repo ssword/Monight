@@ -25,7 +25,7 @@ import {
 } from '../scripts/filters';
 import type { ChromePreferences, ChromePreferencesAuthority } from './chrome-preferences';
 import type { ActiveMarkupState } from './document-workspace';
-import { toolAfterChoosing, VERIFIED_MARKUP_TOOLS, type VerifiedMarkupTool } from './markup-tools';
+import { VERIFIED_MARKUP_TOOLS, type VerifiedMarkupTool } from './markup-tools';
 import type { SidebarChoice } from './reader-sidebar';
 
 /**
@@ -47,12 +47,14 @@ export interface ReaderCommandContext {
   readonly preferences: ChromePreferencesAuthority;
   /** The toolbar sidebar menu's own choice handler. */
   readonly sidebar: { choose(choice: SidebarChoice): void } | null;
-  /** The toolbar Markup toggle's own handler. */
-  readonly markupToolbar: { toggle(): void } | null;
+  /** The markup toolbar's own Markup toggle and tool buttons. */
+  readonly markupToolbar: { toggle(): void; chooseTool(toolId: string): void } | null;
+  /** The Highlight split button's own click, for its text-markup tools. */
+  readonly highlightButton: { activate(toolId: string): void } | null;
   /** The Appearance popover's own preset handler (Custom opens the sliders). */
   readonly appearance: { choose(preset: AppearancePresetId): void } | null;
-  readonly activeMarkup: () => ActiveMarkupState | null;
-  readonly setActiveTool: (toolId: string | null) => void;
+  /** Returns to text selection (Tools ▸ Text Selection). */
+  readonly setActiveTool: (toolId: null) => void;
   readonly toggleSlideshow: () => Promise<void>;
   readonly toggleFullScreen: () => Promise<void>;
   /** Asks the reader for a page number; null when cancelled. */
@@ -216,11 +218,12 @@ const appearanceCommands = (): ReaderCommand[] =>
 const annotateCommands = (tools: readonly VerifiedMarkupTool[]): ReaderCommand[] =>
   tools.map((tool) => ({
     id: `${ANNOTATE_SUBMENU}.${tool.id}`,
-    run: (context) => {
-      const markup = context.activeMarkup();
-      if (!markup || markup.readOnlyReason !== null) return;
-      context.setActiveTool(toolAfterChoosing(markup.activeToolId, tool.id));
-    },
+    // Each tool behaves as in the control that offers it; protected Documents
+    // are refused there.
+    run: (context) =>
+      tool.control === 'highlight-menu'
+        ? context.highlightButton?.activate(tool.id)
+        : context.markupToolbar?.chooseTool(tool.id),
     state: (input) => ({
       enabled: hasDocument(input) && input.markup !== null && input.markup.readOnlyReason === null,
       checked: hasDocument(input) && input.markup?.activeToolId === tool.id,

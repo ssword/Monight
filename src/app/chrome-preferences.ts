@@ -5,6 +5,8 @@
 // PREFERENCE_PARSERS. Stored values are parsed field by field, so older files
 // without the new field keep every other preference.
 
+import { HIGHLIGHT_COLORS, type HighlightColorId } from './markup-tools';
+
 /** Persisted sidebar modes; Hide is `sidebarVisible: false`, not a mode. */
 export const SIDEBAR_MODES = ['thumbnails', 'tableOfContents', 'annotations'] as const;
 export type SidebarMode = (typeof SIDEBAR_MODES)[number];
@@ -19,6 +21,8 @@ export interface ChromePreferences {
   readonly markupToolbarVisible: boolean;
   /** Keeps the tab bar shown with a single Document (View ▸ Show Tab Bar). */
   readonly tabBarVisible: boolean;
+  /** The Highlight split button's last-used colour. */
+  readonly highlightColor: HighlightColorId;
 }
 
 export interface PersistedChromePreferences extends ChromePreferences {
@@ -48,6 +52,7 @@ export const DEFAULT_CHROME_PREFERENCES: ChromePreferences = Object.freeze({
   sidebarWidth: 220,
   markupToolbarVisible: false,
   tabBarVisible: false,
+  highlightColor: 'yellow',
 });
 
 const clampSidebarWidth = (width: number): number =>
@@ -64,6 +69,7 @@ const PREFERENCE_PARSERS: PreferenceParsers = {
     typeof value === 'number' && Number.isFinite(value) ? clampSidebarWidth(value) : undefined,
   markupToolbarVisible: (value) => (typeof value === 'boolean' ? value : undefined),
   tabBarVisible: (value) => (typeof value === 'boolean' ? value : undefined),
+  highlightColor: (value) => HIGHLIGHT_COLORS.find(({ id }) => id === value)?.id,
 };
 
 const PREFERENCE_KEYS = Object.keys(PREFERENCE_PARSERS) as (keyof ChromePreferences)[];

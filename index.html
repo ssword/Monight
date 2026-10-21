@@ -115,6 +115,15 @@
                     </div>
                 </div>
 
+                <!-- Highlight split button: verified text markups (src/app/markup-tools.ts) -->
+                <div class="toolbar-capsule highlight-anchor" role="group" aria-label="Highlight">
+                    <button id="highlight-button" class="toolbar-btn highlight-button" type="button" title="Highlight" aria-label="Highlight" aria-pressed="false"></button>
+                    <button id="highlight-menu-toggle" class="toolbar-btn toolbar-btn-chevron" type="button" title="Highlight Colour" aria-label="Highlight Colour" aria-haspopup="menu" aria-expanded="false" aria-controls="highlight-menu">
+                        <span class="toolbar-icon" data-icon="chevron-down"></span>
+                    </button>
+                    <div id="highlight-menu" class="highlight-menu" role="menu" aria-label="Highlight colour" data-tauri-drag-region="false" hidden></div>
+                </div>
+
                 <div class="toolbar-capsule">
                     <button id="markup-toolbar-toggle" class="toolbar-btn" type="button" title="Show or Hide Markup Toolbar" aria-label="Markup Toolbar" aria-pressed="false" aria-controls="markup-toolbar">
                         <span class="toolbar-icon" data-icon="markup"></span>

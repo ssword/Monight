@@ -32,9 +32,12 @@ function fakeContext(overrides: Partial<ReaderCommandContext> = {}) {
     },
     preferences: preferenceAuthority,
     sidebar: { choose: (choice) => calls.push(`sidebar:${choice}`) },
-    markupToolbar: { toggle: () => calls.push('markup-toolbar') },
+    markupToolbar: {
+      toggle: () => calls.push('markup-toolbar'),
+      chooseTool: (toolId) => calls.push(`markup-toolbar:${toolId}`),
+    },
+    highlightButton: { activate: (toolId) => calls.push(`highlight-button:${toolId}`) },
     appearance: { choose: (preset) => calls.push(`appearance:${preset}`) },
-    activeMarkup: () => markup,
     setActiveTool: (toolId) => {
       calls.push(`tool:${toolId}`);
       if (markup) markup = { ...markup, activeToolId: toolId };
@@ -114,13 +117,16 @@ describe('native menu commands', () => {
     expect(preferences().tabBarVisible).toBe(false);
   });
 
-  it('Tools chooses Text Selection or a verified tool like the markup toolbar', async () => {
+  it('Tools ▸ Annotate goes through the control that offers each verified tool', async () => {
     const { context, calls } = fakeContext();
-    await runReaderCommand('tools.annotate.textComment', context);
     await runReaderCommand('tools.annotate.textComment', context);
     await runReaderCommand('tools.annotate.highlight', context);
     await runReaderCommand('tools.text-selection', context);
-    expect(calls).toEqual(['tool:textComment', 'tool:null', 'tool:highlight', 'tool:null']);
+    expect(calls).toEqual([
+      'markup-toolbar:textComment',
+      'highlight-button:highlight',
+      'tool:null',
+    ]);
   });
 
   it('refuses unknown and unverified commands', async () => {
@@ -129,13 +135,6 @@ describe('native menu commands', () => {
     expect(await runReaderCommand('view.appearance.neon', context)).toBe(false);
     expect(await runReaderCommand('view.nope', context)).toBe(false);
     expect([...calls, ...dispatched]).toEqual([]);
-  });
-
-  it('never chooses a markup tool on a protected Document', async () => {
-    const { context, calls, setMarkup } = fakeContext();
-    setMarkup({ activeToolId: null, readOnlyReason: 'read-only' });
-    await runReaderCommand('tools.annotate.highlight', context);
-    expect(calls).toEqual([]);
   });
 });
 
@@ -344,7 +343,7 @@ describe('native menu listing', () => {
     ]);
     const { context, calls } = fakeContext();
     expect(await runReaderCommand('tools.annotate.underline', context, tools)).toBe(true);
-    expect(calls).toEqual(['tool:underline']);
+    expect(calls).toEqual(['highlight-button:underline']);
     vi.restoreAllMocks();
   });
 });

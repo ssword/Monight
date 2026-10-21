@@ -450,8 +450,84 @@ async function verifyPrintedPageRotation(): Promise<void> {
   }
 }
 
+const waitFor = async (condition: () => boolean, message: string): Promise<void> => {
+  for (let attempt = 0; attempt < 100 && !condition(); attempt += 1)
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  check(condition(), message);
+};
+
+/** The Highlight split button's two paths: mark the selection, or highlight mode. */
+async function verifyHighlightSplitButton(): Promise<void> {
+  const green = '#7ED957';
+  const { surface, annotations, registry } = await open(navigationPdf('Highlight split button'));
+  const documentId = registry
+    .getPlugin<import('@embedpdf/snippet').DocumentManagerPlugin>('document-manager')
+    ?.provides()
+    .getActiveDocumentId();
+  const selection = registry
+    .getPlugin<import('@embedpdf/snippet').SelectionPlugin>('selection')
+    ?.provides()
+    .forDocument(documentId ?? '');
+  if (!selection) throw new Error('Missing text selection capability');
+  const highlights = () =>
+    annotations
+      .getAnnotations()
+      .filter(({ object }) => object.type === PdfAnnotationSubtype.HIGHLIGHT);
+
+  check(
+    surface.rendering.markupSelection?.('highlight', { strokeColor: green }) === false,
+    'Highlight marked text with nothing selected',
+  );
+  await selection
+    .setSelection({ start: { page: 0, index: 0 }, end: { page: 0, index: 6 } })
+    .toPromise();
+  check(selection.getFormattedSelection().length === 1, 'Text selection did not take hold');
+  check(
+    surface.rendering.markupSelection?.('highlight', { strokeColor: green }) === true,
+    'Highlight did not mark the selected text',
+  );
+  await waitFor(() => highlights().length === 1, 'The selected text was not highlighted');
+  check(selection.getFormattedSelection().length === 0, 'The highlighted selection remained');
+  check(surface.runtime.editing?.state().dirty, 'A new highlight did not mark the Document dirty');
+  const saved = await surface.runtime.editing?.exportPdf();
+  if (!saved) throw new Error('Missing highlighted export');
+
+  surface.rendering.setActiveAnnotationTool?.('highlight', { strokeColor: '#B78CF2' });
+  check(
+    annotations.getActiveTool()?.id === 'highlight' &&
+      annotations.getTool('highlight')?.defaults.strokeColor === '#B78CF2',
+    'Highlight mode did not take the chosen colour',
+  );
+  surface.rendering.setActiveAnnotationTool?.(null);
+  await surface.runtime.destroy();
+
+  const reopened = await open(saved);
+  const mark = reopened.annotations
+    .getAnnotations()
+    .map(({ object }) => object)
+    .find((object) => object.type === PdfAnnotationSubtype.HIGHLIGHT);
+  check(
+    mark?.type === PdfAnnotationSubtype.HIGHLIGHT &&
+      mark.strokeColor?.toLowerCase() === green.toLowerCase() &&
+      mark.segmentRects.length > 0,
+    `The saved highlight lost its colour or text: ${JSON.stringify(mark)}`,
+  );
+  await reopened.surface.runtime.destroy();
+
+  const signed = await open(
+    saved,
+    'Digitally signed PDFs are read-only to preserve their signatures',
+  );
+  check(
+    signed.surface.rendering.markupSelection?.('highlight', { strokeColor: green }) === false,
+    'A protected Document accepted a highlight',
+  );
+  await signed.surface.runtime.destroy();
+}
+
 async function run() {
   await verifyProtectedDocuments();
+  await verifyHighlightSplitButton();
   const original = navigationPdf('Native annotations');
   const failed = await open(original);
   const createNativeAnnotation = failed.engine.createPageAnnotation;

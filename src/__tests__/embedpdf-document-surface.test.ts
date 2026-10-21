@@ -49,6 +49,7 @@ const createViewerRuntime = (
   renderThumbnail: vi.fn(async () => document.createElement('canvas')),
   activeAnnotationTool: () => null,
   setActiveAnnotationTool: vi.fn(),
+  markupSelection: vi.fn(() => false),
   annotations: () => [],
   revealAnnotation: vi.fn(),
   destroy: vi.fn(async () => undefined),
@@ -512,6 +513,42 @@ describe('EmbedPDF Document surface', () => {
     protectedDocument.surface.rendering.setActiveAnnotationTool?.('textComment');
     expect(protectedDocument.viewer.setActiveAnnotationTool).not.toHaveBeenCalled();
     expect(protectedDocument.surface.rendering.activeAnnotationTool?.()).toBeNull();
+  });
+
+  it('marks the text selection in a colour only on an editable Document', async () => {
+    const callbacks = {
+      readingPositionObserved: vi.fn(),
+      readingPositionSettled: vi.fn(),
+      stateChanged: vi.fn(),
+      pageNavigationRequested: vi.fn(async () => undefined),
+      zoomIntentRequested: vi.fn(async () => undefined),
+    };
+    const open = async (readOnlyReason: string | null) => {
+      const viewer = createViewerRuntime({
+        editing: {
+          state: () => ({ revision: 0, dirty: false, readOnlyReason }),
+          exportPdf: vi.fn(async () => new Uint8Array()),
+          markSaved: vi.fn(),
+        },
+        markupSelection: vi.fn(() => true),
+      });
+      const surface = await createEmbedPdfDocumentSurfaceFactory({
+        createViewer: async () => viewer,
+        assessEditing: async () => readOnlyReason,
+      })({ filePath: '/docs/a.pdf', title: 'a.pdf', bytes: new Uint8Array([1]), callbacks });
+      return { viewer, surface };
+    };
+    const green = { strokeColor: '#7ED957' };
+
+    const editable = await open(null);
+    expect(editable.surface.rendering.markupSelection?.('highlight', green)).toBe(true);
+    expect(editable.viewer.markupSelection).toHaveBeenCalledWith('highlight', green);
+    editable.surface.rendering.setActiveAnnotationTool?.('highlight', green);
+    expect(editable.viewer.setActiveAnnotationTool).toHaveBeenCalledWith('highlight', green);
+
+    const protectedDocument = await open('PDF permissions prohibit annotation editing');
+    expect(protectedDocument.surface.rendering.markupSelection?.('highlight', green)).toBe(false);
+    expect(protectedDocument.viewer.markupSelection).not.toHaveBeenCalled();
   });
 
   it('configures newly authored annotations with the selected display name', () => {
