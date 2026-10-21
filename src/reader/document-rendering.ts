@@ -28,6 +28,10 @@ export interface DocumentViewTransform {
 
 export interface DocumentRendering {
   getState(): DocumentRenderingState;
+  /** The transient annotation tool in use, or null for text selection. */
+  activeAnnotationTool?(): string | null;
+  /** Chooses an annotation tool, or null for text selection; refused while editing is unavailable. */
+  setActiveAnnotationTool?(toolId: string | null): void;
   getScrollPosition(): number;
   getReadingPosition(): ReadingPosition;
   goToPage(pageNumber: number, options?: ReaderActionOptions): Promise<void>;

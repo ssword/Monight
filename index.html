@@ -115,6 +115,12 @@
                 </div>
 
                 <div class="toolbar-capsule">
+                    <button id="markup-toolbar-toggle" class="toolbar-btn" type="button" title="Show or Hide Markup Toolbar" aria-label="Markup Toolbar" aria-pressed="false" aria-controls="markup-toolbar">
+                        <span class="toolbar-icon" data-icon="markup"></span>
+                    </button>
+                </div>
+
+                <div class="toolbar-capsule">
                     <button id="presentation-mode" class="toolbar-btn" type="button" title="Presentation Mode (Shift+F11)" aria-label="Start presentation mode">
                         <span class="toolbar-icon" data-icon="presentation"></span>
                     </button>
@@ -135,6 +141,9 @@
                     <input id="toolbar-search" type="search" placeholder="Search" aria-label="Search" aria-controls="reader-sidebar" autocomplete="off" spellcheck="false">
                 </div>
             </div>
+
+            <!-- Markup toolbar: verified annotation tools (src/app/markup-tools.ts) -->
+            <div id="markup-toolbar" class="markup-toolbar" role="toolbar" aria-label="Markup" hidden></div>
 
             <!-- Tab Bar -->
             <div id="tab-bar" class="tab-bar hidden">

@@ -10,6 +10,7 @@ import EmbedPDF, {
   type SpreadCapability,
   SpreadMode,
   type ThumbnailCapability,
+  type UICapability,
   type ViewportCapability,
   type ZoomCapability,
   ZoomMode,
@@ -76,6 +77,8 @@ export interface EmbedPdfViewerRuntime {
   readonly editing?: NativePdfEditing;
   preparePrintDocument(): Promise<Uint8Array>;
   open(request: EmbedPdfOpenRequest): Promise<void>;
+  activeAnnotationTool(): string | null;
+  setActiveAnnotationTool(toolId: string | null): void;
   pageCount(): number;
   currentPage(): number;
   currentZoom(): number;
@@ -104,6 +107,8 @@ export interface EmbedPdfViewerRuntime {
   renderThumbnail(pageNumber: number, maxWidth?: number): Promise<HTMLCanvasElement>;
   destroy(): Promise<void>;
 }
+
+const READY_MADE_ANNOTATION_TOOLBAR = 'annotation-toolbar';
 
 const requireCapability = <T>(registry: PluginRegistry, pluginId: string): T => {
   const capability = registry.getPlugin(pluginId)?.provides?.() as T | undefined;
@@ -221,10 +226,12 @@ export async function createEmbedPdfViewerRuntime({
   const zoom = requireCapability<ZoomCapability>(registry, 'zoom');
   const spread = requireCapability<SpreadCapability>(registry, 'spread');
   const thumbnails = requireCapability<ThumbnailCapability>(registry, 'thumbnail');
+  const ui = requireCapability<UICapability>(registry, 'ui');
   const viewport = requireCapability<ViewportCapability>(registry, 'viewport');
   const engine = registry.getEngine();
   const unsubscribers: Array<() => void> = [];
   const documentId = `monight-${crypto.randomUUID()}`;
+  const uiScope = ui.forDocument(documentId);
   let sourceBytes = new Uint8Array();
   let fileName = '';
   let documentObject: ReturnType<DocumentManagerCapability['getDocument']> = null;
@@ -361,7 +368,18 @@ export async function createEmbedPdfViewerRuntime({
     () => shadowRoot.removeEventListener('click', interceptEmbedPdfLink, { capture: true }),
   );
 
+  // Monight's markup toolbar replaces the ready-made annotation toolbar. Ready-made
+  // commands that remain (selection-menu Highlight) open it; close it at once.
+  const closeReadyMadeAnnotationToolbar = () => {
+    if (uiScope.isToolbarOpen('top', 'secondary', READY_MADE_ANNOTATION_TOOLBAR)) {
+      uiScope.closeToolbarSlot('top', 'secondary');
+    }
+  };
   unsubscribers.push(
+    uiScope.onToolbarChanged(({ toolbarId }) => {
+      if (toolbarId === READY_MADE_ANNOTATION_TOOLBAR) closeReadyMadeAnnotationToolbar();
+    }),
+    annotationScope.onActiveToolChange(() => callbacks.stateChanged()),
     scroll.onPageChange((event) => {
       if (event.documentId !== documentId) return;
       callbacks.stateChanged();
@@ -553,6 +571,12 @@ export async function createEmbedPdfViewerRuntime({
       if (!documentObject) throw new Error('EmbedPDF did not publish the opened Document');
       await waitForInitialLayout(request.signal);
       if (request.signal?.aborted) throw new Error('Document Intake interrupted');
+    },
+    activeAnnotationTool: () => annotationScope.getActiveTool()?.id ?? null,
+    setActiveAnnotationTool(toolId) {
+      if (destroyed) return;
+      annotationScope.setActiveTool(toolId);
+      closeReadyMadeAnnotationToolbar();
     },
     pageCount: () => documentObject?.pageCount ?? 0,
     currentPage: currentPageNumber,

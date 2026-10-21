@@ -259,3 +259,61 @@
   border-color: var(--accent-color);
   box-shadow: 0 0 0 2px var(--accent-glow);
 }
+
+/* Markup toolbar: verified annotation tools in a strip beneath the toolbar. */
+#markup-toolbar-toggle[aria-pressed="true"] {
+  color: var(--text-primary);
+  background-color: var(--chrome-pressed);
+}
+
+.markup-toolbar {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  height: 36px;
+  padding: 0 12px;
+  gap: 12px;
+  color: var(--text-primary);
+  background-color: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-color);
+}
+
+.markup-toolbar[hidden] {
+  display: none;
+}
+
+.markup-toolbar-tools {
+  display: flex;
+  align-items: center;
+  height: 28px;
+  padding: 0 2px;
+  gap: 2px;
+  background-color: var(--capsule-bg);
+  border: 1px solid var(--border-color);
+  border-radius: var(--capsule-radius);
+}
+
+/* The active tool uses the moonlight-warm accent, not system blue. */
+.markup-tool[aria-pressed="true"] {
+  color: var(--accent-ink);
+  background-color: var(--accent-glow);
+}
+
+.markup-tool:disabled {
+  cursor: default;
+  opacity: 0.4;
+}
+
+.markup-tool:disabled:hover {
+  color: var(--chrome-icon-color);
+  background-color: transparent;
+}
+
+.markup-toolbar-status {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
