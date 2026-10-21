@@ -57,8 +57,9 @@ transforms, and the conservative read-only block for unsupported Ink. Acrobat
 geometry, empty-form, print-panel, and orphan-Popup failures were fixed through PR #89;
 exact revisions, checksums, and observations are in the [#80 record](../issue-80-acrobat-verification.md).
 No creation tool was disabled or newly enabled; highlight and text comment remain enabled.
-Preview note editing/geometry still fails ([#94](https://github.com/ssword/Monight/issues/94)),
-and conflict/Save As Recovery Draft rebasing remains unresolved
+Preview note editing/geometry subsequently passed repeated native round trips on the
+identified local candidate `934b7cb` in PR #97 ([#94 verification](../issue-94-preview-text-annotations.md));
+conflict/Save As Recovery Draft rebasing remains unresolved
 ([#91](https://github.com/ssword/Monight/issues/91)). The full packaged matrices,
 including Windows/Linux native execution, close/Quit, crash recovery, protected-document
 privacy inspection, and OS-level offline checks, are recorded as dated non-execution

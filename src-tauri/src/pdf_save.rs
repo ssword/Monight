@@ -170,7 +170,7 @@ impl PdfSave {
             .get(token)
             .ok_or("Source Document is no longer authorized")?;
         verify_preservation(&source.version.bytes, bytes)?;
-        let normalized = remove_orphaned_supported_popups(bytes)?;
+        let normalized = prepare_supported_popups(bytes)?;
         let bytes = normalized.as_deref().unwrap_or(bytes);
         verify_preservation(&source.version.bytes, bytes)?;
         let version = write_pdf(
@@ -240,7 +240,7 @@ impl PdfSave {
             );
         }
         verify_preservation(original, bytes)?;
-        let normalized = remove_orphaned_supported_popups(bytes)?;
+        let normalized = prepare_supported_popups(bytes)?;
         let bytes = normalized.as_deref().unwrap_or(bytes);
         verify_preservation(original, bytes)?;
         let reopened = write_pdf(
@@ -360,7 +360,7 @@ fn is_supported_annotation(subtype: &[u8]) -> bool {
 }
 
 pub fn prepare_save(bytes: &[u8]) -> Result<Vec<u8>, String> {
-    if let Some(normalized) = remove_orphaned_supported_popups(bytes)? {
+    if let Some(normalized) = prepare_supported_popups(bytes)? {
         verify_preservation(bytes, &normalized)?;
         Ok(normalized)
     } else {
@@ -368,12 +368,12 @@ pub fn prepare_save(bytes: &[u8]) -> Result<Vec<u8>, String> {
     }
 }
 
-// The pinned engine removes markup parents but leaves their Popup children in
-// /Annots. Acrobat follows those children back to the removed parents and lists
-// the deleted comments. Only detach Popups of supported parents that are no
-// longer in this page's annotation array; never touch live or unsupported parents.
-fn remove_orphaned_supported_popups(bytes: &[u8]) -> Result<Option<Vec<u8>>, String> {
-    use lopdf::Object;
+// Keep native Popup relationships usable in both readers. Acrobat follows orphaned
+// children back to deleted comments; Preview cannot reopen a Text note's editor
+// without a linked Popup after reload (even for its own exported notes). Preserve
+// existing live relationships and all note properties, including appearance/Rect.
+fn prepare_supported_popups(bytes: &[u8]) -> Result<Option<Vec<u8>>, String> {
+    use lopdf::{dictionary, Object};
     let mut document = load_editable(bytes)?;
     let mut changed = false;
     for page_id in document.get_pages().values() {
@@ -391,8 +391,8 @@ fn remove_orphaned_supported_popups(bytes: &[u8]) -> Result<Option<Vec<u8>>, Str
             .collect::<std::collections::HashSet<_>>();
         let mut retained = Vec::new();
         for entry in &annots {
-            let (_, object) = document.dereference(entry).map_err(|e| e.to_string())?;
-            let annotation = object.as_dict().map_err(|e| e.to_string())?;
+            let (id, object) = document.dereference(entry).map_err(|e| e.to_string())?;
+            let mut annotation = object.as_dict().map_err(|e| e.to_string())?.clone();
             let orphaned =
                 if annotation.get(b"Subtype").and_then(Object::as_name).ok() == Some(b"Popup") {
                     annotation
@@ -413,11 +413,36 @@ fn remove_orphaned_supported_popups(bytes: &[u8]) -> Result<Option<Vec<u8>>, Str
                 } else {
                     false
                 };
-            if !orphaned {
+            if orphaned {
+                changed = true;
+                continue;
+            }
+            if annotation.get(b"Subtype").and_then(Object::as_name).ok() == Some(b"Text")
+                && !annotation.has(b"Popup")
+            {
+                // /Parent needs an indirect reference, including for a direct Text
+                // dictionary embedded in /Annots. Do not recreate existing notes.
+                let note_id = id.unwrap_or_else(|| document.new_object_id());
+                let popup_id = document.add_object(dictionary! {
+                    "Type" => "Annot",
+                    "Subtype" => "Popup",
+                    "Rect" => vec![0.into(), 0.into(), 200.into(), 100.into()],
+                    "Parent" => note_id,
+                    "P" => *page_id,
+                    "Open" => false,
+                });
+                annotation.set("Popup", popup_id);
+                document
+                    .objects
+                    .insert(note_id, Object::Dictionary(annotation));
+                retained.push(Object::Reference(note_id));
+                retained.push(Object::Reference(popup_id));
+                changed = true;
+            } else {
                 retained.push(entry.clone());
             }
         }
-        if retained.len() != annots.len() {
+        if retained != annots {
             document
                 .get_dictionary_mut(*page_id)
                 .map_err(|e| e.to_string())?
@@ -859,8 +884,9 @@ mod tests {
         std::fs::write(&source, original).unwrap();
         let writer = PdfSave::default();
         let token = writer.capture_source(&source, original).unwrap();
-        assert_eq!(writer.write_original(&token, annotated).unwrap(), annotated);
-        assert_eq!(std::fs::read(&source).unwrap(), annotated);
+        let prepared = prepare_save(annotated).unwrap();
+        assert_eq!(writer.write_original(&token, annotated).unwrap(), prepared);
+        assert_eq!(std::fs::read(&source).unwrap(), prepared);
         assert_eq!(writer.write_original(&token, deleted).unwrap(), deleted);
         std::fs::write(&source, b"external changes").unwrap();
         assert!(writer
@@ -1009,13 +1035,19 @@ mod tests {
         writer
             .write_destination(&selected.token, &token, annotated)
             .unwrap();
-        assert_eq!(std::fs::read(&target).unwrap(), annotated);
+        assert_eq!(
+            std::fs::read(&target).unwrap(),
+            prepare_save(annotated).unwrap()
+        );
         assert_eq!(std::fs::read(&path).unwrap(), original);
         let selected = writer.authorize(&target).unwrap();
         assert!(writer
             .write_destination(&selected.token, &token, b"invalid PDF")
             .is_err());
-        assert_eq!(std::fs::read(&target).unwrap(), annotated);
+        assert_eq!(
+            std::fs::read(&target).unwrap(),
+            prepare_save(annotated).unwrap()
+        );
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -1103,7 +1135,10 @@ mod tests {
             if phase == WritePhase::Staged {
                 assert_eq!(std::fs::read(&path).unwrap(), original);
             } else {
-                assert_eq!(std::fs::read(&path).unwrap(), annotated);
+                assert_eq!(
+                    std::fs::read(&path).unwrap(),
+                    prepare_save(annotated).unwrap()
+                );
                 assert!(std::fs::read_dir(&dir)
                     .unwrap()
                     .filter_map(Result::ok)
@@ -1375,6 +1410,86 @@ mod tests {
     }
 
     #[test]
+    fn popup_preparation_keeps_existing_relationships_and_handles_direct_text_notes() {
+        use lopdf::{dictionary, Object};
+        let original = include_bytes!("../tests/fixtures/external/acrobat-supported.pdf");
+        let before = lopdf::Document::load_mem(original).unwrap();
+        let prepared = prepare_save(original).unwrap();
+        let after = lopdf::Document::load_mem(&prepared).unwrap();
+        // Keep the existing Popup dictionary and the parent's reference verbatim.
+        for (id, object) in &before.objects {
+            let Ok(annotation) = object.as_dict() else {
+                continue;
+            };
+            if annotation.get(b"Subtype").and_then(Object::as_name).ok() == Some(b"Popup") {
+                let mut saved = after.get_dictionary(*id).unwrap().clone();
+                let mut expected = annotation.clone();
+                let saved_rect = saved.remove(b"Rect").unwrap();
+                let expected_rect = expected.remove(b"Rect").unwrap();
+                for (a, b) in saved_rect
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .zip(expected_rect.as_array().unwrap())
+                {
+                    assert!((a.as_float().unwrap() - b.as_float().unwrap()).abs() < 0.001);
+                }
+                assert_eq!(saved, expected);
+            }
+            if let Ok(popup) = annotation.get(b"Popup") {
+                assert_eq!(
+                    after.get_dictionary(*id).unwrap().get(b"Popup").unwrap(),
+                    popup
+                );
+            }
+        }
+        let mut direct = lopdf::Document::load_mem(&pdf()).unwrap();
+        let page = *direct.get_pages().values().next().unwrap();
+        direct.get_dictionary_mut(page).unwrap().set(
+            "Annots",
+            vec![Object::Dictionary(dictionary! {
+                "Subtype" => "Text", "Contents" => Object::string_literal("Direct note"),
+                "Rect" => vec![72.into(), 650.into(), 96.into(), 674.into()],
+            })],
+        );
+        let mut bytes = Vec::new();
+        direct.save_to(&mut bytes).unwrap();
+        let prepared = prepare_save(&bytes).unwrap();
+        let document = lopdf::Document::load_mem(&prepared).unwrap();
+        let entries = document
+            .get_dictionary(page)
+            .unwrap()
+            .get(b"Annots")
+            .unwrap()
+            .as_array()
+            .unwrap();
+        assert_eq!(entries.len(), 2);
+        let note_id = entries[0].as_reference().unwrap();
+        let popup_id = entries[1].as_reference().unwrap();
+        assert_eq!(
+            document
+                .get_dictionary(note_id)
+                .unwrap()
+                .get(b"Popup")
+                .unwrap()
+                .as_reference()
+                .unwrap(),
+            popup_id
+        );
+        assert_eq!(
+            document
+                .get_dictionary(popup_id)
+                .unwrap()
+                .get(b"Parent")
+                .unwrap()
+                .as_reference()
+                .unwrap(),
+            note_id
+        );
+        assert_eq!(prepare_save(&prepared).unwrap(), prepared);
+    }
+
+    #[test]
     fn deleting_acrobat_markup_removes_its_popup_children_on_save_and_save_as() {
         let original = include_bytes!("../tests/fixtures/external/acrobat-supported.pdf");
         let deleted =
@@ -1406,8 +1521,8 @@ mod tests {
                 }
             }
             assert_eq!(
-                popup_count, 1,
-                "The original note's live Popup must survive"
+                popup_count, 2,
+                "Both remaining Text notes need live Popups, including the original one"
             );
         };
         let prepared = prepare_save(deleted).unwrap();
