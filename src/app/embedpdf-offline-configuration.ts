@@ -3,13 +3,14 @@ import {
   type AnnotationDisplayName,
   DEFAULT_ANNOTATION_DISPLAY_NAME,
 } from '../reader/native-pdf-editing';
+import { VERIFIED_MARKUP_TOOLS } from './markup-tools';
 
 const EMBEDPDF_WASM_URL = '/embedpdf/pdfium.wasm';
 const EMBEDPDF_FONT_BASE_URL = '/embedpdf/fonts';
-const ENABLED_ANNOTATION_TOOL_IDS = ['highlight', 'textComment'] as const;
 
-export function embedPdfAnnotationToolIds(): typeof ENABLED_ANNOTATION_TOOL_IDS {
-  return ENABLED_ANNOTATION_TOOL_IDS;
+/** EmbedPDF tools Monight enables: exactly the verified markup tools. */
+export function embedPdfAnnotationToolIds(): readonly string[] {
+  return VERIFIED_MARKUP_TOOLS.map(({ id }) => id);
 }
 
 const DISABLED_CATEGORIES = [
@@ -30,6 +31,8 @@ const DISABLED_CATEGORIES = [
   'panel-sidebar',
   // Reading Session supports single, continuous, and odd-page spreads.
   'spread-even',
+  // Monight's markup toolbar replaces the ready-made Annotate mode and toolbar.
+  'mode-annotate',
 ] as const;
 
 const localFontFallback = {
@@ -122,7 +125,7 @@ export function createEmbedPdfViewerConfig(
       autoOpenLinks: false,
       annotationAuthor: annotationDisplayName,
       autoCommit: false,
-      tools: ENABLED_ANNOTATION_TOOL_IDS.map((id) => ({
+      tools: embedPdfAnnotationToolIds().map((id) => ({
         id,
         categories: ['monight-native'],
       })),
