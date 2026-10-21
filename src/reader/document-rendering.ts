@@ -11,19 +11,17 @@ export interface DocumentRenderingState {
   readonly totalPages: number;
   readonly zoom: number;
   readonly zoomIntent: ZoomIntent;
-  readonly rotation: number;
   readonly fileName: string;
   readonly filePath: string;
   readonly viewMode: ViewMode;
 }
 
-/** Live presentation only. PDF-authored page orientation belongs to Document
- * Content and is never included in viewingRotation. Save and print must use
- * Document Content, without applying this transform to PDF bytes. */
+/** Live presentation only. Page Rotation belongs to Document Content and is
+ * never part of this transform. Save and print must use Document Content,
+ * without applying this transform to PDF bytes. */
 export interface DocumentViewTransform {
   readonly scale: number;
   readonly zoomIntent: ZoomIntent;
-  readonly viewingRotation: number;
   readonly viewMode: ViewMode;
   readonly filterCss: string;
 }
@@ -41,7 +39,6 @@ export interface DocumentRendering {
   setZoomIntent(intent: ZoomIntent, options?: ReaderActionOptions): Promise<void>;
   zoomIn(options?: ReaderActionOptions): Promise<void>;
   zoomOut(options?: ReaderActionOptions): Promise<void>;
-  setRotation(rotation: number, options?: ReaderActionOptions): Promise<void>;
   setViewMode(viewMode: ViewMode, options?: ReaderActionOptions): Promise<void>;
   fitToPage(options?: ReaderActionOptions): Promise<void>;
   applyFilter(filterCss: string, options?: ReaderActionOptions): void;

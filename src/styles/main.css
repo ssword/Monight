@@ -266,7 +266,7 @@ body.drag-over #viewer-container {
 @media print {
   #toolbar,
   #tab-bar,
-  #darkConfigurator {
+  #appearance-popover {
     display: none !important;
   }
 

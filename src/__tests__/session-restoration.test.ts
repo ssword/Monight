@@ -21,7 +21,6 @@ function visualState(viewMode: 'single' | 'continuous' | 'spread'): ReadingSessi
       extraBrightness: 0,
     },
     zoomIntent: { kind: 'fit-width' },
-    rotation: 0,
     viewMode,
   };
 }
@@ -104,7 +103,7 @@ describe('Reading Session restoration', () => {
     });
 
     await intake.restore({
-      schemaVersion: 2,
+      schemaVersion: 3,
       activeDocumentPath: '/docs/restored.pdf',
       documents: [savedDocument('/docs/restored.pdf', 3)],
     });
@@ -133,7 +132,7 @@ describe('Reading Session restoration', () => {
     );
     const explicit = savedDocument('/docs/explicit.pdf', 4, { viewMode: 'spread' });
     const session: PersistedReadingSession = {
-      schemaVersion: 2,
+      schemaVersion: 3,
       activeDocumentPath: '/docs/saved-active.pdf',
       documents: [
         savedDocument('/docs/other.pdf', 3),
@@ -182,7 +181,7 @@ describe('Reading Session restoration', () => {
       },
     );
     const session: PersistedReadingSession = {
-      schemaVersion: 2,
+      schemaVersion: 3,
       activeDocumentPath: '/docs/saved-active.pdf',
       documents: [
         savedDocument('/docs/explicit.pdf', 4),
@@ -216,7 +215,7 @@ describe('Reading Session restoration', () => {
       }),
     });
     const session: PersistedReadingSession = {
-      schemaVersion: 2,
+      schemaVersion: 3,
       activeDocumentPath: '/docs/active.pdf',
       documents: [savedDocument('/docs/active.pdf', 2), savedDocument('/docs/background.pdf', 3)],
     };
@@ -264,7 +263,7 @@ describe('Reading Session restoration', () => {
       },
     );
     const session: PersistedReadingSession = {
-      schemaVersion: 2,
+      schemaVersion: 3,
       activeDocumentPath: '/docs/active.pdf',
       documents: [savedDocument('/docs/background.pdf', 1), savedDocument('/docs/active.pdf', 2)],
     };
@@ -298,7 +297,7 @@ describe('Reading Session restoration', () => {
       }),
     });
     const session: PersistedReadingSession = {
-      schemaVersion: 2,
+      schemaVersion: 3,
       activeDocumentPath: '/docs/saved-active.pdf',
       documents: [savedDocument('/docs/saved-active.pdf', 5)],
     };
@@ -323,7 +322,7 @@ describe('Reading Session restoration', () => {
       }),
     });
     const session: PersistedReadingSession = {
-      schemaVersion: 2,
+      schemaVersion: 3,
       activeDocumentPath: '/docs/saved-active.pdf',
       documents: [savedDocument('/docs/saved-active.pdf', 5)],
     };
@@ -365,7 +364,7 @@ describe('Reading Session restoration', () => {
       }),
     });
     const session: PersistedReadingSession = {
-      schemaVersion: 2,
+      schemaVersion: 3,
       activeDocumentPath: '/docs/active.pdf',
       documents: [
         savedDocument('/docs/one.pdf', 1),
@@ -389,7 +388,7 @@ describe('Reading Session restoration', () => {
   it('keeps automatic restoration quiet while explicit startup intake remains observable', async () => {
     const { intake, runtime } = createRestoringIntake();
     const session: PersistedReadingSession = {
-      schemaVersion: 2,
+      schemaVersion: 3,
       activeDocumentPath: '/docs/saved.pdf',
       documents: [savedDocument('/docs/saved.pdf', 2)],
     };
@@ -420,7 +419,7 @@ describe('Reading Session restoration', () => {
     });
     const { intake } = createRestoringIntake({}, { describe });
     const session: PersistedReadingSession = {
-      schemaVersion: 2,
+      schemaVersion: 3,
       activeDocumentPath: '/docs/missing.pdf',
       documents: [savedDocument('/docs/missing.pdf', 3)],
     };
@@ -469,7 +468,7 @@ describe('Reading Session restoration', () => {
       },
     );
     const session: PersistedReadingSession = {
-      schemaVersion: 2,
+      schemaVersion: 3,
       activeDocumentPath: '/alias/report.pdf',
       documents: [saved],
     };
@@ -535,7 +534,7 @@ describe('Reading Session restoration', () => {
       },
     );
     const session: PersistedReadingSession = {
-      schemaVersion: 2,
+      schemaVersion: 3,
       activeDocumentPath: '/alias/report.pdf',
       documents: [savedDocument('/alias/report.pdf', 3)],
     };
@@ -586,7 +585,7 @@ describe('Reading Session restoration', () => {
       },
     );
     const session: PersistedReadingSession = {
-      schemaVersion: 2,
+      schemaVersion: 3,
       activeDocumentPath: alias.filePath,
       documents: [alias, explicit],
     };
@@ -625,7 +624,7 @@ describe('Reading Session restoration', () => {
     const first = savedDocument('/docs/first.pdf', 3);
     const second = savedDocument('/docs/second.pdf', 8);
     const session: PersistedReadingSession = {
-      schemaVersion: 2,
+      schemaVersion: 3,
       activeDocumentPath: '/docs/second.pdf',
       documents: [first, second],
     };
@@ -676,7 +675,7 @@ describe('Reading Session restoration', () => {
       },
     );
     const session: PersistedReadingSession = {
-      schemaVersion: 2,
+      schemaVersion: 3,
       activeDocumentPath: '/alias/report.pdf',
       documents: [
         savedDocument('/alias/report.pdf', 3),
@@ -718,7 +717,7 @@ describe('Reading Session restoration', () => {
       },
     );
     const session: PersistedReadingSession = {
-      schemaVersion: 2,
+      schemaVersion: 3,
       activeDocumentPath: '/docs/missing.pdf',
       documents: [savedDocument('/docs/missing.pdf', 1), savedDocument('/docs/kept.pdf', 9)],
     };
@@ -752,7 +751,7 @@ describe('Reading Session restoration', () => {
     });
     const { intake, runtime } = createRestoringIntake({ open });
     const session: PersistedReadingSession = {
-      schemaVersion: 2,
+      schemaVersion: 3,
       activeDocumentPath: '/docs/one.pdf',
       documents: [savedDocument('/docs/one.pdf', 1), savedDocument('/docs/two.pdf', 2)],
     };
@@ -794,7 +793,7 @@ describe('Reading Session restoration', () => {
     );
     const { intake, runtime } = createRestoringIntake({ open });
     const session: PersistedReadingSession = {
-      schemaVersion: 2,
+      schemaVersion: 3,
       activeDocumentPath: '/docs/active.pdf',
       documents: [
         savedDocument('/docs/active.pdf', 1),
@@ -834,7 +833,7 @@ describe('Reading Session restoration', () => {
       },
     );
     const session: PersistedReadingSession = {
-      schemaVersion: 2,
+      schemaVersion: 3,
       activeDocumentPath: '/docs/active.pdf',
       documents: [savedDocument('/docs/active.pdf', 1), savedDocument('/docs/background.pdf', 2)],
     };
@@ -869,7 +868,7 @@ describe('Reading Session restoration', () => {
     }));
     const { intake, runtime } = createRestoringIntake({}, { describe });
     const session: PersistedReadingSession = {
-      schemaVersion: 2,
+      schemaVersion: 3,
       activeDocumentPath: '/docs/active.pdf',
       documents: [savedDocument('/docs/active.pdf', 1), savedDocument('/docs/later.pdf', 2)],
     };
@@ -910,7 +909,7 @@ describe('Reading Session restoration', () => {
       },
     );
     const session: PersistedReadingSession = {
-      schemaVersion: 2,
+      schemaVersion: 3,
       activeDocumentPath: '/alias/report.pdf',
       documents: [savedDocument('/alias/report.pdf', 7)],
     };
@@ -947,7 +946,7 @@ describe('Reading Session restoration', () => {
       ),
     });
     const session: PersistedReadingSession = {
-      schemaVersion: 2,
+      schemaVersion: 3,
       activeDocumentPath: '/docs/active.pdf',
       documents: [savedDocument('/docs/active.pdf', 7)],
     };
@@ -983,7 +982,7 @@ describe('Reading Session restoration', () => {
       },
     );
     const session: PersistedReadingSession = {
-      schemaVersion: 2,
+      schemaVersion: 3,
       activeDocumentPath: '/alias/report.pdf',
       documents: [savedDocument('/alias/report.pdf', 3)],
     };

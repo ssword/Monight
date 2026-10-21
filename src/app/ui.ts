@@ -1,7 +1,6 @@
 import type { DocumentRenderingState } from '../reader/document-rendering';
 import type { ReadingSessionSnapshot } from '../reader/reader-actions';
 import type { RecentDocument } from '../reader/recent-documents';
-import { type FilterSettings, PRESETS } from '../scripts/filters';
 import { hydrateChromeIcons } from './chrome-icons';
 
 // Show splash screen
@@ -64,31 +63,6 @@ export function applyWindowChrome(doc: Document, isMac: boolean): void {
  */
 export function updateTabBarVisibility(documentCount: number): void {
   document.getElementById('tab-bar')?.classList.toggle('hidden', documentCount < 2);
-}
-
-// Update active preset button based on settings
-export function updateActivePresetButton(settings: FilterSettings): void {
-  const buttons = document.querySelectorAll('.preset-btn');
-
-  // Check if settings match any preset
-  let matchedPreset: string | null = null;
-
-  for (const [presetName, presetSettings] of Object.entries(PRESETS)) {
-    if (JSON.stringify(presetSettings) === JSON.stringify(settings)) {
-      matchedPreset = presetName;
-      break;
-    }
-  }
-
-  // Update button states
-  buttons.forEach((btn) => {
-    const presetName = btn.id.replace('preset-', '');
-    if (presetName === matchedPreset) {
-      btn.classList.add('active');
-    } else {
-      btn.classList.remove('active');
-    }
-  });
 }
 
 // Update UI based on viewer state

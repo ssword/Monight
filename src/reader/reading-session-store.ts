@@ -1,8 +1,9 @@
-import type {
-  PersistedReadingSession,
-  ReadingSessionDocument,
-  ReadingSessionVisualState,
-  ZoomIntent,
+import {
+  type PersistedReadingSession,
+  READING_SESSION_SCHEMA_VERSION,
+  type ReadingSessionDocument,
+  type ReadingSessionVisualState,
+  type ZoomIntent,
 } from './reader-actions';
 
 export interface ReadingSessionStorage {
@@ -19,7 +20,6 @@ interface LegacyDocument {
   scrollPosition?: number;
   filterSettings?: ReadingSessionVisualState['filterSettings'];
   zoom?: number;
-  rotation?: number;
   viewMode?: 'single' | 'continuous' | 'spread';
 }
 
@@ -29,7 +29,7 @@ interface LegacyReadingSession {
 }
 
 export const EMPTY_READING_SESSION: PersistedReadingSession = {
-  schemaVersion: 2,
+  schemaVersion: READING_SESSION_SCHEMA_VERSION,
   activeDocumentPath: null,
   documents: [],
 };
@@ -68,9 +68,11 @@ function parseVisualState(value: unknown): ReadingSessionVisualState | undefined
     'extraBrightness',
   ] as const;
   if (filterKeys.some((key) => typeof filterSettings[key] !== 'number')) return undefined;
+  // Schemas 1 and 2 stored a view rotation; it is discarded rather than applied to the PDF.
   if (
-    typeof value.rotation !== 'number' ||
-    (value.viewMode !== 'single' && value.viewMode !== 'continuous' && value.viewMode !== 'spread')
+    value.viewMode !== 'single' &&
+    value.viewMode !== 'continuous' &&
+    value.viewMode !== 'spread'
   ) {
     return undefined;
   }
@@ -86,7 +88,6 @@ function parseVisualState(value: unknown): ReadingSessionVisualState | undefined
       extraBrightness: filterSettings.extraBrightness as number,
     },
     zoomIntent,
-    rotation: value.rotation,
     viewMode: value.viewMode,
   };
 }
@@ -123,7 +124,9 @@ function parseDocument(value: unknown): ReadingSessionDocument | null {
 export function parseReadingSession(value: unknown): PersistedReadingSession | null {
   if (
     !isRecord(value) ||
-    (value.schemaVersion !== 1 && value.schemaVersion !== 2) ||
+    (value.schemaVersion !== 1 &&
+      value.schemaVersion !== 2 &&
+      value.schemaVersion !== READING_SESSION_SCHEMA_VERSION) ||
     !Array.isArray(value.documents)
   ) {
     return null;
@@ -138,7 +141,7 @@ export function parseReadingSession(value: unknown): PersistedReadingSession | n
   if (new Set(paths).size !== paths.length) return null;
   if (value.activeDocumentPath !== null && !paths.includes(value.activeDocumentPath)) return null;
   return {
-    schemaVersion: 2,
+    schemaVersion: READING_SESSION_SCHEMA_VERSION,
     activeDocumentPath: value.activeDocumentPath,
     documents: validDocuments,
   };
@@ -172,13 +175,11 @@ function parseLegacyReadingSession(value: unknown): LegacyReadingSession | null 
             filterSettings: parseVisualState({
               filterSettings: tab.filterSettings,
               zoom: tab.zoom,
-              rotation: tab.rotation ?? 0,
               viewMode: tab.viewMode,
             })?.filterSettings,
           }
         : {}),
       ...(typeof tab.zoom === 'number' ? { zoom: tab.zoom } : {}),
-      ...(typeof tab.rotation === 'number' ? { rotation: tab.rotation } : {}),
       ...(tab.viewMode === 'single' || tab.viewMode === 'continuous' || tab.viewMode === 'spread'
         ? { viewMode: tab.viewMode }
         : {}),
@@ -200,7 +201,6 @@ function migrateLegacyReadingSession(legacy: LegacyReadingSession): PersistedRea
           visualState: {
             filterSettings: tab.filterSettings,
             zoomIntent: { kind: 'manual' as const, scale: tab.zoom },
-            rotation: tab.rotation ?? 0,
             viewMode: tab.viewMode,
           },
         }
@@ -211,7 +211,7 @@ function migrateLegacyReadingSession(legacy: LegacyReadingSession): PersistedRea
   )
     ? legacy.activeFilePath
     : null;
-  return { schemaVersion: 2, activeDocumentPath, documents };
+  return { schemaVersion: READING_SESSION_SCHEMA_VERSION, activeDocumentPath, documents };
 }
 
 export async function loadReadingSession(
@@ -220,11 +220,15 @@ export async function loadReadingSession(
   const rawStored = await storage.read();
   const stored = parseReadingSession(rawStored);
   if (stored) {
-    if (!isRecord(rawStored) || rawStored.schemaVersion !== 2) {
+    if (!isRecord(rawStored) || rawStored.schemaVersion !== READING_SESSION_SCHEMA_VERSION) {
       await storage.write(stored);
       const verifiedRaw = await storage.read();
       const verified = parseReadingSession(verifiedRaw);
-      if (!verified || !isRecord(verifiedRaw) || verifiedRaw.schemaVersion !== 2) {
+      if (
+        !verified ||
+        !isRecord(verifiedRaw) ||
+        verifiedRaw.schemaVersion !== READING_SESSION_SCHEMA_VERSION
+      ) {
         throw new Error('Reading Session schema migration could not be verified');
       }
     }
@@ -249,7 +253,11 @@ export async function loadReadingSession(
   await storage.write(validated);
   const verifiedRaw = await storage.read();
   const verified = parseReadingSession(verifiedRaw);
-  if (!verified || !isRecord(verifiedRaw) || verifiedRaw.schemaVersion !== 2) {
+  if (
+    !verified ||
+    !isRecord(verifiedRaw) ||
+    verifiedRaw.schemaVersion !== READING_SESSION_SCHEMA_VERSION
+  ) {
     throw new Error('Reading Session migration could not be verified');
   }
   await storage.removeLegacy();
