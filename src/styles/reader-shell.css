@@ -317,3 +317,67 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* Highlight split button: the icon carries the current colour as an underline. */
+.highlight-anchor {
+  position: relative;
+}
+
+.highlight-button {
+  position: relative;
+}
+
+.highlight-button::after {
+  content: "";
+  position: absolute;
+  right: 7px;
+  bottom: 4px;
+  left: 7px;
+  height: 3px;
+  background-color: var(--highlight-color, transparent);
+  border-radius: 2px;
+}
+
+.highlight-button[aria-pressed="true"] {
+  color: var(--accent-ink);
+  background-color: var(--accent-glow);
+}
+
+.highlight-anchor .toolbar-btn:disabled {
+  cursor: default;
+  opacity: 0.4;
+}
+
+.highlight-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  min-width: 150px;
+  padding: 4px;
+  gap: 2px;
+  background-color: var(--bg-elevated);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+}
+
+.highlight-menu[hidden] {
+  display: none;
+}
+
+.highlight-swatch {
+  width: 12px;
+  height: 12px;
+  background-color: var(--highlight-color);
+  border: 1px solid var(--border-color);
+  border-radius: 50%;
+}
+
+.toolbar-menu-separator {
+  height: 1px;
+  margin: 3px 6px;
+  background-color: var(--border-color);
+}

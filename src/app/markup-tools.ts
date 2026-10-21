@@ -61,3 +61,20 @@ export function verifiedMarkupTools(
  * existing Annotations, pass round-trip verification (ADR 0003).
  */
 export const PAGE_ROTATION_VERIFIED = false;
+
+/** Colours offered by the Highlight split button, in menu order. */
+export const HIGHLIGHT_COLORS = Object.freeze([
+  // EmbedPDF's own highlight colour, the one ADR 0002's verification used.
+  { id: 'yellow', label: 'Yellow', strokeColor: '#FFCD45' },
+  { id: 'green', label: 'Green', strokeColor: '#7ED957' },
+  { id: 'blue', label: 'Blue', strokeColor: '#6CB4F5' },
+  { id: 'pink', label: 'Pink', strokeColor: '#FF7EB6' },
+  { id: 'purple', label: 'Purple', strokeColor: '#B78CF2' },
+] as const);
+
+export type HighlightColorId = (typeof HIGHLIGHT_COLORS)[number]['id'];
+
+/** The annotation stroke colour for a highlight colour. */
+export function highlightStrokeColor(id: HighlightColorId): string {
+  return (HIGHLIGHT_COLORS.find((color) => color.id === id) ?? HIGHLIGHT_COLORS[0]).strokeColor;
+}

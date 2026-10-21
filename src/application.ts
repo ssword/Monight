@@ -26,8 +26,13 @@ import {
   reportDocumentIntakeOutcomes,
   updatePrintMenuState,
 } from './app/file-actions';
+import { createHighlightButton, type HighlightButton } from './app/highlight-button';
 import { registerKeybindActions } from './app/keybinds';
-import { createMarkupToolbar, type MarkupToolbar } from './app/markup-toolbar';
+import {
+  createMarkupToolbar,
+  leaveMarkupToolOnEscape,
+  type MarkupToolbar,
+} from './app/markup-toolbar';
 import { createPersistenceCoordinator } from './app/persistence-coordinator';
 import { PresentationController } from './app/presentation-controller';
 import { createReaderSidebar, type ReaderSidebar } from './app/reader-sidebar';
@@ -123,6 +128,7 @@ let recentDocumentAuthority: RecentDocumentAuthority | null = null;
 let chromePreferences: ChromePreferencesAuthority | null = null;
 let readerSidebar: ReaderSidebar | null = null;
 let markupToolbar: MarkupToolbar | null = null;
+let highlightButton: HighlightButton | null = null;
 
 // Global keybind manager instance
 let keybindManager: KeybindManager | null = null;
@@ -443,6 +449,23 @@ function mountReaderSidebar(
   return sidebar;
 }
 
+function mountHighlightButton(preferences: ChromePreferencesAuthority): HighlightButton | null {
+  const button = document.getElementById('highlight-button');
+  const menuToggle = document.getElementById('highlight-menu-toggle');
+  const menu = document.getElementById('highlight-menu');
+  if (!(button instanceof HTMLButtonElement) || !(menuToggle instanceof HTMLButtonElement) || !menu)
+    return null;
+  return createHighlightButton({
+    elements: { button, menuToggle, menu },
+    preferences,
+    activeMarkup: () => documentWorkspace?.activeMarkup() ?? null,
+    setActiveTool: (toolId, defaults) =>
+      documentWorkspace?.setActiveAnnotationTool(toolId, defaults),
+    markupSelection: (toolId, defaults) =>
+      documentWorkspace?.markupSelection(toolId, defaults) ?? false,
+  });
+}
+
 function mountMarkupToolbar(preferences: ChromePreferencesAuthority): MarkupToolbar | null {
   const bar = document.getElementById('markup-toolbar');
   const toggle = document.getElementById('markup-toolbar-toggle');
@@ -591,6 +614,7 @@ export async function initializeApplication(modules: ApplicationModules): Promis
         updateUI(readerActions.snapshot(), documentWorkspace.activeRenderingState());
         readerSidebar?.refresh();
         markupToolbar?.refresh();
+        highlightButton?.refresh();
       },
     });
 
@@ -637,11 +661,18 @@ export async function initializeApplication(modules: ApplicationModules): Promis
     }
     readerSidebar = mountReaderSidebar(chromePreferences, defaultVisualState);
     markupToolbar = mountMarkupToolbar(chromePreferences);
+    highlightButton = mountHighlightButton(chromePreferences);
+    leaveMarkupToolOnEscape({
+      activeMarkup: () => documentWorkspace?.activeMarkup() ?? null,
+      setActiveTool: (toolId) => documentWorkspace?.setActiveAnnotationTool(toolId),
+      presentationActive: () => presentationController?.isActive() ?? false,
+    });
     readerActions.observe((snapshot) => {
       documentWorkspace?.project(snapshot);
       updateUI(snapshot, documentWorkspace?.activeRenderingState() ?? null);
       readerSidebar?.refresh();
       markupToolbar?.refresh();
+      highlightButton?.refresh();
       showActiveAppearance(snapshot);
       const hasDocument = snapshot.documents.length > 0;
       updateTabBarVisibility(snapshot.documents.length);

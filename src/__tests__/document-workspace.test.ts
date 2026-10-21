@@ -134,6 +134,8 @@ describe('Document workspace adapter', () => {
   it('routes markup tool choice to the active Document and reports whether it can be edited', async () => {
     const reason = 'Digitally signed PDFs are read-only to preserve their signatures';
     const tools = new Map<string, string | null>();
+    const toolDefaults = new Map<string, { strokeColor?: string }>();
+    const marks: Array<{ filePath: string; toolId: string; strokeColor?: string }> = [];
     let activePath = '/editable.pdf';
     const workspace = createDocumentWorkspace({
       dispatchReaderAction: vi.fn(async () => ({ status: 'committed' as const, revision: 1 })),
@@ -148,7 +150,14 @@ describe('Document workspace adapter', () => {
         const surface = createControllableSurface(filePath);
         tools.set(filePath, null);
         surface.rendering.activeAnnotationTool = () => tools.get(filePath) ?? null;
-        surface.rendering.setActiveAnnotationTool = (toolId) => tools.set(filePath, toolId);
+        surface.rendering.setActiveAnnotationTool = (toolId, defaults) => {
+          tools.set(filePath, toolId);
+          if (defaults) toolDefaults.set(filePath, defaults);
+        };
+        surface.rendering.markupSelection = (toolId, defaults) => {
+          marks.push({ filePath, toolId, ...defaults });
+          return true;
+        };
         surface.runtime.editing = {
           state: () => ({
             revision: 0,
@@ -172,12 +181,19 @@ describe('Document workspace adapter', () => {
     workspace.setActiveAnnotationTool('textComment');
     expect(workspace.activeMarkup()).toEqual({ activeToolId: 'textComment', readOnlyReason: null });
     expect(tools.get('/signed.pdf')).toBeNull();
+    workspace.setActiveAnnotationTool('highlight', { strokeColor: '#7ED957' });
+    expect(toolDefaults.get('/editable.pdf')).toEqual({ strokeColor: '#7ED957' });
+    expect(workspace.markupSelection('highlight', { strokeColor: '#7ED957' })).toBe(true);
+    expect(marks).toEqual([
+      { filePath: '/editable.pdf', toolId: 'highlight', strokeColor: '#7ED957' },
+    ]);
 
     activePath = '/signed.pdf';
     expect(workspace.activeMarkup()).toEqual({ activeToolId: null, readOnlyReason: reason });
 
     activePath = '/missing.pdf';
     expect(workspace.activeMarkup()).toBeNull();
+    expect(workspace.markupSelection('highlight', {})).toBe(false);
   });
 
   it('reveals an Annotation on the rendering surface of the Document that owns it', async () => {
