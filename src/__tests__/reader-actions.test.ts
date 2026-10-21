@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { navigationPdf } from '../__fixtures__/navigation-pdf';
 import type { DocumentContent } from '../reader/document-content';
 import { createDocumentIntake } from '../reader/document-intake';
 import type { DocumentRuntime } from '../reader/document-queries';
@@ -9,7 +10,7 @@ import {
 } from '../reader/reader-actions';
 
 const INITIAL_SESSION = {
-  schemaVersion: 2 as const,
+  schemaVersion: 3 as const,
   activeDocumentPath: '/docs/first.pdf',
   documents: [
     {
@@ -1332,6 +1333,32 @@ describe('Reader Actions', () => {
     expect(reader.snapshot()).toEqual(before);
   });
 
+  it("prints the PDF's own Page Rotation without applying a viewing transform", async () => {
+    const rotatedPdf = navigationPdf('Rotated', 90);
+    const runtime = createDocumentRuntime();
+    runtime.preparePrintDocument = vi.fn(async () => rotatedPdf.slice());
+    const print = vi.fn(async (_request: { bytes: Uint8Array }) => undefined);
+    const reader = createReaderActions({
+      initialSession: INITIAL_SESSION,
+      projection: { activateDocument: vi.fn(), goToReadingPosition: vi.fn() },
+      printAdapter: { print },
+      persist: vi.fn(async () => undefined),
+    });
+    await reader.dispatch({
+      type: 'registerDocument',
+      document: INITIAL_SESSION.documents[0],
+      runtime,
+    });
+
+    await expect(reader.dispatch({ type: 'printDocument' })).resolves.toMatchObject({
+      status: 'performed',
+    });
+
+    const printed = print.mock.calls[0]?.[0].bytes;
+    expect(printed).toEqual(rotatedPdf);
+    expect(new TextDecoder().decode(printed)).toContain('/Rotate 90');
+  });
+
   it('serializes print preparation with Recovery Draft PDF export', async () => {
     let finishDraftExport: ((bytes: Uint8Array) => void) | undefined;
     const events: string[] = [];
@@ -1456,7 +1483,6 @@ describe('Reader Actions', () => {
           extraBrightness: -6,
         },
         zoomIntent: { kind: 'manual', scale: 1 },
-        rotation: 0,
         viewMode: 'continuous',
       },
       projection: { activateDocument: vi.fn(), goToReadingPosition: vi.fn() },
@@ -1549,7 +1575,7 @@ describe('Reader Actions', () => {
   it('canonicalizes Document identities and removes alias duplicates', async () => {
     const reader = createReaderActions({
       initialSession: {
-        schemaVersion: 2,
+        schemaVersion: 3,
         activeDocumentPath: '/alias/report.pdf',
         documents: [
           {
@@ -1599,7 +1625,7 @@ describe('Reader Actions', () => {
   it('prefers the registered canonical runtime state when aliases collapse', async () => {
     const reader = createReaderActions({
       initialSession: {
-        schemaVersion: 2,
+        schemaVersion: 3,
         activeDocumentPath: '/alias/saved-active.pdf',
         documents: [
           {
@@ -1652,7 +1678,7 @@ describe('Reader Actions', () => {
     };
     const reader = createReaderActions({
       initialSession: {
-        schemaVersion: 2,
+        schemaVersion: 3,
         activeDocumentPath: '/alias/report.pdf',
         documents: [
           {
@@ -3053,7 +3079,6 @@ describe('Reader Actions', () => {
               extraBrightness: 0,
             },
             zoomIntent: { kind: 'manual' as const, scale: 1 },
-            rotation: 0,
             viewMode: 'single' as const,
           },
         })),
@@ -3104,7 +3129,6 @@ describe('Reader Actions', () => {
               extraBrightness: 0,
             },
             zoomIntent: { kind: 'fit-width' as const },
-            rotation: 0,
             viewMode: 'single' as const,
           },
         })),
@@ -3130,13 +3154,12 @@ describe('Reader Actions', () => {
     expect(outcome).toMatchObject({ status: 'no-op', revision: 0 });
   });
 
-  it('orders relative zoom and rotation while committing the resolved Visual State', async () => {
+  it('orders relative zoom while committing the resolved Visual State', async () => {
     let scale = 1;
     const applyRelativeZoom = vi.fn(async (_filePath, direction: 'in' | 'out') => {
       scale += direction === 'in' ? 0.25 : -0.25;
       return { kind: 'manual' as const, scale };
     });
-    const applyRotation = vi.fn(async (_filePath: string, _rotation: number) => undefined);
     const reader = createReaderActions({
       initialSession: {
         ...INITIAL_SESSION,
@@ -3152,7 +3175,6 @@ describe('Reader Actions', () => {
               extraBrightness: 0,
             },
             zoomIntent: { kind: 'manual' as const, scale: 1 },
-            rotation: 0,
             viewMode: 'single' as const,
           },
         })),
@@ -3161,21 +3183,16 @@ describe('Reader Actions', () => {
         activateDocument: vi.fn(),
         goToReadingPosition: vi.fn(),
         applyRelativeZoom,
-        applyRotation,
       },
       persist: vi.fn(),
     });
 
     await reader.dispatch({ type: 'zoomIn' });
     await reader.dispatch({ type: 'zoomIn' });
-    await reader.dispatch({ type: 'rotateClockwise' });
-    await reader.dispatch({ type: 'rotateCounterClockwise' });
 
     expect(applyRelativeZoom.mock.calls.map((call) => call[1])).toEqual(['in', 'in']);
-    expect(applyRotation.mock.calls.map((call) => call[1])).toEqual([90, 0]);
     expect(reader.snapshot().documents[0].visualState).toMatchObject({
       zoomIntent: { kind: 'manual', scale: 1.5 },
-      rotation: 0,
     });
   });
 
@@ -3197,7 +3214,6 @@ describe('Reader Actions', () => {
               extraBrightness: 0,
             },
             zoomIntent: { kind: 'fit-width' as const },
-            rotation: 0,
             viewMode: 'single' as const,
           },
         })),
@@ -3234,7 +3250,6 @@ describe('Reader Actions', () => {
     );
     expect(Object.keys(reader.snapshot().documents[0].visualState ?? {}).sort()).toEqual([
       'filterSettings',
-      'rotation',
       'viewMode',
       'zoomIntent',
     ]);
@@ -3260,7 +3275,6 @@ describe('Reader Actions', () => {
               index === 0
                 ? { kind: 'manual' as const, scale: 1.75 }
                 : { kind: 'fit-page' as const },
-            rotation: index * 90,
             viewMode: index === 0 ? ('continuous' as const) : ('spread' as const),
           },
         })),
@@ -3276,13 +3290,11 @@ describe('Reader Actions', () => {
       { page: 7, location: 0.5 },
       expect.objectContaining({
         zoomIntent: { kind: 'fit-page' },
-        rotation: 90,
         viewMode: 'spread',
       }),
     );
     expect(reader.snapshot().documents[0].visualState).toMatchObject({
       zoomIntent: { kind: 'manual', scale: 1.75 },
-      rotation: 0,
       viewMode: 'continuous',
     });
   });
@@ -3305,7 +3317,6 @@ describe('Reader Actions', () => {
               extraBrightness: 0,
             },
             zoomIntent: { kind: 'manual' as const, scale: 1 },
-            rotation: 0,
             viewMode: 'single' as const,
           },
         })),

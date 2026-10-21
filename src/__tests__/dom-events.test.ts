@@ -130,7 +130,7 @@ describe('toolbar input adapters', () => {
         },
       } as unknown as KeybindManager,
       getReadingSessionSnapshot: () => ({
-        schemaVersion: 2,
+        schemaVersion: 3,
         revision: 0,
         activeDocumentPath: null,
         documents: [],

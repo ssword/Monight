@@ -30,7 +30,6 @@ export type ZoomIntent =
 export interface ReadingSessionVisualState {
   readonly filterSettings: Readonly<FilterSettings>;
   readonly zoomIntent: ZoomIntent;
-  readonly rotation: number;
   readonly viewMode: ViewMode;
 }
 
@@ -41,8 +40,14 @@ export interface ReadingSessionDocument {
   readonly visualState?: ReadingSessionVisualState;
 }
 
+/**
+ * Schema 3 removed view rotation from Visual State; rotation is now a Page Rotation stored
+ * in the PDF itself.
+ */
+export const READING_SESSION_SCHEMA_VERSION = 3 as const;
+
 export interface PersistedReadingSession {
-  readonly schemaVersion: 2;
+  readonly schemaVersion: typeof READING_SESSION_SCHEMA_VERSION;
   readonly activeDocumentPath: string | null;
   readonly documents: readonly ReadingSessionDocument[];
 }
@@ -95,7 +100,6 @@ export interface ReaderProjection {
     direction: 'in' | 'out',
     options?: ReaderActionOptions,
   ): Promise<ZoomIntent>;
-  applyRotation?(filePath: string, rotation: number, options?: ReaderActionOptions): Promise<void>;
   applyViewMode?(
     filePath: string,
     viewMode: ViewMode,
@@ -125,8 +129,6 @@ export type ReaderAction =
   | { type: 'setZoomIntent'; zoomIntent: ZoomIntent; filePath?: string }
   | { type: 'zoomIn'; filePath?: string }
   | { type: 'zoomOut'; filePath?: string }
-  | { type: 'rotateClockwise'; filePath?: string }
-  | { type: 'rotateCounterClockwise'; filePath?: string }
   | { type: 'setViewMode'; viewMode: ViewMode; filePath?: string }
   | { type: 'cycleViewMode'; filePath?: string }
   | { type: 'setFilterSettings'; filterSettings: FilterSettings; filePath?: string }
@@ -157,10 +159,6 @@ export const readerAction = {
   zoomOut: (filePath?: string): ReaderAction => withOptionalFilePath({ type: 'zoomOut' }, filePath),
   setZoomIntent: (zoomIntent: ZoomIntent, filePath?: string): ReaderAction =>
     withOptionalFilePath({ type: 'setZoomIntent', zoomIntent }, filePath),
-  rotateClockwise: (filePath?: string): ReaderAction =>
-    withOptionalFilePath({ type: 'rotateClockwise' }, filePath),
-  rotateCounterClockwise: (filePath?: string): ReaderAction =>
-    withOptionalFilePath({ type: 'rotateCounterClockwise' }, filePath),
   cycleViewMode: (filePath?: string): ReaderAction =>
     withOptionalFilePath({ type: 'cycleViewMode' }, filePath),
   setViewMode: (viewMode: ViewMode, filePath?: string): ReaderAction =>
@@ -280,7 +278,6 @@ function visualStatesEqual(
     left.zoomIntent.kind === right.zoomIntent.kind &&
     (left.zoomIntent.kind !== 'manual' ||
       (right.zoomIntent.kind === 'manual' && left.zoomIntent.scale === right.zoomIntent.scale)) &&
-    left.rotation === right.rotation &&
     left.viewMode === right.viewMode &&
     filterKeys.every((key) => left.filterSettings[key] === right.filterSettings[key])
   );
@@ -290,7 +287,6 @@ function createDefaultVisualState(): ReadingSessionVisualState {
   return {
     filterSettings: { ...PRESETS.default },
     zoomIntent: { kind: 'manual', scale: 1 },
-    rotation: 0,
     viewMode: 'single',
   };
 }
@@ -338,10 +334,6 @@ function filterSettingsEqual(
   );
 }
 
-function normalizeRotation(rotation: number): number {
-  return (((Math.round(rotation / 90) * 90) % 360) + 360) % 360;
-}
-
 function nextViewMode(viewMode: ViewMode): ViewMode {
   switch (viewMode) {
     case 'single':
@@ -380,7 +372,7 @@ function activateDocumentTransition(
       )
     : session.documents;
   return {
-    schemaVersion: 2,
+    schemaVersion: READING_SESSION_SCHEMA_VERSION,
     activeDocumentPath: document.filePath,
     documents,
   };
@@ -738,7 +730,11 @@ export function createReaderActions({
         item.filePath === routedPath ? updated : item,
       );
       return commit(
-        { schemaVersion: 2, activeDocumentPath: current.activeDocumentPath, documents },
+        {
+          schemaVersion: READING_SESSION_SCHEMA_VERSION,
+          activeDocumentPath: current.activeDocumentPath,
+          documents,
+        },
         'deferred',
       );
     });
@@ -766,7 +762,11 @@ export function createReaderActions({
         : item,
     );
     return commit(
-      { schemaVersion: 2, activeDocumentPath: latest.activeDocumentPath, documents },
+      {
+        schemaVersion: READING_SESSION_SCHEMA_VERSION,
+        activeDocumentPath: latest.activeDocumentPath,
+        documents,
+      },
       'deferred',
     );
   };
@@ -866,7 +866,10 @@ export function createReaderActions({
       if (activeDocumentPath !== current.activeDocumentPath) changed = true;
       if (!changed) return { status: 'no-op', revision: current.revision };
 
-      return commit({ schemaVersion: 2, activeDocumentPath, documents }, 'immediate');
+      return commit(
+        { schemaVersion: READING_SESSION_SCHEMA_VERSION, activeDocumentPath, documents },
+        'immediate',
+      );
     });
 
   const quiesce = async (): Promise<void> => {
@@ -950,7 +953,10 @@ export function createReaderActions({
           const latest = session.snapshot();
           const latestTransition = closeDocumentTransition(latest, action.filePath);
           if (!latestTransition) return { status: 'no-op', revision: latest.revision };
-          const outcome = await commit({ schemaVersion: 2, ...latestTransition }, 'immediate');
+          const outcome = await commit(
+            { schemaVersion: READING_SESSION_SCHEMA_VERSION, ...latestTransition },
+            'immediate',
+          );
           await removeRuntime(action.filePath);
           if (action.type === 'closeDocument') {
             recentlyClosedDocumentPaths.push(action.filePath);
@@ -1255,7 +1261,7 @@ export function createReaderActions({
           const latest = session.snapshot();
           return commit(
             {
-              schemaVersion: 2,
+              schemaVersion: READING_SESSION_SCHEMA_VERSION,
               activeDocumentPath:
                 latest.activeDocumentPath === filePath
                   ? selected.canonicalPath
@@ -1471,7 +1477,11 @@ export function createReaderActions({
             return document;
           });
           return commit(
-            { schemaVersion: 2, activeDocumentPath: current.activeDocumentPath, documents },
+            {
+              schemaVersion: READING_SESSION_SCHEMA_VERSION,
+              activeDocumentPath: current.activeDocumentPath,
+              documents,
+            },
             'immediate',
           );
         });
@@ -1602,7 +1612,7 @@ export function createReaderActions({
           let next: PersistedReadingSession = existingDocument
             ? current
             : {
-                schemaVersion: 2,
+                schemaVersion: READING_SESSION_SCHEMA_VERSION,
                 activeDocumentPath: current.activeDocumentPath,
                 documents: [...current.documents, document],
               };
@@ -1720,7 +1730,11 @@ export function createReaderActions({
               document.filePath === filePath ? { ...document, readingPosition } : document,
             );
             return commit(
-              { schemaVersion: 2, activeDocumentPath: latest.activeDocumentPath, documents },
+              {
+                schemaVersion: READING_SESSION_SCHEMA_VERSION,
+                activeDocumentPath: latest.activeDocumentPath,
+                documents,
+              },
               'deferred',
             );
           },
@@ -1815,26 +1829,6 @@ export function createReaderActions({
                 projectionOptions,
               );
               return validZoomIntent(zoomIntent) ? { ...current, zoomIntent } : null;
-            },
-          ),
-        );
-      }
-
-      if (action.type === 'rotateClockwise' || action.type === 'rotateCounterClockwise') {
-        return routeRelativeDocumentAction(action.filePath, (filePath, expectedGeneration) =>
-          projectVisualState(
-            filePath,
-            expectedGeneration,
-            options,
-            async (current, projectionOptions) => {
-              const rotation = normalizeRotation(
-                current.rotation + (action.type === 'rotateClockwise' ? 90 : -90),
-              );
-              if (!projection.applyRotation) {
-                throw new Error('Reader projection cannot apply rotation');
-              }
-              await projection.applyRotation(filePath, rotation, projectionOptions);
-              return { ...current, rotation };
             },
           ),
         );
@@ -1953,7 +1947,11 @@ export function createReaderActions({
               item.filePath === filePath ? { ...item, readingPosition } : item,
             );
             return commit(
-              { schemaVersion: 2, activeDocumentPath: latest.activeDocumentPath, documents },
+              {
+                schemaVersion: READING_SESSION_SCHEMA_VERSION,
+                activeDocumentPath: latest.activeDocumentPath,
+                documents,
+              },
               'deferred',
             );
           },
@@ -1990,7 +1988,11 @@ export function createReaderActions({
             item.filePath === filePath ? { ...item, readingPosition } : item,
           );
           return commit(
-            { schemaVersion: 2, activeDocumentPath: latest.activeDocumentPath, documents },
+            {
+              schemaVersion: READING_SESSION_SCHEMA_VERSION,
+              activeDocumentPath: latest.activeDocumentPath,
+              documents,
+            },
             'deferred',
           );
         },

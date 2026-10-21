@@ -185,40 +185,28 @@ export async function verifyReading(browser, origin) {
     viewerZoom.live,
     'Relative zoom must persist the resulting scale',
   );
-  await command('rotate:clockwise');
-  await page.waitForTimeout(400);
-  assert.equal(
-    await page.evaluate(
-      () => window.readingSmoke.reader.snapshot().documents[0].visualState.rotation,
-    ),
-    90,
-  );
-  await command('rotate:counter-clockwise');
-  await page.waitForTimeout(400);
-  await page.evaluate(async () => {
+  // Rotation is a Page Rotation edit of the PDF; the ready-made view rotation is unavailable.
+  const viewRotation = await page.evaluate(async () => {
     const container = document.querySelector(
       '.embedpdf-document-surface[data-visible="true"] embedpdf-container',
     );
     const registry = await container.registry;
     const commands = registry.getPlugin('commands').provides();
+    const resolved = ['rotate:clockwise', 'rotate:counter-clockwise'].map((id) => {
+      const command = commands.resolve(id);
+      return command.visible && !command.disabled;
+    });
     commands.execute('rotate:clockwise', undefined, 'ui');
-    await new Promise(requestAnimationFrame);
-    commands.execute('rotate:clockwise', undefined, 'ui');
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    return {
+      available: resolved,
+      viewerRotation: registry.getPlugin('rotate').provides().getRotation(),
+      saved: window.readingSmoke.reader.snapshot().documents[0].visualState,
+    };
   });
-  await page.waitForTimeout(400);
-  const rapidRotation = await page.evaluate(() => ({
-    saved: window.readingSmoke.reader.snapshot().documents[0].visualState.rotation,
-    live: window.readingSmoke.workspace.activeRenderingState().rotation,
-  }));
-  assert.deepEqual(
-    rapidRotation,
-    { saved: 180, live: 180 },
-    'A second viewer rotation during projection must not be lost',
-  );
-  await command('rotate:counter-clockwise');
-  await page.waitForTimeout(400);
-  await command('rotate:counter-clockwise');
-  await page.waitForTimeout(400);
+  assert.deepEqual(viewRotation.available, [false, false], 'View rotation commands must be hidden');
+  assert.equal(viewRotation.viewerRotation, 0, 'The ready-made viewer must not rotate the view');
+  assert.equal('rotation' in viewRotation.saved, false, 'Visual State must not contain rotation');
   await command('spread:odd');
   await page.waitForTimeout(400);
   assert.equal(
@@ -241,21 +229,18 @@ export async function verifyReading(browser, origin) {
     {
       path: '/docs/first.pdf',
       viewMode: 'continuous',
-      rotations: 0,
       zoomIntent: { kind: 'manual', scale: 2 },
       position: { page: 2, location: 0.25 },
     },
     {
       path: '/docs/second.pdf',
       viewMode: 'single',
-      rotations: 1,
       zoomIntent: { kind: 'fit-width' },
       position: { page: 2, location: 0 },
     },
     {
       path: '/docs/third.pdf',
       viewMode: 'spread',
-      rotations: 2,
       zoomIntent: { kind: 'fit-page' },
       position: { page: 1, location: 0 },
     },
@@ -265,8 +250,6 @@ export async function verifyReading(browser, origin) {
       const { reader, intake } = window.readingSmoke;
       await intake.open([scenario.path]);
       await reader.dispatch({ type: 'setViewMode', viewMode: scenario.viewMode });
-      for (let turn = 0; turn < scenario.rotations; turn++)
-        await reader.dispatch({ type: 'rotateClockwise' });
       await reader.dispatch({ type: 'setZoomIntent', zoomIntent: scenario.zoomIntent });
       await reader.dispatch({
         type: 'activateDocumentTarget',
@@ -283,7 +266,6 @@ export async function verifyReading(browser, origin) {
         ),
     }));
     assert.equal(state.live.viewMode, scenario.viewMode);
-    assert.equal(state.live.rotation, scenario.rotations * 90);
     assert.deepEqual(state.saved.readingPosition, scenario.position);
     assert.deepEqual(state.saved.visualState.zoomIntent, scenario.zoomIntent);
   }
@@ -320,7 +302,6 @@ export async function verifyReading(browser, origin) {
     await page.getByRole('tab', { name: scenario.path.split('/').pop(), exact: true }).click();
     await page.waitForTimeout(500);
     const live = await page.evaluate(() => window.readingSmoke.workspace.activeRenderingState());
-    assert.equal(live.rotation, scenario.rotations * 90);
     assert.equal(live.viewMode, scenario.viewMode);
     assert.deepEqual(live.zoomIntent, scenario.zoomIntent);
   }
@@ -347,7 +328,7 @@ export async function verifyReading(browser, origin) {
   const transform = await page.evaluate(() =>
     window.readingSmoke.workspace.viewTransform('/docs/first.pdf'),
   );
-  assert.equal(transform.viewingRotation, 0);
+  assert.equal('viewingRotation' in transform, false, 'Viewing has no rotation transform');
   assert.equal(transform.scale, 2);
   assert.deepEqual(transform.zoomIntent, { kind: 'manual', scale: 2 });
   assert.match(transform.filterCss, /invert\(0.95\)/);
@@ -425,38 +406,63 @@ export async function verifyReading(browser, origin) {
     Array.from(await window.readingSmoke.contents.get('/docs/native.pdf').getData()),
   );
   assert.match(new TextDecoder().decode(new Uint8Array(originalBytes)), /\/Rotate 90/);
-  for (const rotation of [0, 90, 180, 270]) {
-    await page.evaluate(async (rotation) => {
-      const { reader } = window.readingSmoke;
-      if (rotation) await reader.dispatch({ type: 'rotateClockwise' });
-      await reader.dispatch({ type: 'setZoomIntent', zoomIntent: { kind: 'manual', scale: 2 } });
-      await reader.dispatch({
-        type: 'activateDocumentTarget',
-        target: { readingPosition: { page: 2, location: 0.25 } },
-      });
-    }, rotation);
-    await page.waitForTimeout(400);
-    const native = await page.evaluate(async () => ({
-      transform: window.readingSmoke.workspace.viewTransform('/docs/native.pdf'),
-      position: window.readingSmoke.workspace.activeReadingPosition().readingPosition,
-      bytes: Array.from(await window.readingSmoke.contents.get('/docs/native.pdf').getData()),
-    }));
-    assert.equal(
-      native.transform.viewingRotation,
-      rotation,
-      'Viewing rotation must exclude the PDF native orientation',
-    );
-    assert.equal(native.position.page, 2);
-    assert.ok(
-      Math.abs(native.position.location - 0.25) < 0.01,
-      `Native orientation anchor: ${JSON.stringify(native.position)}`,
-    );
-    assert.deepEqual(
-      native.bytes,
-      originalBytes,
-      'Viewing transforms must leave Document Content bytes unchanged',
-    );
+  await page.evaluate(async () => {
+    const { reader } = window.readingSmoke;
+    await reader.dispatch({ type: 'setZoomIntent', zoomIntent: { kind: 'manual', scale: 2 } });
+    await reader.dispatch({
+      type: 'activateDocumentTarget',
+      target: { readingPosition: { page: 2, location: 0.25 } },
+    });
+  });
+  await page.waitForTimeout(400);
+  const native = await page.evaluate(async () => ({
+    position: window.readingSmoke.workspace.activeReadingPosition().readingPosition,
+    bytes: Array.from(await window.readingSmoke.contents.get('/docs/native.pdf').getData()),
+  }));
+  assert.equal(native.position.page, 2);
+  assert.ok(
+    Math.abs(native.position.location - 0.25) < 0.01,
+    `Native orientation anchor: ${JSON.stringify(native.position)}`,
+  );
+  assert.deepEqual(native.bytes, originalBytes, 'Viewing must leave Document Content unchanged');
+
+  // An upgrade discards a saved schema-two view rotation instead of editing the PDF.
+  await page.evaluate(async () => {
+    await window.readingSmoke.reader.flush();
+    const saved = JSON.parse(localStorage.getItem('reading-session'));
+    saved.schemaVersion = 2;
+    saved.activeDocumentPath = '/docs/native.pdf';
+    for (const document of saved.documents) document.visualState.rotation = 270;
+    localStorage.setItem('reading-session', JSON.stringify(saved));
+  });
+  await page.reload();
+  await page.waitForFunction(() => document.body.dataset.status !== 'loading');
+  assert.equal(
+    await page.getAttribute('body', 'data-status'),
+    'ready',
+    await page.getAttribute('body', 'data-error'),
+  );
+  await page.waitForTimeout(600);
+  const upgraded = await page.evaluate(async () => {
+    const { reader, contents, workspace } = window.readingSmoke;
+    const registry = await document.querySelector(
+      '.embedpdf-document-surface[data-visible="true"] embedpdf-container',
+    ).registry;
+    return {
+      snapshot: reader.snapshot(),
+      stored: JSON.parse(localStorage.getItem('reading-session')),
+      viewerRotation: registry.getPlugin('rotate').provides().getRotation(),
+      active: workspace.activeRenderingState().filePath,
+      bytes: Array.from(await contents.get('/docs/native.pdf').getData()),
+    };
+  });
+  assert.equal(upgraded.active, '/docs/native.pdf');
+  assert.equal(upgraded.stored.schemaVersion, 3);
+  for (const document of [...upgraded.snapshot.documents, ...upgraded.stored.documents]) {
+    assert.equal('rotation' in document.visualState, false, 'Migration must drop view rotation');
   }
+  assert.equal(upgraded.viewerRotation, 0, 'A migrated session must restore at 0 degrees');
+  assert.deepEqual(upgraded.bytes, originalBytes, 'Migration must leave the PDF byte-for-byte');
   await page.close();
   console.log('EmbedPDF Reading Session contract passed');
 }

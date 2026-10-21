@@ -22,6 +22,8 @@ const DISABLED_CATEGORIES = [
   'document-export',
   'document-protect',
   'document-capture',
+  // Rotation is a Page Rotation edit of the PDF, never a view setting.
+  'rotate',
   // Monight's toolbar zoom group replaces the ready-made zoom controls.
   'zoom',
   // Reading Session supports single, continuous, and odd-page spreads.

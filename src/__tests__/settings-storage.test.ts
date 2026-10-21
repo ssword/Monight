@@ -131,14 +131,19 @@ describe('settings storage', () => {
     expect(store.values.has('annotations')).toBe(false);
     expect(settings.lastFilter).toEqual(legacy.lastFilter);
     expect(store.values.get('readingSession')).toEqual({
-      schemaVersion: 2,
+      schemaVersion: 3,
       activeDocumentPath: '/books/one.pdf',
       documents: [
-        expect.objectContaining({
+        {
           filePath: '/books/one.pdf',
           title: 'one.pdf',
           readingPosition: { page: 4, legacyOffset: 842 },
-        }),
+          visualState: {
+            filterSettings: legacySession.tabs[0].filterSettings,
+            zoomIntent: { kind: 'manual', scale: 1.25 },
+            viewMode: 'continuous',
+          },
+        },
       ],
     });
     expect(store.values.get('storageSchemaVersion')).toBe(SETTINGS_SCHEMA_VERSION);
@@ -147,6 +152,33 @@ describe('settings storage', () => {
     store.writes.length = 0;
     await new SettingsManager('settings').load();
     expect(store.writes).toEqual([]);
+  });
+
+  it('offers no view-rotation shortcut and ignores stored view-rotation bindings', async () => {
+    expect(Object.values(DEFAULT_SETTINGS.keybinds).map(({ action }) => action)).not.toEqual(
+      expect.arrayContaining([expect.stringMatching(/^rotate/)]),
+    );
+    store.reset({
+      storageSchemaVersion: SETTINGS_SCHEMA_VERSION,
+      keybinds: {
+        ...DEFAULT_SETTINGS.keybinds,
+        RotateClockwise: {
+          displayName: 'Rotate Right',
+          binds: ['CmdOrCtrl+R'],
+          action: 'rotateRight',
+        },
+        RotateCounterClockwise: {
+          displayName: 'Rotate Left',
+          binds: ['CmdOrCtrl+Shift+R'],
+          action: 'rotateLeft',
+        },
+      },
+    });
+
+    const settings = await new SettingsManager('settings').load();
+
+    expect(settings.keybinds).not.toHaveProperty('RotateClockwise');
+    expect(settings.keybinds).not.toHaveProperty('RotateCounterClockwise');
   });
 
   it('writes only the requested concern and rejects keys not owned by the window', async () => {
@@ -190,7 +222,7 @@ describe('settings storage', () => {
     keybinds.OpenFile.binds = ['Ctrl+Alt+O'];
     await settingsWindow.set('keybinds', keybinds);
     await mainWindow.writePersistedReadingSession({
-      schemaVersion: 2,
+      schemaVersion: 3,
       activeDocumentPath: '/books/two.pdf',
       documents: [
         {
@@ -214,7 +246,7 @@ describe('settings storage', () => {
       { filePath: '/books/one.pdf', title: 'one.pdf', openedAt: 42 },
     ]);
     await mainWindow.writePersistedReadingSession({
-      schemaVersion: 2,
+      schemaVersion: 3,
       activeDocumentPath: '/books/one.pdf',
       documents: [
         {
@@ -235,7 +267,7 @@ describe('settings storage', () => {
     ]);
     expect(store.values.has('annotations')).toBe(false);
     expect(store.values.get('readingSession')).toEqual({
-      schemaVersion: 2,
+      schemaVersion: 3,
       activeDocumentPath: null,
       documents: [],
     });

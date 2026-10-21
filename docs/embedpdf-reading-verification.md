@@ -27,9 +27,9 @@ build-time engine selection is required.
   revalidate it when upgrading the package.
 
 `DocumentWorkspace.viewTransform(filePath)` returns a detached, read-only
-`DocumentViewTransform`: actual scale, Zoom Intent, viewing rotation, view mode, and
-filter CSS. It describes presentation only. `viewingRotation` excludes PDF-authored
-page orientation. Save and print must consume Document Content rather than apply this
+`DocumentViewTransform`: actual scale, Zoom Intent, view mode, and filter CSS. It
+describes presentation only and has no rotation: Page Rotation belongs to Document
+Content (ADR 0003). Save and print must consume Document Content rather than apply this
 transform to PDF bytes. Native annotation saving and annotated printing were implemented by later
 slices and are composed by default in issue #66.
 
@@ -72,18 +72,20 @@ Verified locally in Chromium on macOS:
 - Zoom and viewport resize preserve a within-page anchor; fit width remains a fit intent.
 - Ctrl+0 runs reset zoom once, custom bindings override conflicting viewer tools, and
   removing a binding does not leave the old viewer shortcut active.
-- Ready-made zoom, rotation, and layout commands reach Reading Session snapshots.
-  Relative zoom persists the resulting scale, and rapid rotations during rendering
-  retain every requested turn.
+- Ready-made zoom and layout commands reach Reading Session snapshots, and relative
+  zoom persists the resulting scale. Ready-made view-rotation commands are unavailable
+  and Visual State has no rotation.
 - Three Documents retain their order, active identity, different zoom intentions,
-  rotations, view modes, and filters across duplicate activation, reload, and tab changes.
+  view modes, and filters across duplicate activation, reload, and tab changes.
 - Presentation projections do not change settled session state; Ctrl-wheel zoom
   preserves the physical point under the pointer and updates both live rendering
   and the saved manual intent/Reading Position.
 - Duplicate saved aliases collapse to one Document; an invalid PDF is pruned and its
   provisional surface is disposed without preventing the other Documents from restoring.
-- A PDF with native 90-degree orientation preserves a within-page anchor under all four
-  viewing rotations. Document Content bytes remain identical through those transforms.
+- A PDF with native 90-degree Page Rotation preserves a within-page anchor, and its
+  Document Content bytes remain identical through zoom and navigation.
+- A schema-two Reading Session with a saved view rotation restores at 0 degrees as
+  schema three, without changing the PDF's bytes.
 
 Focused unit contracts additionally verify stale-generation callbacks and cancelled or
 disposed projections, plus configured shortcuts while a Document tab has focus.

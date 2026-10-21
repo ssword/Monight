@@ -3,7 +3,7 @@ import { registerKeybindActions } from '../app/keybinds';
 import type { KeybindManager } from '../scripts/keybind-manager';
 
 const readingSession = (activeDocumentPath: string | null = null) => ({
-  schemaVersion: 2 as const,
+  schemaVersion: 3 as const,
   revision: 0,
   activeDocumentPath,
   documents: activeDocumentPath
