@@ -169,6 +169,7 @@ vi.mock('@tauri-apps/api/webviewWindow', () => {
     }),
     unminimize: vi.fn(async () => undefined),
     isFullscreen: vi.fn(async () => false),
+    onResized: vi.fn(async () => vi.fn()),
     setFullscreen: vi.fn(async () => undefined),
   };
   const auxiliaryWindow = {
@@ -415,6 +416,7 @@ function createModules(
           access: vi.fn(() => null),
           activePresentation: vi.fn(() => null),
           activeRenderingState: vi.fn(() => null),
+          activeMarkup: vi.fn(() => null),
           activeReadingPosition: vi.fn(() => ({
             filePath: '/docs/report.pdf',
             readingPosition: { page: 4, location: 0.5 },

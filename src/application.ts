@@ -6,10 +6,12 @@ import { hydrateChromeIcons } from './app/chrome-icons';
 import {
   type ChromePreferencesAuthority,
   type ChromePreferencesStorage,
+  DEFAULT_CHROME_PREFERENCES,
   loadChromePreferences,
 } from './app/chrome-preferences';
 import {
   requestConfirmation,
+  requestPageNumber,
   requestPdfPassword,
   requestPdfSaveFailure,
   requestRecoveryDraft,
@@ -26,10 +28,12 @@ import {
   reportDocumentIntakeOutcomes,
   updatePrintMenuState,
 } from './app/file-actions';
-import { registerKeybindActions } from './app/keybinds';
+import { registerKeybindActions, toggleWindowFullScreen } from './app/keybinds';
 import { createMarkupToolbar, type MarkupToolbar } from './app/markup-toolbar';
+import { createNativeMenuSync, createReaderMenu } from './app/native-menu';
 import { createPersistenceCoordinator } from './app/persistence-coordinator';
 import { PresentationController } from './app/presentation-controller';
+import type { ReaderCommandContext, ReaderCommandStateInput } from './app/reader-commands';
 import { createReaderSidebar, type ReaderSidebar } from './app/reader-sidebar';
 import { restoreReadingSessionAtStartup } from './app/startup-restoration';
 import { type ExternalOpenPayload, setupTauriListeners } from './app/tauri-events';
@@ -127,6 +131,54 @@ let markupToolbar: MarkupToolbar | null = null;
 // Global keybind manager instance
 let keybindManager: KeybindManager | null = null;
 let presentationController: PresentationController | null = null;
+let readerCommandContext: ReaderCommandContext | null = null;
+let windowFullScreen = false;
+
+/** Shows the tab bar for two or more Documents, or for one after View ▸ Show Tab Bar. */
+const showTabBar = (documentCount: number): void =>
+  updateTabBarVisibility(documentCount, chromePreferences?.snapshot().tabBarVisible ?? false);
+
+const readerMenuState = (): ReaderCommandStateInput => {
+  const snapshot = readerActions?.snapshot();
+  const activeDocument = snapshot?.documents.find(
+    ({ filePath }) => filePath === snapshot.activeDocumentPath,
+  );
+  const rendering = documentWorkspace?.activeRenderingState() ?? null;
+  const live = rendering && rendering.filePath === activeDocument?.filePath ? rendering : null;
+  return {
+    documentCount: snapshot?.documents.length ?? 0,
+    activeDocument: activeDocument
+      ? {
+          viewMode: activeDocument.visualState?.viewMode ?? live?.viewMode ?? getInitialViewMode(),
+          filterSettings: activeDocument.visualState?.filterSettings ?? getInitialFilterSettings(),
+          currentPage: live?.currentPage ?? 0,
+          pageCount: live?.totalPages ?? 0,
+        }
+      : null,
+    preferences: chromePreferences?.snapshot() ?? DEFAULT_CHROME_PREFERENCES,
+    markup: documentWorkspace?.activeMarkup() ?? null,
+    fullScreen: windowFullScreen,
+  };
+};
+
+// The native View, Go and Tools menus (reader-commands.ts).
+const readerMenu = createReaderMenu({
+  nativeMenu: createNativeMenuSync((command, args) => invoke(command, args)),
+  stateInput: readerMenuState,
+  context: () => readerCommandContext,
+});
+const syncReaderMenu = (): void => {
+  void readerMenu.sync();
+};
+
+const refreshWindowFullScreen = async (): Promise<void> => {
+  try {
+    windowFullScreen = await getCurrentWebviewWindow().isFullscreen();
+  } catch (error) {
+    console.error('Failed to read the full screen state:', error);
+  }
+  syncReaderMenu();
+};
 
 // Detect if we're on macOS
 const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
@@ -200,7 +252,7 @@ const applyWindowAfterOpen = async (): Promise<void> => {
 const refreshAfterOpen = async (): Promise<void> => {
   const documentCount = readerActions?.snapshot().documents.length ?? 0;
   const hasDocument = documentCount > 0;
-  updateTabBarVisibility(documentCount);
+  showTabBar(documentCount);
   await updatePrintMenuState(hasDocument);
   await applyWindowAfterOpen();
 };
@@ -361,7 +413,7 @@ const restoreStartupReadingSession = async (
       showViewer();
       const documentCount = readerActions?.snapshot().documents.length ?? 0;
       const hasDocument = documentCount > 0;
-      updateTabBarVisibility(documentCount);
+      showTabBar(documentCount);
       await updatePrintMenuState(hasDocument);
       await applyWindowAfterOpen();
       const currentWindow = getCurrentWebviewWindow();
@@ -377,7 +429,7 @@ const restoreStartupReadingSession = async (
   reportDocumentIntakeOutcomes(result.explicitRequestResult);
   const documentCount = readerActions?.snapshot().documents.length ?? 0;
   const hasDocument = documentCount > 0;
-  updateTabBarVisibility(documentCount);
+  showTabBar(documentCount);
   await updatePrintMenuState(hasDocument);
 
   return readerActions?.snapshot().documents.length ?? 0;
@@ -530,6 +582,10 @@ export async function initializeApplication(modules: ApplicationModules): Promis
           console.error('Chrome preferences persistence failed:', error),
       },
     );
+    chromePreferences.observe(() => {
+      showTabBar(readerActions?.snapshot().documents.length ?? 0);
+      syncReaderMenu();
+    });
     readingSessionStorage = modules.createReadingSessionStorage(settingsManager);
     try {
       restoredReadingSession = await loadReadingSession(readingSessionStorage);
@@ -591,6 +647,7 @@ export async function initializeApplication(modules: ApplicationModules): Promis
         updateUI(readerActions.snapshot(), documentWorkspace.activeRenderingState());
         readerSidebar?.refresh();
         markupToolbar?.refresh();
+        syncReaderMenu();
       },
     });
 
@@ -644,8 +701,9 @@ export async function initializeApplication(modules: ApplicationModules): Promis
       markupToolbar?.refresh();
       showActiveAppearance(snapshot);
       const hasDocument = snapshot.documents.length > 0;
-      updateTabBarVisibility(snapshot.documents.length);
+      showTabBar(snapshot.documents.length);
       void updatePrintMenuState(hasDocument);
+      syncReaderMenu();
     });
     documentWorkspace.project(readerActions.snapshot());
     if (modules.pdfSaveAdapter) {
@@ -674,6 +732,7 @@ export async function initializeApplication(modules: ApplicationModules): Promis
         if (readerActions && documentWorkspace) {
           updateUI(readerActions.snapshot(), documentWorkspace.activeRenderingState());
         }
+        void refreshWindowFullScreen();
       },
     });
 
@@ -690,8 +749,7 @@ export async function initializeApplication(modules: ApplicationModules): Promis
         updateUI(readerActions.snapshot(), documentWorkspace.activeRenderingState());
       }
     };
-    const updateTabBar = () =>
-      updateTabBarVisibility(readerActions?.snapshot().documents.length ?? 0);
+    const updateTabBar = () => showTabBar(readerActions?.snapshot().documents.length ?? 0);
 
     // Register all action handlers
     registerKeybindActions({
@@ -747,6 +805,38 @@ export async function initializeApplication(modules: ApplicationModules): Promis
       dispatchReaderAction,
     });
     if (readerActions) showActiveAppearance(readerActions.snapshot());
+
+    // Native View, Go and Tools items go through the same toolbar entry points.
+    const preferencesForCommands = chromePreferences;
+    const chromeForCommands = readerChrome;
+    readerCommandContext = {
+      dispatchReaderAction,
+      preferences: preferencesForCommands,
+      sidebar: readerSidebar,
+      markupToolbar,
+      appearance: { choose: (preset) => chromeForCommands.chooseAppearance(preset) },
+      activeMarkup: () => documentWorkspace?.activeMarkup() ?? null,
+      setActiveTool: (toolId) => documentWorkspace?.setActiveAnnotationTool(toolId),
+      toggleSlideshow: async () => {
+        await presentationController?.toggle();
+      },
+      toggleFullScreen: async () => {
+        await toggleWindowFullScreen();
+        await refreshWindowFullScreen();
+      },
+      requestPage: async () => {
+        const { activeDocument } = readerMenuState();
+        if (!activeDocument || activeDocument.pageCount < 1) return null;
+        return requestPageNumber({
+          currentPage: Math.max(1, activeDocument.currentPage),
+          pageCount: activeDocument.pageCount,
+        });
+      },
+    };
+    await currentWindow.onResized(() => {
+      void refreshWindowFullScreen();
+    });
+    await readerMenu.install();
 
     // Update keyboard hints for platform
     updateKeyboardHints(isMac);
@@ -806,6 +896,7 @@ export async function initializeApplication(modules: ApplicationModules): Promis
       updatePrintMenuState: () =>
         updatePrintMenuState((readerActions?.snapshot().documents.length ?? 0) > 0),
       dispatchReaderAction,
+      runMenuCommand: (id) => readerMenu.run(id),
     });
 
     shutdown.markReady();

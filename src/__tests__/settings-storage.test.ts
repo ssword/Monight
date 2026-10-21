@@ -181,6 +181,28 @@ describe('settings storage', () => {
     expect(settings.keybinds).not.toHaveProperty('RotateCounterClockwise');
   });
 
+  it('names Presentation Mode Slideshow while keeping a stored binding', async () => {
+    store.reset({
+      storageSchemaVersion: SETTINGS_SCHEMA_VERSION,
+      keybinds: {
+        ...DEFAULT_SETTINGS.keybinds,
+        PresentationMode: {
+          displayName: 'Presentation Mode',
+          binds: ['Ctrl+Alt+P'],
+          action: 'presentationMode',
+        },
+      },
+    });
+
+    const settings = await new SettingsManager('settings').load();
+
+    expect(settings.keybinds.PresentationMode).toEqual({
+      displayName: 'Slideshow',
+      binds: ['Ctrl+Alt+P'],
+      action: 'presentationMode',
+    });
+  });
+
   it('writes only the requested concern and rejects keys not owned by the window', async () => {
     const settingsWindow = new SettingsManager('settings');
     await settingsWindow.load();

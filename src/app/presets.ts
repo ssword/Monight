@@ -13,6 +13,8 @@ type AppearanceSliders = Pick<SliderManager, 'initialize' | 'isInitialized' | 's
 export interface AppearancePopover {
   /** Reflects the active Document's filter settings in the popover. */
   show(activeDocumentPath: string | null, filterSettings: FilterSettings): void;
+  /** Chooses a preset as its button does; Custom opens the popover on the sliders. */
+  choose(preset: AppearancePresetId): void;
 }
 
 /**
@@ -72,10 +74,7 @@ export function setupAppearancePopover(
 
   toggle?.addEventListener('click', () => setOpen(!isOpen()));
 
-  document.addEventListener('click', (event) => {
-    const button = event.target instanceof Element ? event.target.closest('.preset-btn') : null;
-    if (!button) return;
-    const preset = presetOf(button);
+  const choose = (preset: string) => {
     if (preset === 'custom') {
       customChosen = true;
       showActive('custom');
@@ -90,6 +89,11 @@ export function setupAppearancePopover(
     showActive(presetForFilterSettings(settings));
     applyFilterSettings({ ...settings });
     debugLog(`Applied preset: ${preset}`);
+  };
+
+  document.addEventListener('click', (event) => {
+    const button = event.target instanceof Element ? event.target.closest('.preset-btn') : null;
+    if (button) choose(presetOf(button));
   });
 
   document.addEventListener('pointerdown', (event) => {
@@ -114,6 +118,10 @@ export function setupAppearancePopover(
       }
       sliderManager?.setPreset(filterSettings);
       showActive(customChosen ? 'custom' : presetForFilterSettings(filterSettings));
+    },
+    choose(preset) {
+      choose(preset);
+      if (preset === 'custom') setOpen(true);
     },
   };
 }

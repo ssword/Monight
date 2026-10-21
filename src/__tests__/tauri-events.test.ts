@@ -98,6 +98,7 @@ describe('Tauri drag and drop events', () => {
     updateTabBarVisibility: vi.fn(),
     updatePrintMenuState: vi.fn(async () => undefined),
     dispatchReaderAction: vi.fn(async () => undefined),
+    runMenuCommand: vi.fn(async () => true),
     ...overrides,
   });
 
@@ -264,13 +265,24 @@ describe('Tauri drag and drop events', () => {
     expect(completed).toBe(true);
   });
 
-  it('dispatches native menu zoom as the same typed Reader Action', async () => {
-    const dispatchReaderAction = vi.fn(async () => undefined);
-    await setupTauriListeners(context({ dispatchReaderAction }));
+  it('runs View, Go and Tools menu items as reader commands', async () => {
+    const runMenuCommand = vi.fn(async () => true);
+    await setupTauriListeners(context({ runMenuCommand }));
 
-    await mocks.getListener('menu-zoom-in')?.();
+    await mocks.getListener('menu-command')?.({ payload: 'view.zoom.in' });
+    await mocks.getListener('menu-command')?.({ payload: 'go.page' });
 
-    expect(dispatchReaderAction).toHaveBeenCalledWith({ type: 'zoomIn' });
+    expect(runMenuCommand.mock.calls).toEqual([['view.zoom.in'], ['go.page']]);
+    expect(mocks.getListener('menu-zoom-in')).toBeUndefined();
+  });
+
+  it('ignores a malformed menu command', async () => {
+    const runMenuCommand = vi.fn(async () => true);
+    await setupTauriListeners(context({ runMenuCommand }));
+
+    await mocks.getListener('menu-command')?.({ payload: 42 });
+
+    expect(runMenuCommand).not.toHaveBeenCalled();
   });
 
   it('dispatches native menu printing as a semantic Reader Action', async () => {

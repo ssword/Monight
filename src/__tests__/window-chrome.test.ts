@@ -47,6 +47,13 @@ describe('document tab bar', () => {
     expect(tabBarHidden()).toBe(true);
   });
 
+  it('stays shown for one Document after View ▸ Show Tab Bar, but never without one', () => {
+    updateTabBarVisibility(1, true);
+    expect(tabBarHidden()).toBe(false);
+    updateTabBarVisibility(0, true);
+    expect(tabBarHidden()).toBe(true);
+  });
+
   it('keeps the rendered tabs in Reading Session order while hidden and shown', () => {
     updateTabBarVisibility(1);
     expect(tabOrder()).toEqual(['/docs/b.pdf', '/docs/a.pdf']);

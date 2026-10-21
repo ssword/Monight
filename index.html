@@ -122,7 +122,7 @@
                 </div>
 
                 <div class="toolbar-capsule">
-                    <button id="presentation-mode" class="toolbar-btn" type="button" title="Presentation Mode (Shift+F11)" aria-label="Start presentation mode">
+                    <button id="presentation-mode" class="toolbar-btn" type="button" title="Slideshow (Shift+F11)" aria-label="Slideshow">
                         <span class="toolbar-icon" data-icon="presentation"></span>
                     </button>
                 </div>
@@ -175,6 +175,21 @@
                 <div class="dialog-actions">
                     <button type="button" class="dialog-secondary" data-dialog-cancel>Cancel</button>
                     <button type="submit" class="dialog-primary">Unlock</button>
+                </div>
+            </form>
+        </dialog>
+
+        <dialog id="go-to-page-dialog" class="app-dialog">
+            <form method="dialog">
+                <h2>Go to Page</h2>
+                <p data-go-to-page-range>Enter a page.</p>
+                <label>
+                    Page
+                    <input name="page" type="number" inputmode="numeric" min="1" step="1" required />
+                </label>
+                <div class="dialog-actions">
+                    <button type="button" class="dialog-secondary" data-dialog-cancel>Cancel</button>
+                    <button type="submit" class="dialog-primary">Go</button>
                 </div>
             </form>
         </dialog>

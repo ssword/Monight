@@ -179,7 +179,12 @@ describe('Chrome preferences storage', () => {
     const firstLaunch = await loadChromePreferences(createChromePreferencesStorage(), {
       debounceMs: 0,
     });
-    firstLaunch.update({ sidebarVisible: true, sidebarWidth: 280, markupToolbarVisible: true });
+    firstLaunch.update({
+      sidebarVisible: true,
+      sidebarWidth: 280,
+      markupToolbarVisible: true,
+      tabBarVisible: true,
+    });
     await firstLaunch.flush();
 
     const nextLaunch = await loadChromePreferences(createChromePreferencesStorage());
@@ -189,6 +194,7 @@ describe('Chrome preferences storage', () => {
       sidebarMode: 'thumbnails',
       sidebarWidth: 280,
       markupToolbarVisible: true,
+      tabBarVisible: true,
     });
     expect(tauriStores.values.get('chrome-preferences.json')?.get('chromePreferences')).toEqual({
       schemaVersion: 1,
@@ -196,6 +202,7 @@ describe('Chrome preferences storage', () => {
       sidebarMode: 'thumbnails',
       sidebarWidth: 280,
       markupToolbarVisible: true,
+      tabBarVisible: true,
     } satisfies PersistedChromePreferences);
     expect(tauriStores.values.has('settings.json')).toBe(false);
   });

@@ -1,0 +1,350 @@
+import { describe, expect, it, vi } from 'vitest';
+import {
+  type ChromePreferences,
+  type ChromePreferencesAuthority,
+  DEFAULT_CHROME_PREFERENCES,
+} from '../app/chrome-preferences';
+import type { ActiveMarkupState } from '../app/document-workspace';
+import {
+  type ReaderCommandContext,
+  type ReaderCommandStateInput,
+  readerCommandStates,
+  runReaderCommand,
+} from '../app/reader-commands';
+import type { ReaderAction } from '../reader/reader-actions';
+
+function fakeContext(overrides: Partial<ReaderCommandContext> = {}) {
+  const dispatched: ReaderAction[] = [];
+  const calls: string[] = [];
+  let preferences: ChromePreferences = { ...DEFAULT_CHROME_PREFERENCES };
+  let markup: ActiveMarkupState | null = { activeToolId: null, readOnlyReason: null };
+  const preferenceAuthority: ChromePreferencesAuthority = {
+    snapshot: () => ({ ...preferences }),
+    update: (changes) => {
+      preferences = { ...preferences, ...changes };
+    },
+    observe: () => () => undefined,
+    flush: async () => undefined,
+  };
+  const context: ReaderCommandContext = {
+    dispatchReaderAction: async (action) => {
+      dispatched.push(action);
+    },
+    preferences: preferenceAuthority,
+    sidebar: { choose: (choice) => calls.push(`sidebar:${choice}`) },
+    markupToolbar: { toggle: () => calls.push('markup-toolbar') },
+    appearance: { choose: (preset) => calls.push(`appearance:${preset}`) },
+    activeMarkup: () => markup,
+    setActiveTool: (toolId) => {
+      calls.push(`tool:${toolId}`);
+      if (markup) markup = { ...markup, activeToolId: toolId };
+    },
+    toggleSlideshow: async () => {
+      calls.push('slideshow');
+    },
+    toggleFullScreen: async () => {
+      calls.push('full-screen');
+    },
+    requestPage: async () => 12,
+    ...overrides,
+  };
+  return {
+    context,
+    dispatched,
+    calls,
+    preferences: () => preferences,
+    setMarkup: (next: ActiveMarkupState | null) => {
+      markup = next;
+    },
+  };
+}
+
+describe('native menu commands', () => {
+  it.each([
+    ['view.zoom.in', { type: 'zoomIn' }],
+    ['view.zoom.out', { type: 'zoomOut' }],
+    ['view.zoom.actual-size', { type: 'setZoomIntent', zoomIntent: { kind: 'manual', scale: 1 } }],
+    ['view.zoom.fit', { type: 'setZoomIntent', zoomIntent: { kind: 'fit-page' } }],
+    ['view.zoom.width', { type: 'setZoomIntent', zoomIntent: { kind: 'fit-width' } }],
+    ['view.mode.continuous', { type: 'setViewMode', viewMode: 'continuous' }],
+    ['view.mode.single', { type: 'setViewMode', viewMode: 'single' }],
+    ['view.mode.spread', { type: 'setViewMode', viewMode: 'spread' }],
+    ['go.previous-page', { type: 'goToPreviousPage' }],
+    ['go.next-page', { type: 'goToNextPage' }],
+  ])('%s dispatches its typed Reader Action', async (id, action) => {
+    const { context, dispatched } = fakeContext();
+    expect(await runReaderCommand(id, context)).toBe(true);
+    expect(dispatched).toEqual([action]);
+  });
+
+  it('Go to Page… asks for a page and goes there', async () => {
+    const { context, dispatched } = fakeContext();
+    await runReaderCommand('go.page', context);
+    expect(dispatched).toEqual([{ type: 'goToPage', page: 12 }]);
+  });
+
+  it('Go to Page… does nothing when the request is cancelled', async () => {
+    const { context, dispatched } = fakeContext({ requestPage: async () => null });
+    await runReaderCommand('go.page', context);
+    expect(dispatched).toEqual([]);
+  });
+
+  it.each([
+    ['view.sidebar.hidden', 'sidebar:hidden'],
+    ['view.sidebar.thumbnails', 'sidebar:thumbnails'],
+    ['view.sidebar.tableOfContents', 'sidebar:tableOfContents'],
+    ['view.sidebar.annotations', 'sidebar:annotations'],
+    ['view.markup-toolbar', 'markup-toolbar'],
+    ['view.slideshow', 'slideshow'],
+    ['view.full-screen', 'full-screen'],
+    ['view.appearance.sepia', 'appearance:sepia'],
+    ['view.appearance.custom', 'appearance:custom'],
+  ])('%s goes through the toolbar control it mirrors', async (id, call) => {
+    const { context, calls, dispatched } = fakeContext();
+    await runReaderCommand(id, context);
+    expect(calls).toEqual([call]);
+    expect(dispatched).toEqual([]);
+  });
+
+  it('Show Tab Bar toggles the tab bar chrome preference', async () => {
+    const { context, preferences } = fakeContext();
+    await runReaderCommand('view.tab-bar', context);
+    expect(preferences().tabBarVisible).toBe(true);
+    await runReaderCommand('view.tab-bar', context);
+    expect(preferences().tabBarVisible).toBe(false);
+  });
+
+  it('Tools chooses Text Selection or a verified tool like the markup toolbar', async () => {
+    const { context, calls } = fakeContext();
+    await runReaderCommand('tools.annotate.textComment', context);
+    await runReaderCommand('tools.annotate.textComment', context);
+    await runReaderCommand('tools.annotate.highlight', context);
+    await runReaderCommand('tools.text-selection', context);
+    expect(calls).toEqual(['tool:textComment', 'tool:null', 'tool:highlight', 'tool:null']);
+  });
+
+  it('refuses unknown and unverified commands', async () => {
+    const { context, calls, dispatched } = fakeContext();
+    expect(await runReaderCommand('tools.annotate.ink', context)).toBe(false);
+    expect(await runReaderCommand('view.appearance.neon', context)).toBe(false);
+    expect(await runReaderCommand('view.nope', context)).toBe(false);
+    expect([...calls, ...dispatched]).toEqual([]);
+  });
+
+  it('never chooses a markup tool on a protected Document', async () => {
+    const { context, calls, setMarkup } = fakeContext();
+    setMarkup({ activeToolId: null, readOnlyReason: 'read-only' });
+    await runReaderCommand('tools.annotate.highlight', context);
+    expect(calls).toEqual([]);
+  });
+});
+
+const input = (overrides: Partial<ReaderCommandStateInput> = {}): ReaderCommandStateInput => ({
+  documentCount: 1,
+  activeDocument: {
+    viewMode: 'continuous',
+    filterSettings: {
+      brightness: 0,
+      grayscale: 0,
+      invert: 25,
+      sepia: 100,
+      hue: 0,
+      extraBrightness: -30,
+    },
+    currentPage: 3,
+    pageCount: 10,
+  },
+  preferences: { ...DEFAULT_CHROME_PREFERENCES, sidebarVisible: true, sidebarMode: 'annotations' },
+  markup: { activeToolId: 'textComment', readOnlyReason: null },
+  fullScreen: false,
+  ...overrides,
+});
+
+const stateOf = (states: ReturnType<typeof readerCommandStates>, id: string) =>
+  states.find((state) => state.id === id);
+
+const checkedIds = (states: ReturnType<typeof readerCommandStates>) =>
+  states.filter((state) => state.checked).map((state) => state.id);
+
+describe('native menu state', () => {
+  it('checks the sidebar mode, view mode, preset and active tool', () => {
+    expect(checkedIds(readerCommandStates(input()))).toEqual([
+      'view.sidebar.annotations',
+      'view.mode.continuous',
+      'view.appearance.sepia',
+      'tools.annotate.textComment',
+    ]);
+  });
+
+  it('checks Hide Sidebar and Text Selection when nothing is shown or chosen', () => {
+    const states = readerCommandStates(
+      input({
+        preferences: { ...DEFAULT_CHROME_PREFERENCES, sidebarVisible: false },
+        markup: { activeToolId: null, readOnlyReason: null },
+      }),
+    );
+    expect(checkedIds(states)).toEqual([
+      'view.sidebar.hidden',
+      'view.mode.continuous',
+      'view.appearance.sepia',
+      'tools.text-selection',
+    ]);
+  });
+
+  it('checks Custom when the filter matches no preset', () => {
+    const states = readerCommandStates(
+      input({
+        activeDocument: {
+          ...(input().activeDocument as NonNullable<ReaderCommandStateInput['activeDocument']>),
+          filterSettings: {
+            brightness: 1,
+            grayscale: 2,
+            invert: 3,
+            sepia: 4,
+            hue: 5,
+            extraBrightness: 6,
+          },
+        },
+      }),
+    );
+    expect(stateOf(states, 'view.appearance.custom')?.checked).toBe(true);
+  });
+
+  it('disables Document commands while no Document is open', () => {
+    const states = readerCommandStates(
+      input({ documentCount: 0, activeDocument: null, markup: null }),
+    );
+    const enabled = states.filter((state) => state.enabled).map((state) => state.id);
+    expect(enabled).toEqual(['view.full-screen']);
+    expect(checkedIds(states)).toEqual([]);
+  });
+
+  it('disables markup tools on a protected Document but keeps reading commands', () => {
+    const states = readerCommandStates(
+      input({ markup: { activeToolId: null, readOnlyReason: 'read-only' } }),
+    );
+    expect(stateOf(states, 'tools.annotate.highlight')?.enabled).toBe(false);
+    expect(stateOf(states, 'tools.annotate.textComment')?.enabled).toBe(false);
+    expect(stateOf(states, 'tools.text-selection')?.enabled).toBe(true);
+    expect(stateOf(states, 'view.zoom.in')?.enabled).toBe(true);
+    expect(stateOf(states, 'view.markup-toolbar')?.enabled).toBe(true);
+  });
+
+  it('disables page steps at the first and last page', () => {
+    const first = readerCommandStates(
+      input({
+        activeDocument: {
+          ...(input().activeDocument as NonNullable<ReaderCommandStateInput['activeDocument']>),
+          currentPage: 1,
+        },
+      }),
+    );
+    expect(stateOf(first, 'go.previous-page')?.enabled).toBe(false);
+    expect(stateOf(first, 'go.next-page')?.enabled).toBe(true);
+    const last = readerCommandStates(
+      input({
+        activeDocument: {
+          ...(input().activeDocument as NonNullable<ReaderCommandStateInput['activeDocument']>),
+          currentPage: 10,
+        },
+      }),
+    );
+    expect(stateOf(last, 'go.previous-page')?.enabled).toBe(true);
+    expect(stateOf(last, 'go.next-page')?.enabled).toBe(false);
+  });
+
+  it('names the tab bar, markup toolbar and full screen items by what they will do', () => {
+    const shown = readerCommandStates(
+      input({
+        documentCount: 1,
+        preferences: {
+          ...DEFAULT_CHROME_PREFERENCES,
+          tabBarVisible: true,
+          markupToolbarVisible: true,
+        },
+        fullScreen: true,
+      }),
+    );
+    expect(stateOf(shown, 'view.tab-bar')).toMatchObject({ text: 'Hide Tab Bar', enabled: true });
+    expect(stateOf(shown, 'view.markup-toolbar')?.text).toBe('Hide Markup Toolbar');
+    expect(stateOf(shown, 'view.full-screen')?.text).toBe('Exit Full Screen');
+
+    const hidden = readerCommandStates(input());
+    expect(stateOf(hidden, 'view.tab-bar')?.text).toBe('Show Tab Bar');
+    expect(stateOf(hidden, 'view.markup-toolbar')?.text).toBe('Show Markup Toolbar');
+    expect(stateOf(hidden, 'view.full-screen')?.text).toBe('Enter Full Screen');
+  });
+
+  it('cannot hide the tab bar while several Documents are open', () => {
+    const states = readerCommandStates(input({ documentCount: 2 }));
+    expect(stateOf(states, 'view.tab-bar')).toMatchObject({
+      text: 'Hide Tab Bar',
+      enabled: false,
+    });
+  });
+});
+
+describe('native menu ids', () => {
+  it('match the items built by src-tauri/src/menu.rs', async () => {
+    const { readFileSync } = await import('node:fs');
+    const { readerMenuSubmenus } = await import('../app/reader-commands');
+    const menuSource = readFileSync('src-tauri/src/menu.rs', 'utf8');
+    const definitions = menuSource.slice(0, menuSource.indexOf('#[cfg(test)]'));
+    const rustIds = [...definitions.matchAll(/"((?:view|go|tools)\.[A-Za-z.-]+)"/g)].map(
+      ([, id]) => id,
+    );
+
+    const listed = readerMenuSubmenus();
+    const listedItemIds = new Set(listed.flatMap(({ items }) => items.map(({ id }) => id)));
+    const staticIds = readerCommandStates(input())
+      .map(({ id }) => id)
+      .filter((id) => !listedItemIds.has(id));
+
+    expect(new Set(rustIds)).toEqual(new Set([...staticIds, ...listed.map(({ id }) => id)]));
+  });
+});
+
+describe('native menu listing', () => {
+  it('Annotate lists exactly the verified tools and View lists every preset', async () => {
+    const { readerMenuSubmenus } = await import('../app/reader-commands');
+    expect(readerMenuSubmenus()).toEqual([
+      {
+        id: 'view.appearance',
+        items: [
+          { id: 'view.appearance.default', text: 'Default' },
+          { id: 'view.appearance.original', text: 'Original' },
+          { id: 'view.appearance.redeye', text: 'Redeye' },
+          { id: 'view.appearance.sepia', text: 'Sepia' },
+          { id: 'view.appearance.custom', text: 'Custom' },
+        ],
+      },
+      {
+        id: 'tools.annotate',
+        items: [
+          { id: 'tools.annotate.highlight', text: 'Highlight' },
+          { id: 'tools.annotate.textComment', text: 'Text Note' },
+        ],
+      },
+    ]);
+  });
+
+  it('a newly verified tool joins Annotate without other changes', async () => {
+    const { readerMenuSubmenus } = await import('../app/reader-commands');
+    const tools = [
+      {
+        id: 'underline',
+        label: 'Underline',
+        icon: 'underline',
+        control: 'highlight-menu' as const,
+        verification: ['docs/x.md'],
+      },
+    ];
+    expect(readerMenuSubmenus(tools)[1]?.items).toEqual([
+      { id: 'tools.annotate.underline', text: 'Underline' },
+    ]);
+    const { context, calls } = fakeContext();
+    expect(await runReaderCommand('tools.annotate.underline', context, tools)).toBe(true);
+    expect(calls).toEqual(['tool:underline']);
+    vi.restoreAllMocks();
+  });
+});

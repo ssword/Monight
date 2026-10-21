@@ -4,7 +4,7 @@ import { getCurrentWebview } from '@tauri-apps/api/webview';
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 import { debugLog } from '../lib/debug-log';
 import type { DocumentIntake } from '../reader/document-intake';
-import { type DispatchReaderAction, readerAction } from '../reader/reader-actions';
+import type { DispatchReaderAction } from '../reader/reader-actions';
 import type { KeybindManager } from '../scripts/keybind-manager';
 import type { SettingsManager } from '../scripts/settings';
 import { showToast } from './dialogs';
@@ -32,6 +32,8 @@ interface TauriListenerContext {
   updateTabBarVisibility: () => void;
   updatePrintMenuState: () => Promise<void>;
   dispatchReaderAction: DispatchReaderAction;
+  /** Runs a native View, Go or Tools menu item; see reader-commands.ts. */
+  runMenuCommand: (id: string) => Promise<boolean>;
 }
 
 export async function setupTauriListeners({
@@ -48,6 +50,7 @@ export async function setupTauriListeners({
   updateTabBarVisibility,
   updatePrintMenuState,
   dispatchReaderAction,
+  runMenuCommand,
 }: TauriListenerContext): Promise<void> {
   const handleExternalOpenPayload = async (payload: ExternalOpenPayload) => {
     debugLog('External Document request:', payload);
@@ -144,24 +147,9 @@ export async function setupTauriListeners({
     await dispatchReaderAction({ type: 'printDocument' });
   });
 
-  await listen('menu-zoom-in', async () => {
-    await dispatchReaderAction(readerAction.zoomIn());
-  });
-
-  await listen('menu-zoom-out', async () => {
-    await dispatchReaderAction(readerAction.zoomOut());
-  });
-
-  await listen('menu-reset-zoom', async () => {
-    await dispatchReaderAction(readerAction.setZoomIntent({ kind: 'manual', scale: 1 }));
-  });
-
-  await listen('menu-toggle-fullscreen', async () => {
-    debugLog('Menu toggle fullscreen event received');
-    const currentWindow = getCurrentWebviewWindow();
-    const isFullscreen = await currentWindow.isFullscreen();
-    await currentWindow.setFullscreen(!isFullscreen);
-    debugLog(`Fullscreen ${!isFullscreen ? 'enabled' : 'disabled'}`);
+  // View, Go and Tools items arrive as reader command ids (reader-commands.ts).
+  await listen<unknown>('menu-command', async (event) => {
+    if (typeof event.payload === 'string') await runMenuCommand(event.payload);
   });
 
   await listen('menu-close-tab', async () => {

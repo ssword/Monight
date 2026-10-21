@@ -161,6 +161,25 @@ describe('reader sidebar', () => {
     });
   });
 
+  it('offers the dropdown choices to other input adapters such as View menu items', async () => {
+    const sidebar = await mount({ schemaVersion: 1, sidebarMode: 'annotations' });
+
+    sidebar.choose('thumbnails');
+    expect(preferences.snapshot()).toMatchObject({
+      sidebarVisible: true,
+      sidebarMode: 'thumbnails',
+    });
+    expect(sidebarRoot().hidden).toBe(false);
+    expect(menuItem('thumbnails').getAttribute('aria-checked')).toBe('true');
+
+    sidebar.choose('hidden');
+    expect(preferences.snapshot()).toMatchObject({
+      sidebarVisible: false,
+      sidebarMode: 'thumbnails',
+    });
+    expect(sidebarRoot().hidden).toBe(true);
+  });
+
   it('closes the mode dropdown on Escape', async () => {
     await mount();
     document.getElementById('sidebar-mode-toggle')?.click();

@@ -1,9 +1,10 @@
 import { debugLog } from '../lib/debug-log';
 import { type DispatchReaderAction, readerAction } from '../reader/reader-actions';
-import type { FilterSettings } from '../scripts/filters';
+import type { AppearancePresetId, FilterSettings } from '../scripts/filters';
 import type { KeybindManager } from '../scripts/keybind-manager';
 import type { SliderManager } from '../scripts/sliders';
 import { isWithinAppearancePopover, setupAppearancePopover } from './presets';
+import { READER_ACTION_COMMANDS } from './reader-commands';
 
 interface DomEventContext {
   sliderManager: SliderManager | null;
@@ -18,6 +19,8 @@ interface DomEventContext {
 export interface ReaderChromeControls {
   /** Shows the active Document's current filter preset in the Appearance popover. */
   showAppearance(activeDocumentPath: string | null, filterSettings: FilterSettings): void;
+  /** Chooses an Appearance preset as the popover does (View menu presets). */
+  chooseAppearance(preset: AppearancePresetId): void;
 }
 
 const NAVIGATION_KEYS = [
@@ -82,9 +85,9 @@ export function setupEventListeners({
 
   // Zoom group: the same typed Reader Actions as the zoom shortcuts.
   const zoomButtons = [
-    ['zoom-out', () => readerAction.zoomOut()],
-    ['zoom-to-fit', () => readerAction.setZoomIntent({ kind: 'fit-page' })],
-    ['zoom-in', () => readerAction.zoomIn()],
+    ['zoom-out', READER_ACTION_COMMANDS.zoomOut],
+    ['zoom-to-fit', READER_ACTION_COMMANDS.zoomToFit],
+    ['zoom-in', READER_ACTION_COMMANDS.zoomIn],
   ] as const;
   for (const [id, action] of zoomButtons) {
     document.getElementById(id)?.addEventListener('click', () => {
@@ -168,5 +171,6 @@ export function setupEventListeners({
   return {
     showAppearance: (activeDocumentPath, filterSettings) =>
       appearance.show(activeDocumentPath, filterSettings),
+    chooseAppearance: (preset) => appearance.choose(preset),
   };
 }

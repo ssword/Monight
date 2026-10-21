@@ -26,6 +26,7 @@ describe('Chrome preferences', () => {
       sidebarMode: 'thumbnails',
       sidebarWidth: 220,
       markupToolbarVisible: false,
+      tabBarVisible: false,
     });
     expect(DEFAULT_CHROME_PREFERENCES.sidebarVisible).toBe(false);
   });
@@ -43,6 +44,7 @@ describe('Chrome preferences', () => {
       sidebarMode: 'thumbnails',
       sidebarWidth: 300,
       markupToolbarVisible: false,
+      tabBarVisible: false,
     });
     expect(backing.getStored()).toEqual({
       schemaVersion: 1,
@@ -50,6 +52,7 @@ describe('Chrome preferences', () => {
       sidebarMode: 'thumbnails',
       sidebarWidth: 300,
       markupToolbarVisible: false,
+      tabBarVisible: false,
     });
   });
 
@@ -60,6 +63,7 @@ describe('Chrome preferences', () => {
       sidebarMode: 'contact-sheet',
       sidebarWidth: 'wide',
       markupToolbarVisible: 'yes',
+      tabBarVisible: 'yes',
     });
 
     const preferences = await loadChromePreferences(storage);
@@ -69,6 +73,7 @@ describe('Chrome preferences', () => {
       sidebarMode: 'thumbnails',
       sidebarWidth: 220,
       markupToolbarVisible: false,
+      tabBarVisible: false,
     });
   });
 

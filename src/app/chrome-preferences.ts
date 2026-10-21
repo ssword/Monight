@@ -17,6 +17,8 @@ export interface ChromePreferences {
   readonly sidebarWidth: number;
   /** Whether the markup toolbar shows beneath the toolbar. */
   readonly markupToolbarVisible: boolean;
+  /** Keeps the tab bar shown with a single Document (View ▸ Show Tab Bar). */
+  readonly tabBarVisible: boolean;
 }
 
 export interface PersistedChromePreferences extends ChromePreferences {
@@ -45,6 +47,7 @@ export const DEFAULT_CHROME_PREFERENCES: ChromePreferences = Object.freeze({
   sidebarMode: 'thumbnails',
   sidebarWidth: 220,
   markupToolbarVisible: false,
+  tabBarVisible: false,
 });
 
 const clampSidebarWidth = (width: number): number =>
@@ -60,6 +63,7 @@ const PREFERENCE_PARSERS: PreferenceParsers = {
   sidebarWidth: (value) =>
     typeof value === 'number' && Number.isFinite(value) ? clampSidebarWidth(value) : undefined,
   markupToolbarVisible: (value) => (typeof value === 'boolean' ? value : undefined),
+  tabBarVisible: (value) => (typeof value === 'boolean' ? value : undefined),
 };
 
 const PREFERENCE_KEYS = Object.keys(PREFERENCE_PARSERS) as (keyof ChromePreferences)[];

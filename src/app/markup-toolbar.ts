@@ -7,6 +7,7 @@ import { hydrateChromeIcons } from './chrome-icons';
 import type { ChromePreferencesAuthority } from './chrome-preferences';
 import type { ActiveMarkupState } from './document-workspace';
 import {
+  toolAfterChoosing,
   VERIFIED_MARKUP_TOOLS,
   type VerifiedMarkupTool,
   verifiedMarkupTools,
@@ -30,6 +31,8 @@ export interface MarkupToolbarOptions {
 export interface MarkupToolbar {
   /** Re-reads the active Document; call on Reading Session and rendering changes. */
   refresh(): void;
+  /** Shows or hides the markup toolbar, as the toolbar's Markup toggle does. */
+  toggle(): void;
   destroy(): void;
 }
 
@@ -93,7 +96,7 @@ export function createMarkupToolbar({
     const toolId = button?.dataset.markupTool;
     const markup = activeMarkup();
     if (!button || button.disabled || !toolId || !markup || markup.readOnlyReason !== null) return;
-    setActiveTool(markup.activeToolId === toolId ? null : toolId);
+    setActiveTool(toolAfterChoosing(markup.activeToolId, toolId));
     render();
   };
 
@@ -104,6 +107,7 @@ export function createMarkupToolbar({
 
   return {
     refresh: render,
+    toggle: onToggle,
     destroy() {
       toggle.removeEventListener('click', onToggle);
       group.removeEventListener('click', onToolClick);

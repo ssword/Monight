@@ -116,6 +116,42 @@ export function requestPdfPassword(
   });
 }
 
+/** Go ▸ Go to Page…: asks for a page of the active Document; null when cancelled. */
+export function requestPageNumber({
+  currentPage,
+  pageCount,
+}: {
+  currentPage: number;
+  pageCount: number;
+}): Promise<number | null> {
+  const dialog = requireDialog('go-to-page-dialog');
+  const form = dialog.querySelector<HTMLFormElement>('form');
+  const range = dialog.querySelector<HTMLElement>('[data-go-to-page-range]');
+  const input = dialog.querySelector<HTMLInputElement>('input[name="page"]');
+  const cancelButton = dialog.querySelector<HTMLButtonElement>('[data-dialog-cancel]');
+  if (!form || !input || !cancelButton) {
+    throw new Error('Go to Page dialog is incomplete');
+  }
+
+  if (range) range.textContent = `Enter a page from 1 to ${pageCount}.`;
+  input.min = '1';
+  input.max = String(pageCount);
+  input.value = String(currentPage);
+
+  return requestDialogValue<number | null>({
+    dialog,
+    form,
+    cancelButton,
+    cancelValue: null,
+    submitValue: () => {
+      const page = Number(input.value);
+      return Number.isInteger(page) && page >= 1 && page <= pageCount ? page : KEEP_DIALOG_OPEN;
+    },
+    focusTarget: input,
+    afterFocus: () => input.select(),
+  });
+}
+
 export function requestConfirmation({
   title,
   message,

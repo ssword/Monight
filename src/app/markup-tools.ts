@@ -61,3 +61,11 @@ export function verifiedMarkupTools(
  * existing Annotations, pass round-trip verification (ADR 0003).
  */
 export const PAGE_ROTATION_VERIFIED = false;
+
+/**
+ * The tool a reader's choice leaves active: choosing the active tool again
+ * returns to text selection (null). Shared by every control offering tools.
+ */
+export function toolAfterChoosing(activeToolId: string | null, toolId: string): string | null {
+  return activeToolId === toolId ? null : toolId;
+}
