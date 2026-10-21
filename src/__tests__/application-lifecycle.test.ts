@@ -36,7 +36,7 @@ const mocks = vi.hoisted(() => {
   let restorationBarrier = Promise.resolve();
   let useRealRestoration = false;
   let savedReadingSession: PersistedReadingSession = {
-    schemaVersion: 2,
+    schemaVersion: 3,
     activeDocumentPath: '/docs/report.pdf',
     documents: [
       {
@@ -112,7 +112,7 @@ const mocks = vi.hoisted(() => {
       confirmationChoices = [];
       useRealRestoration = false;
       savedReadingSession = {
-        schemaVersion: 2,
+        schemaVersion: 3,
         activeDocumentPath: '/docs/report.pdf',
         documents: [
           {
@@ -256,7 +256,7 @@ vi.mock('../app/ui', () => ({
 }));
 vi.mock('../lib/debug-log', () => ({ debugLog: vi.fn() }));
 vi.mock('../reader/reading-session-store', () => ({
-  EMPTY_READING_SESSION: { schemaVersion: 2, activeDocumentPath: null, documents: [] },
+  EMPTY_READING_SESSION: { schemaVersion: 3, activeDocumentPath: null, documents: [] },
   loadReadingSession: vi.fn(async () => mocks.savedReadingSession()),
 }));
 vi.mock('../reader/recent-documents', () => ({
@@ -318,7 +318,7 @@ function createModules(
 ): ApplicationModules {
   let remainingSessionFlushFailures = options.sessionFlushFailures ?? 0;
   const session: ReadingSessionSnapshot = {
-    schemaVersion: 2,
+    schemaVersion: 3,
     revision: 0,
     activeDocumentPath: '/docs/report.pdf',
     documents: [
@@ -454,14 +454,12 @@ function createLifecycleSurface(filePath: string): {
       totalPages: 12,
       zoom: 1,
       zoomIntent: { kind: 'manual' as const, scale: 1 },
-      rotation: 0,
       fileName: filePath.split('/').pop() ?? filePath,
       filePath,
       viewMode: 'single' as const,
     }),
     getReadingPosition: () => readingPosition,
     applyFilter: vi.fn(),
-    setRotation: vi.fn(async () => undefined),
     setViewMode: vi.fn(async () => undefined),
     setZoomIntent: vi.fn(async () => undefined),
     goToReadingPosition: vi.fn(async (position) => {
@@ -616,7 +614,7 @@ describe('application lifecycle composition', () => {
   it('persists completed foreground changes while retaining interrupted Reading Session Documents', async () => {
     mocks.setUseRealRestoration(true);
     mocks.setSavedReadingSession({
-      schemaVersion: 2,
+      schemaVersion: 3,
       activeDocumentPath: '/docs/active.pdf',
       documents: [
         {

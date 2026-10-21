@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { createReadingSession } from '../reader/reading-session';
 
 const INITIAL_SESSION = {
-  schemaVersion: 2 as const,
+  schemaVersion: 3 as const,
   activeDocumentPath: '/docs/first.pdf',
   documents: [
     {
@@ -38,7 +38,7 @@ describe('Reading Session', () => {
     expect(Object.isFrozen(second.documents[0].readingPosition)).toBe(true);
   });
 
-  it('excludes transient reader state from Visual State snapshots', () => {
+  it('excludes view rotation and transient reader state from Visual State snapshots', () => {
     const session = createReadingSession({
       initialSession: {
         ...INITIAL_SESSION,
@@ -55,8 +55,8 @@ describe('Reading Session', () => {
                 extraBrightness: 0,
               },
               zoomIntent: { kind: 'fit-width' },
-              rotation: 90,
               viewMode: 'continuous',
+              rotation: 90,
               presentation: true,
               searchQuery: 'needle',
               sidebar: 'outline',
@@ -71,7 +71,6 @@ describe('Reading Session', () => {
 
     expect(Object.keys(session.snapshot().documents[0].visualState ?? {}).sort()).toEqual([
       'filterSettings',
-      'rotation',
       'viewMode',
       'zoomIntent',
     ]);

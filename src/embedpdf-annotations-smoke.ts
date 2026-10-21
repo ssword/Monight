@@ -147,13 +147,18 @@ async function verifyProtectedDocuments(): Promise<void> {
   );
 }
 
-async function open(bytes: Uint8Array): Promise<{
+async function open(
+  bytes: Uint8Array,
+  readOnlyReason: string | null = null,
+): Promise<{
   surface: DocumentSurface;
   annotations: AnnotationCapability;
   history: HistoryCapability;
   engine: import('@embedpdf/models').PdfEngine;
 }> {
-  const surface = await createEmbedPdfDocumentSurfaceFactory({ assessEditing: async () => null })({
+  const surface = await createEmbedPdfDocumentSurfaceFactory({
+    assessEditing: async () => readOnlyReason,
+  })({
     filePath: '/fixture.pdf',
     title: 'fixture.pdf',
     bytes,
@@ -184,11 +189,15 @@ async function open(bytes: Uint8Array): Promise<{
     .getPlugin<import('@embedpdf/snippet').CommandsPlugin>('commands')
     ?.provides();
   if (!commands) throw new Error('Missing viewer commands');
-  for (const id of ['annotation:add-highlight', 'annotation:add-comment', 'panel:toggle-comment']) {
+  for (const id of readOnlyReason === null
+    ? ['annotation:add-highlight', 'annotation:add-comment', 'panel:toggle-comment']
+    : []) {
     const command = commands.resolve(id);
     check(command.visible && !command.disabled, `Required native UI command is unavailable: ${id}`);
   }
   for (const id of [
+    'rotate:clockwise',
+    'rotate:counter-clockwise',
     'document:export',
     'document:protect',
     'form:add-textfield',
@@ -199,6 +208,40 @@ async function open(bytes: Uint8Array): Promise<{
     check(!command.visible || command.disabled, `Unsafe viewer command is available: ${id}`);
   }
   return { surface, annotations, history, engine: registry.getEngine() };
+}
+
+async function printedPageRotations(
+  engine: import('@embedpdf/models').PdfEngine,
+  bytes: Uint8Array,
+): Promise<number[]> {
+  const printedDocument = await engine
+    .openDocumentBuffer({
+      id: `verify-printed-rotation-${crypto.randomUUID()}`,
+      content: bytes.slice().buffer as ArrayBuffer,
+    })
+    .toPromise();
+  try {
+    return printedDocument.pages.map(({ rotation }) => rotation * 90);
+  } finally {
+    await engine.closeDocument(printedDocument).toPromise();
+  }
+}
+
+/** Printing reproduces the PDF's own Page Rotation, editable or read-only. */
+async function verifyPrintedPageRotation(): Promise<void> {
+  const rotated = navigationPdf('Native Page Rotation', 90, false);
+  for (const readOnlyReason of [null, 'Read-only print path']) {
+    // Unedited: annotation export verification on /Rotate pages is pending Page Rotation work.
+    const { surface, engine } = await open(rotated, readOnlyReason);
+    const printed = await surface.runtime.preparePrintDocument?.();
+    if (!printed?.length) throw new Error('Missing rotated print output');
+    const rotations = await printedPageRotations(engine, printed);
+    check(
+      JSON.stringify(rotations) === JSON.stringify([90, 90, 90]),
+      `Printing must reproduce the PDF's own Page Rotation (${readOnlyReason ?? 'editable'}): ${JSON.stringify(rotations)}`,
+    );
+    await surface.runtime.destroy();
+  }
 }
 
 async function run() {
@@ -340,7 +383,6 @@ async function run() {
   check(surface.runtime.editing?.state().dirty, 'Native edits did not mark Document dirty');
   history.undo();
   history.redo();
-  await surface.rendering.setRotation(1);
   await surface.rendering.setZoomIntent({ kind: 'manual', scale: 1.75 });
   surface.rendering.applyFilter('invert(1) sepia(1)');
   const printed = await surface.runtime.preparePrintDocument?.();
@@ -358,11 +400,8 @@ async function run() {
     annotations.getAnnotations().some(({ object }) => object.contents === 'Native comment'),
     'Printed bytes omitted the current native comment',
   );
-  check(
-    surface.rendering.getState().rotation === 0,
-    'Printed bytes baked in Monight viewing rotation',
-  );
   await surface.runtime.destroy();
+  await verifyPrintedPageRotation();
   ({ surface, annotations, history } = await open(annotated));
   const objects = annotations.getAnnotations().map((annotation) => annotation.object);
   const highlight = objects.find((object) => object.type === PdfAnnotationSubtype.HIGHLIGHT);

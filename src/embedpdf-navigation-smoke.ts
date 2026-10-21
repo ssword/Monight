@@ -6,6 +6,7 @@ import { createEmbedPdfDocumentSurfaceFactory } from './app/embedpdf-document-su
 import { createTauriExternalLinkAdapter } from './app/tauri-external-link-adapter';
 import {
   createReaderActions,
+  READING_SESSION_SCHEMA_VERSION,
   type ReaderAction,
   type ReaderActions,
 } from './reader/reader-actions';
@@ -19,7 +20,11 @@ async function run() {
   const actions: ReaderAction[] = [];
   const externalUrls: string[] = [];
   const errors: string[] = [];
-  const initialSession = { schemaVersion: 2 as const, activeDocumentPath: null, documents: [] };
+  const initialSession = {
+    schemaVersion: READING_SESSION_SCHEMA_VERSION,
+    activeDocumentPath: null,
+    documents: [],
+  };
   let reader: ReaderActions;
   const workspace = createDocumentWorkspace({
     dispatchReaderAction: async (action, options) => {
@@ -31,7 +36,6 @@ async function run() {
     defaultVisualState: () => ({
       filterSettings: PRESETS.default,
       zoomIntent: { kind: 'manual', scale: 1 },
-      rotation: 0,
       viewMode: 'continuous',
     }),
     createSurface: createEmbedPdfDocumentSurfaceFactory(),

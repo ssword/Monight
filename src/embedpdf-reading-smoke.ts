@@ -11,7 +11,7 @@ import {
   type ReaderAction,
   type ReaderActions,
 } from './reader/reader-actions';
-import { EMPTY_READING_SESSION } from './reader/reading-session-store';
+import { loadReadingSession } from './reader/reading-session-store';
 import { PRESETS } from './scripts/filters';
 import { KeybindManager } from './scripts/keybind-manager';
 import { DEFAULT_SETTINGS } from './scripts/settings';
@@ -19,8 +19,12 @@ import './styles/document-workspace.css';
 import './styles/reader-shell.css';
 
 async function run() {
-  const saved =
-    JSON.parse(localStorage.getItem('reading-session') ?? 'null') ?? EMPTY_READING_SESSION;
+  const saved = await loadReadingSession({
+    read: async () => JSON.parse(localStorage.getItem('reading-session') ?? 'null') ?? undefined,
+    write: async (session) => localStorage.setItem('reading-session', JSON.stringify(session)),
+    readLegacy: async () => undefined,
+    removeLegacy: async () => {},
+  });
   const actions: ReaderAction[] = [];
   const contents = new Map<string, DocumentContent>();
   const createSurface = createEmbedPdfDocumentSurfaceFactory();
@@ -36,7 +40,6 @@ async function run() {
     defaultVisualState: () => ({
       filterSettings: PRESETS.default,
       zoomIntent: { kind: 'manual', scale: 1 },
-      rotation: 0,
       viewMode: 'continuous',
     }),
     createSurface: async (request) => {

@@ -3,7 +3,6 @@ import EmbedPDF, {
   type CommandsCapability,
   type DocumentManagerCapability,
   type PluginRegistry,
-  type RotateCapability,
   type Rotation,
   type ScrollCapability,
   ScrollStrategy,
@@ -37,7 +36,6 @@ import type { DocumentSurfaceCallbacks } from './document-workspace';
 import { createEmbedPdfNativeAnnotationEditing } from './embedpdf-native-annotation-editing';
 import {
   captureEmbedPdfReadingPosition,
-  degreesFromEmbedPdfRotation,
   embedPdfDestinationReadingPosition,
   embedPdfLayoutForViewMode,
   embedPdfLinkGeometries,
@@ -46,7 +44,6 @@ import {
   embedPdfOutlinePath,
   embedPdfPageNumberForEventPath,
   embedPdfReadingFilterStyle,
-  embedPdfRotationFromDegrees,
   embedPdfZoomLevelFromIntent,
   isEmbedPdfLinkHitArea,
   restoreEmbedPdfReadingPositionCoordinates,
@@ -84,7 +81,6 @@ export interface EmbedPdfViewerRuntime {
   currentPage(): number;
   currentZoom(): number;
   zoomIntent(): ZoomIntent;
-  rotation(): number;
   viewMode(): ViewMode;
   readingPosition(): ReadingPosition;
   goToPage(pageNumber: number): Promise<void>;
@@ -92,7 +88,6 @@ export interface EmbedPdfViewerRuntime {
   setZoomIntent(intent: ZoomIntent): Promise<void>;
   zoomIn(): Promise<void>;
   zoomOut(): Promise<void>;
-  setRotation(rotation: number): Promise<void>;
   setViewMode(viewMode: ViewMode): Promise<void>;
   fitToPage(): Promise<void>;
   applyFilter(filterCss: string): void;
@@ -218,7 +213,6 @@ export async function createEmbedPdfViewerRuntime({
   const annotations = requireCapability<AnnotationCapability>(registry, 'annotation');
   const scroll = requireCapability<ScrollCapability>(registry, 'scroll');
   const zoom = requireCapability<ZoomCapability>(registry, 'zoom');
-  const rotate = requireCapability<RotateCapability>(registry, 'rotate');
   const spread = requireCapability<SpreadCapability>(registry, 'spread');
   const thumbnails = requireCapability<ThumbnailCapability>(registry, 'thumbnail');
   const ui = requireCapability<UICapability>(registry, 'ui');
@@ -231,7 +225,6 @@ export async function createEmbedPdfViewerRuntime({
   let fileName = '';
   let documentObject: ReturnType<DocumentManagerCapability['getDocument']> = null;
   let selectedViewMode: ViewMode = 'single';
-  let selectedRotation = 0;
   let selectedScrollStrategy = ScrollStrategy.Vertical;
   let selectedSpreadMode = SpreadMode.None;
   let destroyed = false;
@@ -240,7 +233,7 @@ export async function createEmbedPdfViewerRuntime({
   let selectedZoomIntent: ZoomIntent | null = null;
   let layoutEpoch = 0;
   let observationEpoch = 0;
-  const projectionDepth = { page: 0, zoom: 0, rotation: 0, viewMode: 0 };
+  const projectionDepth = { page: 0, zoom: 0, viewMode: 0 };
   let initialLayoutReady = false;
   let resolveInitialLayout!: () => void;
   const initialLayoutReadyPromise = new Promise<void>((resolve) => {
@@ -253,7 +246,6 @@ export async function createEmbedPdfViewerRuntime({
   };
   const scrollScope = scroll.forDocument(documentId);
   const annotationScope = annotations.forDocument(documentId);
-  const rotateScope = rotate.forDocument(documentId);
   const spreadScope = spread.forDocument(documentId);
   const thumbnailScope = thumbnails.forDocument(documentId);
   const zoomScope = zoom.forDocument(documentId);
@@ -374,7 +366,7 @@ export async function createEmbedPdfViewerRuntime({
       const epoch = ++observationEpoch;
       const position = currentReadingPosition(metrics);
       // Layout changes emit intermediate metrics synchronously, before the zoom
-      // or rotate notification. Give that notification time to cancel the sample.
+      // notification. Give that notification time to cancel the sample.
       void waitForPresentationFrames().then(() => {
         if (
           destroyed ||
@@ -430,20 +422,6 @@ export async function createEmbedPdfViewerRuntime({
         void withProjection('page', () => scrollToPosition(anchor));
       }
     }),
-    rotate.onRotateChange((event) => {
-      if (event.documentId !== documentId) return;
-      const nextRotation = degreesFromEmbedPdfRotation(event.rotation);
-      const delta = (nextRotation - selectedRotation + 360) % 360;
-      selectedRotation = nextRotation;
-      callbacks.stateChanged();
-      // setRotation records its target before calling the viewer, making its own
-      // event delta zero. A distinct user turn must survive an in-flight render.
-      if (delta === 90) {
-        void callbacks.rotationRequested?.('clockwise');
-      } else if (delta === 270) {
-        void callbacks.rotationRequested?.('counter-clockwise');
-      }
-    }),
     spread.onSpreadChange((event) => {
       if (event.documentId !== documentId) return;
       if (event.spreadMode === selectedSpreadMode) return;
@@ -456,7 +434,8 @@ export async function createEmbedPdfViewerRuntime({
     if (destroyed) return;
     readingAnchor = 'location' in position ? { ...position } : { page: position.page, location: 0 };
     const page = currentDocument().pages[position.page - 1];
-    const rotation = (((page?.rotation ?? 0) + rotateScope.getRotation()) % 4) as Rotation;
+    // Page Rotation is the only rotation; Monight never applies a view rotation.
+    const rotation: Rotation = page?.rotation ?? 0;
     scrollScope.scrollToPage({
       pageNumber: position.page,
       pageCoordinates:
@@ -574,7 +553,6 @@ export async function createEmbedPdfViewerRuntime({
     currentPage: currentPageNumber,
     currentZoom: () => zoomScope.getState().currentZoomLevel,
     zoomIntent: () => zoomIntentFromEmbedPdfLevel(zoomScope.getState().zoomLevel),
-    rotation: () => degreesFromEmbedPdfRotation(rotateScope.getRotation()),
     viewMode: () => selectedViewMode,
     readingPosition: currentReadingPosition,
     goToPage: (pageNumber) =>
@@ -594,11 +572,6 @@ export async function createEmbedPdfViewerRuntime({
     },
     zoomIn: () => withProjection('zoom', () => zoomScope.zoomIn()),
     zoomOut: () => withProjection('zoom', () => zoomScope.zoomOut()),
-    setRotation: (rotation) =>
-      withProjection('rotation', () => {
-        selectedRotation = ((rotation % 360) + 360) % 360;
-        rotateScope.setRotation(embedPdfRotationFromDegrees(rotation));
-      }),
     setViewMode: (viewMode) =>
       withProjection('viewMode', () => {
         const layout = embedPdfLayoutForViewMode(viewMode);
