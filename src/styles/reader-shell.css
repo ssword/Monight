@@ -15,83 +15,161 @@
   pointer-events: none;
 }
 
+/* Unified toolbar — Preview proportions: title block leading, capsule groups trailing. */
 #toolbar {
+  position: relative;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  height: 48px;
-  padding: 0 12px;
-  gap: 12px;
+  height: var(--toolbar-height);
+  padding: 0 12px 0 16px;
+  gap: 10px;
   flex-shrink: 0;
+  color: var(--text-primary);
   background-color: var(--bg-secondary);
   border-bottom: 1px solid var(--border-color);
 }
 
-.toolbar-group,
-.preset-group {
+.toolbar-title {
   display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.toolbar-group.file-info {
-  flex: 1;
+  flex-direction: column;
   justify-content: center;
-  overflow: hidden;
-}
-
-.toolbar-btn,
-.preset-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  height: 32px;
-  color: var(--text-primary);
-  background-color: transparent;
-  border: 1px solid var(--border-color);
-  border-radius: 4px;
-  cursor: pointer;
-  transition: all 0.2s ease;
-  user-select: none;
-}
-
-.toolbar-btn {
-  width: 32px;
-  font-size: 16px;
-}
-
-.preset-btn {
-  padding: 0 12px;
-  font-size: 13px;
-  font-weight: 500;
-  white-space: nowrap;
-}
-
-.toolbar-btn:hover,
-.preset-btn:hover {
-  background-color: var(--bg-primary);
-  border-color: var(--accent-color);
-}
-
-.toolbar-btn:active,
-.preset-btn:active {
-  background-color: var(--border-color);
-  transform: scale(0.98);
-}
-
-.preset-btn.active {
-  color: var(--text-on-accent);
-  background-color: var(--accent-color);
-  border-color: var(--accent-color);
+  min-width: 0;
+  flex: 0 1 auto;
+  line-height: 1.2;
 }
 
 .file-name {
   max-width: 100%;
   overflow: hidden;
   color: var(--text-primary);
-  font-size: 14px;
+  font-size: 13px;
+  font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.page-status {
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.page-status:empty {
+  display: none;
+}
+
+.toolbar-spacer {
+  flex: 1 1 auto;
+}
+
+.toolbar-capsule {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  height: 28px;
+  padding: 0 2px;
+  gap: 2px;
+  background-color: var(--capsule-bg);
+  border: 1px solid var(--border-color);
+  border-radius: var(--capsule-radius);
+}
+
+.toolbar-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 22px;
+  padding: 0;
+  color: var(--chrome-icon-color);
+  background-color: transparent;
+  border: 0;
+  border-radius: 5px;
+  cursor: pointer;
+  user-select: none;
+  transition:
+    background-color 0.12s ease,
+    color 0.12s ease;
+}
+
+.toolbar-btn:hover {
+  color: var(--text-primary);
+  background-color: var(--chrome-hover);
+}
+
+.toolbar-btn:active,
+.toolbar-btn[aria-expanded="true"] {
+  color: var(--text-primary);
+  background-color: var(--chrome-pressed);
+}
+
+.toolbar-btn:focus-visible,
+.preset-btn:focus-visible {
+  outline: 2px solid var(--accent-color);
+  outline-offset: 1px;
+}
+
+.toolbar-icon {
+  display: inline-flex;
+  width: 18px;
+  height: 18px;
+  pointer-events: none;
+}
+
+.toolbar-icon svg {
+  width: 100%;
+  height: 100%;
+}
+
+/* Interim presets menu, replaced by the Appearance popover. */
+.toolbar-menu-anchor {
+  position: relative;
+}
+
+.toolbar-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  min-width: 160px;
+  padding: 4px;
+  gap: 2px;
+  background-color: var(--bg-elevated);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+}
+
+.toolbar-menu.hidden {
+  display: none;
+}
+
+.preset-btn {
+  display: flex;
+  align-items: center;
+  height: 26px;
+  padding: 0 10px;
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 13px;
+  text-align: left;
+  white-space: nowrap;
+  background-color: transparent;
+  border: 0;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.preset-btn:hover {
+  background-color: var(--chrome-hover);
+}
+
+.preset-btn.active {
+  color: var(--text-on-accent);
+  background-color: var(--accent-color);
 }
 
 #pdf-container {
@@ -122,24 +200,4 @@
   color: var(--text-secondary);
   font-family: "Monaco", "Courier New", monospace;
   font-size: 14px;
-}
-
-@media (max-width: 768px) {
-  #toolbar {
-    height: auto;
-    min-height: 56px;
-    padding: 8px;
-    flex-wrap: wrap;
-  }
-
-  .toolbar-btn {
-    width: 36px;
-    height: 36px;
-    font-size: 18px;
-  }
-
-  .toolbar-group.file-info {
-    order: 4;
-    width: 100%;
-  }
 }

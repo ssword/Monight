@@ -152,7 +152,7 @@
 
 .new-tab-btn:hover {
   background-color: var(--bg-primary);
-  color: var(--accent-color);
+  color: var(--accent-ink);
 }
 
 .new-tab-btn:active {
@@ -186,7 +186,7 @@
 
 .tab-dirty-indicator {
   flex-shrink: 0;
-  color: var(--accent-color, #ffd48c);
+  color: var(--accent-ink, #ffd48c);
   margin-left: 6px;
 }
 

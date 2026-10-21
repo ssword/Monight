@@ -63,6 +63,44 @@ export function setupEventListeners({
     void dispatchReaderAction({ type: 'printDocument' });
   });
 
+  // Zoom group: the same typed Reader Actions as the zoom shortcuts.
+  const zoomButtons = [
+    ['zoom-out', () => readerAction.zoomOut()],
+    ['zoom-to-fit', () => readerAction.setZoomIntent({ kind: 'fit-page' })],
+    ['zoom-in', () => readerAction.zoomIn()],
+  ] as const;
+  for (const [id, action] of zoomButtons) {
+    document.getElementById(id)?.addEventListener('click', () => {
+      void dispatchReaderAction(action());
+    });
+  }
+
+  // Interim presets menu, until the Appearance popover replaces it.
+  const appearanceToggle = document.getElementById('appearance-toggle');
+  const presetMenu = document.getElementById('preset-menu');
+  const setPresetMenuOpen = (open: boolean) => {
+    presetMenu?.classList.toggle('hidden', !open);
+    appearanceToggle?.setAttribute('aria-expanded', String(open));
+  };
+  const presetMenuOpen = () => (presetMenu ? !presetMenu.classList.contains('hidden') : false);
+  appearanceToggle?.addEventListener('click', () => setPresetMenuOpen(!presetMenuOpen()));
+  presetMenu?.addEventListener('click', (event) => {
+    if (event.target instanceof Element && event.target.closest('.preset-btn'))
+      setPresetMenuOpen(false);
+  });
+  document.addEventListener('pointerdown', (event) => {
+    if (!presetMenuOpen()) return;
+    const target = event.target instanceof Node ? event.target : null;
+    if (target && (presetMenu?.contains(target) || appearanceToggle?.contains(target))) return;
+    setPresetMenuOpen(false);
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && presetMenuOpen()) {
+      setPresetMenuOpen(false);
+      appearanceToggle?.focus();
+    }
+  });
+
   // Setup preset buttons
   setupPresetButtons(sliderManager, (settings) => {
     void dispatchReaderAction(readerAction.setFilterSettings(settings));
