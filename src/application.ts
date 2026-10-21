@@ -139,6 +139,13 @@ let markupToolbar: MarkupToolbar | null = null;
 let highlightButton: HighlightButton | null = null;
 let rotateButton: RotateButton | null = null;
 
+/** The toolbar controls that re-read the active Document on session and rendering changes. */
+const refreshReaderControls = (): void => {
+  for (const control of [readerSidebar, markupToolbar, highlightButton, rotateButton]) {
+    control?.refresh();
+  }
+};
+
 // Global keybind manager instance
 let keybindManager: KeybindManager | null = null;
 /** The effective keybinds, which the native menu shows as accelerators. */
@@ -697,10 +704,7 @@ export async function initializeApplication(modules: ApplicationModules): Promis
       renderingStateChanged: () => {
         if (!readerActions || !documentWorkspace) return;
         updateUI(readerActions.snapshot(), documentWorkspace.activeRenderingState());
-        readerSidebar?.refresh();
-        markupToolbar?.refresh();
-        highlightButton?.refresh();
-        rotateButton?.refresh();
+        refreshReaderControls();
         syncReaderMenu();
       },
     });
@@ -758,10 +762,7 @@ export async function initializeApplication(modules: ApplicationModules): Promis
     readerActions.observe((snapshot) => {
       documentWorkspace?.project(snapshot);
       updateUI(snapshot, documentWorkspace?.activeRenderingState() ?? null);
-      readerSidebar?.refresh();
-      markupToolbar?.refresh();
-      highlightButton?.refresh();
-      rotateButton?.refresh();
+      refreshReaderControls();
       showActiveAppearance(snapshot);
       const hasDocument = snapshot.documents.length > 0;
       showTabBar(snapshot.documents.length);
