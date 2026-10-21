@@ -116,8 +116,8 @@ export interface ReaderMenuSubmenu {
   readonly items: readonly { readonly id: string; readonly text: string }[];
 }
 
-interface ReaderCommand {
-  readonly id: string;
+interface ReaderCommand<Id extends string = string> {
+  readonly id: Id;
   run(context: ReaderCommandContext): void | Promise<void>;
   state(input: ReaderCommandStateInput): Omit<ReaderCommandState, 'id'>;
 }
@@ -142,13 +142,15 @@ const checkedWithDocument = (input: ReaderCommandStateInput, checked: boolean) =
   checked: hasDocument(input) && checked,
 });
 
-const dispatching = (id: string, action: () => ReaderAction): ReaderCommand => ({
+const dispatching = <Id extends string>(id: Id, action: () => ReaderAction): ReaderCommand<Id> => ({
   id,
   run: (context) => context.dispatchReaderAction(action()),
   state: whenDocument,
 });
 
-const sidebarCommand = (choice: SidebarChoice): ReaderCommand => ({
+const sidebarCommand = <Choice extends SidebarChoice>(
+  choice: Choice,
+): ReaderCommand<`view.sidebar.${Choice}`> => ({
   id: `view.sidebar.${choice}`,
   run: (context) => context.sidebar?.choose(choice),
   state: (input) => {
@@ -160,13 +162,15 @@ const sidebarCommand = (choice: SidebarChoice): ReaderCommand => ({
   },
 });
 
-const viewModeCommand = (viewMode: ViewMode): ReaderCommand => ({
+const viewModeCommand = <Mode extends ViewMode>(
+  viewMode: Mode,
+): ReaderCommand<`view.mode.${Mode}`> => ({
   id: `view.mode.${viewMode}`,
   run: (context) => context.dispatchReaderAction(readerAction.setViewMode(viewMode)),
   state: (input) => checkedWithDocument(input, input.activeDocument?.viewMode === viewMode),
 });
 
-const staticCommands: readonly ReaderCommand[] = [
+const staticCommands = [
   {
     id: 'view.tab-bar',
     run: (context) => context.toggleTabBar(),
@@ -251,7 +255,18 @@ const staticCommands: readonly ReaderCommand[] = [
     state: (input) =>
       checkedWithDocument(input, input.markup !== null && input.markup.activeToolId === null),
   },
-];
+] as const satisfies readonly ReaderCommand[];
+
+/**
+ * Every command id: the static table's, plus the items listed from the presets,
+ * the verified tools and (behind the gate) Rotate. Native menu ids and stored
+ * keybind data arrive as plain strings; the menu.rs id test keeps them in step.
+ */
+export type ReaderCommandId =
+  | (typeof staticCommands)[number]['id']
+  | `${typeof APPEARANCE_SUBMENU}.${AppearancePresetId}`
+  | `${typeof ANNOTATE_SUBMENU}.${string}`
+  | (typeof ROTATE_ITEMS)[number]['id'];
 
 const appearanceCommands = (): ReaderCommand[] =>
   APPEARANCE_PRESETS.map(({ id }) => ({
@@ -329,7 +344,7 @@ export async function runReaderCommand(
  * each one runs: the shortcut handler (keybinds.ts) and the menu accelerator
  * both read this one map.
  */
-export const LEGACY_KEYBIND_COMMANDS: Readonly<Record<string, string>> = {
+export const LEGACY_KEYBIND_COMMANDS: Readonly<Record<string, ReaderCommandId>> = {
   resetZoom: 'view.zoom.actual-size',
   fitToPage: 'view.zoom.fit',
   fitToWidth: 'view.zoom.width',

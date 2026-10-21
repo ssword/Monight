@@ -29,6 +29,7 @@
 //   is stored yet. Collisions with the reader's own bindings are dropped as for
 //   any revision. Once stored, a gated action is the reader's like any other.
 
+import type { ReaderCommandId } from '../app/reader-commands';
 import { isMacPlatform } from '../lib/platform';
 import { PAGE_ROTATION_VERIFIED } from '../lib/verification-gates';
 import { sameChord } from './accelerators';
@@ -70,7 +71,7 @@ interface KeybindDefaultsRevision {
 
 type KeybindAction = Omit<KeybindConfig, 'binds'>;
 
-const readerCommand = (displayName: string, commandId: string): KeybindAction => ({
+const readerCommand = (displayName: string, commandId: ReaderCommandId): KeybindAction => ({
   displayName,
   action: 'readerCommand',
   data: commandId,

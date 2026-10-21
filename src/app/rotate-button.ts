@@ -11,6 +11,7 @@ import { PAGE_ROTATION_VERIFIED } from '../lib/verification-gates';
 import { hydrateChromeIcons } from './chrome-icons';
 import type { ActiveMarkupState } from './document-workspace';
 import { isEditableMarkup } from './markup-tools';
+import type { ReaderCommandId } from './reader-commands';
 
 export interface RotateButtonOptions {
   /** The toolbar capsule the button is placed in. */
@@ -21,7 +22,7 @@ export interface RotateButtonOptions {
   /** The active Document's editing state; protected Documents carry their reason. */
   readonly activeMarkup: () => ActiveMarkupState | null;
   /** Runs a reader command by id (the native menu's Tools ▸ Rotate items). */
-  readonly runCommand: (id: string) => Promise<boolean>;
+  readonly runCommand: (id: ReaderCommandId) => Promise<boolean>;
 }
 
 export interface RotateButton {
@@ -30,8 +31,8 @@ export interface RotateButton {
   destroy(): void;
 }
 
-const ROTATE_LEFT = 'tools.rotate.left';
-const ROTATE_RIGHT = 'tools.rotate.right';
+const ROTATE_LEFT: ReaderCommandId = 'tools.rotate.left';
+const ROTATE_RIGHT: ReaderCommandId = 'tools.rotate.right';
 
 /** Mounts the Rotate button; null (and nothing shown) while Page Rotation is unverified. */
 export function createRotateButton({
