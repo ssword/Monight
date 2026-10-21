@@ -17,8 +17,15 @@ export interface NavigationHistories {
   target(filePath: string, direction: NavigationDirection): RestorableReadingPosition | null;
   /** A new jump away from `from`; it discards the forward entries. */
   record(filePath: string, from: RestorableReadingPosition): void;
-  /** Back or Forward has moved away from `from` to its target. */
-  stepped(filePath: string, direction: NavigationDirection, from: RestorableReadingPosition): void;
+  /**
+   * Back or Forward has moved away from `from` to its target. With no known
+   * `from`, the target is still consumed so repeated steps never loop.
+   */
+  stepped(
+    filePath: string,
+    direction: NavigationDirection,
+    from: RestorableReadingPosition | null,
+  ): void;
   discard(filePath: string): void;
   /** The Document is now known by another path (Save As, path canonicalization). */
   rename(fromPath: string, toPath: string): void;
@@ -51,7 +58,7 @@ export function createNavigationHistories(): NavigationHistories {
     stepped(filePath, direction, from) {
       const history = historyFor(filePath);
       history[direction].pop();
-      history[opposite(direction)].push(from);
+      if (from) history[opposite(direction)].push(from);
     },
     discard(filePath) {
       histories.delete(filePath);

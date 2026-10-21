@@ -619,8 +619,8 @@ export function createReaderActions({
     // History changes before the commit so snapshot observers see it.
     if (origin && history === 'record' && !readingPositionsEqual(origin, readingPosition)) {
       navigationHistories.record(filePath, origin);
-    } else if (origin && (history === 'back' || history === 'forward')) {
-      navigationHistories.stepped(filePath, history, origin);
+    } else if (history === 'back' || history === 'forward') {
+      navigationHistories.stepped(filePath, history, origin ?? null);
     }
     const latest = session.snapshot();
     const documents = latest.documents.map((document) =>
