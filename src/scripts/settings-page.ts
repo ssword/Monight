@@ -2,6 +2,7 @@ import { getName, getTauriVersion, getVersion } from '@tauri-apps/api/app';
 import { emit, listen } from '@tauri-apps/api/event';
 import { requestConfirmation } from '../app/dialogs';
 import { debugLog } from '../lib/debug-log';
+import { isMacPlatform } from '../lib/platform';
 import '../styles/dialogs.css';
 import { KeybindEditor } from './keybind-editor';
 import { KeybindManager } from './keybind-manager';
@@ -13,7 +14,7 @@ const settingsManager = new SettingsManager('settings');
 let currentSettings: MoonightSettings;
 
 // Detect platform
-const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
+const isMac = isMacPlatform();
 
 // Initialize keybind manager and editor
 const keybindManager = new KeybindManager(isMac);

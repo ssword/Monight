@@ -6,6 +6,7 @@
 // The button exists only once Page Rotation is verified (PAGE_ROTATION_VERIFIED,
 // ADR 0003); until then its toolbar slot stays empty and hidden.
 
+import { isMacPlatform } from '../lib/platform';
 import { PAGE_ROTATION_VERIFIED } from '../lib/verification-gates';
 import { hydrateChromeIcons } from './chrome-icons';
 import type { ActiveMarkupState } from './document-workspace';
@@ -30,8 +31,6 @@ export interface RotateButton {
 
 const ROTATE_LEFT = 'tools.rotate.left';
 const ROTATE_RIGHT = 'tools.rotate.right';
-
-const isMacPlatform = () => (globalThis.navigator?.platform ?? '').toUpperCase().includes('MAC');
 
 /** Mounts the Rotate button; null (and nothing shown) while Page Rotation is unverified. */
 export function createRotateButton({

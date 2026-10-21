@@ -60,6 +60,7 @@ import {
 } from './app/window-lifecycle';
 import { debugLog } from './lib/debug-log';
 import type { ViewMode } from './lib/document-features';
+import { isMacPlatform } from './lib/platform';
 import type { DocumentIntake } from './reader/document-intake';
 import { DEFAULT_ANNOTATION_DISPLAY_NAME } from './reader/native-pdf-editing';
 import {
@@ -197,7 +198,7 @@ const refreshWindowFullScreen = async (): Promise<void> => {
 };
 
 // Detect if we're on macOS
-const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
+const isMac = isMacPlatform();
 
 /** Loads the effective keybinds into the shortcuts and the native menu accelerators. */
 const applyKeybinds = (settings: MoonightSettings): void => {

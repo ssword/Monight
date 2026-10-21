@@ -29,6 +29,7 @@
 //   is stored yet. Collisions with the reader's own bindings are dropped as for
 //   any revision. Once stored, a gated action is the reader's like any other.
 
+import { isMacPlatform } from '../lib/platform';
 import { PAGE_ROTATION_VERIFIED } from '../lib/verification-gates';
 import { sameChord } from './accelerators';
 
@@ -280,8 +281,7 @@ export function defaultKeybinds(
 
 /** The platform this window runs on, for platform-dependent defaults. */
 export function currentKeybindPlatform(): KeybindPlatform {
-  const platform = globalThis.navigator?.platform ?? '';
-  return platform.toUpperCase().includes('MAC') ? 'mac' : 'other';
+  return isMacPlatform() ? 'mac' : 'other';
 }
 
 const sameBinds = (a: readonly string[], b: readonly string[], isMac: boolean): boolean =>
