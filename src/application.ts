@@ -329,13 +329,6 @@ const goToPage = async (page: number, options?: ReaderActionOptions): Promise<vo
   if (outcome?.status === 'failure') throw outcome.error;
 };
 
-const goToRelativePage = async (direction: 'next' | 'previous'): Promise<void> => {
-  const outcome = await dispatchReaderActionOutcome({
-    type: direction === 'next' ? 'goToNextPage' : 'goToPreviousPage',
-  });
-  if (outcome?.status === 'failure') throw outcome.error;
-};
-
 const dispatchReaderAction = async (action: ReaderAction): Promise<void> => {
   const outcome = await dispatchReaderActionOutcome(action);
   if (outcome?.status === 'failure') {
@@ -828,11 +821,7 @@ export async function initializeApplication(modules: ApplicationModules): Promis
       updateTabBarVisibility: updateTabBar,
       updateUI: updateReaderUI,
       openSearch: () => readerSidebar?.focusSearch(),
-      togglePresentationMode: async () => {
-        await presentationController?.toggle();
-      },
       goToPage,
-      goToRelativePage,
       runReaderCommand: (id) => readerMenu.run(id),
       dispatchReaderAction,
     });

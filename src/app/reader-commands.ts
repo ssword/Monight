@@ -325,10 +325,11 @@ export async function runReaderCommand(
 }
 
 /**
- * Keybind actions that predate the `readerCommand` action, and the menu
- * command each one performs.
+ * Keybind actions that predate the `readerCommand` action, and the command
+ * each one runs: the shortcut handler (keybinds.ts) and the menu accelerator
+ * both read this one map.
  */
-const KEYBIND_ACTION_COMMANDS: Readonly<Record<string, string>> = {
+export const LEGACY_KEYBIND_COMMANDS: Readonly<Record<string, string>> = {
   resetZoom: 'view.zoom.actual-size',
   fitToPage: 'view.zoom.fit',
   fitToWidth: 'view.zoom.width',
@@ -346,7 +347,7 @@ function commandAccelerators(
 ): Map<string, string> {
   const accelerators = new Map<string, string>();
   for (const { action, data, binds } of Object.values(keybinds)) {
-    const commandId = action === 'readerCommand' ? data : KEYBIND_ACTION_COMMANDS[action];
+    const commandId = action === 'readerCommand' ? data : LEGACY_KEYBIND_COMMANDS[action];
     if (!commandId || accelerators.has(commandId)) continue;
     const accelerator = binds.map(menuAccelerator).find((candidate) => candidate !== null);
     if (accelerator) accelerators.set(commandId, accelerator);

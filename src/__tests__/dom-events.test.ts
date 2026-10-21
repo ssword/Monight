@@ -3,6 +3,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { setupEventListeners } from '../app/dom-events';
 import { registerKeybindActions } from '../app/keybinds';
+import { type ReaderCommandContext, runReaderCommand } from '../app/reader-commands';
 import type { KeybindManager } from '../scripts/keybind-manager';
 
 describe('setupEventListeners', () => {
@@ -141,13 +142,15 @@ describe('toolbar input adapters', () => {
       updateTabBarVisibility: vi.fn(),
       updateUI: vi.fn(),
       openSearch: vi.fn(),
-      togglePresentationMode: vi.fn(async () => undefined),
       goToPage: vi.fn(async () => undefined),
-      goToRelativePage: vi.fn(async () => undefined),
-      runReaderCommand: vi.fn(async () => true),
-      dispatchReaderAction: async (action) => {
-        shortcutActions.push(action);
-      },
+      // Zoom shortcuts run their View menu commands, which dispatch the action.
+      runReaderCommand: (id) =>
+        runReaderCommand(id, {
+          dispatchReaderAction: async (action: unknown) => {
+            shortcutActions.push(action);
+          },
+        } as unknown as ReaderCommandContext),
+      dispatchReaderAction: vi.fn(async () => undefined),
     });
     for (const name of ['zoomOut', 'fitToPage', 'zoomIn']) await handlers.get(name)?.();
 

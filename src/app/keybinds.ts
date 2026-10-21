@@ -2,7 +2,7 @@ import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 import { debugLog } from '../lib/debug-log';
 import type { DispatchReaderAction, ReadingSessionSnapshot } from '../reader/reader-actions';
 import type { KeybindManager } from '../scripts/keybind-manager';
-import { READER_ACTION_COMMANDS } from './reader-commands';
+import { LEGACY_KEYBIND_COMMANDS } from './reader-commands';
 
 interface KeybindContext {
   keybindManager: KeybindManager | null;
@@ -13,9 +13,7 @@ interface KeybindContext {
   updateTabBarVisibility: () => void;
   updateUI: () => void;
   openSearch: () => void;
-  togglePresentationMode: () => Promise<void>;
   goToPage: (page: number) => Promise<void>;
-  goToRelativePage: (direction: 'next' | 'previous') => Promise<void>;
   /** Runs a native View, Go or Tools command (reader-commands.ts) by id. */
   runReaderCommand: (id: string) => Promise<boolean>;
   dispatchReaderAction: DispatchReaderAction;
@@ -37,9 +35,7 @@ export function registerKeybindActions({
   updateTabBarVisibility,
   updateUI,
   openSearch,
-  togglePresentationMode,
   goToPage,
-  goToRelativePage,
   runReaderCommand,
   dispatchReaderAction,
 }: KeybindContext): void {
@@ -113,16 +109,6 @@ export function registerKeybindActions({
   });
 
   // PDF navigation (requires active tab)
-  keybindManager.registerAction('nextPage', async () => {
-    await goToRelativePage('next');
-    updateUI();
-  });
-
-  keybindManager.registerAction('previousPage', async () => {
-    await goToRelativePage('previous');
-    updateUI();
-  });
-
   keybindManager.registerAction('firstPage', async () => {
     await goToPage(1);
     updateUI();
@@ -135,39 +121,18 @@ export function registerKeybindActions({
     updateUI();
   });
 
-  // Zoom
-  keybindManager.registerAction('zoomIn', async () => {
-    await dispatchReaderAction(READER_ACTION_COMMANDS.zoomIn());
-  });
-
-  keybindManager.registerAction('zoomOut', async () => {
-    await dispatchReaderAction(READER_ACTION_COMMANDS.zoomOut());
-  });
-
-  keybindManager.registerAction('resetZoom', async () => {
-    await dispatchReaderAction(READER_ACTION_COMMANDS.actualSize());
-  });
-
-  // Fit modes
-  keybindManager.registerAction('fitToWidth', async () => {
-    await dispatchReaderAction(READER_ACTION_COMMANDS.zoomToWidth());
-  });
-
-  keybindManager.registerAction('fitToPage', async () => {
-    await dispatchReaderAction(READER_ACTION_COMMANDS.zoomToFit());
-  });
+  // Zoom, page steps, Slideshow and full screen predate `readerCommand` but run
+  // the same commands as the native menu.
+  for (const [action, commandId] of Object.entries(LEGACY_KEYBIND_COMMANDS)) {
+    keybindManager.registerAction(action, async () => {
+      await runReaderCommand(commandId);
+    });
+  }
 
   // Shortcuts for native menu commands (view modes, sidebar modes, markup
   // toolbar, Go to Page…) name the command in their data.
   keybindManager.registerAction('readerCommand', async (_e, commandId) => {
     if (commandId) await runReaderCommand(commandId);
-  });
-
-  // Fullscreen
-  keybindManager.registerAction('toggleFullscreen', toggleWindowFullScreen);
-
-  keybindManager.registerAction('presentationMode', async () => {
-    await togglePresentationMode();
   });
 
   debugLog('All keybind actions registered');
