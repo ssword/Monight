@@ -112,10 +112,12 @@ let applicationShutdown: ApplicationShutdownCoordinator | null = null;
 let sliderManager: SliderManager | null = null;
 let readerChrome: ReaderChromeControls | null = null;
 
+/** The Reading Session's active Document, if one is open. */
+const activeSessionDocument = (snapshot: ReadingSessionSnapshot | undefined) =>
+  snapshot?.documents.find(({ filePath }) => filePath === snapshot.activeDocumentPath);
+
 const showActiveAppearance = (snapshot: ReadingSessionSnapshot): void => {
-  const activeDocument = snapshot.documents.find(
-    ({ filePath }) => filePath === snapshot.activeDocumentPath,
-  );
+  const activeDocument = activeSessionDocument(snapshot);
   if (activeDocument?.visualState) {
     readerChrome?.showAppearance(
       activeDocument.filePath,
@@ -153,9 +155,7 @@ const showTabBar = (documentCount: number): void =>
 
 const readerMenuState = (): ReaderCommandStateInput => {
   const snapshot = readerActions?.snapshot();
-  const activeDocument = snapshot?.documents.find(
-    ({ filePath }) => filePath === snapshot.activeDocumentPath,
-  );
+  const activeDocument = activeSessionDocument(snapshot);
   const rendering = documentWorkspace?.activeRenderingState() ?? null;
   const live = rendering && rendering.filePath === activeDocument?.filePath ? rendering : null;
   return {
@@ -503,13 +503,10 @@ function mountReaderSidebar(
     revealAnnotation: (filePath, annotationId) =>
       documentWorkspace?.revealAnnotation(filePath, annotationId),
     activeDocument: () => {
-      const snapshot = readerActions?.snapshot();
+      const active = activeSessionDocument(readerActions?.snapshot());
       const rendering = documentWorkspace?.activeRenderingState();
-      const filePath = snapshot?.activeDocumentPath;
-      if (!snapshot || !filePath || !rendering || rendering.filePath !== filePath) return null;
-      const visualState = snapshot.documents.find(
-        (document) => document.filePath === filePath,
-      )?.visualState;
+      if (!active || !rendering || rendering.filePath !== active.filePath) return null;
+      const { filePath, visualState } = active;
       return {
         filePath,
         pageCount: rendering.totalPages,
