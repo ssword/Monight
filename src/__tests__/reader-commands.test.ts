@@ -50,6 +50,8 @@ function fakeContext(overrides: Partial<ReaderCommandContext> = {}) {
       calls.push('full-screen');
     },
     requestPage: async () => 12,
+    selectedPages: () => [],
+    currentPage: () => 3,
     ...overrides,
   };
   return {
@@ -353,7 +355,7 @@ describe('native menu ids', () => {
 describe('native menu listing', () => {
   it('Annotate lists exactly the verified tools and View lists every preset', async () => {
     const { readerMenuSubmenus } = await import('../app/reader-commands');
-    expect(readerMenuSubmenus()).toEqual([
+    expect(readerMenuSubmenus(undefined, false)).toEqual([
       {
         id: 'view.appearance',
         items: [
@@ -371,6 +373,8 @@ describe('native menu listing', () => {
           { id: 'tools.annotate.textComment', text: 'Text Note' },
         ],
       },
+      // Rotate Left and Right stay unlisted until Page Rotation is verified.
+      { id: 'tools.rotate', items: [] },
     ]);
   });
 
@@ -392,5 +396,85 @@ describe('native menu listing', () => {
     expect(await runReaderCommand('tools.annotate.underline', context, tools)).toBe(true);
     expect(calls).toEqual(['highlight-button:underline']);
     vi.restoreAllMocks();
+  });
+});
+
+describe('Rotate commands behind the Page Rotation gate', () => {
+  const verified = true;
+
+  it('rotate the current page when no thumbnails are selected', async () => {
+    const { context, dispatched } = fakeContext();
+    expect(await runReaderCommand('tools.rotate.left', context, undefined, verified)).toBe(true);
+    expect(await runReaderCommand('tools.rotate.right', context, undefined, verified)).toBe(true);
+    expect(dispatched).toEqual([
+      { type: 'rotatePages', pages: [3], direction: 'counterclockwise' },
+      { type: 'rotatePages', pages: [3], direction: 'clockwise' },
+    ]);
+  });
+
+  it('rotate the selected pages when thumbnails are selected', async () => {
+    const { context, dispatched } = fakeContext({ selectedPages: () => [2, 5, 6] });
+    await runReaderCommand('tools.rotate.right', context, undefined, verified);
+    expect(dispatched).toEqual([{ type: 'rotatePages', pages: [2, 5, 6], direction: 'clockwise' }]);
+  });
+
+  it('do nothing without a page to rotate', async () => {
+    const { context, dispatched } = fakeContext({ currentPage: () => null });
+    await runReaderCommand('tools.rotate.left', context, undefined, verified);
+    expect(dispatched).toEqual([]);
+  });
+
+  it('are absent while Page Rotation is unverified', async () => {
+    const { context, dispatched } = fakeContext();
+    expect(await runReaderCommand('tools.rotate.left', context, undefined, false)).toBe(false);
+    expect(await runReaderCommand('tools.rotate.right', context, undefined, false)).toBe(false);
+    expect(dispatched).toEqual([]);
+    const ids = readerCommandStates(input(), undefined, false).map(({ id }) => id);
+    expect(ids.filter((id) => id.includes('rotate'))).toEqual([]);
+    const { readerMenuSubmenus } = await import('../app/reader-commands');
+    expect(readerMenuSubmenus(undefined, false).find(({ id }) => id === 'tools.rotate')).toEqual({
+      id: 'tools.rotate',
+      items: [],
+    });
+  });
+
+  it('list Rotate Left and Rotate Right in the Tools menu once verified', async () => {
+    const { readerMenuSubmenus } = await import('../app/reader-commands');
+    expect(readerMenuSubmenus(undefined, verified).find(({ id }) => id === 'tools.rotate')).toEqual(
+      {
+        id: 'tools.rotate',
+        items: [
+          { id: 'tools.rotate.left', text: 'Rotate Left' },
+          { id: 'tools.rotate.right', text: 'Rotate Right' },
+        ],
+      },
+    );
+  });
+
+  it('are unavailable on protected Documents and without a Document', () => {
+    const editable = readerCommandStates(input(), undefined, verified);
+    expect(stateOf(editable, 'tools.rotate.left')?.enabled).toBe(true);
+    expect(stateOf(editable, 'tools.rotate.right')?.enabled).toBe(true);
+    const protectedDocument = readerCommandStates(
+      input({ markup: { activeToolId: null, readOnlyReason: 'Signed Document' } }),
+      undefined,
+      verified,
+    );
+    expect(stateOf(protectedDocument, 'tools.rotate.left')?.enabled).toBe(false);
+    expect(stateOf(protectedDocument, 'tools.rotate.right')?.enabled).toBe(false);
+    const none = readerCommandStates(
+      input({ documentCount: 0, activeDocument: null, markup: null }),
+      undefined,
+      verified,
+    );
+    expect(stateOf(none, 'tools.rotate.left')?.enabled).toBe(false);
+  });
+
+  it('show ⌘L and ⌘R as their menu accelerators', async () => {
+    const { defaultKeybinds } = await import('../scripts/keybind-defaults');
+    const keybinds = defaultKeybinds('mac', { pageRotation: true });
+    const states = readerCommandStates(input({ keybinds }), undefined, verified);
+    expect(stateOf(states, 'tools.rotate.left')?.accelerator).toBe('CmdOrCtrl+L');
+    expect(stateOf(states, 'tools.rotate.right')?.accelerator).toBe('CmdOrCtrl+R');
   });
 });

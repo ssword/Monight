@@ -48,3 +48,30 @@ dispatch:
 
 `readerAction.rotatePages(pages, direction, filePath?)` builds the first action. On read-only,
 signed, or protected Documents these actions are refused with the existing explanation.
+
+## Rotate controls and the verification gate (issue #114)
+
+Rotate is offered by the toolbar Rotate button (click: Rotate Left, Option/Alt-click: Rotate
+Right), Tools ▸ Rotate Left / Rotate Right, and the ⌘L / ⌘R shortcuts (Ctrl+L / Ctrl+R on
+Windows and Linux). All three run the same reader commands (`tools.rotate.left`,
+`tools.rotate.right` in `src/app/reader-commands.ts`), which dispatch `rotatePages` for the pages
+selected in the Thumbnails sidebar, or the current page when none are selected. Thumbnail
+selection (⇧-click range, ⌘/Ctrl-click toggle; a plain click ends it) is transient: it is cleared
+on Document switch or when Thumbnails closes and is never persisted. Protected Documents disable
+the button and menu items with their reason; a shortcut is refused by the Reader Action with it.
+
+Everything is behind `PAGE_ROTATION_VERIFIED` (`src/app/markup-tools.ts`). While it is `false`
+the button's toolbar slot is empty, the Tools menu's `tools.rotate` section (filled inline from
+TypeScript; Rust cannot see the constant) has no items, the commands do not exist, and the
+Rotate keybind actions are not defaults, not stored, and not shown in Settings. The browser
+reload chords (Ctrl+R, Ctrl+Shift+R, F5) never reach WebView2 either way.
+
+Opening the gate is a one-line change. Keybind defaults revision 4 (`RotateLeft: ⌘L`,
+`RotateRight: ⌘R`) carries `gate: 'pageRotation'`, so it does not count towards the stored
+defaults version while closed. Once open, a fresh install gets ⌘L/⌘R with its other defaults;
+an install stored under an earlier version applies revision 4 in order; and an install already
+stamped with a later version while the gate was closed still applies it, because none of its
+actions is stored yet. As with every revision, a default that collides with a chord the reader
+chose is dropped, and once stored the Rotate bindings are the reader's.
+
+Deferred: the Thumbnails sidebar does not yet re-render a page's thumbnail after it is rotated.

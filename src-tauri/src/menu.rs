@@ -124,10 +124,17 @@ enum ReaderMenuEntry {
         id: &'static str,
         text: &'static str,
     },
+    /// Items TypeScript lists inline at the end of the menu, after a separator,
+    /// with `set_menu_submenu_items`; empty until TypeScript fills it. Used for
+    /// Rotate Left and Right, which exist only once Page Rotation is verified
+    /// (PAGE_ROTATION_VERIFIED in src/app/markup-tools.ts).
+    Section {
+        id: &'static str,
+    },
     Separator,
 }
 
-use ReaderMenuEntry::{Check, Command, Listed, Separator};
+use ReaderMenuEntry::{Check, Command, Listed, Section, Separator};
 
 const fn command(id: &'static str, text: &'static str) -> ReaderMenuEntry {
     Command { id, text }
@@ -178,6 +185,7 @@ const TOOLS_MENU: &[ReaderMenuEntry] = &[
         id: "tools.annotate",
         text: "Annotate",
     },
+    Section { id: "tools.rotate" },
 ];
 
 const READER_MENUS: [&[ReaderMenuEntry]; 3] = [VIEW_MENU, GO_MENU, TOOLS_MENU];
@@ -222,6 +230,7 @@ fn build_reader_menu(
                 None::<&str>,
             )?)?,
             Listed { id, text } => submenu.append(&Submenu::with_id(app, id, text, true)?)?,
+            Section { .. } => {}
             Separator => submenu.append(&PredefinedMenuItem::separator(app)?)?,
         }
     }
@@ -345,13 +354,76 @@ fn is_listed_submenu(id: &str) -> bool {
         .any(|entry| matches!(entry, Listed { id: listed, .. } if *listed == id))
 }
 
+/// For an inline section: how many native items precede it in its menu (every
+/// entry before it builds exactly one item; sections end their menu).
+fn section_start(id: &str) -> Option<usize> {
+    READER_MENUS.iter().find_map(|entries| {
+        entries
+            .iter()
+            .position(|entry| matches!(entry, Section { id: section } if *section == id))
+    })
+}
+
+/// The reader menu holding a section, found through its first entry's item.
+fn section_menu(app: &AppHandle, id: &str) -> Option<Submenu<Wry>> {
+    let entries = READER_MENUS.iter().find(|entries| {
+        entries
+            .iter()
+            .any(|entry| matches!(entry, Section { id: section } if *section == id))
+    })?;
+    let first = entries.iter().find_map(|entry| match *entry {
+        Command { id, .. } | Check { id, .. } | Listed { id, .. } => Some(id),
+        Section { .. } | Separator => None,
+    })?;
+    app.menu()?.items().ok()?.into_iter().find_map(|item| {
+        let submenu = item.as_submenu()?.clone();
+        submenu
+            .items()
+            .ok()?
+            .iter()
+            .any(|child| child.id().0 == first)
+            .then_some(submenu)
+    })
+}
+
+/// Replaces an inline section's items: a separator and plain items, or nothing.
+fn set_section_items(
+    app: &AppHandle,
+    section_id: &str,
+    start: usize,
+    items: &[&ListedMenuItem],
+) -> Result<(), String> {
+    let Some(menu) = section_menu(app, section_id) else {
+        return Err(format!("{section_id} is not in the menu"));
+    };
+    for item in menu
+        .items()
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .skip(start)
+    {
+        menu.remove(&item).map_err(|e| e.to_string())?;
+    }
+    if items.is_empty() {
+        return Ok(());
+    }
+    menu.append(&PredefinedMenuItem::separator(app).map_err(|e| e.to_string())?)
+        .map_err(|e| e.to_string())?;
+    for item in items {
+        let entry = MenuItem::with_id(app, &item.id, &item.text, false, None::<&str>)
+            .map_err(|e| e.to_string())?;
+        menu.append(&entry).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 /// Items of a listed submenu must carry its id as their prefix, so they are
 /// forwarded as reader commands and cannot shadow other items.
 fn listed_items<'a>(
     submenu_id: &str,
     items: &'a [ListedMenuItem],
 ) -> Result<Vec<&'a ListedMenuItem>, String> {
-    if !is_listed_submenu(submenu_id) {
+    if !is_listed_submenu(submenu_id) && section_start(submenu_id).is_none() {
         return Err(format!("{submenu_id} is not a listed submenu"));
     }
     let prefix = format!("{submenu_id}.");
@@ -362,7 +434,8 @@ fn listed_items<'a>(
 }
 
 /// Replaces a listed submenu's items with check items, so the menu always
-/// shows exactly the TypeScript list (filter presets, verified tools).
+/// shows exactly the TypeScript list (filter presets, verified tools), or an
+/// inline section's items with plain items (Rotate).
 #[tauri::command]
 pub fn set_menu_submenu_items(
     app: AppHandle,
@@ -370,6 +443,9 @@ pub fn set_menu_submenu_items(
     items: Vec<ListedMenuItem>,
 ) -> Result<(), String> {
     let items = listed_items(&submenu_id, &items)?;
+    if let Some(start) = section_start(&submenu_id) {
+        return set_section_items(&app, &submenu_id, start, &items);
+    }
     let Some(MenuItemKind::Submenu(submenu)) = app_menu_item(&app, &submenu_id) else {
         return Err(format!("{submenu_id} is not in the menu"));
     };
@@ -568,6 +644,7 @@ mod tests {
             .iter()
             .map(|entry| match *entry {
                 Command { text, .. } | Check { text, .. } | Listed { text, .. } => text,
+                Section { .. } => "[section]",
                 Separator => "-",
             })
             .collect()
@@ -578,7 +655,9 @@ mod tests {
             .iter()
             .flat_map(|entries| entries.iter())
             .filter_map(|entry| match *entry {
-                Command { id, .. } | Check { id, .. } | Listed { id, .. } => Some(id),
+                Command { id, .. } | Check { id, .. } | Listed { id, .. } | Section { id } => {
+                    Some(id)
+                }
                 Separator => None,
             })
             .collect()
@@ -617,7 +696,10 @@ mod tests {
             titles(GO_MENU),
             ["Previous Page", "Next Page", "-", "Go to Page\u{2026}"]
         );
-        assert_eq!(titles(TOOLS_MENU), ["Text Selection", "Annotate"]);
+        assert_eq!(
+            titles(TOOLS_MENU),
+            ["Text Selection", "Annotate", "[section]"]
+        );
     }
 
     #[test]
@@ -741,6 +823,40 @@ mod tests {
         );
         assert!(listed_items("view.appearance", &[]).is_ok());
         assert!(listed_items("view.zoom.in", &items).is_err());
+    }
+
+    #[test]
+    fn rotate_items_are_listed_inline_at_the_end_of_the_tools_menu() {
+        // Rust cannot see PAGE_ROTATION_VERIFIED: TypeScript fills the section
+        // only once Page Rotation is verified, so the menu has no Rotate item
+        // until then.
+        assert_eq!(section_start("tools.rotate"), Some(2));
+        assert_eq!(section_start("tools.annotate"), None);
+        assert_eq!(section_start("tools.text-selection"), None);
+        let items: Vec<ListedMenuItem> = serde_json::from_value(serde_json::json!([
+            { "id": "tools.rotate.left", "text": "Rotate Left" },
+            { "id": "tools.annotate.highlight", "text": "Highlight" },
+            { "id": "tools.rotate.right", "text": "Rotate Right" }
+        ]))
+        .unwrap();
+        let accepted: Vec<_> = listed_items("tools.rotate", &items)
+            .unwrap()
+            .into_iter()
+            .map(|item| item.id.as_str())
+            .collect();
+        assert_eq!(accepted, ["tools.rotate.left", "tools.rotate.right"]);
+    }
+
+    #[test]
+    fn sections_end_their_menu() {
+        for entries in READER_MENUS {
+            if let Some(position) = entries
+                .iter()
+                .position(|entry| matches!(entry, Section { .. }))
+            {
+                assert_eq!(position, entries.len() - 1);
+            }
+        }
     }
 
     #[test]
