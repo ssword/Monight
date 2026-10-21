@@ -100,7 +100,6 @@ export interface DocumentWorkspace {
   activeRenderingState(): ReturnType<DocumentRendering['getState']> | null;
   activeReadingPosition(): { filePath: string; readingPosition: ReadingPosition } | null;
   viewTransform(filePath: string): DocumentViewTransform | null;
-  openActiveSearch(): void;
   /** The active Document's markup tool and why editing is unavailable, if it is. */
   activeMarkup(): ActiveMarkupState | null;
   /** Chooses a markup tool on the active Document, or null for text selection. */
@@ -553,9 +552,6 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
       rendering: surface.rendering,
       presentation: {
         snapshot: () => surface.rendering.getState(),
-        ...(surface.rendering.openSearch
-          ? { openSearch: () => surface.rendering.openSearch?.() }
-          : {}),
       },
     };
   };
@@ -843,10 +839,6 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
         viewMode: state.viewMode,
         filterCss: buildFilterCSS(visualState.filterSettings),
       };
-    },
-    openActiveSearch() {
-      const filePath = options.snapshot().activeDocumentPath;
-      if (filePath) presented.get(filePath)?.rendering.openSearch?.();
     },
     activeMarkup() {
       const filePath = options.snapshot().activeDocumentPath;

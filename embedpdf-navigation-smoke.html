@@ -6,12 +6,27 @@
     <title>EmbedPDF navigation contract</title>
     <style>
       html, body { margin: 0; height: 100%; }
-      #pdf-container { position: relative; width: 100%; height: calc(100% - 40px); }
+      #document-workspace { display: flex; height: calc(100% - 40px); }
+      #pdf-container { position: relative; flex: 1; min-width: 0; height: 100%; }
     </style>
   </head>
   <body data-status="loading">
+    <div id="toolbar">
+      <button id="sidebar-toggle" type="button">Sidebar</button>
+      <button id="sidebar-mode-toggle" type="button" aria-expanded="false">Mode</button>
+      <div id="sidebar-mode-menu" class="hidden" role="menu">
+        <button type="button" role="menuitemradio" data-sidebar-mode="hidden">Hide Sidebar</button>
+        <button type="button" role="menuitemradio" data-sidebar-mode="thumbnails">Thumbnails</button>
+      </div>
+      <input id="toolbar-search" type="search" aria-label="Search" />
+    </div>
     <div id="tab-container"></div>
-    <div id="pdf-container"></div>
+    <div id="document-workspace">
+      <aside id="reader-sidebar" class="reader-sidebar" hidden>
+        <div class="reader-sidebar-content"></div>
+      </aside>
+      <div id="pdf-container"></div>
+    </div>
     <script type="module" src="/src/embedpdf-navigation-smoke.ts"></script>
   </body>
 </html>

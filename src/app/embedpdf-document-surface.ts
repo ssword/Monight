@@ -105,7 +105,6 @@ export function createEmbedPdfDocumentSurfaceFactory({
           viewMode: openedViewer.viewMode(),
         };
       },
-      openSearch: () => openedViewer.openSearch(),
       activeAnnotationTool: () => openedViewer.activeAnnotationTool(),
       setActiveAnnotationTool: (toolId) => {
         if (destroyPromise) return;

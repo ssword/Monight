@@ -419,7 +419,6 @@ function createModules(
             filePath: '/docs/report.pdf',
             readingPosition: { page: 4, location: 0.5 },
           })),
-          openActiveSearch: vi.fn(),
           setAnnotationDisplayName: options.annotationDisplayNameChanged ?? vi.fn(),
         };
       },

@@ -10,6 +10,7 @@ import {
   embedPdfLinkTarget,
   embedPdfLinkTargetAtGeometry,
   embedPdfPageNumberForEventPath,
+  embedPdfSearchHitLocation,
   restoreEmbedPdfReadingPositionCoordinates,
 } from '../app/embedpdf-navigation-geometry';
 import { createEmbedPdfViewerConfig } from '../app/embedpdf-offline-configuration';
@@ -26,7 +27,6 @@ const createViewerRuntime = (
 ): EmbedPdfViewerRuntime => ({
   preparePrintDocument: vi.fn(async () => new Uint8Array([1, 2, 3])),
   open: vi.fn(async () => undefined),
-  openSearch: vi.fn(),
   pageCount: () => 2,
   currentPage: () => 1,
   currentZoom: () => 1,
@@ -93,6 +93,19 @@ describe('EmbedPDF Document surface', () => {
         location: 0.25,
       }),
     ).toEqual({ x: 100, y: 600 });
+  });
+
+  it('locates a search hit at the top of its first highlight rect in reading order', () => {
+    const size = { width: 400, height: 600 };
+    const rects = [
+      { origin: { x: 100, y: 300 }, size: { width: 50, height: 12 } },
+      { origin: { x: 40, y: 150 }, size: { width: 80, height: 12 } },
+    ];
+    expect(embedPdfSearchHitLocation(size, 0, rects)).toBe(0.25);
+    expect(embedPdfSearchHitLocation(size, 1, rects)).toBe(0.1);
+    expect(embedPdfSearchHitLocation(size, 2, rects)).toBe(0.48);
+    expect(embedPdfSearchHitLocation(size, 3, rects)).toBe(0.625);
+    expect(embedPdfSearchHitLocation(size, 0, [])).toBe(0);
   });
 
   it('maps every retained View Mode to a distinct EmbedPDF layout', () => {
@@ -375,12 +388,13 @@ describe('EmbedPDF Document surface', () => {
         'rotate',
         // Monight's own sidebar replaces the ready-made thumbnails and outline.
         'panel-sidebar',
+        // Monight's toolbar Search field and sidebar replace the ready-made search panel.
+        'panel-search',
       ]),
     );
     // Only the replaced controls are hidden; every other ready-made control stays.
     for (const retained of [
       'panel',
-      'panel-search',
       'page',
       'spread',
       'history',
@@ -831,15 +845,14 @@ describe('EmbedPDF Document surface', () => {
     });
 
     surface.rendering.applyFilter('brightness(0.8)');
-    surface.rendering.openSearch?.();
     await surface.rendering.setViewMode('continuous');
     await surface.rendering.setZoomIntent({ kind: 'fit-width' });
 
     expect(runtime.applyFilter).toHaveBeenCalledWith('brightness(0.8)');
-    expect(runtime.openSearch).toHaveBeenCalledOnce();
     expect(runtime.setViewMode).toHaveBeenCalledWith('continuous');
     expect(runtime.setZoomIntent).toHaveBeenCalledWith({ kind: 'fit-width' });
     expect(PRESETS.default).toBeDefined();
+    expect('openSearch' in surface.rendering).toBe(false);
   });
 
   it('ignores cancelled and disposed visual projections through the rendering contract', async () => {

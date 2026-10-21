@@ -144,8 +144,8 @@ export async function verifyReading(browser, origin) {
       .filter(({ visible }) => visible)
       .map(({ label }) => label),
   );
-  // Monight's own sidebar replaces the ready-made Sidebar (thumbnails and outline).
-  for (const hidden of ['Zoom Menu', 'Zoom Out', 'Zoom In', 'Sidebar']) {
+  // Monight's toolbar zoom group, Search field and sidebar replace these ready-made controls.
+  for (const hidden of ['Zoom Menu', 'Zoom Out', 'Zoom In', 'Search', 'Sidebar']) {
     assert.ok(
       !readyMadeControls.includes(hidden),
       `Ready-made ${hidden} must be hidden: ${readyMadeControls}`,
@@ -156,7 +156,6 @@ export async function verifyReading(browser, origin) {
     'Page Settings',
     'Toggle Pan Mode',
     'Toggle Pointer Mode',
-    'Search',
     'Comment',
     'Previous Page',
     'Next Page',
