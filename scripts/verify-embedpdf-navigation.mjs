@@ -90,9 +90,15 @@ export async function verifyNavigation(browser, origin) {
     'Caret keys inside the ready-made search field must not become Reader Actions',
   );
   await viewer.getByRole('button', { name: 'Sidebar', exact: true }).click();
-  // The pinned snippet renders icon-only, unnamed Thumbnails / Outline tabs.
-  await viewer.getByRole('tab').nth(1).click();
+  // Monight's own sidebar replaces the ready-made Thumbnails tab; the outline remains.
   await viewer.locator('.outline-tree').waitFor({ state: 'visible' });
+  const readyMadeSidebar = viewer.locator('[data-sidebar-id="sidebar-panel"]');
+  assert.equal(await readyMadeSidebar.getByRole('tab').count(), 0);
+  assert.equal(
+    await readyMadeSidebar.locator('img[src^="blob:"]').count(),
+    0,
+    'The ready-made thumbnail panel must not be reachable',
+  );
   let popupOpened = false;
   page.on('popup', async (popup) => {
     popupOpened = true;
@@ -142,8 +148,9 @@ export async function verifyNavigation(browser, origin) {
   assert.equal(retained.outline[0].items[0].pageNumber, 3);
   assert.ok(retained.thumbnail[0] > 0 && retained.thumbnail[0] <= 100 && retained.thumbnail[1] > 0);
   assert.equal(retained.unchanged, true);
-  await viewer.getByRole('tab').first().click();
-  await viewer.locator('[data-sidebar-id="sidebar-panel"]').getByText('3', { exact: true }).click();
+  await page.evaluate(async () => {
+    await window.navigationSmoke.reader.dispatch({ type: 'goToPage', page: 3 });
+  });
   await page.waitForFunction(
     () => window.navigationSmoke.reader.snapshot().documents[0].readingPosition.page === 3,
   );
