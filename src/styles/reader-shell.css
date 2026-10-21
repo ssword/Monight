@@ -29,6 +29,16 @@
   border-bottom: 1px solid var(--border-color);
 }
 
+/* macOS overlay title bar: the traffic lights sit in the toolbar's leading
+   inset, over the sidebar column. Windows and Linux keep a native title bar. */
+:root[data-window-chrome="overlay"] {
+  --traffic-light-inset: 78px;
+}
+
+:root[data-window-chrome="overlay"] #toolbar {
+  padding-left: calc(var(--traffic-light-inset) + 8px);
+}
+
 .toolbar-title {
   display: flex;
   flex-direction: column;

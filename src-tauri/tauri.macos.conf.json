@@ -1,5 +1,25 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Monight (墨页)",
+        "width": 550,
+        "height": 420,
+        "minWidth": 565,
+        "minHeight": 200,
+        "resizable": true,
+        "visible": false,
+        "center": true,
+        "decorations": true,
+        "transparent": false,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "trafficLightPosition": { "x": 18, "y": 20 }
+      }
+    ]
+  },
   "bundle": {
     "icon": [
       "icons/32x32.png",

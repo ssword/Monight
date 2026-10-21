@@ -27,6 +27,7 @@ import { PresentationController } from './app/presentation-controller';
 import { restoreReadingSessionAtStartup } from './app/startup-restoration';
 import { type ExternalOpenPayload, setupTauriListeners } from './app/tauri-events';
 import {
+  applyWindowChrome,
   renderRecentFiles,
   showSplash,
   showViewer,
@@ -172,8 +173,9 @@ const applyWindowAfterOpen = async (): Promise<void> => {
 };
 
 const refreshAfterOpen = async (): Promise<void> => {
-  const hasDocument = (readerActions?.snapshot().documents.length ?? 0) > 0;
-  updateTabBarVisibility(hasDocument);
+  const documentCount = readerActions?.snapshot().documents.length ?? 0;
+  const hasDocument = documentCount > 0;
+  updateTabBarVisibility(documentCount);
   await updatePrintMenuState(hasDocument);
   await applyWindowAfterOpen();
 };
@@ -332,8 +334,9 @@ const restoreStartupReadingSession = async (
     onForegroundReady: async () => {
       if (applicationShutdown?.isShutdownRequested()) return;
       showViewer();
-      const hasDocument = (readerActions?.snapshot().documents.length ?? 0) > 0;
-      updateTabBarVisibility(hasDocument);
+      const documentCount = readerActions?.snapshot().documents.length ?? 0;
+      const hasDocument = documentCount > 0;
+      updateTabBarVisibility(documentCount);
       await updatePrintMenuState(hasDocument);
       await applyWindowAfterOpen();
       const currentWindow = getCurrentWebviewWindow();
@@ -347,8 +350,9 @@ const restoreStartupReadingSession = async (
     reportFailure: (message) => showToast(message, 'error'),
   });
   reportDocumentIntakeOutcomes(result.explicitRequestResult);
-  const hasDocument = (readerActions?.snapshot().documents.length ?? 0) > 0;
-  updateTabBarVisibility(hasDocument);
+  const documentCount = readerActions?.snapshot().documents.length ?? 0;
+  const hasDocument = documentCount > 0;
+  updateTabBarVisibility(documentCount);
   await updatePrintMenuState(hasDocument);
 
   return readerActions?.snapshot().documents.length ?? 0;
@@ -535,7 +539,7 @@ export async function initializeApplication(modules: ApplicationModules): Promis
         updateActivePresetButton(activeDocument.visualState.filterSettings);
       }
       const hasDocument = snapshot.documents.length > 0;
-      updateTabBarVisibility(hasDocument);
+      updateTabBarVisibility(snapshot.documents.length);
       void updatePrintMenuState(hasDocument);
     });
     documentWorkspace.project(readerActions.snapshot());
@@ -582,7 +586,7 @@ export async function initializeApplication(modules: ApplicationModules): Promis
       }
     };
     const updateTabBar = () =>
-      updateTabBarVisibility((readerActions?.snapshot().documents.length ?? 0) > 0);
+      updateTabBarVisibility(readerActions?.snapshot().documents.length ?? 0);
 
     // Register all action handlers
     registerKeybindActions({
@@ -622,6 +626,7 @@ export async function initializeApplication(modules: ApplicationModules): Promis
       versionElement.textContent = `v${info.version} • Tauri ${info.tauriVersion}`;
     }
 
+    applyWindowChrome(document, isMac);
     hydrateChromeIcons(document);
 
     // Setup event listeners
