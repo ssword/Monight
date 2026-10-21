@@ -74,4 +74,7 @@ stamped with a later version while the gate was closed still applies it, because
 actions is stored yet. As with every revision, a default that collides with a chord the reader
 chose is dropped, and once stored the Rotate bindings are the reader's.
 
-Deferred: the Thumbnails sidebar does not yet re-render a page's thumbnail after it is rotated.
+The Thumbnails sidebar re-renders a page's thumbnail whenever its Page Rotation changes (a
+rotation or its undo/redo): the rendering state carries each page's live rotation
+(`DocumentRenderingState.pageRotations`), and the Thumbnails view re-renders only the pages
+whose rotation differs from the last refresh.

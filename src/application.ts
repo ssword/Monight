@@ -536,6 +536,7 @@ function mountReaderSidebar(
         currentPage: rendering.currentPage,
         filterSettings: visualState?.filterSettings ?? defaultVisualState().filterSettings,
         query: readerActions?.query(filePath) ?? null,
+        ...(rendering.pageRotations ? { pageRotations: rendering.pageRotations } : {}),
       };
     },
   });

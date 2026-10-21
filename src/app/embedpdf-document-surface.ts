@@ -100,6 +100,7 @@ export function createEmbedPdfDocumentSurfaceFactory({
         return {
           currentPage: openedViewer.currentPage(),
           totalPages: openedViewer.pageCount(),
+          pageRotations: openedViewer.pageRotations(),
           zoom: openedViewer.currentZoom(),
           zoomIntent: openedViewer.zoomIntent(),
           fileName: title,

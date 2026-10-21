@@ -87,6 +87,8 @@ export interface EmbedPdfViewerRuntime {
   /** Marks the text selection with a text-markup tool; false when nothing is selected. */
   markupSelection(toolId: string, defaults: AnnotationToolDefaults): boolean;
   pageCount(): number;
+  /** Each page's live Page Rotation (quarter turns), in page order. */
+  pageRotations(): readonly number[];
   currentPage(): number;
   currentZoom(): number;
   zoomIntent(): ZoomIntent;
@@ -634,6 +636,7 @@ export async function createEmbedPdfViewerRuntime({
       return true;
     },
     pageCount: () => documentObject?.pageCount ?? 0,
+    pageRotations: () => documentObject?.pages.map(({ rotation }) => rotation) ?? [],
     currentPage: currentPageNumber,
     currentZoom: () => zoomScope.getState().currentZoomLevel,
     zoomIntent: () => zoomIntentFromEmbedPdfLevel(zoomScope.getState().zoomLevel),

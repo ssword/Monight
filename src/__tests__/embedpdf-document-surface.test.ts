@@ -28,6 +28,7 @@ const createViewerRuntime = (
   preparePrintDocument: vi.fn(async () => new Uint8Array([1, 2, 3])),
   open: vi.fn(async () => undefined),
   pageCount: () => 2,
+  pageRotations: () => [0, 0],
   currentPage: () => 1,
   currentZoom: () => 1,
   zoomIntent: () => ({ kind: 'manual', scale: 1 }),
@@ -251,6 +252,7 @@ describe('EmbedPDF Document surface', () => {
     let callbacks: DocumentSurfaceCallbacks | undefined;
     const runtime = createViewerRuntime({
       pageCount: () => 2,
+      pageRotations: () => [0, 1],
       currentPage: () => currentPage,
       currentZoom: () => zoom,
       zoomIntent: () => ({ kind: 'manual', scale: zoom }),
@@ -324,6 +326,7 @@ describe('EmbedPDF Document surface', () => {
       zoom: 1.5,
       fileName: 'report.pdf',
       filePath: '/docs/report.pdf',
+      pageRotations: [0, 1],
     });
     expect(surface.rendering.getReadingPosition()).toEqual({ page: 2, location: 0 });
     expect(callbacks).toBeDefined();
