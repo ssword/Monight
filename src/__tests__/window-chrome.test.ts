@@ -190,6 +190,17 @@ describe('platform title bar', () => {
     expect(capability.permissions).toContain('core:window:allow-start-dragging');
   });
 
+  it('never drags the window from a popover opened over the toolbar', () => {
+    loadAppShell();
+    const popovers = Array.from(
+      document.querySelectorAll<HTMLElement>('#toolbar [role="dialog"], #toolbar [role="menu"]'),
+    );
+    expect(popovers.length).toBeGreaterThan(0);
+    for (const popover of popovers) {
+      expect(popover.dataset.tauriDragRegion, popover.id).toBe('false');
+    }
+  });
+
   it('marks the overlay title bar on macOS and the native title bar elsewhere', () => {
     applyWindowChrome(document, true);
     expect(document.documentElement.dataset.windowChrome).toBe('overlay');
