@@ -143,7 +143,7 @@ describe('Page Rotation Reader Action', () => {
     await expect(reader.captureRecoveryDraft(DOCUMENT.filePath)).resolves.toMatchObject({
       status: 'performed',
     });
-    const draft = vi.mocked(recoveryDraftAdapter.write).mock.calls.at(-1)?.[0];
+    const draft = vi.mocked(recoveryDraftAdapter.write).mock.lastCall?.[0];
     expect(draft).toMatchObject({ documentPath: DOCUMENT.filePath, sourceVersion: 'source-v1' });
     expect(rotationsIn(draft?.bytes)).toEqual([90, 0, 90]);
 
@@ -159,7 +159,9 @@ describe('Page Rotation Reader Action', () => {
     await expect(reader.dispatch({ type: 'saveDocument' })).resolves.toMatchObject({
       status: 'performed',
     });
-    const written = vi.mocked(pdfSaveAdapter.writeOriginal).mock.calls.at(-1);
+    const written = vi.mocked(
+      pdfSaveAdapter.writeOriginal as NonNullable<NativePdfSaveAdapter['writeOriginal']>,
+    ).mock.lastCall;
     expect(written?.[0]).toBe('source-token');
     expect(rotationsIn(written?.[1])).toEqual([90, 0, 0]);
     expect(reader.hasUnsavedPdfWork()).toBe(false);

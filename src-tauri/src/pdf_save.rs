@@ -1901,6 +1901,58 @@ mod tests {
     }
 
     #[test]
+    fn real_embedpdf_page_rotation_saves_with_its_annotations_unchanged() {
+        let original = include_bytes!("../tests/fixtures/native-annotations/original.pdf");
+        let rotated = include_bytes!("../tests/fixtures/native-annotations/rotated.pdf");
+        let dir = directory();
+        let source = dir.join("source.pdf");
+        std::fs::write(&source, original).unwrap();
+        let writer = PdfSave::default();
+        let token = writer.capture_source(&source, original).unwrap();
+        let reopened = writer
+            .write_original(&token, &prepare_save(rotated).unwrap())
+            .unwrap();
+        let document = lopdf::Document::load_mem(&reopened).unwrap();
+        let rotations: Vec<_> = document
+            .get_pages()
+            .values()
+            .map(|id| {
+                document
+                    .get_dictionary(*id)
+                    .unwrap()
+                    .get(b"Rotate")
+                    .map_or(0, |rotation| rotation.as_i64().unwrap())
+            })
+            .collect();
+        assert_eq!(rotations, vec![90, 0, 0]);
+        let page = document
+            .get_dictionary(*document.get_pages().get(&1).unwrap())
+            .unwrap();
+        let (_, annots) = document.dereference(page.get(b"Annots").unwrap()).unwrap();
+        let subtypes: Vec<_> = annots
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|entry| {
+                let (_, annotation) = document.dereference(entry).unwrap();
+                annotation
+                    .as_dict()
+                    .unwrap()
+                    .get(b"Subtype")
+                    .unwrap()
+                    .as_name()
+                    .unwrap()
+                    .to_vec()
+            })
+            .collect();
+        for subtype in [b"Highlight".as_slice(), b"Text"] {
+            assert!(subtypes.iter().any(|s| s == subtype));
+        }
+        assert_eq!(subtypes.iter().filter(|s| *s == b"Link").count(), 2);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn real_embedpdf_native_annotations_survive_disk_round_trip_without_content_changes() {
         let original = include_bytes!("../tests/fixtures/native-annotations/original.pdf");
         let annotated = include_bytes!("../tests/fixtures/native-annotations/annotated.pdf");
