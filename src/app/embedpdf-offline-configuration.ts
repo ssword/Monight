@@ -22,6 +22,8 @@ const DISABLED_CATEGORIES = [
   'document-export',
   'document-protect',
   'document-capture',
+  // Monight's toolbar zoom group replaces the ready-made zoom controls.
+  'zoom',
   // Reading Session supports single, continuous, and odd-page spreads.
   'spread-even',
 ] as const;

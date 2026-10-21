@@ -37,6 +37,7 @@
   --accent-color-soft: var(--brand-cream-soft);
   --accent-color-hover: #ffc978;
   --accent-glow: rgba(255, 212, 140, 0.3);
+  --accent-ink: var(--brand-cream); /* accent used as text or glyph colour */
 
   /* Typography */
   --font-family:
@@ -44,6 +45,39 @@
   --font-size-base: 16px;
   --font-size-large: 24px;
   --font-size-xlarge: 36px;
+
+  /* Chrome geometry — Preview proportions */
+  --toolbar-height: 52px;
+  --capsule-radius: 7px;
+  --chrome-icon-color: var(--text-secondary);
+  --chrome-hover: rgba(251, 253, 255, 0.08);
+  --chrome-pressed: rgba(251, 253, 255, 0.14);
+  --capsule-bg: rgba(251, 253, 255, 0.06);
+
+  color-scheme: light dark;
+}
+
+/* Light appearance — 纸白 chrome with 墨夜蓝 ink. Filters stay on page content. */
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg-primary: #dde5ee; /* reading desk: 蓝灰 tint on 纸白 */
+    --bg-secondary: var(--brand-paper); /* chrome: toolbar, tab bar */
+    --bg-elevated: var(--brand-paper); /* floating: dialogs, popovers */
+    --text-primary: var(--brand-night);
+    --text-secondary: var(--brand-blue);
+    --text-on-accent: var(--brand-night);
+    --border-color: #c9d6e4; /* 蓝灰 divider on 纸白 */
+    --accent-color: var(--brand-cream);
+    --accent-color-soft: var(--brand-cream-soft);
+    --accent-color-hover: #ffc978;
+    --accent-glow: rgba(255, 212, 140, 0.45);
+    /* 月光暖米 deepened so accent glyphs stay legible on 纸白 */
+    --accent-ink: color-mix(in srgb, var(--brand-cream) 55%, var(--brand-night));
+    --chrome-icon-color: var(--brand-blue);
+    --chrome-hover: rgba(12, 24, 44, 0.06);
+    --chrome-pressed: rgba(12, 24, 44, 0.12);
+    --capsule-bg: rgba(12, 24, 44, 0.04);
+  }
 }
 
 body {

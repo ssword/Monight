@@ -369,8 +369,24 @@ describe('EmbedPDF Document surface', () => {
         'document-print',
         'document-export',
         'document-protect',
+        // Monight's toolbar zoom group replaces the ready-made zoom controls.
+        'zoom',
       ]),
     );
+    // Only the replaced controls are hidden; every other ready-made control stays.
+    for (const retained of [
+      'panel',
+      'panel-sidebar',
+      'panel-search',
+      'page',
+      'rotate',
+      'spread',
+      'history',
+      'selection-copy',
+      'document-fullscreen',
+    ]) {
+      expect(config.disabledCategories).not.toContain(retained);
+    }
     expect(config.permissions).toEqual({
       enforceDocumentPermissions: true,
       overrides: {

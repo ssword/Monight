@@ -97,6 +97,12 @@ export function updateUI(
   if (fileName) {
     fileName.textContent = activeDocument.title || 'No file loaded';
   }
+
+  const pageStatus = document.getElementById('page-status');
+  if (pageStatus) {
+    pageStatus.textContent =
+      state.totalPages > 0 ? `Page ${state.currentPage} of ${state.totalPages}` : '';
+  }
 }
 
 // Update keyboard shortcut hints based on platform

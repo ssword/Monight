@@ -131,7 +131,49 @@ export async function verifyReading(browser, origin) {
       const registry = await container.registry;
       registry.getPlugin('commands').provides().execute(id, undefined, 'ui');
     }, id);
+  // Monight's toolbar zoom group replaces the ready-made zoom controls; every
+  // other ready-made control stays visible.
+  const readyMadeControls = await viewer.evaluate((surface) =>
+    Array.from(
+      surface.querySelector('embedpdf-container').shadowRoot.querySelectorAll('button'),
+      (button) => ({
+        label: button.getAttribute('aria-label') ?? '',
+        visible: button.checkVisibility() && button.getBoundingClientRect().width > 0,
+      }),
+    )
+      .filter(({ visible }) => visible)
+      .map(({ label }) => label),
+  );
+  for (const hidden of ['Zoom Menu', 'Zoom Out', 'Zoom In']) {
+    assert.ok(
+      !readyMadeControls.includes(hidden),
+      `Ready-made ${hidden} must be hidden: ${readyMadeControls}`,
+    );
+  }
+  for (const retained of [
+    'Document Menu',
+    'Sidebar',
+    'Page Settings',
+    'Toggle Pan Mode',
+    'Toggle Pointer Mode',
+    'Search',
+    'Comment',
+    'Previous Page',
+    'Next Page',
+  ]) {
+    assert.ok(
+      readyMadeControls.includes(retained),
+      `Ready-made ${retained} must remain: ${readyMadeControls}`,
+    );
+  }
   await command('zoom:in');
+  await page.waitForTimeout(400);
+  assert.equal(
+    await page.evaluate(() => window.readingSmoke.workspace.activeRenderingState().zoom),
+    1.2,
+    'The hidden ready-made zoom command must not run',
+  );
+  await page.evaluate(() => window.readingSmoke.reader.dispatch({ type: 'zoomIn' }));
   await page.waitForTimeout(400);
   const viewerZoom = await page.evaluate(() => ({
     live: window.readingSmoke.workspace.activeRenderingState().zoomIntent,
@@ -141,7 +183,7 @@ export async function verifyReading(browser, origin) {
   assert.deepEqual(
     viewerZoom.saved,
     viewerZoom.live,
-    'Ready-made relative zoom must persist the resulting scale',
+    'Relative zoom must persist the resulting scale',
   );
   await command('rotate:clockwise');
   await page.waitForTimeout(400);
