@@ -17,9 +17,12 @@ import {
   currentKeybindPlatform,
   defaultKeybinds,
   effectiveKeybinds,
-  KEYBIND_DEFAULTS_VERSION,
+  KEYBIND_GATES,
   type KeybindConfig,
+  type KeybindGates,
   type KeybindPlatform,
+  keybindDefaultsVersion,
+  keybindsNeedUpgrade,
   migrateKeybinds,
 } from './keybind-defaults';
 
@@ -89,8 +92,11 @@ const DEFAULT_GENERAL: MoonightSettings['general'] = {
 };
 
 /** Default settings for a platform; shortcuts differ between macOS and the others. */
-export function defaultSettings(platform: KeybindPlatform): MoonightSettings {
-  return { general: { ...DEFAULT_GENERAL }, keybinds: defaultKeybinds(platform) };
+export function defaultSettings(
+  platform: KeybindPlatform,
+  gates: KeybindGates = KEYBIND_GATES,
+): MoonightSettings {
+  return { general: { ...DEFAULT_GENERAL }, keybinds: defaultKeybinds(platform, gates) };
 }
 
 /** Default settings for the platform this window runs on. */
@@ -131,20 +137,27 @@ function migrateLegacyReadingSession(session: ReadingSession | undefined): Persi
 export interface SettingsManagerOptions {
   /** Selects the platform-dependent default shortcuts; detected when omitted. */
   readonly platform?: KeybindPlatform;
+  /** Offers the Rotate shortcuts; PAGE_ROTATION_VERIFIED when omitted. */
+  readonly pageRotationVerified?: boolean;
 }
 
 /** Persistent storage split by concern and constrained by window ownership. */
 export class SettingsManager<Owner extends SettingsOwner = 'main'> {
   private store: Store | null = null;
   private readonly platform: KeybindPlatform;
+  private readonly gates: KeybindGates;
   private settings: MoonightSettings;
 
   constructor(
     private readonly owner: Owner = 'main' as Owner,
-    { platform = currentKeybindPlatform() }: SettingsManagerOptions = {},
+    {
+      platform = currentKeybindPlatform(),
+      pageRotationVerified = KEYBIND_GATES.pageRotation,
+    }: SettingsManagerOptions = {},
   ) {
     this.platform = platform;
-    this.settings = defaultSettings(platform);
+    this.gates = { pageRotation: pageRotationVerified };
+    this.settings = defaultSettings(platform, this.gates);
   }
 
   private async initStore(): Promise<Store> {
@@ -165,12 +178,17 @@ export class SettingsManager<Owner extends SettingsOwner = 'main'> {
   private async ensureKeybindDefaults(store: Store): Promise<void> {
     if (this.owner !== 'main') return;
     const { keybinds, version } = await this.storedKeybinds(store);
-    if (version >= KEYBIND_DEFAULTS_VERSION) return;
+    if (!keybindsNeedUpgrade(keybinds, version, this.gates)) return;
     await store.set(
       'keybinds',
-      keybinds ? migrateKeybinds(keybinds, version, this.platform) : defaultKeybinds(this.platform),
+      keybinds
+        ? migrateKeybinds(keybinds, version, this.platform, this.gates)
+        : defaultKeybinds(this.platform, this.gates),
     );
-    await store.set(KEYBIND_DEFAULTS_VERSION_KEY, KEYBIND_DEFAULTS_VERSION);
+    await store.set(
+      KEYBIND_DEFAULTS_VERSION_KEY,
+      Math.max(version, keybindDefaultsVersion(this.gates)),
+    );
     await store.save();
   }
 
@@ -203,7 +221,7 @@ export class SettingsManager<Owner extends SettingsOwner = 'main'> {
         ...legacyGeneral,
       },
       // Legacy keybinds hold the first defaults; ensureKeybindDefaults upgrades them.
-      keybinds: storedKeybinds ?? legacy?.keybinds ?? defaultKeybinds(this.platform),
+      keybinds: storedKeybinds ?? legacy?.keybinds ?? defaultKeybinds(this.platform, this.gates),
       readingSession:
         (await store.get<PersistedReadingSession>('readingSession')) ??
         migrateLegacyReadingSession(legacy?.lastSession),
@@ -215,7 +233,7 @@ export class SettingsManager<Owner extends SettingsOwner = 'main'> {
     await store.set('general', values.general);
     await store.set('keybinds', values.keybinds);
     if (!storedKeybinds && !legacy?.keybinds) {
-      await store.set(KEYBIND_DEFAULTS_VERSION_KEY, KEYBIND_DEFAULTS_VERSION);
+      await store.set(KEYBIND_DEFAULTS_VERSION_KEY, keybindDefaultsVersion(this.gates));
     }
     await store.set('readingSession', values.readingSession);
     await store.set('recentFiles', values.recentFiles);
@@ -242,13 +260,13 @@ export class SettingsManager<Owner extends SettingsOwner = 'main'> {
             mergedGeneral.annotationDisplayName,
           ),
         },
-        keybinds: effectiveKeybinds(keybinds, version, this.platform),
+        keybinds: effectiveKeybinds(keybinds, version, this.platform, this.gates),
         ...(lastFilter ? { lastFilter } : {}),
       };
       return structuredClone(this.settings);
     } catch (error) {
       console.error('Error loading settings:', error);
-      return defaultSettings(this.platform);
+      return defaultSettings(this.platform, this.gates);
     }
   }
 
@@ -309,7 +327,7 @@ export class SettingsManager<Owner extends SettingsOwner = 'main'> {
 
   async reset(): Promise<void> {
     if (this.owner !== 'settings') throw new Error('Only the Settings window can reset settings');
-    const defaults = defaultSettings(this.platform);
+    const defaults = defaultSettings(this.platform, this.gates);
     await this.writeConcern('general', defaults.general);
     await this.writeConcern('keybinds', defaults.keybinds);
     this.settings = defaults;
