@@ -41,7 +41,12 @@ checked on each CI run:
   with the selector's subtype, contents, and author; checks its Rect (and QuadPoints for
   markup) against the inventory within `geometryTolerancePoints`; selects it, edits its
   contents, exports, reopens, deletes it, and exports again. Other Annotations must be
-  unchanged throughout.
+  unchanged throughout. The same contract checks the Highlights and Notes sidebar (#107):
+  at every stage it must list exactly the inventory's Highlight, Underline, StrikeOut,
+  Squiggly, and Text Annotations by page and author, follow live edits, deletions, and a
+  new note, and scroll to and select an entry when it is clicked. The unsupported fixture
+  is opened read-only and must still list its notes and highlights while leaving out its
+  Preview `/Square` or Acrobat `/Ink`.
 - **Rust** (`src-tauri/src/external_reader_contract.rs`, run by `cargo test` on all three
   platforms): asserts the observed classification of both fixtures, that native Save
   accepts both exports over the supported fixture without changing its Document Content

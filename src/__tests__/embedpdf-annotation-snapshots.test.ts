@@ -68,7 +68,7 @@ describe('EmbedPDF Annotation snapshots', () => {
       id: 'highlight',
       kind: 'highlight',
       pageNumber: 1,
-      readingPosition: { page: 1, location: 0.25 },
+      readingPosition: { page: 1, location: 0.22 },
       author: 'Andrew Chen',
       contents: 'Preview native highlight 75',
       color: '#FFCD45',
@@ -98,9 +98,9 @@ describe('EmbedPDF Annotation snapshots', () => {
     );
 
     expect(snapshots.map(({ id, readingPosition }) => [id, readingPosition])).toEqual([
-      ['upper', { page: 1, location: 0.1 }],
-      ['lower', { page: 1, location: 0.75 }],
-      ['page-2', { page: 2, location: 0.25 }],
+      ['upper', { page: 1, location: 0.07 }],
+      ['lower', { page: 1, location: 0.72 }],
+      ['page-2', { page: 2, location: 0.22 }],
     ]);
   });
 
@@ -112,10 +112,10 @@ describe('EmbedPDF Annotation snapshots', () => {
         [{ size: PAGE.size, rotation }],
       )[0]?.readingPosition.location;
 
-    // The displayed top edge of the rect, as a fraction of the displayed page height.
-    expect(at(Rotation.Degree90)).toBeCloseTo(150 / 600);
-    expect(at(Rotation.Degree180)).toBeCloseTo(1 - 240 / 800);
-    expect(at(Rotation.Degree270)).toBeCloseTo(1 - 210 / 600);
+    // 24 points above the displayed top edge of the rect, as a fraction of the displayed page height.
+    expect(at(Rotation.Degree90)).toBeCloseTo(126 / 600);
+    expect(at(Rotation.Degree180)).toBeCloseTo(1 - 264 / 800);
+    expect(at(Rotation.Degree270)).toBeCloseTo(1 - 234 / 600);
   });
 });
 

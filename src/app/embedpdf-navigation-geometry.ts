@@ -283,7 +283,10 @@ interface EmbedPdfAnnotationPage {
   readonly rotation?: Rotation;
 }
 
-/** The displayed top edge of a page-space rect, as a fraction of the displayed page height. */
+/** Room left above a revealed Annotation, in PDF points, so it never sits under the viewer's page inset. */
+const ANNOTATION_REVEAL_MARGIN = 24;
+
+/** Just above the displayed top edge of a page-space rect, as a fraction of the displayed page height. */
 function annotationLocation(
   { origin, size }: TrackedAnnotation['object']['rect'],
   page: EmbedPdfAnnotationPage | undefined,
@@ -293,13 +296,13 @@ function annotationLocation(
   const location = (() => {
     switch (page.rotation ?? Rotation.Degree0) {
       case Rotation.Degree90:
-        return width > 0 ? origin.x / width : 0;
+        return width > 0 ? (origin.x - ANNOTATION_REVEAL_MARGIN) / width : 0;
       case Rotation.Degree180:
-        return height > 0 ? 1 - (origin.y + size.height) / height : 0;
+        return height > 0 ? 1 - (origin.y + size.height + ANNOTATION_REVEAL_MARGIN) / height : 0;
       case Rotation.Degree270:
-        return width > 0 ? 1 - (origin.x + size.width) / width : 0;
+        return width > 0 ? 1 - (origin.x + size.width + ANNOTATION_REVEAL_MARGIN) / width : 0;
       default:
-        return height > 0 ? origin.y / height : 0;
+        return height > 0 ? (origin.y - ANNOTATION_REVEAL_MARGIN) / height : 0;
     }
   })();
   return Math.min(1, Math.max(0, location));
