@@ -115,6 +115,9 @@ export function createEmbedPdfDocumentSurfaceFactory({
           return;
         openedViewer.setActiveAnnotationTool(toolId);
       },
+      revealAnnotation: (annotationId) => {
+        if (!destroyPromise) openedViewer.revealAnnotation(annotationId);
+      },
       getScrollPosition: () => 0,
       getReadingPosition: () => openedViewer.readingPosition(),
       goToPage: (pageNumber, options) => project(() => openedViewer.goToPage(pageNumber), options),
@@ -141,6 +144,7 @@ export function createEmbedPdfDocumentSurfaceFactory({
       content,
       renderThumbnail: (pageNumber, options) =>
         openedViewer.renderThumbnail(pageNumber, options?.maxWidth),
+      annotations: () => (destroyPromise ? [] : openedViewer.annotations()),
       destroy,
     };
     return { rendering, runtime } satisfies DocumentSurface;

@@ -32,6 +32,8 @@ export interface DocumentRendering {
   activeAnnotationTool?(): string | null;
   /** Chooses an annotation tool, or null for text selection; refused while editing is unavailable. */
   setActiveAnnotationTool?(toolId: string | null): void;
+  /** Selects an Annotation already scrolled into view; transient rendering state. */
+  revealAnnotation?(annotationId: string): void;
   getScrollPosition(): number;
   getReadingPosition(): ReadingPosition;
   goToPage(pageNumber: number, options?: ReaderActionOptions): Promise<void>;

@@ -20,6 +20,7 @@ import {
   SIDEBAR_WIDTH_BOUNDS,
   type SidebarMode,
 } from './chrome-preferences';
+import { createAnnotationsView } from './sidebar-annotations-view';
 import { createSearchResultsView, type SearchResultsView } from './sidebar-search';
 import { createTableOfContentsView } from './sidebar-table-of-contents';
 
@@ -39,7 +40,11 @@ export interface SidebarModeContext {
   readonly dispatchReaderAction: DispatchReaderAction;
   readonly whenVisible: WhenVisible;
   readonly width: () => number;
+  /** Selects an Annotation on the rendering surface; transient, never Reading Session state. */
+  readonly revealAnnotation: RevealAnnotation;
 }
+
+export type RevealAnnotation = (filePath: string, annotationId: string) => void;
 
 export interface SidebarModeView {
   readonly element: HTMLElement;
@@ -64,6 +69,7 @@ export interface ReaderSidebarOptions {
   readonly dispatchReaderAction: DispatchReaderAction;
   readonly whenVisible?: WhenVisible;
   readonly searchDebounceMs?: number;
+  readonly revealAnnotation?: RevealAnnotation;
 }
 
 export interface ReaderSidebar {
@@ -82,6 +88,7 @@ const MODE_VIEWS: Readonly<Record<SidebarMode, (context: SidebarModeContext) => 
   {
     thumbnails: createThumbnailsView,
     tableOfContents: createTableOfContentsView,
+    annotations: createAnnotationsView,
   };
 
 function observeVisibility(root: Element | null): WhenVisible {
@@ -111,6 +118,7 @@ export function createReaderSidebar({
   dispatchReaderAction,
   whenVisible,
   searchDebounceMs = SEARCH_DEBOUNCE_MS,
+  revealAnnotation = () => undefined,
 }: ReaderSidebarOptions): ReaderSidebar {
   const content = root.querySelector<HTMLElement>('.reader-sidebar-content') ?? root;
   const resizer = root.querySelector<HTMLElement>('.reader-sidebar-resizer');
@@ -118,6 +126,7 @@ export function createReaderSidebar({
     dispatchReaderAction,
     whenVisible: whenVisible ?? observeVisibility(content),
     width: () => preferences.snapshot().sidebarWidth,
+    revealAnnotation,
   };
   let view: { mode: SidebarMode; view: SidebarModeView } | null = null;
   // Transient search takeover: never written to preferences.

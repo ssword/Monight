@@ -49,6 +49,8 @@ const createViewerRuntime = (
   renderThumbnail: vi.fn(async () => document.createElement('canvas')),
   activeAnnotationTool: () => null,
   setActiveAnnotationTool: vi.fn(),
+  annotations: () => [],
+  revealAnnotation: vi.fn(),
   destroy: vi.fn(async () => undefined),
   ...overrides,
 });

@@ -129,6 +129,49 @@ describe('Document Queries', () => {
     expect(second?.[0]?.items[0]?.target).toEqual({ url: 'https://example.com' });
   });
 
+  it('reads Annotation snapshots as copies, and none once the Document closes', async () => {
+    const live = [
+      {
+        id: 'note-1',
+        kind: 'note' as const,
+        pageNumber: 2,
+        readingPosition: { page: 2, location: 0.25 },
+        author: 'Andrew Chen',
+        contents: 'Preview native note 75',
+        color: '#FFCD45',
+        modified: '2026-10-20T08:00:00.000Z',
+      },
+    ];
+    const reader = createReader();
+    await reader.dispatch({
+      type: 'registerDocument',
+      document: FIRST_DOCUMENT,
+      runtime: { ...createRuntime(), annotations: () => live },
+    });
+    const before = reader.snapshot();
+    const query = reader.query(FIRST_DOCUMENT.filePath);
+
+    const snapshots = await query?.annotations();
+    expect(snapshots).toEqual(live);
+    expect(snapshots?.[0]).not.toBe(live[0]);
+    expect(snapshots?.[0]?.readingPosition).not.toBe(live[0].readingPosition);
+    expect(reader.snapshot()).toEqual(before);
+    await expect(query?.annotations({ isCancelled: () => true })).resolves.toEqual([]);
+
+    await reader.dispatch({ type: 'closeDocument', filePath: FIRST_DOCUMENT.filePath });
+    await expect(query?.annotations()).resolves.toEqual([]);
+  });
+
+  it('reads no Annotations from a runtime that cannot list them', async () => {
+    const reader = createReader();
+    await reader.dispatch({
+      type: 'registerDocument',
+      document: FIRST_DOCUMENT,
+      runtime: createRuntime(),
+    });
+    await expect(reader.query(FIRST_DOCUMENT.filePath)?.annotations()).resolves.toEqual([]);
+  });
+
   it('invalidates a generation immediately when its Document closes and ignores late results', async () => {
     let finishSearch: ((matches: []) => void) | undefined;
     let emitProgress: (() => void) | undefined;

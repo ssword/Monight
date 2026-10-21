@@ -104,6 +104,8 @@ export interface DocumentWorkspace {
   activeMarkup(): ActiveMarkupState | null;
   /** Chooses a markup tool on the active Document, or null for text selection. */
   setActiveAnnotationTool(toolId: string | null): void;
+  /** Selects an Annotation on its Document's rendering surface. */
+  revealAnnotation(filePath: string, annotationId: string): void;
   setAnnotationDisplayName(displayName: AnnotationDisplayName): void;
 }
 
@@ -851,6 +853,9 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
     setActiveAnnotationTool(toolId) {
       const filePath = options.snapshot().activeDocumentPath;
       if (filePath) presented.get(filePath)?.rendering.setActiveAnnotationTool?.(toolId);
+    },
+    revealAnnotation(filePath, annotationId) {
+      presented.get(filePath)?.rendering.revealAnnotation?.(annotationId);
     },
     setAnnotationDisplayName(displayName) {
       for (const documentState of presented.values()) {

@@ -420,6 +420,8 @@ function mountReaderSidebar(
     },
     preferences,
     dispatchReaderAction,
+    revealAnnotation: (filePath, annotationId) =>
+      documentWorkspace?.revealAnnotation(filePath, annotationId),
     activeDocument: () => {
       const snapshot = readerActions?.snapshot();
       const rendering = documentWorkspace?.activeRenderingState();
