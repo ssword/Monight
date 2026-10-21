@@ -84,6 +84,8 @@ describe('the shipped Page Rotation gate', () => {
       preferences: DEFAULT_CHROME_PREFERENCES,
       markup: null,
       fullScreen: false,
+      canGoBack: false,
+      canGoForward: false,
       keybinds,
     });
 

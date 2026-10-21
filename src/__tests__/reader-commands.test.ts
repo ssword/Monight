@@ -77,16 +77,18 @@ describe('native menu commands', () => {
     ['view.mode.spread', { type: 'setViewMode', viewMode: 'spread' }],
     ['go.previous-page', { type: 'goToPreviousPage' }],
     ['go.next-page', { type: 'goToNextPage' }],
+    ['go.back', { type: 'goBack' }],
+    ['go.forward', { type: 'goForward' }],
   ])('%s dispatches its typed Reader Action', async (id, action) => {
     const { context, dispatched } = fakeContext();
     expect(await runReaderCommand(id, context)).toBe(true);
     expect(dispatched).toEqual([action]);
   });
 
-  it('Go to Page… asks for a page and goes there', async () => {
+  it('Go to Page… asks for a page and jumps there, recorded in Navigation History', async () => {
     const { context, dispatched } = fakeContext();
     await runReaderCommand('go.page', context);
-    expect(dispatched).toEqual([{ type: 'goToPage', page: 12 }]);
+    expect(dispatched).toEqual([{ type: 'goToPage', page: 12, recordHistory: true }]);
   });
 
   it('Go to Page… does nothing when the request is cancelled', async () => {
@@ -159,6 +161,8 @@ const input = (overrides: Partial<ReaderCommandStateInput> = {}): ReaderCommandS
   preferences: { ...DEFAULT_CHROME_PREFERENCES, sidebarVisible: true, sidebarMode: 'annotations' },
   markup: { activeToolId: 'textComment', readOnlyReason: null },
   fullScreen: false,
+  canGoBack: false,
+  canGoForward: false,
   ...overrides,
 });
 
@@ -255,6 +259,26 @@ describe('native menu state', () => {
     expect(stateOf(last, 'go.next-page')?.enabled).toBe(false);
   });
 
+  it('enables Back and Forward only when Navigation History has somewhere to go', () => {
+    const none = readerCommandStates(input());
+    expect(stateOf(none, 'go.back')?.enabled).toBe(false);
+    expect(stateOf(none, 'go.forward')?.enabled).toBe(false);
+
+    const back = readerCommandStates(input({ canGoBack: true }));
+    expect(stateOf(back, 'go.back')?.enabled).toBe(true);
+    expect(stateOf(back, 'go.forward')?.enabled).toBe(false);
+
+    const forward = readerCommandStates(input({ canGoForward: true }));
+    expect(stateOf(forward, 'go.back')?.enabled).toBe(false);
+    expect(stateOf(forward, 'go.forward')?.enabled).toBe(true);
+
+    const closed = readerCommandStates(
+      input({ activeDocument: null, documentCount: 0, canGoBack: true, canGoForward: true }),
+    );
+    expect(stateOf(closed, 'go.back')?.enabled).toBe(false);
+    expect(stateOf(closed, 'go.forward')?.enabled).toBe(false);
+  });
+
   it('names the tab bar, markup toolbar and full screen items by what they will do', () => {
     const shown = readerCommandStates(
       input({
@@ -303,6 +327,8 @@ describe('native menu state', () => {
       'view.slideshow': 'CmdOrCtrl+Shift+F',
       'view.full-screen': 'Ctrl+Alt+Enter',
       'go.page': 'CmdOrCtrl+Alt+G',
+      'go.back': 'CmdOrCtrl+[',
+      'go.forward': 'CmdOrCtrl+]',
       // Unmodified keys stay with the page so the menu never takes them from text fields.
       'go.next-page': null,
       'go.previous-page': null,

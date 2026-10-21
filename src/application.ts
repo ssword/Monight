@@ -168,6 +168,8 @@ const readerMenuState = (): ReaderCommandStateInput => {
     preferences: chromePreferences?.snapshot() ?? DEFAULT_CHROME_PREFERENCES,
     markup: documentWorkspace?.activeMarkup() ?? null,
     fullScreen: windowFullScreen,
+    canGoBack: readerActions?.canGoBack() ?? false,
+    canGoForward: readerActions?.canGoForward() ?? false,
     keybinds: activeKeybinds,
   };
 };

@@ -515,6 +515,64 @@ describe('Preview shortcut defaults', () => {
   });
 });
 
+describe('Back and Forward shortcut defaults', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    store.reset();
+  });
+
+  const storedWithPreviewDefaults = async (rebind: Record<string, string[]> = {}) => {
+    // An install that stored the Preview defaults (revision 2) before Back and Forward.
+    const stored = structuredClone(
+      (await new SettingsManager('main', { platform: 'mac' }).load()).keybinds,
+    );
+    delete stored.GoBack;
+    delete stored.GoForward;
+    for (const [id, binds] of Object.entries(rebind)) stored[id].binds = binds;
+    store.reset({
+      storageSchemaVersion: SETTINGS_SCHEMA_VERSION,
+      keybinds: stored,
+      keybindDefaultsVersion: 2,
+    });
+  };
+
+  it('gives a fresh install ⌘[ Back and ⌘] Forward in the Go menu', async () => {
+    const settings = await new SettingsManager('main', { platform: 'mac' }).load();
+
+    expect(settings.keybinds.GoBack).toMatchObject({
+      displayName: 'Back',
+      binds: ['CmdOrCtrl+['],
+      action: 'readerCommand',
+      data: 'go.back',
+    });
+    expect(settings.keybinds.GoForward).toMatchObject({
+      displayName: 'Forward',
+      binds: ['CmdOrCtrl+]'],
+      action: 'readerCommand',
+      data: 'go.forward',
+    });
+  });
+
+  it('adds Back and Forward to an install upgraded from the Preview defaults', async () => {
+    await storedWithPreviewDefaults();
+
+    const settings = await new SettingsManager('main', { platform: 'other' }).load();
+
+    expect(settings.keybinds.GoBack.binds).toEqual(['CmdOrCtrl+[']);
+    expect(settings.keybinds.GoForward.binds).toEqual(['CmdOrCtrl+]']);
+  });
+
+  it('leaves ⌘[ with a reader who already chose it', async () => {
+    await storedWithPreviewDefaults({ Print: ['Cmd+['] });
+
+    const settings = await new SettingsManager('main', { platform: 'mac' }).load();
+
+    expect(settings.keybinds.Print.binds).toEqual(['Cmd+[']);
+    expect(settings.keybinds.GoBack.binds).toEqual([]);
+    expect(settings.keybinds.GoForward.binds).toEqual(['CmdOrCtrl+]']);
+  });
+});
+
 describe('Rotate shortcuts behind the Page Rotation gate', () => {
   beforeEach(() => {
     vi.clearAllMocks();

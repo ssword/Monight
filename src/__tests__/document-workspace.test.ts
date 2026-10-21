@@ -740,6 +740,12 @@ describe('Document workspace adapter', () => {
         readingPosition: { page: 4, location: 0 },
       },
     });
+    // Navigation History reads the live position before a jump settles.
+    expect(workspace.projection.currentReadingPosition?.('/docs/report.pdf')).toEqual({
+      page: 4,
+      location: 0,
+    });
+    expect(workspace.projection.currentReadingPosition?.('/docs/other.pdf')).toBeNull();
   });
 
   it('does not treat an unrestored Reading Session entry as a live Document runtime', () => {

@@ -134,6 +134,8 @@ describe('native menu state sync', () => {
         preferences: DEFAULT_CHROME_PREFERENCES,
         markup: { activeToolId: null, readOnlyReason: null },
         fullScreen: false,
+        canGoBack: false,
+        canGoForward: false,
       }),
       context: () =>
         ({

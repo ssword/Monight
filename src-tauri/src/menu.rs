@@ -177,6 +177,9 @@ const GO_MENU: &[ReaderMenuEntry] = &[
     command("go.next-page", "Next Page"),
     Separator,
     command("go.page", "Go to Page\u{2026}"),
+    Separator,
+    command("go.back", "Back"),
+    command("go.forward", "Forward"),
 ];
 
 const TOOLS_MENU: &[ReaderMenuEntry] = &[
@@ -694,7 +697,15 @@ mod tests {
         );
         assert_eq!(
             titles(GO_MENU),
-            ["Previous Page", "Next Page", "-", "Go to Page\u{2026}"]
+            [
+                "Previous Page",
+                "Next Page",
+                "-",
+                "Go to Page\u{2026}",
+                "-",
+                "Back",
+                "Forward"
+            ]
         );
         assert_eq!(
             titles(TOOLS_MENU),
