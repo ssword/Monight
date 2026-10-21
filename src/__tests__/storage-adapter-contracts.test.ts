@@ -175,11 +175,11 @@ describe('Recent Document storage contract', () => {
 });
 
 describe('Chrome preferences storage', () => {
-  it('keeps sidebar preferences in their own app-wide store across relaunches', async () => {
+  it('keeps chrome preferences in their own app-wide store across relaunches', async () => {
     const firstLaunch = await loadChromePreferences(createChromePreferencesStorage(), {
       debounceMs: 0,
     });
-    firstLaunch.update({ sidebarVisible: true, sidebarWidth: 280 });
+    firstLaunch.update({ sidebarVisible: true, sidebarWidth: 280, markupToolbarVisible: true });
     await firstLaunch.flush();
 
     const nextLaunch = await loadChromePreferences(createChromePreferencesStorage());
@@ -188,12 +188,14 @@ describe('Chrome preferences storage', () => {
       sidebarVisible: true,
       sidebarMode: 'thumbnails',
       sidebarWidth: 280,
+      markupToolbarVisible: true,
     });
     expect(tauriStores.values.get('chrome-preferences.json')?.get('chromePreferences')).toEqual({
       schemaVersion: 1,
       sidebarVisible: true,
       sidebarMode: 'thumbnails',
       sidebarWidth: 280,
+      markupToolbarVisible: true,
     } satisfies PersistedChromePreferences);
     expect(tauriStores.values.has('settings.json')).toBe(false);
   });

@@ -15,6 +15,8 @@ export interface ChromePreferences {
   readonly sidebarVisible: boolean;
   readonly sidebarMode: SidebarMode;
   readonly sidebarWidth: number;
+  /** Whether the markup toolbar shows beneath the toolbar. */
+  readonly markupToolbarVisible: boolean;
 }
 
 export interface PersistedChromePreferences extends ChromePreferences {
@@ -42,6 +44,7 @@ export const DEFAULT_CHROME_PREFERENCES: ChromePreferences = Object.freeze({
   sidebarVisible: false,
   sidebarMode: 'thumbnails',
   sidebarWidth: 220,
+  markupToolbarVisible: false,
 });
 
 const clampSidebarWidth = (width: number): number =>
@@ -56,6 +59,7 @@ const PREFERENCE_PARSERS: PreferenceParsers = {
   sidebarMode: (value) => SIDEBAR_MODES.find((mode) => mode === value) as SidebarMode | undefined,
   sidebarWidth: (value) =>
     typeof value === 'number' && Number.isFinite(value) ? clampSidebarWidth(value) : undefined,
+  markupToolbarVisible: (value) => (typeof value === 'boolean' ? value : undefined),
 };
 
 const PREFERENCE_KEYS = Object.keys(PREFERENCE_PARSERS) as (keyof ChromePreferences)[];
