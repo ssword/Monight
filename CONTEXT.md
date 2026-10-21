@@ -24,9 +24,17 @@ _Avoid_: Last file, startup files, window state
 A page and normalized location within that page where the reader has settled. It is independent of viewport pixels.
 _Avoid_: Scroll position, current page
 
+**Navigation History**:
+The jumps a reader has made within one Document during the current app run, through links, outline entries, search results, or Go to Page, which Back and Forward retrace. Ordinary scrolling does not add to it, and it is not part of the Reading Session.
+_Avoid_: Back stack, scroll history
+
 **Visual State**:
-A Document's settled view mode, rotation, Zoom Intent, and visual filters. It excludes transient presentation, search, sidebar, selection, and hover state.
+A Document's settled view mode, Zoom Intent, and visual filters. It excludes Page Rotation and transient presentation, search, sidebar, selection, and hover state.
 _Avoid_: Viewer state, UI state
+
+**Page Rotation**:
+The rotation a page carries in the PDF file itself. Changing it is an edit of the Document, saved and shared with other readers like an Annotation, not a reading preference.
+_Avoid_: View rotation, rotate view
 
 **Zoom Intent**:
 The reader's choice of a manual scale, fit width, or fit page. Fit choices are recalculated for the current viewport.
