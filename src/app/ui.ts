@@ -60,9 +60,11 @@ export function applyWindowChrome(doc: Document, isMac: boolean): void {
 /**
  * The tab bar is shown only while two or more Documents are open, like macOS tabs.
  * Only visibility changes; the rendered tabs keep Reading Session order.
+ * `alwaysShown` (View ▸ Show Tab Bar) keeps it shown for a single Document.
  */
-export function updateTabBarVisibility(documentCount: number): void {
-  document.getElementById('tab-bar')?.classList.toggle('hidden', documentCount < 2);
+export function updateTabBarVisibility(documentCount: number, alwaysShown = false): void {
+  const shown = documentCount >= 2 || (alwaysShown && documentCount > 0);
+  document.getElementById('tab-bar')?.classList.toggle('hidden', !shown);
 }
 
 // Update UI based on viewer state

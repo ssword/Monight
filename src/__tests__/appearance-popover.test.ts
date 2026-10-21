@@ -106,6 +106,26 @@ describe('Appearance popover', () => {
     expect(slidersShown()).toBe(false);
   });
 
+  it('offers its presets to other input adapters such as the View menu', async () => {
+    const { controls, dispatchReaderAction } = setup();
+
+    controls.chooseAppearance('sepia');
+    await vi.waitFor(() =>
+      expect(dispatchReaderAction).toHaveBeenCalledWith({
+        type: 'setFilterSettings',
+        filterSettings: SEPIA,
+      }),
+    );
+    expect(checkedPreset()).toEqual(['Sepia']);
+
+    // Custom opens the popover on its sliders, as the Custom button does.
+    controls.chooseAppearance('custom');
+    expect(popoverOpen()).toBe(true);
+    expect(slidersShown()).toBe(true);
+    expect(checkedPreset()).toEqual(['Custom']);
+    expect(dispatchReaderAction).toHaveBeenCalledOnce();
+  });
+
   it("shows each Document's current preset when switching Documents", () => {
     const { controls, sliders } = setup();
 

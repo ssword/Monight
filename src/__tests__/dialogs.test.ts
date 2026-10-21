@@ -3,11 +3,69 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   requestConfirmation,
+  requestPageNumber,
   requestPdfPassword,
   requestPdfSaveFailure,
   requestRecoveryDraft,
   requestUnsavedDocument,
 } from '../app/dialogs';
+
+describe('requestPageNumber', () => {
+  beforeEach(() => {
+    document.body.innerHTML = `
+      <dialog id="go-to-page-dialog">
+        <form method="dialog">
+          <p data-go-to-page-range></p>
+          <input name="page" type="number" />
+          <button type="button" data-dialog-cancel>Cancel</button>
+          <button type="submit">Go</button>
+        </form>
+      </dialog>
+    `;
+  });
+
+  const dialog = () => document.getElementById('go-to-page-dialog') as HTMLDialogElement;
+  const input = () => dialog().querySelector<HTMLInputElement>('input') as HTMLInputElement;
+  const submit = () =>
+    dialog()
+      .querySelector<HTMLFormElement>('form')
+      ?.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }));
+
+  it('offers the current page and resolves the page the reader enters', async () => {
+    const result = requestPageNumber({ currentPage: 4, pageCount: 12 });
+
+    expect(dialog().open).toBe(true);
+    expect(input().value).toBe('4');
+    expect(input().max).toBe('12');
+    expect(dialog().querySelector('[data-go-to-page-range]')?.textContent).toBe(
+      'Enter a page from 1 to 12.',
+    );
+
+    input().value = '9';
+    submit();
+
+    await expect(result).resolves.toBe(9);
+    expect(dialog().open).toBe(false);
+  });
+
+  it('keeps asking while the page is out of range', async () => {
+    const result = requestPageNumber({ currentPage: 1, pageCount: 3 });
+
+    input().value = '7';
+    submit();
+    expect(dialog().open).toBe(true);
+
+    input().value = '3';
+    submit();
+    await expect(result).resolves.toBe(3);
+  });
+
+  it('resolves null when cancelled', async () => {
+    const result = requestPageNumber({ currentPage: 1, pageCount: 3 });
+    dialog().querySelector<HTMLButtonElement>('[data-dialog-cancel]')?.click();
+    await expect(result).resolves.toBeNull();
+  });
+});
 
 const mountConfirmationDialog = (): void => {
   document.body.innerHTML = `

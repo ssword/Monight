@@ -7,6 +7,7 @@ import { hydrateChromeIcons } from './chrome-icons';
 import type { ChromePreferencesAuthority } from './chrome-preferences';
 import type { ActiveMarkupState } from './document-workspace';
 import {
+  toolAfterChoosing,
   VERIFIED_MARKUP_TOOLS,
   type VerifiedMarkupTool,
   verifiedMarkupTools,
@@ -30,6 +31,10 @@ export interface MarkupToolbarOptions {
 export interface MarkupToolbar {
   /** Re-reads the active Document; call on Reading Session and rendering changes. */
   refresh(): void;
+  /** Shows or hides the markup toolbar, as the toolbar's Markup toggle does. */
+  toggle(): void;
+  /** Chooses a markup-toolbar tool as its button does. */
+  chooseTool(toolId: string): void;
   destroy(): void;
 }
 
@@ -120,15 +125,20 @@ export function createMarkupToolbar({
     if (!visible && activeToolId && markupToolIds.has(activeToolId)) setActiveTool(null);
     preferences.update({ markupToolbarVisible: visible });
   };
+  /** A tool button's choice; choosing the active tool returns to text selection. */
+  const chooseTool = (toolId: string) => {
+    const markup = activeMarkup();
+    if (!markupToolIds.has(toolId) || !markup || markup.readOnlyReason !== null) return;
+    setActiveTool(toolAfterChoosing(markup.activeToolId, toolId));
+    render();
+  };
   const onToolClick = (event: MouseEvent) => {
     const button = (event.target as Element | null)?.closest<HTMLButtonElement>(
       '[data-markup-tool]',
     );
     const toolId = button?.dataset.markupTool;
-    const markup = activeMarkup();
-    if (!button || button.disabled || !toolId || !markup || markup.readOnlyReason !== null) return;
-    setActiveTool(markup.activeToolId === toolId ? null : toolId);
-    render();
+    if (!button || button.disabled || !toolId) return;
+    chooseTool(toolId);
   };
 
   toggle.addEventListener('click', onToggle);
@@ -138,6 +148,8 @@ export function createMarkupToolbar({
 
   return {
     refresh: render,
+    toggle: onToggle,
+    chooseTool,
     destroy() {
       toggle.removeEventListener('click', onToggle);
       group.removeEventListener('click', onToolClick);

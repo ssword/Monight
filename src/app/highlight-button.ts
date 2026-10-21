@@ -42,6 +42,11 @@ export interface HighlightButtonOptions {
 export interface HighlightButton {
   /** Re-reads the active Document; call on Reading Session and rendering changes. */
   refresh(): void;
+  /**
+   * Clicks the button for one of its text-markup tools (Tools ▸ Annotate):
+   * marks the selection, or enters or leaves highlight mode.
+   */
+  activate(toolId: string): void;
   destroy(): void;
 }
 
@@ -186,6 +191,12 @@ export function createHighlightButton({
 
   return {
     refresh: render,
+    activate(toolId) {
+      const tool = markupTools.find(({ id }) => id === toolId);
+      if (!tool) return;
+      currentTool = tool;
+      onButtonClick();
+    },
     destroy() {
       button.removeEventListener('click', onButtonClick);
       menuToggle.removeEventListener('click', onMenuToggle);

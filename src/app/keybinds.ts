@@ -1,11 +1,8 @@
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 import { debugLog } from '../lib/debug-log';
-import {
-  type DispatchReaderAction,
-  type ReadingSessionSnapshot,
-  readerAction,
-} from '../reader/reader-actions';
+import type { DispatchReaderAction, ReadingSessionSnapshot } from '../reader/reader-actions';
 import type { KeybindManager } from '../scripts/keybind-manager';
+import { READER_ACTION_COMMANDS } from './reader-commands';
 
 interface KeybindContext {
   keybindManager: KeybindManager | null;
@@ -20,6 +17,12 @@ interface KeybindContext {
   goToPage: (page: number) => Promise<void>;
   goToRelativePage: (direction: 'next' | 'previous') => Promise<void>;
   dispatchReaderAction: DispatchReaderAction;
+}
+
+/** Enter Full Screen: fills the screen with the window without presenting. */
+export async function toggleWindowFullScreen(): Promise<void> {
+  const currentWindow = getCurrentWebviewWindow();
+  await currentWindow.setFullscreen(!(await currentWindow.isFullscreen()));
 }
 
 // Register all keybind actions with the KeybindManager
@@ -131,32 +134,28 @@ export function registerKeybindActions({
 
   // Zoom
   keybindManager.registerAction('zoomIn', async () => {
-    await dispatchReaderAction(readerAction.zoomIn());
+    await dispatchReaderAction(READER_ACTION_COMMANDS.zoomIn());
   });
 
   keybindManager.registerAction('zoomOut', async () => {
-    await dispatchReaderAction(readerAction.zoomOut());
+    await dispatchReaderAction(READER_ACTION_COMMANDS.zoomOut());
   });
 
   keybindManager.registerAction('resetZoom', async () => {
-    await dispatchReaderAction(readerAction.setZoomIntent({ kind: 'manual', scale: 1 }));
+    await dispatchReaderAction(READER_ACTION_COMMANDS.actualSize());
   });
 
   // Fit modes
   keybindManager.registerAction('fitToWidth', async () => {
-    await dispatchReaderAction(readerAction.setZoomIntent({ kind: 'fit-width' }));
+    await dispatchReaderAction(READER_ACTION_COMMANDS.zoomToWidth());
   });
 
   keybindManager.registerAction('fitToPage', async () => {
-    await dispatchReaderAction(readerAction.setZoomIntent({ kind: 'fit-page' }));
+    await dispatchReaderAction(READER_ACTION_COMMANDS.zoomToFit());
   });
 
   // Fullscreen
-  keybindManager.registerAction('toggleFullscreen', async () => {
-    const currentWindow = getCurrentWebviewWindow();
-    const isFullscreen = await currentWindow.isFullscreen();
-    await currentWindow.setFullscreen(!isFullscreen);
-  });
+  keybindManager.registerAction('toggleFullscreen', toggleWindowFullScreen);
 
   keybindManager.registerAction('presentationMode', async () => {
     await togglePresentationMode();

@@ -25,6 +25,9 @@ import { createSearchResultsView, type SearchResultsView } from './sidebar-searc
 import { createTableOfContentsView } from './sidebar-table-of-contents';
 
 /** What the sidebar needs to know about the active Document. */
+/** A sidebar choice offered by the toolbar's mode dropdown and the View menu. */
+export type SidebarChoice = SidebarMode | 'hidden';
+
 export interface SidebarDocument {
   readonly filePath: string;
   readonly pageCount: number;
@@ -75,6 +78,8 @@ export interface ReaderSidebarOptions {
 export interface ReaderSidebar {
   /** Re-reads the active Document; call on Reading Session and rendering changes. */
   refresh(): void;
+  /** Hides the sidebar or shows a mode, as the mode dropdown does; ends a search takeover. */
+  choose(choice: SidebarChoice): void;
   /** Focuses the toolbar Search field (Find). */
   focusSearch(): void;
   destroy(): void;
@@ -209,6 +214,17 @@ export function createReaderSidebar({
     return wasActive;
   };
 
+  /** The mode dropdown's choice, shared with the View menu. */
+  const choose = (choice: SidebarChoice) => {
+    endSearch();
+    preferences.update(
+      choice === 'hidden'
+        ? { sidebarVisible: false }
+        : { sidebarVisible: true, sidebarMode: choice },
+    );
+    render();
+  };
+
   listen(toggle, 'click', () => {
     // Hiding a search takeover ends the search and hides the sidebar.
     if (endSearch()) preferences.update({ sidebarVisible: false });
@@ -223,12 +239,8 @@ export function createReaderSidebar({
         : null;
     if (!item) return;
     const mode = SIDEBAR_MODES.find((candidate) => candidate === item.dataset.sidebarMode);
-    endSearch();
-    preferences.update(
-      mode ? { sidebarVisible: true, sidebarMode: mode } : { sidebarVisible: false },
-    );
+    choose(mode ?? 'hidden');
     setMenuOpen(false);
-    render();
   });
   if (search) {
     listen(search, 'input', () => {
@@ -306,6 +318,7 @@ export function createReaderSidebar({
 
   return {
     refresh: render,
+    choose,
     focusSearch() {
       search?.focus();
       search?.select();

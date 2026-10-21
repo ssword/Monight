@@ -62,6 +62,14 @@ export function verifiedMarkupTools(
  */
 export const PAGE_ROTATION_VERIFIED = false;
 
+/**
+ * The tool a reader's choice leaves active: choosing the active tool again
+ * returns to text selection (null). Shared by every control offering tools.
+ */
+export function toolAfterChoosing(activeToolId: string | null, toolId: string): string | null {
+  return activeToolId === toolId ? null : toolId;
+}
+
 /** Colours offered by the Highlight split button, in menu order. */
 export const HIGHLIGHT_COLORS = Object.freeze([
   // EmbedPDF's own highlight colour, the one ADR 0002's verification used.

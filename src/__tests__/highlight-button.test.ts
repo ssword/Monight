@@ -93,6 +93,25 @@ describe('Highlight split button', () => {
     expect(button().getAttribute('aria-pressed')).toBe('false');
   });
 
+  it('offers its click to other input adapters such as Tools ▸ Annotate', async () => {
+    const highlight = await mount();
+
+    selectedText = true;
+    highlight.activate('highlight');
+    expect(marked).toEqual([{ toolId: 'highlight', strokeColor: YELLOW }]);
+
+    highlight.activate('highlight');
+    expect(chosen).toEqual([{ toolId: 'highlight', strokeColor: YELLOW }]);
+    expect(button().getAttribute('aria-pressed')).toBe('true');
+
+    highlight.activate('highlight');
+    expect(chosen[chosen.length - 1]).toEqual({ toolId: null });
+
+    // Unverified or non-text-markup tools are not the button's to choose.
+    highlight.activate('textComment');
+    expect(chosen).toHaveLength(2);
+  });
+
   it('offers the five colours and only verified text-markup subtypes', async () => {
     await mount();
     const menu = document.getElementById('highlight-menu') as HTMLElement;

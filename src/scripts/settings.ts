@@ -234,7 +234,7 @@ export const DEFAULT_SETTINGS: MoonightSettings = {
       action: 'toggleFullscreen',
     },
     PresentationMode: {
-      displayName: 'Presentation Mode',
+      displayName: 'Slideshow',
       binds: ['Shift+F11'],
       action: 'presentationMode',
     },
@@ -251,7 +251,13 @@ function withoutRetiredKeybinds(
   keybinds: MoonightSettings['keybinds'] | undefined,
 ): MoonightSettings['keybinds'] {
   return Object.fromEntries(
-    Object.entries(keybinds ?? {}).filter(([id]) => !RETIRED_KEYBIND_IDS.has(id)),
+    Object.entries(keybinds ?? {})
+      .filter(([id]) => !RETIRED_KEYBIND_IDS.has(id))
+      // Command names follow the current defaults (e.g. Presentation Mode → Slideshow).
+      .map(([id, config]) => {
+        const displayName = DEFAULT_SETTINGS.keybinds[id]?.displayName;
+        return [id, displayName ? { ...config, displayName } : config];
+      }),
   );
 }
 

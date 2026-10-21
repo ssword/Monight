@@ -125,6 +125,34 @@ describe('markup toolbar', () => {
     expect(chosen).toEqual([null]);
   });
 
+  it('offers its tools to other input adapters such as Tools ▸ Annotate', async () => {
+    const toolbar = await mount();
+
+    toolbar.chooseTool('textComment');
+    toolbar.chooseTool('textComment');
+    toolbar.chooseTool('highlight');
+
+    expect(chosen).toEqual(['textComment', null]);
+
+    active = { activeToolId: null, readOnlyReason: PROTECTED };
+    toolbar.chooseTool('textComment');
+    expect(chosen).toEqual(['textComment', null]);
+  });
+
+  it('offers the toggle to other input adapters such as the View menu', async () => {
+    active = { activeToolId: 'textComment', readOnlyReason: null };
+    const toolbar = await mount(createStorage({ schemaVersion: 1, markupToolbarVisible: true }));
+
+    toolbar.toggle();
+    expect(bar().hidden).toBe(true);
+    expect(preferences.snapshot().markupToolbarVisible).toBe(false);
+    expect(chosen).toEqual([null]);
+
+    toolbar.toggle();
+    expect(bar().hidden).toBe(false);
+    expect(toggle().getAttribute('aria-pressed')).toBe('true');
+  });
+
   it('makes tools unavailable on a protected Document with its editing explanation', async () => {
     active = { activeToolId: null, readOnlyReason: PROTECTED };
     await mount(createStorage({ schemaVersion: 1, markupToolbarVisible: true }));
