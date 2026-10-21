@@ -401,6 +401,7 @@ function mountReaderSidebar(
   const toggle = document.getElementById('sidebar-toggle');
   const modeToggle = document.getElementById('sidebar-mode-toggle');
   const modeMenu = document.getElementById('sidebar-mode-menu');
+  const search = document.getElementById('toolbar-search');
   if (
     !root ||
     !(toggle instanceof HTMLButtonElement) ||
@@ -410,7 +411,13 @@ function mountReaderSidebar(
     return null;
   }
   const sidebar = createReaderSidebar({
-    elements: { root, toggle, modeToggle, modeMenu },
+    elements: {
+      root,
+      toggle,
+      modeToggle,
+      modeMenu,
+      ...(search instanceof HTMLInputElement ? { search } : {}),
+    },
     preferences,
     dispatchReaderAction,
     activeDocument: () => {
@@ -696,7 +703,7 @@ export async function initializeApplication(modules: ApplicationModules): Promis
       openSettings,
       updateTabBarVisibility: updateTabBar,
       updateUI: updateReaderUI,
-      openSearch: () => documentWorkspace?.openActiveSearch(),
+      openSearch: () => readerSidebar?.focusSearch(),
       togglePresentationMode: async () => {
         await presentationController?.toggle();
       },

@@ -86,7 +86,7 @@ async function run() {
     openSettings: async () => {},
     updateTabBarVisibility: () => {},
     updateUI: () => {},
-    openSearch: () => workspace.openActiveSearch(),
+    openSearch: () => {},
     togglePresentationMode: async () => {},
     goToPage,
     goToRelativePage,

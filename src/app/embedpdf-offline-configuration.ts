@@ -29,6 +29,8 @@ const DISABLED_CATEGORIES = [
   'zoom',
   // Monight's own sidebar replaces the ready-made thumbnails and outline.
   'panel-sidebar',
+  // Monight's toolbar Search field and sidebar replace the ready-made search panel.
+  'panel-search',
   // Reading Session supports single, continuous, and odd-page spreads.
   'spread-even',
   // Monight's markup toolbar replaces the ready-made Annotate mode and toolbar.
