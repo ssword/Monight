@@ -2,6 +2,7 @@ import EmbedPDF, {
   type AnnotationCapability,
   type CommandsCapability,
   type DocumentManagerCapability,
+  type HistoryCapability,
   type PluginRegistry,
   type Rotation,
   type ScrollCapability,
@@ -249,11 +250,33 @@ export async function createEmbedPdfViewerRuntime({
   const spreadScope = spread.forDocument(documentId);
   const thumbnailScope = thumbnails.forDocument(documentId);
   const zoomScope = zoom.forDocument(documentId);
+  const store = registry.getStore();
   const { editing, onAnnotationEvent } = createEmbedPdfNativeAnnotationEditing({
     annotations,
     annotationScope,
     currentDocument,
     engine,
+    history: requireCapability<HistoryCapability>(registry, 'history').forDocument(documentId),
+    pageRotationChanged(pageIndexes) {
+      // Keep the viewer's copy of each page in step, then re-lay out (SET_ROTATION with
+      // the unchanged view rotation) and re-render the turned pages.
+      const core = store.getState().core.documents[documentId];
+      const live = currentDocument();
+      for (const index of pageIndexes) {
+        const page = core?.document?.pages[index];
+        const rotation = live.pages[index]?.rotation;
+        if (page && rotation !== undefined) page.rotation = rotation;
+      }
+      store.dispatch({
+        type: 'SET_ROTATION',
+        payload: { rotation: core?.rotation ?? 0, documentId },
+      });
+      store.dispatch({
+        type: 'REFRESH_PAGES',
+        payload: { documentId, pageIndexes: [...pageIndexes] },
+      });
+      for (const index of pageIndexes) annotationScope.invalidatePageAppearances(index);
+    },
     readOnlyReason,
     stateChanged: callbacks.stateChanged,
   });

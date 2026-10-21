@@ -12,6 +12,8 @@ export function normalizeAnnotationDisplayName(value: unknown): AnnotationDispla
   ) as AnnotationDisplayName;
 }
 
+export type PageRotationDirection = 'clockwise' | 'counterclockwise';
+
 /** Live PDF edits are independent of durable Reading Session persistence. */
 export interface NativePdfEditing {
   state(): {
@@ -23,6 +25,15 @@ export interface NativePdfEditing {
   markSaved(revision: number): void;
   markRecovered?(revision: number): void;
   setAnnotationDisplayName?(displayName: AnnotationDisplayName): void;
+  /**
+   * Turns the Page Rotation stored in the PDF of each 1-based page by a quarter turn, as
+   * one edit on the same undo timeline as Annotation edits.
+   */
+  rotatePages?(pages: readonly number[], direction: PageRotationDirection): void;
+  /** Undoes the most recent edit (Annotation or Page Rotation). */
+  undo?(): void;
+  /** Reapplies the most recently undone edit. */
+  redo?(): void;
 }
 
 export interface PdfSaveDestination {
