@@ -64,7 +64,8 @@ byte equality with the unnormalized engine output is no longer the correct asser
 `knownGeometryFailures` pins geometry that is known to be broken after a Monight stage,
 instead of the input geometry. The Chromium contract prints each as `KNOWN FAILURE` and
 fails when the observed geometry no longer matches, so a fix or a further change forces
-the entry to be revisited. The Preview note's 24-to-20-point shrink is registered this way.
+the entry to be revisited. The Preview note's 24-to-20-point shrink was registered this way
+until #94 fixed it; no reader currently registers one.
 
 ### Registering another reader
 
@@ -180,7 +181,8 @@ PDFs in `native-annotations/` were left unchanged.
   opened before Monight re-save and did not open after that save. Root cause is unproven.
 - Native inspection also found that Monight re-save changed the Preview note's Rect
   from `[220.6667, 372.0833, 244.6667, 396.0833]` (24 by 24 points) to
-  `[220.6667, 372.08331, 240.6667, 392.08331]` (20 by 20 points).
+  `[220.6667, 372.08331, 240.6667, 392.08331]` (20 by 20 points). Fixed by #94 in the
+  engine exports: see [`docs/issue-94-preview-text-annotations.md`](../../../../docs/issue-94-preview-text-annotations.md).
 - Print button and Cmd+P on the transformed supported file produced no native print
   panel. No printed PDF exists; printed-transform verification could not be completed.
 - No additional Monight creation tool was enabled. Preview's Rectangle is intentionally

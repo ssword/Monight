@@ -39,16 +39,7 @@
         "Preview note editor does not open after Monight re-save",
         "Preview note Rect changes from 24x24 points to 20x20 points after Monight re-save"
       ],
-      "knownGeometryFailures": [
-        {
-          "subtype": "/Text",
-          "contents": "Preview native note 75",
-          "author": "Andrew Chen",
-          "stage": "edited",
-          "Rect": [220.6667, 372.0833, 240.6667, 392.0833],
-          "failure": "Preview note Rect changes from 24x24 points to 20x20 points after Monight re-save"
-        }
-      ]
+      "knownGeometryFailures": []
     },
     {
       "id": "acrobat-reader-26",
