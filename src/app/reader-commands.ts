@@ -37,6 +37,7 @@ import {
   type VerifiedMarkupTool,
 } from './markup-tools';
 import type { SidebarChoice } from './reader-sidebar';
+import { tabBarShown } from './tab-bar';
 
 /**
  * Reader Actions shared by every input adapter (toolbar, shortcuts, menus) so
@@ -75,6 +76,8 @@ export interface ReaderCommandContext {
   readonly selectedPages: () => readonly number[];
   /** The active Document's current page; null without one. */
   readonly currentPage: () => number | null;
+  /** View ▸ Show/Hide Tab Bar: keeps the tab bar shown for one Document, for this app run. */
+  readonly toggleTabBar: () => void;
 }
 
 export interface ReaderCommandStateInput {
@@ -91,6 +94,8 @@ export interface ReaderCommandStateInput {
   /** Whether the active Document's Navigation History has somewhere to go. */
   readonly canGoBack: boolean;
   readonly canGoForward: boolean;
+  /** Whether View ▸ Show Tab Bar keeps the tab bar shown (transient, never persisted). */
+  readonly tabBarKeptShown: boolean;
   /**
    * The effective keybinds; each command's menu item shows its shortcut as
    * its accelerator. Absent: accelerators are left as they are.
@@ -164,10 +169,9 @@ const viewModeCommand = (viewMode: ViewMode): ReaderCommand => ({
 const staticCommands: readonly ReaderCommand[] = [
   {
     id: 'view.tab-bar',
-    run: ({ preferences }) =>
-      preferences.update({ tabBarVisible: !preferences.snapshot().tabBarVisible }),
+    run: (context) => context.toggleTabBar(),
     state: (input) => {
-      const shown = input.preferences.tabBarVisible || input.documentCount > 1;
+      const shown = tabBarShown(input.documentCount, input.tabBarKeptShown);
       return {
         // Several open Documents always show their tabs.
         enabled: hasDocument(input) && input.documentCount < 2,

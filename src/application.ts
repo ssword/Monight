@@ -143,10 +143,12 @@ let activeKeybinds: MoonightSettings['keybinds'] | undefined;
 let presentationController: PresentationController | null = null;
 let readerCommandContext: ReaderCommandContext | null = null;
 let windowFullScreen = false;
+/** View ▸ Show Tab Bar: app-run state, never persisted. */
+let tabBarKeptShown = false;
 
 /** Shows the tab bar for two or more Documents, or for one after View ▸ Show Tab Bar. */
 const showTabBar = (documentCount: number): void =>
-  updateTabBarVisibility(documentCount, chromePreferences?.snapshot().tabBarVisible ?? false);
+  updateTabBarVisibility(documentCount, tabBarKeptShown);
 
 const readerMenuState = (): ReaderCommandStateInput => {
   const snapshot = readerActions?.snapshot();
@@ -170,6 +172,7 @@ const readerMenuState = (): ReaderCommandStateInput => {
     fullScreen: windowFullScreen,
     canGoBack: readerActions?.canGoBack() ?? false,
     canGoForward: readerActions?.canGoForward() ?? false,
+    tabBarKeptShown,
     keybinds: activeKeybinds,
   };
 };
@@ -892,6 +895,11 @@ export async function initializeApplication(modules: ApplicationModules): Promis
       },
       selectedPages: () => readerSidebar?.selectedPages() ?? [],
       currentPage: () => readerMenuState().activeDocument?.currentPage || null,
+      toggleTabBar: () => {
+        tabBarKeptShown = !tabBarKeptShown;
+        showTabBar(readerActions?.snapshot().documents.length ?? 0);
+        syncReaderMenu();
+      },
     };
     await currentWindow.onResized(() => {
       void refreshWindowFullScreen();

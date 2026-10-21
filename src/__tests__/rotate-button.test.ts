@@ -86,6 +86,7 @@ describe('the shipped Page Rotation gate', () => {
       fullScreen: false,
       canGoBack: false,
       canGoForward: false,
+      tabBarKeptShown: false,
       keybinds,
     });
 

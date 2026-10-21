@@ -52,6 +52,9 @@ function fakeContext(overrides: Partial<ReaderCommandContext> = {}) {
     requestPage: async () => 12,
     selectedPages: () => [],
     currentPage: () => 3,
+    toggleTabBar: () => {
+      calls.push('tab-bar');
+    },
     ...overrides,
   };
   return {
@@ -114,12 +117,11 @@ describe('native menu commands', () => {
     expect(dispatched).toEqual([]);
   });
 
-  it('Show Tab Bar toggles the tab bar chrome preference', async () => {
-    const { context, preferences } = fakeContext();
+  it('Show Tab Bar toggles the tab bar for this app run, not as a chrome preference', async () => {
+    const { context, calls, preferences } = fakeContext();
     await runReaderCommand('view.tab-bar', context);
-    expect(preferences().tabBarVisible).toBe(true);
-    await runReaderCommand('view.tab-bar', context);
-    expect(preferences().tabBarVisible).toBe(false);
+    expect(calls).toEqual(['tab-bar']);
+    expect(preferences()).toEqual(DEFAULT_CHROME_PREFERENCES);
   });
 
   it('Tools ▸ Annotate goes through the control that offers each verified tool', async () => {
@@ -163,6 +165,7 @@ const input = (overrides: Partial<ReaderCommandStateInput> = {}): ReaderCommandS
   fullScreen: false,
   canGoBack: false,
   canGoForward: false,
+  tabBarKeptShown: false,
   ...overrides,
 });
 
@@ -283,11 +286,8 @@ describe('native menu state', () => {
     const shown = readerCommandStates(
       input({
         documentCount: 1,
-        preferences: {
-          ...DEFAULT_CHROME_PREFERENCES,
-          tabBarVisible: true,
-          markupToolbarVisible: true,
-        },
+        tabBarKeptShown: true,
+        preferences: { ...DEFAULT_CHROME_PREFERENCES, markupToolbarVisible: true },
         fullScreen: true,
       }),
     );

@@ -2,6 +2,7 @@ import type { DocumentRenderingState } from '../reader/document-rendering';
 import type { ReadingSessionSnapshot } from '../reader/reader-actions';
 import type { RecentDocument } from '../reader/recent-documents';
 import { hydrateChromeIcons } from './chrome-icons';
+import { tabBarShown } from './tab-bar';
 
 // Show splash screen
 export function showSplash(): void {
@@ -58,13 +59,13 @@ export function applyWindowChrome(doc: Document, isMac: boolean): void {
 }
 
 /**
- * The tab bar is shown only while two or more Documents are open, like macOS tabs.
- * Only visibility changes; the rendered tabs keep Reading Session order.
- * `alwaysShown` (View ▸ Show Tab Bar) keeps it shown for a single Document.
+ * Shows or hides the tab bar by `tabBarShown`. Only visibility changes; the
+ * rendered tabs keep Reading Session order.
  */
-export function updateTabBarVisibility(documentCount: number, alwaysShown = false): void {
-  const shown = documentCount >= 2 || (alwaysShown && documentCount > 0);
-  document.getElementById('tab-bar')?.classList.toggle('hidden', !shown);
+export function updateTabBarVisibility(documentCount: number, keptShown = false): void {
+  document
+    .getElementById('tab-bar')
+    ?.classList.toggle('hidden', !tabBarShown(documentCount, keptShown));
 }
 
 // Update UI based on viewer state
