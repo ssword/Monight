@@ -92,6 +92,43 @@ describe('Document Queries', () => {
     expect(reader.snapshot()).toEqual(before);
   });
 
+  it('returns outline entries with their targets as copies the caller may keep', async () => {
+    const outline = [
+      {
+        title: 'Chapter',
+        pageNumber: 2,
+        target: { readingPosition: { page: 2, location: 0.5 } },
+        bold: false,
+        italic: false,
+        items: [
+          {
+            title: 'Website',
+            pageNumber: null,
+            url: 'https://example.com',
+            target: { url: 'https://example.com' },
+            bold: false,
+            italic: false,
+            items: [],
+          },
+        ],
+      },
+    ];
+    const reader = createReader();
+    await reader.dispatch({
+      type: 'registerDocument',
+      document: FIRST_DOCUMENT,
+      runtime: createRuntime(createContent({ getOutline: vi.fn(async () => outline) })),
+    });
+
+    const first = await reader.query(FIRST_DOCUMENT.filePath)?.outline();
+    expect(first).toEqual(outline);
+    (first?.[0]?.target?.readingPosition as { page: number }).page = 9;
+
+    const second = await reader.query(FIRST_DOCUMENT.filePath)?.outline();
+    expect(second?.[0]?.target).toEqual({ readingPosition: { page: 2, location: 0.5 } });
+    expect(second?.[0]?.items[0]?.target).toEqual({ url: 'https://example.com' });
+  });
+
   it('invalidates a generation immediately when its Document closes and ignores late results', async () => {
     let finishSearch: ((matches: []) => void) | undefined;
     let emitProgress: (() => void) | undefined;
