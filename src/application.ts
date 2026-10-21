@@ -4,6 +4,11 @@ import { listen } from '@tauri-apps/api/event';
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 import { hydrateChromeIcons } from './app/chrome-icons';
 import {
+  type ChromePreferencesAuthority,
+  type ChromePreferencesStorage,
+  loadChromePreferences,
+} from './app/chrome-preferences';
+import {
   requestConfirmation,
   requestPdfPassword,
   requestPdfSaveFailure,
@@ -24,6 +29,7 @@ import {
 import { registerKeybindActions } from './app/keybinds';
 import { createPersistenceCoordinator } from './app/persistence-coordinator';
 import { PresentationController } from './app/presentation-controller';
+import { createReaderSidebar, type ReaderSidebar } from './app/reader-sidebar';
 import { restoreReadingSessionAtStartup } from './app/startup-restoration';
 import { type ExternalOpenPayload, setupTauriListeners } from './app/tauri-events';
 import {
@@ -79,6 +85,7 @@ export interface ApplicationModules {
   createDocumentSurface: DocumentSurfaceProvider;
   createReadingSessionStorage: typeof import('./app/reading-session-storage').createReadingSessionStorage;
   createRecentDocumentStorage: typeof import('./app/recent-document-storage').createRecentDocumentStorage;
+  createChromePreferencesStorage?: () => ChromePreferencesStorage;
   createReaderActions: typeof import('./reader/reader-actions').createReaderActions;
 }
 
@@ -97,6 +104,8 @@ let readerActions: ReaderActions | null = null;
 let readingSessionStorage: ReadingSessionStorage | null = null;
 let restoredReadingSession: PersistedReadingSession | null = null;
 let recentDocumentAuthority: RecentDocumentAuthority | null = null;
+let chromePreferences: ChromePreferencesAuthority | null = null;
+let readerSidebar: ReaderSidebar | null = null;
 
 // Global keybind manager instance
 let keybindManager: KeybindManager | null = null;
@@ -354,6 +363,57 @@ const restoreStartupReadingSession = async (
   return readerActions?.snapshot().documents.length ?? 0;
 };
 
+function createTransientChromePreferencesStorage(): ChromePreferencesStorage {
+  let stored: unknown;
+  return {
+    read: async () => stored,
+    write: async (preferences) => {
+      stored = preferences;
+    },
+  };
+}
+
+function mountReaderSidebar(
+  preferences: ChromePreferencesAuthority,
+  defaultVisualState: () => { filterSettings: FilterSettings },
+): ReaderSidebar | null {
+  const root = document.getElementById('reader-sidebar');
+  const toggle = document.getElementById('sidebar-toggle');
+  const modeToggle = document.getElementById('sidebar-mode-toggle');
+  const modeMenu = document.getElementById('sidebar-mode-menu');
+  if (
+    !root ||
+    !(toggle instanceof HTMLButtonElement) ||
+    !(modeToggle instanceof HTMLButtonElement) ||
+    !modeMenu
+  ) {
+    return null;
+  }
+  const sidebar = createReaderSidebar({
+    elements: { root, toggle, modeToggle, modeMenu },
+    preferences,
+    dispatchReaderAction,
+    activeDocument: () => {
+      const snapshot = readerActions?.snapshot();
+      const rendering = documentWorkspace?.activeRenderingState();
+      const filePath = snapshot?.activeDocumentPath;
+      if (!snapshot || !filePath || !rendering || rendering.filePath !== filePath) return null;
+      const visualState = snapshot.documents.find(
+        (document) => document.filePath === filePath,
+      )?.visualState;
+      return {
+        filePath,
+        pageCount: rendering.totalPages,
+        currentPage: rendering.currentPage,
+        filterSettings: visualState?.filterSettings ?? defaultVisualState().filterSettings,
+        query: readerActions?.query(filePath) ?? null,
+      };
+    },
+  });
+  sidebar.refresh();
+  return sidebar;
+}
+
 export async function initializeApplication(modules: ApplicationModules): Promise<void> {
   const currentWindow = getCurrentWebviewWindow();
   const shutdown = createApplicationShutdownCoordinator({
@@ -369,6 +429,8 @@ export async function initializeApplication(modules: ApplicationModules): Promis
     canShutdown: () => readerActions?.isShutdownPrepared() ?? true,
     flush: async () => {
       await documentIntake?.quiesce();
+      // Chrome preferences are best-effort and never hold up quitting.
+      await chromePreferences?.flush().catch(() => undefined);
       await persistence.flush();
     },
     chooseAfterFailure: chooseAfterFinalSaveFailure,
@@ -420,6 +482,13 @@ export async function initializeApplication(modules: ApplicationModules): Promis
       },
     );
     renderRecentFiles(recentDocumentAuthority.snapshot());
+    chromePreferences = await loadChromePreferences(
+      modules.createChromePreferencesStorage?.() ?? createTransientChromePreferencesStorage(),
+      {
+        onPersistenceError: (error) =>
+          console.error('Chrome preferences persistence failed:', error),
+      },
+    );
     readingSessionStorage = modules.createReadingSessionStorage(settingsManager);
     try {
       restoredReadingSession = await loadReadingSession(readingSessionStorage);
@@ -480,6 +549,7 @@ export async function initializeApplication(modules: ApplicationModules): Promis
       renderingStateChanged: () => {
         if (!readerActions || !documentWorkspace) return;
         updateUI(readerActions.snapshot(), documentWorkspace.activeRenderingState());
+        readerSidebar?.refresh();
       },
     });
 
@@ -524,9 +594,11 @@ export async function initializeApplication(modules: ApplicationModules): Promis
       documentIntake.interrupt();
       documentIntake.stopAccepting();
     }
+    readerSidebar = mountReaderSidebar(chromePreferences, defaultVisualState);
     readerActions.observe((snapshot) => {
       documentWorkspace?.project(snapshot);
       updateUI(snapshot, documentWorkspace?.activeRenderingState() ?? null);
+      readerSidebar?.refresh();
       const activeDocument = snapshot.documents.find(
         ({ filePath }) => filePath === snapshot.activeDocumentPath,
       );

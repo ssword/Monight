@@ -55,6 +55,7 @@ import {
 } from './embedpdf-navigation-geometry';
 import {
   createEmbedPdfViewerConfig,
+  embedPdfSidebarsWithoutThumbnails,
   preloadEmbedPdfLocalFonts,
 } from './embedpdf-offline-configuration';
 import { prepareEmbedPdfPrintDocument } from './embedpdf-print-preparation';
@@ -222,6 +223,8 @@ export async function createEmbedPdfViewerRuntime({
   const spread = requireCapability<SpreadCapability>(registry, 'spread');
   const thumbnails = requireCapability<ThumbnailCapability>(registry, 'thumbnail');
   const ui = requireCapability<UICapability>(registry, 'ui');
+  // Must precede document loading: each document copies the schema when it opens.
+  ui.mergeSchema({ sidebars: embedPdfSidebarsWithoutThumbnails(ui.getSchema().sidebars) });
   const viewport = requireCapability<ViewportCapability>(registry, 'viewport');
   const engine = registry.getEngine();
   const unsubscribers: Array<() => void> = [];

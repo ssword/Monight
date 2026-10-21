@@ -1,10 +1,12 @@
 // Reader chrome icons come from one bundled, open-licensed outline set
 // (Lucide, ISC). Icons are compiled into the app bundle, never fetched.
 import {
+  ChevronDown,
   createElement,
   FolderOpen,
   type IconNode,
   Palette,
+  PanelLeft,
   Presentation,
   Printer,
   Scan,
@@ -13,10 +15,12 @@ import {
 } from 'lucide';
 
 const CHROME_ICONS: Readonly<Record<string, IconNode>> = {
+  'chevron-down': ChevronDown,
   'folder-open': FolderOpen,
   palette: Palette,
   presentation: Presentation,
   printer: Printer,
+  sidebar: PanelLeft,
   'zoom-in': ZoomIn,
   'zoom-out': ZoomOut,
   'zoom-to-fit': Scan,
