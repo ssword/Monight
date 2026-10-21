@@ -6,6 +6,8 @@
 // Adding a verified tool: append an entry below (with its verification
 // record). No other change is needed for it to appear in its control.
 
+import type { ActiveMarkupState } from './document-workspace';
+
 /** Where a verified tool is offered in the reader chrome. */
 export type MarkupToolControl =
   /** A button on the markup toolbar beneath the toolbar. */
@@ -54,6 +56,14 @@ export function verifiedMarkupTools(
   tools: readonly VerifiedMarkupTool[] = VERIFIED_MARKUP_TOOLS,
 ): readonly VerifiedMarkupTool[] {
   return control ? tools.filter((tool) => tool.control === control) : tools;
+}
+
+/**
+ * Whether the active Document takes edits (markup tools, Page Rotation). A
+ * protected Document carries the explanation its controls show instead.
+ */
+export function isEditableMarkup(markup: ActiveMarkupState | null): markup is ActiveMarkupState {
+  return markup !== null && markup.readOnlyReason === null;
 }
 
 /**

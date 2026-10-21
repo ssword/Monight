@@ -7,6 +7,7 @@ import { hydrateChromeIcons } from './chrome-icons';
 import type { ChromePreferencesAuthority } from './chrome-preferences';
 import type { ActiveMarkupState } from './document-workspace';
 import {
+  isEditableMarkup,
   toolAfterChoosing,
   VERIFIED_MARKUP_TOOLS,
   type VerifiedMarkupTool,
@@ -112,7 +113,7 @@ export function createMarkupToolbar({
     const markup = activeMarkup();
     const reason = markup?.readOnlyReason ?? null;
     for (const { tool, button } of buttons) {
-      button.disabled = !markup || reason !== null;
+      button.disabled = !isEditableMarkup(markup);
       button.title = reason ?? tool.label;
       button.setAttribute('aria-pressed', String(markup?.activeToolId === tool.id));
     }
@@ -128,7 +129,7 @@ export function createMarkupToolbar({
   /** A tool button's choice; choosing the active tool returns to text selection. */
   const chooseTool = (toolId: string) => {
     const markup = activeMarkup();
-    if (!markupToolIds.has(toolId) || !markup || markup.readOnlyReason !== null) return;
+    if (!markupToolIds.has(toolId) || !isEditableMarkup(markup)) return;
     setActiveTool(toolAfterChoosing(markup.activeToolId, toolId));
     render();
   };

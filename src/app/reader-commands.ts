@@ -32,7 +32,7 @@ import {
 import type { KeybindConfig } from '../scripts/keybind-defaults';
 import type { ChromePreferences, ChromePreferencesAuthority } from './chrome-preferences';
 import type { ActiveMarkupState } from './document-workspace';
-import { VERIFIED_MARKUP_TOOLS, type VerifiedMarkupTool } from './markup-tools';
+import { isEditableMarkup, VERIFIED_MARKUP_TOOLS, type VerifiedMarkupTool } from './markup-tools';
 import type { SidebarChoice } from './reader-sidebar';
 import { tabBarShown } from './tab-bar';
 
@@ -133,6 +133,9 @@ const ROTATE_ITEMS = [
 ] as const;
 
 const hasDocument = (input: ReaderCommandStateInput) => input.activeDocument !== null;
+/** The active Document takes edits; protected Documents refuse with their reason. */
+const editableDocument = (input: ReaderCommandStateInput) =>
+  hasDocument(input) && isEditableMarkup(input.markup);
 const whenDocument = (input: ReaderCommandStateInput) => ({ enabled: hasDocument(input) });
 const checkedWithDocument = (input: ReaderCommandStateInput, checked: boolean) => ({
   enabled: hasDocument(input),
@@ -272,7 +275,7 @@ const annotateCommands = (tools: readonly VerifiedMarkupTool[]): ReaderCommand[]
         ? context.highlightButton?.activate(tool.id)
         : context.markupToolbar?.chooseTool(tool.id),
     state: (input) => ({
-      enabled: hasDocument(input) && input.markup !== null && input.markup.readOnlyReason === null,
+      enabled: editableDocument(input),
       checked: hasDocument(input) && input.markup?.activeToolId === tool.id,
     }),
   }));
@@ -292,9 +295,7 @@ const rotateCommands = (): ReaderCommand[] =>
       if (pages.length === 0) return;
       return context.dispatchReaderAction(readerAction.rotatePages(pages, direction));
     },
-    state: (input) => ({
-      enabled: hasDocument(input) && input.markup !== null && input.markup.readOnlyReason === null,
-    }),
+    state: (input) => ({ enabled: editableDocument(input) }),
   }));
 
 function readerCommands(

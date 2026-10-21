@@ -11,6 +11,7 @@ import {
   HIGHLIGHT_COLORS,
   type HighlightColorId,
   highlightStrokeColor,
+  isEditableMarkup,
   VERIFIED_MARKUP_TOOLS,
   type VerifiedMarkupTool,
   verifiedMarkupTools,
@@ -106,14 +107,12 @@ export function createHighlightButton({
   const defaults = (): MarkupDefaults => ({
     strokeColor: highlightStrokeColor(preferences.snapshot().highlightColor),
   });
-  const editable = (markup: ActiveMarkupState | null): markup is ActiveMarkupState =>
-    Boolean(markup && markup.readOnlyReason === null && currentTool);
 
   let renderedIcon = '';
   const render = () => {
     const markup = activeMarkup();
     const reason = markup?.readOnlyReason ?? null;
-    const unavailable = !editable(markup);
+    const unavailable = !isEditableMarkup(markup) || !currentTool;
     const label = currentTool?.label ?? 'Highlight';
     button.disabled = unavailable;
     menuToggle.disabled = unavailable;
@@ -138,7 +137,7 @@ export function createHighlightButton({
 
   const onButtonClick = () => {
     const markup = activeMarkup();
-    if (!editable(markup) || !currentTool) return;
+    if (!isEditableMarkup(markup) || !currentTool) return;
     if (markupToolIds.has(markup.activeToolId ?? '')) setActiveTool(null);
     else if (!markupSelection(currentTool.id, defaults()))
       setActiveTool(currentTool.id, defaults());
@@ -159,7 +158,7 @@ export function createHighlightButton({
     if (tool) currentTool = tool;
     setMenuOpen(false);
     const markup = activeMarkup();
-    if (editable(markup) && currentTool) {
+    if (isEditableMarkup(markup) && currentTool) {
       // In highlight mode the choice changes the mode's mark; otherwise it marks
       // any selection without entering the mode.
       if (markupToolIds.has(markup.activeToolId ?? '')) setActiveTool(currentTool.id, defaults());

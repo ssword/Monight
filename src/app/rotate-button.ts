@@ -10,6 +10,7 @@ import { isMacPlatform } from '../lib/platform';
 import { PAGE_ROTATION_VERIFIED } from '../lib/verification-gates';
 import { hydrateChromeIcons } from './chrome-icons';
 import type { ActiveMarkupState } from './document-workspace';
+import { isEditableMarkup } from './markup-tools';
 
 export interface RotateButtonOptions {
   /** The toolbar capsule the button is placed in. */
@@ -62,9 +63,8 @@ export function createRotateButton({
   const label = `Rotate Left (${isMac ? 'Option' : 'Alt'}-click to Rotate Right)`;
   const render = () => {
     const markup = activeMarkup();
-    const reason = markup?.readOnlyReason ?? null;
-    button.disabled = markup === null || reason !== null;
-    button.title = reason ?? label;
+    button.disabled = !isEditableMarkup(markup);
+    button.title = markup?.readOnlyReason ?? label;
   };
 
   const onClick = (event: MouseEvent) => {
