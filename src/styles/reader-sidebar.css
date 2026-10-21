@@ -180,11 +180,17 @@
   border-radius: 8px;
 }
 
-.sidebar-thumbnail[aria-current="page"] .sidebar-thumbnail-image {
+/* The current page shows as selected until the reader selects pages (⇧/⌘-click). */
+.sidebar-thumbnails:not([data-selecting]) .sidebar-thumbnail[aria-current="page"]
+  .sidebar-thumbnail-image,
+.sidebar-thumbnail[data-selected="true"] .sidebar-thumbnail-image {
   border-color: var(--accent-color);
 }
 
-.sidebar-thumbnail[aria-current="page"] .sidebar-thumbnail-label {
+.sidebar-thumbnails:not([data-selecting])
+  .sidebar-thumbnail[aria-current="page"]
+  .sidebar-thumbnail-label,
+.sidebar-thumbnail[data-selected="true"] .sidebar-thumbnail-label {
   color: var(--text-on-accent);
   background-color: var(--accent-color);
 }

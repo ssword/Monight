@@ -40,6 +40,7 @@ import { createPersistenceCoordinator } from './app/persistence-coordinator';
 import { PresentationController } from './app/presentation-controller';
 import type { ReaderCommandContext, ReaderCommandStateInput } from './app/reader-commands';
 import { createReaderSidebar, type ReaderSidebar } from './app/reader-sidebar';
+import { createRotateButton, type RotateButton } from './app/rotate-button';
 import { restoreReadingSessionAtStartup } from './app/startup-restoration';
 import { type ExternalOpenPayload, setupTauriListeners } from './app/tauri-events';
 import {
@@ -133,6 +134,7 @@ let chromePreferences: ChromePreferencesAuthority | null = null;
 let readerSidebar: ReaderSidebar | null = null;
 let markupToolbar: MarkupToolbar | null = null;
 let highlightButton: HighlightButton | null = null;
+let rotateButton: RotateButton | null = null;
 
 // Global keybind manager instance
 let keybindManager: KeybindManager | null = null;
@@ -534,6 +536,16 @@ function mountHighlightButton(preferences: ChromePreferencesAuthority): Highligh
   });
 }
 
+function mountRotateButton(): RotateButton | null {
+  const slot = document.getElementById('rotate-control');
+  if (!slot) return null;
+  return createRotateButton({
+    slot,
+    activeMarkup: () => documentWorkspace?.activeMarkup() ?? null,
+    runCommand: (id) => readerMenu.run(id),
+  });
+}
+
 function mountMarkupToolbar(preferences: ChromePreferencesAuthority): MarkupToolbar | null {
   const bar = document.getElementById('markup-toolbar');
   const toggle = document.getElementById('markup-toolbar-toggle');
@@ -687,6 +699,7 @@ export async function initializeApplication(modules: ApplicationModules): Promis
         readerSidebar?.refresh();
         markupToolbar?.refresh();
         highlightButton?.refresh();
+        rotateButton?.refresh();
         syncReaderMenu();
       },
     });
@@ -735,6 +748,7 @@ export async function initializeApplication(modules: ApplicationModules): Promis
     readerSidebar = mountReaderSidebar(chromePreferences, defaultVisualState);
     markupToolbar = mountMarkupToolbar(chromePreferences);
     highlightButton = mountHighlightButton(chromePreferences);
+    rotateButton = mountRotateButton();
     leaveMarkupToolOnEscape({
       activeMarkup: () => documentWorkspace?.activeMarkup() ?? null,
       setActiveTool: (toolId) => documentWorkspace?.setActiveAnnotationTool(toolId),
@@ -746,6 +760,7 @@ export async function initializeApplication(modules: ApplicationModules): Promis
       readerSidebar?.refresh();
       markupToolbar?.refresh();
       highlightButton?.refresh();
+      rotateButton?.refresh();
       showActiveAppearance(snapshot);
       const hasDocument = snapshot.documents.length > 0;
       showTabBar(snapshot.documents.length);
@@ -875,6 +890,8 @@ export async function initializeApplication(modules: ApplicationModules): Promis
           pageCount: activeDocument.pageCount,
         });
       },
+      selectedPages: () => readerSidebar?.selectedPages() ?? [],
+      currentPage: () => readerMenuState().activeDocument?.currentPage || null,
     };
     await currentWindow.onResized(() => {
       void refreshWindowFullScreen();

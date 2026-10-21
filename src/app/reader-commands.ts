@@ -10,6 +10,10 @@
 //
 // Extending: add an entry to `staticCommands` (and the item in menu.rs), or
 // extend `ReaderCommandStateInput` for new reader state.
+//
+// Rotate Left and Rotate Right exist only while PAGE_ROTATION_VERIFIED is on:
+// otherwise they are neither commands nor menu items (the `tools.rotate`
+// section stays empty), so no shortcut or menu click can reach them.
 
 import type { ViewMode } from '../lib/document-features';
 import {
@@ -27,7 +31,11 @@ import {
 import type { KeybindConfig } from '../scripts/keybind-defaults';
 import type { ChromePreferences, ChromePreferencesAuthority } from './chrome-preferences';
 import type { ActiveMarkupState } from './document-workspace';
-import { VERIFIED_MARKUP_TOOLS, type VerifiedMarkupTool } from './markup-tools';
+import {
+  PAGE_ROTATION_VERIFIED,
+  VERIFIED_MARKUP_TOOLS,
+  type VerifiedMarkupTool,
+} from './markup-tools';
 import type { SidebarChoice } from './reader-sidebar';
 
 /**
@@ -63,6 +71,10 @@ export interface ReaderCommandContext {
   readonly toggleFullScreen: () => Promise<void>;
   /** Asks the reader for a page number; null when cancelled. */
   readonly requestPage: () => Promise<number | null>;
+  /** The pages selected in the Thumbnails sidebar (transient); empty when none. */
+  readonly selectedPages: () => readonly number[];
+  /** The active Document's current page; null without one. */
+  readonly currentPage: () => number | null;
 }
 
 export interface ReaderCommandStateInput {
@@ -110,6 +122,13 @@ interface ReaderCommand {
 
 const APPEARANCE_SUBMENU = 'view.appearance';
 const ANNOTATE_SUBMENU = 'tools.annotate';
+/** The Tools menu's Rotate items, listed inline from TypeScript behind the gate. */
+const ROTATE_SECTION = 'tools.rotate';
+
+const ROTATE_ITEMS = [
+  { id: `${ROTATE_SECTION}.left`, text: 'Rotate Left', direction: 'counterclockwise' },
+  { id: `${ROTATE_SECTION}.right`, text: 'Rotate Right', direction: 'clockwise' },
+] as const;
 
 const hasDocument = (input: ReaderCommandStateInput) => input.activeDocument !== null;
 const whenDocument = (input: ReaderCommandStateInput) => ({ enabled: hasDocument(input) });
@@ -257,8 +276,31 @@ const annotateCommands = (tools: readonly VerifiedMarkupTool[]): ReaderCommand[]
     }),
   }));
 
-function readerCommands(tools: readonly VerifiedMarkupTool[]): readonly ReaderCommand[] {
-  const commands = [...staticCommands];
+/**
+ * Page Rotation acts on the pages selected in the Thumbnails sidebar, or on the
+ * current page when none are; protected Documents are refused with their
+ * explanation by the Reader Action.
+ */
+const rotateCommands = (): ReaderCommand[] =>
+  ROTATE_ITEMS.map(({ id, direction }) => ({
+    id,
+    run: (context) => {
+      const selected = context.selectedPages();
+      const current = context.currentPage();
+      const pages = selected.length > 0 ? [...selected] : current ? [current] : [];
+      if (pages.length === 0) return;
+      return context.dispatchReaderAction(readerAction.rotatePages(pages, direction));
+    },
+    state: (input) => ({
+      enabled: hasDocument(input) && input.markup !== null && input.markup.readOnlyReason === null,
+    }),
+  }));
+
+function readerCommands(
+  tools: readonly VerifiedMarkupTool[],
+  pageRotation: boolean,
+): readonly ReaderCommand[] {
+  const commands = [...staticCommands, ...(pageRotation ? rotateCommands() : [])];
   const textSelection = commands.findIndex(({ id }) => id === 'tools.text-selection');
   const zoomOut = commands.findIndex(({ id }) => id === 'view.zoom.out');
   // Menu order: presets after the markup toolbar item, tools after Text Selection.
@@ -272,8 +314,9 @@ export async function runReaderCommand(
   id: string,
   context: ReaderCommandContext,
   tools: readonly VerifiedMarkupTool[] = VERIFIED_MARKUP_TOOLS,
+  pageRotation: boolean = PAGE_ROTATION_VERIFIED,
 ): Promise<boolean> {
-  const command = readerCommands(tools).find((candidate) => candidate.id === id);
+  const command = readerCommands(tools, pageRotation).find((candidate) => candidate.id === id);
   if (!command) return false;
   await command.run(context);
   return true;
@@ -313,18 +356,23 @@ function commandAccelerators(
 export function readerCommandStates(
   input: ReaderCommandStateInput,
   tools: readonly VerifiedMarkupTool[] = VERIFIED_MARKUP_TOOLS,
+  pageRotation: boolean = PAGE_ROTATION_VERIFIED,
 ): ReaderCommandState[] {
   const accelerators = input.keybinds ? commandAccelerators(input.keybinds) : null;
-  return readerCommands(tools).map((command) => ({
+  return readerCommands(tools, pageRotation).map((command) => ({
     id: command.id,
     ...command.state(input),
     ...(accelerators ? { accelerator: accelerators.get(command.id) ?? null } : {}),
   }));
 }
 
-/** The native submenus whose items come from the presets and verified-tools lists. */
+/**
+ * The native submenus (and inline sections) whose items come from the presets
+ * and verified-tools lists, and the Rotate items behind the gate.
+ */
 export function readerMenuSubmenus(
   tools: readonly VerifiedMarkupTool[] = VERIFIED_MARKUP_TOOLS,
+  pageRotation: boolean = PAGE_ROTATION_VERIFIED,
 ): ReaderMenuSubmenu[] {
   return [
     {
@@ -337,6 +385,10 @@ export function readerMenuSubmenus(
     {
       id: ANNOTATE_SUBMENU,
       items: tools.map(({ id, label }) => ({ id: `${ANNOTATE_SUBMENU}.${id}`, text: label })),
+    },
+    {
+      id: ROTATE_SECTION,
+      items: pageRotation ? ROTATE_ITEMS.map(({ id, text }) => ({ id, text })) : [],
     },
   ];
 }

@@ -14,10 +14,22 @@
 //   { version: N + 1, binds: { GoBack: ['CmdOrCtrl+['], ... } }
 // On upgrade, `migrateKeybinds` gives each listed action its new default only
 // if the reader has not rebound it, and drops any new default that collides
-// with a binding the reader chose. A default behind a gate (such as
-// PAGE_ROTATION_VERIFIED) is appended in the change that opens the gate, so
-// installs upgraded while it was closed still receive it.
+// with a binding the reader chose.
+//
+// Gated defaults: an action behind a verification gate (KEYBIND_GATES, e.g.
+// PAGE_ROTATION_VERIFIED for Rotate) is listed in GATED_KEYBIND_ACTIONS and
+// introduced by a revision carrying the same `gate`. While the gate is closed
+// the action and its revision do not exist: no default, no stored binding, not
+// shown in Settings, and the revision does not count towards the stored
+// defaults version. Opening the gate is the only change needed:
+// - a fresh install gets the gated defaults with every other default;
+// - an install stored under an earlier version applies the revision in order;
+// - an install already stamped with a later version (upgraded while the gate
+//   was closed) still applies the gated revision, because none of its actions
+//   is stored yet. Collisions with the reader's own bindings are dropped as for
+//   any revision. Once stored, a gated action is the reader's like any other.
 
+import { PAGE_ROTATION_VERIFIED } from '../app/markup-tools';
 import { sameChord } from './accelerators';
 
 export type KeybindPlatform = 'mac' | 'other';
@@ -36,8 +48,22 @@ type PlatformBinds =
   | readonly string[]
   | { readonly mac: readonly string[]; readonly other: readonly string[] };
 
+/** Verification gates that hide whole actions until their feature is verified. */
+export interface KeybindGates {
+  readonly pageRotation: boolean;
+}
+
+type KeybindGate = keyof KeybindGates;
+
+/** The gates as this build ships them. */
+export const KEYBIND_GATES: KeybindGates = Object.freeze({
+  pageRotation: PAGE_ROTATION_VERIFIED,
+});
+
 interface KeybindDefaultsRevision {
   readonly version: number;
+  /** A revision introducing gated actions applies only once the gate is open. */
+  readonly gate?: KeybindGate;
   readonly binds: Readonly<Record<string, PlatformBinds>>;
 }
 
@@ -97,6 +123,14 @@ export const KEYBIND_ACTIONS: Readonly<Record<string, KeybindAction>> = {
   SwitchToTab9: switchToTab(9),
   Fullscreen: { displayName: 'Enter Full Screen', action: 'toggleFullscreen' },
   PresentationMode: { displayName: 'Slideshow', action: 'presentationMode' },
+  RotateLeft: readerCommand('Rotate Left', 'tools.rotate.left'),
+  RotateRight: readerCommand('Rotate Right', 'tools.rotate.right'),
+};
+
+/** Actions that exist only while their gate is open. */
+const GATED_KEYBIND_ACTIONS: Readonly<Record<string, KeybindGate>> = {
+  RotateLeft: 'pageRotation',
+  RotateRight: 'pageRotation',
 };
 
 export const KEYBIND_DEFAULTS_REVISIONS: readonly KeybindDefaultsRevision[] = [
@@ -174,11 +208,30 @@ export const KEYBIND_DEFAULTS_REVISIONS: readonly KeybindDefaultsRevision[] = [
       GoForward: ['CmdOrCtrl+]'],
     },
   },
+  {
+    // Preview's Rotate Left and Rotate Right (#114), once Page Rotation is verified.
+    version: 4,
+    gate: 'pageRotation',
+    binds: {
+      RotateLeft: ['CmdOrCtrl+L'],
+      RotateRight: ['CmdOrCtrl+R'],
+    },
+  },
 ];
 
-export const KEYBIND_DEFAULTS_VERSION = Math.max(
-  ...KEYBIND_DEFAULTS_REVISIONS.map(({ version }) => version),
-);
+const gateOpen = (gate: KeybindGate | undefined, gates: KeybindGates) =>
+  gate === undefined || gates[gate];
+
+const actionOffered = (id: string, gates: KeybindGates) =>
+  gateOpen(GATED_KEYBIND_ACTIONS[id], gates);
+
+const openRevisions = (gates: KeybindGates) =>
+  KEYBIND_DEFAULTS_REVISIONS.filter(({ gate }) => gateOpen(gate, gates));
+
+/** The defaults version stored keybinds are upgraded to: the latest open revision. */
+export function keybindDefaultsVersion(gates: KeybindGates = KEYBIND_GATES): number {
+  return Math.max(...openRevisions(gates).map(({ version }) => version));
+}
 
 /** The keybind ids no longer offered; their stored bindings are ignored. */
 export const RETIRED_KEYBIND_IDS: ReadonlySet<string> = new Set([
@@ -190,10 +243,14 @@ export const RETIRED_KEYBIND_IDS: ReadonlySet<string> = new Set([
 const forPlatform = (binds: PlatformBinds, platform: KeybindPlatform): string[] =>
   'mac' in binds ? [...binds[platform]] : [...binds];
 
-/** Default bindings by action id as of `version`. */
-function defaultBindsAt(version: number, platform: KeybindPlatform): Record<string, string[]> {
+/** Default bindings by action id as of `version`, from the open revisions. */
+function defaultBindsAt(
+  version: number,
+  platform: KeybindPlatform,
+  gates: KeybindGates,
+): Record<string, string[]> {
   const binds: Record<string, string[]> = {};
-  for (const revision of KEYBIND_DEFAULTS_REVISIONS) {
+  for (const revision of openRevisions(gates)) {
     if (revision.version > version) continue;
     for (const [id, revisionBinds] of Object.entries(revision.binds)) {
       binds[id] = forPlatform(revisionBinds, platform);
@@ -208,11 +265,16 @@ const configFor = (id: string, binds: string[]): KeybindConfig => {
   return { ...action, binds };
 };
 
-/** The current default keybinds for a platform. */
-export function defaultKeybinds(platform: KeybindPlatform): Keybinds {
-  const binds = defaultBindsAt(KEYBIND_DEFAULTS_VERSION, platform);
+/** The current default keybinds for a platform: every action whose gate is open. */
+export function defaultKeybinds(
+  platform: KeybindPlatform,
+  gates: KeybindGates = KEYBIND_GATES,
+): Keybinds {
+  const binds = defaultBindsAt(keybindDefaultsVersion(gates), platform, gates);
   return Object.fromEntries(
-    Object.keys(KEYBIND_ACTIONS).map((id) => [id, configFor(id, binds[id] ?? [])]),
+    Object.keys(KEYBIND_ACTIONS)
+      .filter((id) => actionOffered(id, gates))
+      .map((id) => [id, configFor(id, binds[id] ?? [])]),
   );
 }
 
@@ -228,27 +290,57 @@ const sameBinds = (a: readonly string[], b: readonly string[], isMac: boolean): 
   b.every((bind) => a.some((other) => sameChord(bind, other, isMac)));
 
 /**
- * Applies every revision after `fromVersion` to a stored keybind map. An action
- * whose stored bindings still equal the defaults of the version it was stored
- * under (or that is not stored at all) takes the revision's defaults, minus any
- * chord another action keeps; every other action keeps the reader's bindings.
- * Every action a revision names is written out, so a dropped default stays
- * dropped instead of being merged back from the defaults.
+ * The open revisions a keybind map stored under `fromVersion` has not received:
+ * every later one, and any gated one none of whose actions is stored yet (its
+ * gate was closed when the map was upgraded past it).
+ */
+function pendingRevisions(
+  stored: Keybinds | undefined,
+  fromVersion: number,
+  gates: KeybindGates,
+): KeybindDefaultsRevision[] {
+  return openRevisions(gates)
+    .filter(
+      ({ version, gate, binds }) =>
+        version > fromVersion ||
+        (gate !== undefined && Object.keys(binds).every((id) => stored?.[id] === undefined)),
+    )
+    .sort((a, b) => a.version - b.version);
+}
+
+/** Whether a stored keybind map lacks defaults it should be upgraded to. */
+export function keybindsNeedUpgrade(
+  stored: Keybinds | undefined,
+  fromVersion: number,
+  gates: KeybindGates = KEYBIND_GATES,
+): boolean {
+  if (fromVersion < keybindDefaultsVersion(gates)) return true;
+  return stored !== undefined && pendingRevisions(stored, fromVersion, gates).length > 0;
+}
+
+/**
+ * Applies every pending revision (see pendingRevisions) to a stored keybind
+ * map. An action whose stored bindings still equal the defaults of the version
+ * it was stored under (or that is not stored at all) takes the revision's
+ * defaults, minus any chord another action keeps; every other action keeps the
+ * reader's bindings. Every action a revision names is written out, so a dropped
+ * default stays dropped instead of being merged back from the defaults. Retired
+ * actions and actions behind a closed gate are left out.
  */
 export function migrateKeybinds(
   stored: Keybinds,
   fromVersion: number,
   platform: KeybindPlatform,
+  gates: KeybindGates = KEYBIND_GATES,
 ): Keybinds {
   const isMac = platform === 'mac';
   let keybinds: Keybinds = Object.fromEntries(
-    Object.entries(stored).filter(([id]) => !RETIRED_KEYBIND_IDS.has(id)),
+    Object.entries(stored).filter(
+      ([id]) => !RETIRED_KEYBIND_IDS.has(id) && actionOffered(id, gates),
+    ),
   );
-  const revisions = KEYBIND_DEFAULTS_REVISIONS.filter(({ version }) => version > fromVersion).sort(
-    (a, b) => a.version - b.version,
-  );
-  for (const revision of revisions) {
-    const previous = defaultBindsAt(revision.version - 1, platform);
+  for (const revision of pendingRevisions(keybinds, fromVersion, gates)) {
+    const previous = defaultBindsAt(revision.version - 1, platform, gates);
     const takesDefault = new Set(
       Object.keys(revision.binds).filter((id) => {
         const current = keybinds[id];
@@ -272,16 +364,17 @@ export function migrateKeybinds(
 
 /**
  * The bindings in effect: stored bindings (stored under defaults `version`)
- * upgraded and laid over the current defaults, without retired actions, and
- * with each action's current name.
+ * upgraded and laid over the current defaults, without retired or gated-off
+ * actions, and with each action's current name.
  */
 export function effectiveKeybinds(
   stored: Keybinds | undefined,
   version: number,
   platform: KeybindPlatform,
+  gates: KeybindGates = KEYBIND_GATES,
 ): Keybinds {
-  const keybinds = defaultKeybinds(platform);
-  const upgraded = stored ? migrateKeybinds(stored, version, platform) : {};
+  const keybinds = defaultKeybinds(platform, gates);
+  const upgraded = stored ? migrateKeybinds(stored, version, platform, gates) : {};
   for (const [id, config] of Object.entries(upgraded)) {
     const displayName = KEYBIND_ACTIONS[id]?.displayName;
     keybinds[id] = displayName ? { ...config, displayName } : config;

@@ -572,3 +572,119 @@ describe('Back and Forward shortcut defaults', () => {
     expect(settings.keybinds.GoForward.binds).toEqual(['CmdOrCtrl+]']);
   });
 });
+
+describe('Rotate shortcuts behind the Page Rotation gate', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    store.reset();
+  });
+
+  const closed = { platform: 'mac', pageRotationVerified: false } as const;
+  const open = { platform: 'mac', pageRotationVerified: true } as const;
+
+  it('offers no Rotate shortcut while Page Rotation is unverified', async () => {
+    const settings = await new SettingsManager('main', closed).load();
+
+    for (const { displayName } of Object.values(settings.keybinds))
+      expect(displayName).not.toMatch(/Rotate/);
+    expect(store.values.get('keybinds')).not.toHaveProperty('RotateLeft');
+    expect(store.values.get('keybinds')).not.toHaveProperty('RotateRight');
+  });
+
+  it('gives a fresh install ⌘L Rotate Left and ⌘R Rotate Right once verified', async () => {
+    const settings = await new SettingsManager('main', open).load();
+
+    expect(settings.keybinds.RotateLeft).toEqual({
+      displayName: 'Rotate Left',
+      binds: ['CmdOrCtrl+L'],
+      action: 'readerCommand',
+      data: 'tools.rotate.left',
+    });
+    expect(settings.keybinds.RotateRight).toMatchObject({
+      displayName: 'Rotate Right',
+      binds: ['CmdOrCtrl+R'],
+      data: 'tools.rotate.right',
+    });
+  });
+
+  it('gives an install upgraded while the gate was closed the Rotate defaults when it opens', async () => {
+    await new SettingsManager('main', closed).load();
+    const settingsWindow = new SettingsManager('settings', closed);
+    const edited = await settingsWindow.load();
+    await settingsWindow.set('keybinds', {
+      ...edited.keybinds,
+      Find: { ...edited.keybinds.Find, binds: ['CmdOrCtrl+F', 'CmdOrCtrl+R'] },
+    });
+
+    const settings = await new SettingsManager('main', open).load();
+    const settingsAfterward = await new SettingsManager('settings', open).load();
+
+    expect(settings.keybinds.RotateLeft.binds).toEqual(['CmdOrCtrl+L']);
+    // The reader chose ⌘R while Rotate was hidden; the new default gives way.
+    expect(settings.keybinds.RotateRight.binds).toEqual([]);
+    expect(settings.keybinds.Find.binds).toEqual(['CmdOrCtrl+F', 'CmdOrCtrl+R']);
+    expect(store.values.get('keybinds')).toHaveProperty('RotateLeft');
+    expect(settingsAfterward.keybinds.RotateLeft.binds).toEqual(['CmdOrCtrl+L']);
+    expect(settingsAfterward.keybinds.RotateRight.binds).toEqual([]);
+  });
+
+  it('gives the Rotate defaults to an install a later version upgraded while the gate was closed', async () => {
+    const { keybinds } = await new SettingsManager('main', closed).load();
+    store.reset({
+      storageSchemaVersion: SETTINGS_SCHEMA_VERSION,
+      keybindDefaultsVersion: 99,
+      keybinds,
+    });
+
+    const settings = await new SettingsManager('main', open).load();
+
+    expect(settings.keybinds.RotateLeft.binds).toEqual(['CmdOrCtrl+L']);
+    expect(settings.keybinds.RotateRight.binds).toEqual(['CmdOrCtrl+R']);
+    expect(store.values.get('keybinds')).toHaveProperty('RotateRight');
+  });
+
+  it('keeps a Rotate binding the reader changed after the gate opened', async () => {
+    await new SettingsManager('main', open).load();
+    const settingsWindow = new SettingsManager('settings', open);
+    const edited = await settingsWindow.load();
+    await settingsWindow.set('keybinds', {
+      ...edited.keybinds,
+      RotateLeft: { ...edited.keybinds.RotateLeft, binds: [] },
+    });
+
+    const settings = await new SettingsManager('main', open).load();
+
+    expect(settings.keybinds.RotateLeft.binds).toEqual([]);
+    expect(settings.keybinds.RotateRight.binds).toEqual(['CmdOrCtrl+R']);
+  });
+
+  it('hides stored Rotate shortcuts again if the gate is closed', async () => {
+    await new SettingsManager('main', open).load();
+
+    const settings = await new SettingsManager('settings', closed).load();
+
+    expect(settings.keybinds).not.toHaveProperty('RotateLeft');
+    expect(settings.keybinds).not.toHaveProperty('RotateRight');
+  });
+
+  it('lets retired view-rotation bindings block neither Rotate default', async () => {
+    store.reset({
+      storageSchemaVersion: SETTINGS_SCHEMA_VERSION,
+      keybindDefaultsVersion: 2,
+      keybinds: {
+        RotateClockwise: { displayName: 'Rotate', binds: ['CmdOrCtrl+R'], action: 'rotateRight' },
+        RotateCounterClockwise: {
+          displayName: 'Rotate',
+          binds: ['CmdOrCtrl+L'],
+          action: 'rotateLeft',
+        },
+      },
+    });
+
+    const settings = await new SettingsManager('main', { ...open, platform: 'other' }).load();
+
+    expect(settings.keybinds.RotateLeft.binds).toEqual(['CmdOrCtrl+L']);
+    expect(settings.keybinds.RotateRight.binds).toEqual(['CmdOrCtrl+R']);
+    expect(settings.keybinds).not.toHaveProperty('RotateClockwise');
+  });
+});

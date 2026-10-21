@@ -35,6 +35,12 @@ const NAVIGATION_KEYS = [
 ];
 
 // Setup event listeners
+/** The browser's reload shortcuts, which a WebView (WebView2) may still honour. */
+function isReloadChord(event: KeyboardEvent): boolean {
+  if (event.key === 'F5') return true;
+  return event.ctrlKey && !event.metaKey && !event.altKey && event.key.toLowerCase() === 'r';
+}
+
 export function setupEventListeners({
   sliderManager,
   keybindManager,
@@ -142,7 +148,7 @@ export function setupEventListeners({
   });
 
   // Keyboard shortcuts - use KeybindManager for dynamic keybind handling
-  const handleKeyDown = async (e: KeyboardEvent) => {
+  const handleShortcut = async (e: KeyboardEvent) => {
     if (!keybindManager || e.defaultPrevented) return;
     // Tab controls own their arrow-key focus navigation. Other configurable
     // reader shortcuts must be claimed before the ready-made viewer's listeners.
@@ -163,6 +169,14 @@ export function setupEventListeners({
       e.stopImmediatePropagation();
       await keybindManager.handleEvent(e);
     }
+  };
+  const handleKeyDown = (e: KeyboardEvent) => {
+    const handled = handleShortcut(e);
+    // WebView2 reloads the page on Ctrl+R, Ctrl+Shift+R and F5, which would drop
+    // the reader; such chords only ever run their bound shortcut (Ctrl+R is
+    // Rotate Right once Page Rotation is verified), even in text fields.
+    if (isReloadChord(e)) e.preventDefault();
+    return handled;
   };
 
   document.addEventListener('keydown', handleKeyDown, true);

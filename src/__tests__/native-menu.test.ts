@@ -148,6 +148,8 @@ describe('native menu state sync', () => {
     await readerMenu.install();
     const installed = calls.map(([command]) => command);
     expect(installed).toEqual([
+      // Appearance, Annotate, and the Rotate section (empty until verified).
+      'set_menu_submenu_items',
       'set_menu_submenu_items',
       'set_menu_submenu_items',
       'set_menu_item_states',
