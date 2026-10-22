@@ -106,7 +106,7 @@ describe('shipped code-health invariants', () => {
     }
   });
 
-  it('keeps the EmbedPDF Document surface as seven single-purpose modules', () => {
+  it('keeps the EmbedPDF Document surface and engine adapters in single-purpose modules', () => {
     const appDirectory = new URL('../app/', import.meta.url);
     const modules = readdirSync(appDirectory, { encoding: 'utf8' })
       .filter((path) => path.startsWith('embedpdf-') && path.endsWith('.ts'))
@@ -118,7 +118,9 @@ describe('shipped code-health invariants', () => {
       'embedpdf-navigation-geometry.ts',
       'embedpdf-offline-configuration.ts',
       'embedpdf-print-preparation.ts',
+      'embedpdf-selection-geometry.ts',
       'embedpdf-shortcuts.ts',
+      'embedpdf-text-markup-appearance.ts',
       'embedpdf-viewer-runtime.ts',
     ]);
 
