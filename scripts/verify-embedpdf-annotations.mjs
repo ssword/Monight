@@ -24,7 +24,7 @@ export async function verifyAnnotations(page, origin) {
   }));
   assert.equal(status, 'ready', error);
   const highlight = result.annotations.find((object) => object.type === 9);
-  const comment = result.annotations.find((object) => object.type === 1);
+  const comment = result.annotations.find((object) => object.id === 'comment-native');
   assert.deepEqual(comment.rect, { origin: { x: 260, y: 100 }, size: { width: 24, height: 24 } });
   assert.deepEqual(highlight.segmentRects, [
     { origin: { x: 72, y: 50 }, size: { width: 160, height: 24 } },
