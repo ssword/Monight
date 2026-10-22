@@ -64,13 +64,27 @@ function nativeAnnotationMatches(
     const value = Reflect.get(expected, field);
     const saved = Reflect.get(actual, field);
     if (value === undefined) return true;
+    // PDFium reads colour channels back in 8 bits, truncating, so a float written by
+    // Monight, Preview or Acrobat may return one step lower (#127).
     if (field === 'strokeColor' && typeof value === 'string' && typeof saved === 'string')
-      return value.toLowerCase() === saved.toLowerCase();
+      return sameColorWithin8BitStep(value, saved);
     // PDFium represents alpha in 8 bits.
     if (field === 'opacity' && typeof value === 'number' && typeof saved === 'number')
       return Math.round(value * 255) === Math.round(saved * 255);
     return equal(value, saved);
   });
+}
+
+/** Whether two #RRGGBB colours differ by at most one 8-bit step per channel. */
+function sameColorWithin8BitStep(a: string, b: string): boolean {
+  const channels = (color: string) =>
+    /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i
+      .exec(color)
+      ?.slice(1)
+      .map((c) => parseInt(c, 16));
+  const [x, y] = [channels(a), channels(b)];
+  if (!x || !y) return a.toLowerCase() === b.toLowerCase();
+  return x.every((channel, index) => Math.abs(channel - y[index]) <= 1);
 }
 
 // Plugin commit may swallow individual mutation failures. Keep failed appearance
@@ -86,8 +100,10 @@ function noteIcon({ name, icon }: { name?: PdfAnnotationName; icon?: PdfAnnotati
 }
 
 /**
- * Comment-only text-markup edits must keep their native appearance; actual visual
- * edits regenerate it and correct its coordinate box before saving (#119).
+ * Comment-only text-markup edits must keep their native appearance, such as Preview's
+ * or Acrobat's own Highlight (#127); actual visual edits regenerate it. Underline and
+ * StrikeOut also correct the regenerated coordinate box before saving (#119); the
+ * engine's multiply-blend Highlight appearance needs no correction.
  * Keep a note's existing appearance stream, such as Preview's or Acrobat's own icon,
  * when an update leaves that icon unchanged. The pinned engine otherwise replaces it
  * with PDFium's 20pt icon on every contents edit. Writing an absent icon name (Preview
@@ -102,9 +118,10 @@ function preserveNativeAnnotationAppearances(
   pendingMarkupAppearances.set(engine, pending);
   const update = engine.updatePageAnnotation.bind(engine);
   engine.updatePageAnnotation = (doc, page, annotation, options) => {
-    const textMarkup =
+    const mappedMarkup =
       annotation.type === PdfAnnotationSubtype.UNDERLINE ||
       annotation.type === PdfAnnotationSubtype.STRIKEOUT;
+    const textMarkup = mappedMarkup || annotation.type === PdfAnnotationSubtype.HIGHLIGHT;
     if (annotation.type !== PdfAnnotationSubtype.TEXT && !textMarkup)
       return update(doc, page, annotation, options);
     if (textMarkup) {
@@ -121,7 +138,7 @@ function preserveNativeAnnotationAppearances(
           update(doc, page, annotation, { ...options, regenerateAppearance }).wait(
             (ok) => {
               try {
-                if (ok && regenerateAppearance) {
+                if (ok && regenerateAppearance && mappedMarkup) {
                   const key = `${doc.id}:${annotation.id}`;
                   const markup = { document: doc, page, annotationId: annotation.id };
                   pending.set(key, markup);
