@@ -1,5 +1,9 @@
 # Issue #124: Highlight verification after selection-geometry correction
 
+Superseded by the [passing #124/#127 re-verification](issue-124-127-highlight-admission.md)
+after merged PR #128. The following is the historical failed-candidate record;
+its suspension and exact-colour criteria do not describe current production.
+
 Status (2026-10-22): native matrix executed in both directions. Placement,
 Page Rotation, native editability, saved comments and attached replies pass.
 **Highlight admission fails colour/appearance preservation on comment-only

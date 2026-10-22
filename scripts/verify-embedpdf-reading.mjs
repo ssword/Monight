@@ -523,7 +523,23 @@ export async function verifyReadingChrome(browser, origin) {
 
     // Edit ▸ Copy (and ⌘C) copy the page text selection: the ready-made Copy button is gone.
     await page.click('#zoom-to-fit');
-    await selectText(page, { x: 73, y: 65 }, { x: 250, y: 65 });
+    // Zoom relayout can replace the selection layer after the first drag. Establish
+    // the selection before testing Copy, rather than mistaking that race for a
+    // clipboard failure. The actual clipboard contents are still asserted below.
+    await until(async () => {
+      await selectText(page, { x: 73, y: 65 }, { x: 250, y: 65 });
+      return page.evaluate(async () => {
+        const container = document.querySelector(
+          '.embedpdf-document-surface[data-visible="true"] embedpdf-container',
+        );
+        const registry = await container.registry;
+        const documentId = registry.getPlugin('document-manager').provides().getActiveDocument().id;
+        return (
+          registry.getPlugin('selection').provides().forDocument(documentId).getState()
+            .selection !== null
+        );
+      });
+    }, 'Page text selection did not settle after Zoom to Fit');
     await assertNoReadyMadeInterface(page, 'with page text selected');
     await page.evaluate(() => navigator.clipboard.writeText(''));
     await page.evaluate(() => document.execCommand('copy'));

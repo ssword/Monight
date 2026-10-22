@@ -68,10 +68,13 @@ describe('EmbedPDF native Highlight appearance preservation (#127)', () => {
     );
   });
 
-  it('regenerates the engine appearance, without Underline/StrikeOut mapping, on a colour edit', async () => {
+  it.each([
+    ['colour', { strokeColor: '#6CB4F5' }],
+    ['opacity', { opacity: 0.5 }],
+  ] as const)('regenerates the engine appearance, without Underline/StrikeOut mapping, on a %s edit', async (_field, change) => {
     const { edit, update } = wrappedUpdate(highlight());
 
-    await expect(edit(highlight({ strokeColor: '#6CB4F5' }))).resolves.toBe(true);
+    await expect(edit(highlight(change))).resolves.toBe(true);
 
     expect(update).toHaveBeenCalledWith(
       DOCUMENT,
