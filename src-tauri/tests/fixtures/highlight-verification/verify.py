@@ -118,6 +118,6 @@ if __name__ == '__main__':
         ((183, 140, 242), (183, 139, 242)),
     ] * 2), changes
     print('PASS: eight PDF checksums; page content/boxes/rotation; native identities and geometry; exact comments/replies; 10 Preview-origin and 2 Acrobat-origin Highlights survive Monight saves.')
-    print('FAIL Highlight admission: comment-only saves alter colour channels/appearances; six production-colour changes reproduced. Creation remains suspended.')
+    print('EXPECTED HISTORICAL FAILURE: comment-only saves regenerate native appearances; six production-colour changes reproduced. Run fixed/verify.py for current Highlight admission.')
     if '--require-admission' in sys.argv:
         compare('preview-edited-snapshot.pdf', 'preview-monight-final.pdf', exact_appearance=True)
