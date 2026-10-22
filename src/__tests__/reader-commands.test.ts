@@ -432,6 +432,8 @@ describe('native menu listing', () => {
         id: 'tools.annotate',
         items: [
           { id: 'tools.annotate.highlight', text: 'Highlight' },
+          { id: 'tools.annotate.underline', text: 'Underline' },
+          { id: 'tools.annotate.strikeout', text: 'Strikethrough' },
           { id: 'tools.annotate.textComment', text: 'Text Note' },
         ],
       },

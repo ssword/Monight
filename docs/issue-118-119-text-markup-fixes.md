@@ -1,5 +1,9 @@
 # Issues #118 and #119: selection and text-markup appearance fixes
 
+Subsequent status: the [#116 admission matrix](issue-116-text-markup-admission.md)
+now passes in both native readers. The scope and observations below describe the
+fix revision before that separate admission.
+
 Status (2026-10-22): code fixes implemented; automated regressions and targeted
 native Preview/Acrobat observations passed. Underline and Strikethrough remain
 absent from the verified-tools list. This is a fix record, not full #116 admission.

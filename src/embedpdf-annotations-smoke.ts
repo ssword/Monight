@@ -630,6 +630,9 @@ async function run() {
   let { surface, annotations, history } = await open(original);
   check(!annotations.isToolLocked('highlight'), 'Highlight is locked');
   check(!annotations.isToolLocked('textComment'), 'Comment is locked');
+  check(!annotations.isToolLocked('underline'), 'Admitted Underline is locked');
+  check(!annotations.isToolLocked('strikeout'), 'Admitted Strikethrough is locked');
+  check(annotations.isToolLocked('squiggly'), 'Unverified Squiggly is enabled');
   check(annotations.isToolLocked('ink'), 'Unsupported ink tool is enabled');
   const rect = { origin: { x: 72, y: 50 }, size: { width: 160, height: 24 } };
   annotations.createAnnotation(0, {

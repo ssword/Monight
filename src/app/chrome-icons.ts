@@ -17,6 +17,8 @@ import {
   Scan,
   Search,
   StickyNote,
+  Strikethrough,
+  Underline,
   ZoomIn,
   ZoomOut,
 } from 'lucide';
@@ -35,6 +37,8 @@ const CHROME_ICONS: Readonly<Record<string, IconNode>> = {
   search: Search,
   sidebar: PanelLeft,
   'sticky-note': StickyNote,
+  strikethrough: Strikethrough,
+  underline: Underline,
   'zoom-in': ZoomIn,
   'zoom-out': ZoomOut,
   'zoom-to-fit': Scan,

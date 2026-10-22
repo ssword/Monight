@@ -350,10 +350,11 @@ fn write_pdf(
     Ok(reopened)
 }
 
-const EDITABLE_ANNOTATIONS: &[&[u8]] = &[b"Highlight", b"Text", b"Popup"];
+const EDITABLE_ANNOTATIONS: &[&[u8]] =
+    &[b"Highlight", b"Text", b"Popup", b"Underline", b"StrikeOut"];
 // Never edited by Monight (the viewer locks them); saving must carry them through
-// unchanged. Text markup beyond highlights arrives from Preview, Acrobat, and others.
-const PRESERVED_ANNOTATIONS: &[&[u8]] = &[b"Link", b"Underline", b"StrikeOut", b"Squiggly"];
+// unchanged. Unverified Squiggly markup can arrive from other PDF readers.
+const PRESERVED_ANNOTATIONS: &[&[u8]] = &[b"Link", b"Squiggly"];
 
 fn is_supported_annotation(subtype: &[u8]) -> bool {
     EDITABLE_ANNOTATIONS.contains(&subtype) || PRESERVED_ANNOTATIONS.contains(&subtype)
@@ -407,7 +408,10 @@ fn prepare_supported_popups(bytes: &[u8]) -> Result<Option<Vec<u8>>, String> {
                                     .and_then(|parent| parent.get(b"Subtype").ok())
                                     .and_then(|subtype| subtype.as_name().ok())
                                     .is_some_and(|subtype| {
-                                        subtype == b"Highlight" || subtype == b"Text"
+                                        matches!(
+                                            subtype,
+                                            b"Highlight" | b"Text" | b"Underline" | b"StrikeOut"
+                                        )
                                     })
                         })
                 } else {
@@ -1423,7 +1427,7 @@ mod tests {
     #[test]
     fn external_text_markup_is_editable_and_must_survive_saves_unchanged() {
         use lopdf::{dictionary, Object};
-        for subtype in ["Underline", "StrikeOut", "Squiggly"] {
+        for subtype in ["Squiggly"] {
             let mut doc = lopdf::Document::load_mem(&pdf()).unwrap();
             let markup = doc.add_object(dictionary! {
                 "Subtype" => subtype,
@@ -1431,7 +1435,7 @@ mod tests {
                 "QuadPoints" => vec![72.into(), 685.into(), 260.into(), 685.into(), 72.into(), 650.into(), 260.into(), 650.into()],
             });
             let page = *doc.get_pages().values().next().unwrap();
-            let mut save = |doc: &mut lopdf::Document, annots: Vec<Object>| {
+            let save = |doc: &mut lopdf::Document, annots: Vec<Object>| {
                 doc.get_object_mut(page)
                     .unwrap()
                     .as_dict_mut()
@@ -1452,6 +1456,123 @@ mod tests {
                 "{subtype}"
             );
         }
+    }
+
+    #[test]
+    fn native_admission_snapshots_pass_save_preservation() {
+        macro_rules! admission {
+            ($file:literal) => {
+                include_bytes!(concat!(
+                    "../tests/fixtures/text-markup-verification/admission/",
+                    $file,
+                    ".pdf"
+                ))
+                .as_slice()
+            };
+        }
+        let acrobat_original =
+            include_bytes!("../tests/fixtures/text-markup-verification/acrobat-text-markups.pdf");
+        for (original, edited, deleted) in [
+            (
+                admission!("acrobat-edited-snapshot"),
+                admission!("acrobat-roundtrip-final"),
+                admission!("acrobat-monight-deleted"),
+            ),
+            (
+                admission!("preview-edited-snapshot"),
+                admission!("preview-roundtrip-final"),
+                admission!("preview-monight-deleted"),
+            ),
+            (
+                acrobat_original.as_slice(),
+                admission!("acrobat-origin-edited"),
+                admission!("acrobat-origin-deleted"),
+            ),
+            (
+                admission!("preview-origin-input"),
+                admission!("preview-origin-edited"),
+                admission!("preview-origin-deleted"),
+            ),
+        ] {
+            verify_preservation(original, edited).unwrap();
+            verify_preservation(original, deleted).unwrap();
+        }
+    }
+
+    #[test]
+    fn admitted_native_text_markups_can_be_edited_and_deleted_with_their_popups() {
+        use lopdf::Object;
+        let original =
+            include_bytes!("../tests/fixtures/text-markup-verification/acrobat-text-markups.pdf");
+        let mut document = lopdf::Document::load_mem(original).unwrap();
+        let mut deleted_ids = std::collections::HashSet::new();
+        for (id, object) in document.objects.iter_mut() {
+            let Ok(annotation) = object.as_dict_mut() else {
+                continue;
+            };
+            if matches!(
+                annotation.get(b"Subtype").and_then(Object::as_name).ok(),
+                Some(b"Underline" | b"StrikeOut")
+            ) {
+                annotation.set("Contents", Object::string_literal("Admission edit"));
+                deleted_ids.insert(*id);
+            }
+        }
+        assert_eq!(deleted_ids.len(), 2);
+        let mut edited = Vec::new();
+        document.save_to(&mut edited).unwrap();
+        verify_preservation(original, &edited).unwrap();
+        for page in document.get_pages().values() {
+            let entries = document
+                .get_dictionary(*page)
+                .unwrap()
+                .get(b"Annots")
+                .and_then(Object::as_array)
+                .cloned()
+                .unwrap_or_default();
+            let retained = entries
+                .into_iter()
+                .filter(|entry| {
+                    !entry
+                        .as_reference()
+                        .is_ok_and(|id| deleted_ids.contains(&id))
+                })
+                .collect::<Vec<_>>();
+            document
+                .get_dictionary_mut(*page)
+                .unwrap()
+                .set("Annots", retained);
+        }
+        let mut deleted = Vec::new();
+        document.save_to(&mut deleted).unwrap();
+        let prepared = prepare_save(&deleted).unwrap();
+        verify_preservation(original, &prepared).unwrap();
+        let saved = lopdf::Document::load_mem(&prepared).unwrap();
+        let mut popups = 0;
+        for page in saved.get_pages().values() {
+            let entries = saved
+                .get_dictionary(*page)
+                .unwrap()
+                .get(b"Annots")
+                .unwrap()
+                .as_array()
+                .unwrap();
+            for entry in entries {
+                let (_, object) = saved.dereference(entry).unwrap();
+                let annotation = object.as_dict().unwrap();
+                let subtype = annotation.get(b"Subtype").unwrap().as_name().unwrap();
+                assert!(!matches!(subtype, b"Underline" | b"StrikeOut"));
+                if subtype == b"Popup" {
+                    popups += 1;
+                    let parent = annotation.get(b"Parent").unwrap().as_reference().unwrap();
+                    assert!(entries
+                        .iter()
+                        .any(|item| item.as_reference().ok() == Some(parent)));
+                }
+            }
+        }
+        assert_eq!(popups, 4, "Unrelated Text/Highlight popups must survive");
+        assert_eq!(prepare_save(&prepared).unwrap(), prepared);
     }
 
     #[test]
