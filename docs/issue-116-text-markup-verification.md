@@ -4,7 +4,7 @@ Status (2026-10-22): both subtypes failed native verification and remain absent.
 Underline creation placement is tracked in #118; regeneration of Acrobat-authored
 Underline and Strikethrough appearances is tracked in #119. Temporary admission
 changes were removed from source. Neither feature is accepted for release.
-Candidate identity, build, archive and source-delta checksums are in the
+The initial three-feature candidate identity, build, archive and source-delta checksums are in the
 [#115 record](issue-115-page-rotation-verification.md#candidate-identity).
 
 ## Preview observations
@@ -143,3 +143,8 @@ Local evidence and the inspection script are under
 `artifacts/issue-115-116/2026-10-22/`. The saved temporary candidate was quit and
 the local bundle rebuilt with the restored source gates; the archive in the
 #115 record retains the actual tested temporary candidate.
+
+The owner's subsequent Acrobat rotation waiver applies only to #115. The final
+rotation-only build admits Rotate after Preview acceptance; neither Underline nor
+Strikethrough is admitted. Final `npm test` passed 621 tests in 66 files, and the
+application build and lint passed (five existing design-preview warnings).

@@ -1,10 +1,10 @@
 # Issue #115: native Page Rotation round trips
 
-Status (2026-10-22): partial native evidence; Acrobat acceptance is outstanding.
-This record does not admit Rotate. Temporary admission changes were removed from
-source after testing; `PAGE_ROTATION_VERIFIED` remains `false`.
-The production gate must remain off until every required Preview and Acrobat
-direction, including editing existing Annotations, has passed.
+Status (2026-10-22): Preview native round trips passed; Rotate is admitted.
+`PAGE_ROTATION_VERIFIED` is `true`. The owner explicitly waived Acrobat rotation
+because persistent rotation requires a paid Acrobat subscription. ADR 0003 and
+the reader-chrome spec record the amendment. Annotation-tool interoperability
+requirements are unchanged; neither #116 tool is admitted.
 
 ## Candidate identity
 
@@ -137,22 +137,52 @@ retained in the repository as
 `src-tauri/tests/fixtures/text-markup-verification/monight-offset-underline.pdf`
 because it reproduces [#118](https://github.com/ssword/Monight/issues/118).
 
-## Outstanding acceptance
+## Completed Preview acceptance and final candidate
 
-- Preview: finish the second return leg and explicit Highlight editing check.
-- Acrobat: complete persistent Page Rotation in the reverse direction and native
-  note/Highlight editing on rotated pages. Applying the observed universal Rotate
-  and saving left the PDF byte-for-byte unchanged, with zero stored rotations.
-  This direction needs an Acrobat workflow capable of saving actual Page Rotation;
-  an all-page edit is valid, but view-only rotation cannot satisfy the requirement.
-- No Rotate admission: the reverse persistent-rotation and native edit cells
-  remain unexecuted, rather than inferred from automated fixture contracts or
-  view-only rotation. The owner completed the requested mouse-only creation and
-  explicit rotate/save steps; saved bytes establish that the tested Rotate command
-  does not persist Page Rotation.
+The initial temporary admissions were removed and the bundle rebuilt (executable
+SHA-256 `84d1fb22fbd99d15f23081e3655c78d033cccf6ee6205c0724ccfbde4f12132b`).
+After the owner waived Acrobat rotation, the final candidate enabled only Rotate.
+Underline and Strikethrough remain absent and preserved/locked.
 
-After verification, the saved temporary candidate was quit and the local app
-bundle rebuilt from the restored source gates. The archive above retains the
-tested temporary candidate; it must not be confused with the rebuilt local app.
-The restored bundle build passed; its executable SHA-256 is
-`84d1fb22fbd99d15f23081e3655c78d033cccf6ee6205c0724ccfbde4f12132b`.
+| Final candidate | Value |
+| --- | --- |
+| Base revision | `a192768f6220fc542b0d8a9b3d1762ea6480d8c6` |
+| Compiled source delta | `artifacts/issue-115-116/2026-10-22/rotation-only-candidate.patch` |
+| Delta SHA-256 | `da17b72409c4cb3f28d79ee7a00df374b7ed4587aec770c421ae41b27130e339` |
+| Executable SHA-256 | `45b42cab35037c7c994bc09ea063c395a11d0a85046cd15daefa42ab0eb73926` |
+| Archive SHA-256 | `29ded95816fd8c1575522e22de24e2402ec2a5094cfb23d7ce2f715e6c606ee0` |
+| Archive | `artifacts/issue-115-116/2026-10-22/rotation-only-candidate.app.tar.gz` |
+
+1. In native Preview, opened a disposable copy of `preview-monight-edited.pdf`
+   at rotation 180. Selected the existing Highlight and used Remove Note, then
+   saved. Inspection confirmed its Contents was removed while the Highlight,
+   Rect and QuadPoints remained. The exact Preview-edited Text note remained.
+2. Reopened the result in the final Monight candidate on the built-in display.
+   The rotated Highlight and note icons aligned. Its comment pane showed
+   `Preview rotated note re-edited 115` and a blank Highlight comment.
+3. Edited the existing Text note to `Preview rotation note final Monight 115`
+   and Highlight to `Preview rotation highlight final Monight 115`. Rotated page 1
+   left and saved; inspection confirmed `[90,0,0]` and both exact contents.
+4. Opened the output in native Preview, moved its window to Built-in Retina
+   Display, and visually confirmed the 90-degree page and aligned marks/icons.
+   Preview's native Highlights and Notes sidebar showed both exact edited
+   contents. Screenshot: `evidence/preview-rotation-final-native.png`.
+
+The two snapshots are retained under
+`src-tauri/tests/fixtures/page-rotation-verification/` with checksums and provenance
+in its README. The Preview-edited input SHA-256 is
+`d3d97eb2869f93fb144b6ea6b6806d7ba392a1e62197efcb7a8eb4f185970497`;
+the Monight output SHA-256 is
+`dc99e180ed47c78740aabb36b5d4d6c4aa660535bef59e27217522fdcc557696`.
+Decoded page contents and MediaBoxes are identical. Annotation subtypes are
+unchanged; Rect/QuadPoints differ only by float serialization below 0.0001pt.
+No flattening occurred.
+
+Both required Preview directions and native editing of existing Text notes and
+Highlights passed. Historical Acrobat observations above remain evidence but
+are not an acceptance gate under the owner's amendment.
+
+Final candidate: `npm test` passed 621 tests in 66 files;
+`npm run tauri -- build --bundles app` passed; `npm run lint` passed with five
+existing `!important` warnings in the design preview. The earlier native save
+test and Chromium/WebKit offline suite passed as recorded above.

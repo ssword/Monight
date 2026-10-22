@@ -184,7 +184,7 @@ It applies on macOS, Windows, and Linux; only macOS gets the overlay title bar w
 - **Seam 3: native save adapter and EmbedPDF browser checks.**
   - Page Rotation bytes are written and preserved by the native save adapter contract (prior art: native PDF save adapter tests and the Rust save tests).
   - The headless EmbedPDF composition is covered by extending the existing EmbedPDF Playwright verification scripts (reading, navigation, annotations, offline) to drive the new chrome.
-- **Manual interoperability records.** Round trips with Preview and Acrobat for Highlight colours, Underline, Strikethrough, and Page Rotation (including existing Annotations on rotated pages, in both directions) are recorded in the style of the issue #80 and #94 verification documents. A tool or Rotate becomes visible only when its record passes.
+- **Manual interoperability records.** Round trips with Preview and Acrobat for Highlight colours, Underline and Strikethrough are recorded in the style of the issue #80 and #94 verification documents. Page Rotation requires Preview round trips in both directions, including existing Annotations on rotated pages. The owner waived Acrobat Page Rotation checks on 2026-10-22 because they require a paid subscription (ADR 0003 amendment). A tool or Rotate becomes visible only when its required record passes.
 
 ## Out of Scope
 
