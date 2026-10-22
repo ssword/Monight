@@ -817,6 +817,14 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
     setDocumentOrder: () => undefined,
   };
 
+  /** The active Document's path and presented state; null without a presented one. */
+  const activeDocument = () => {
+    const filePath = options.snapshot().activeDocumentPath;
+    const documentState = filePath ? presented.get(filePath) : undefined;
+    return filePath && documentState ? { filePath, ...documentState } : null;
+  };
+  const activeRendering = () => activeDocument()?.rendering ?? null;
+
   return {
     intakeRuntime,
     projection,
@@ -827,8 +835,7 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
       return presentation ? { query, presentation } : null;
     },
     activePresentation() {
-      const filePath = options.snapshot().activeDocumentPath;
-      const rendering = filePath ? presented.get(filePath)?.rendering : null;
+      const rendering = activeRendering();
       return rendering
         ? {
             snapshot: () => rendering.getState(),
@@ -839,14 +846,12 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
         : null;
     },
     activeRenderingState() {
-      const filePath = options.snapshot().activeDocumentPath;
-      return filePath ? (presented.get(filePath)?.rendering.getState() ?? null) : null;
+      return activeRendering()?.getState() ?? null;
     },
     activeReadingPosition() {
-      const filePath = options.snapshot().activeDocumentPath;
-      const rendering = filePath ? presented.get(filePath)?.rendering : null;
-      return filePath && rendering
-        ? { filePath, readingPosition: rendering.getReadingPosition() }
+      const active = activeDocument();
+      return active
+        ? { filePath: active.filePath, readingPosition: active.rendering.getReadingPosition() }
         : null;
     },
     viewTransform(filePath) {
@@ -863,8 +868,7 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
       };
     },
     activeMarkup() {
-      const filePath = options.snapshot().activeDocumentPath;
-      const documentState = filePath ? presented.get(filePath) : undefined;
+      const documentState = activeDocument();
       if (!documentState) return null;
       const runtimeEditing = documentState.runtime.editing;
       const editing = runtimeEditing?.state();
@@ -876,22 +880,18 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
       };
     },
     setActiveAnnotationTool(toolId, defaults) {
-      const filePath = options.snapshot().activeDocumentPath;
-      if (filePath) presented.get(filePath)?.rendering.setActiveAnnotationTool?.(toolId, defaults);
+      activeRendering()?.setActiveAnnotationTool?.(toolId, defaults);
     },
     markupSelection(toolId, defaults) {
-      const filePath = options.snapshot().activeDocumentPath;
-      const rendering = filePath ? presented.get(filePath)?.rendering : undefined;
-      return rendering?.markupSelection?.(toolId, defaults) ?? false;
+      return activeRendering()?.markupSelection?.(toolId, defaults) ?? false;
     },
     revealAnnotation(filePath, annotationId) {
       presented.get(filePath)?.rendering.revealAnnotation?.(annotationId);
     },
     selectedAnnotation() {
-      const filePath = options.snapshot().activeDocumentPath;
-      const rendering = filePath ? presented.get(filePath)?.rendering : undefined;
-      const annotation = rendering?.selectedAnnotation?.();
-      return filePath && annotation ? { ...annotation, filePath } : null;
+      const active = activeDocument();
+      const annotation = active?.rendering.selectedAnnotation?.();
+      return active && annotation ? { ...annotation, filePath: active.filePath } : null;
     },
     setAnnotationDisplayName(displayName) {
       for (const documentState of presented.values()) {
