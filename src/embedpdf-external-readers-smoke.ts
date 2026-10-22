@@ -4,7 +4,7 @@ import type {
   PdfAnnotationObject,
   Rect,
 } from '@embedpdf/snippet';
-import { LockModeType, PdfAnnotationSubtype } from '@embedpdf/snippet';
+import { PdfAnnotationSubtype } from '@embedpdf/snippet';
 import manifest from '../src-tauri/tests/fixtures/external/manifest.json';
 import { loadChromePreferences } from './app/chrome-preferences';
 import type { DocumentSurface } from './app/document-workspace';
@@ -383,16 +383,11 @@ async function open(
   });
   surface.rendering.setVisible(true);
   const container = document.querySelector<EmbedPdfContainer>('embedpdf-container');
-  if (!container) throw new Error('Missing ready-made viewer');
+  if (!container) throw new Error('Missing viewer');
   const annotations = (await container.registry)
     .getPlugin<import('@embedpdf/snippet').AnnotationPlugin>('annotation')
     ?.provides();
   if (!annotations) throw new Error('Missing native annotation capability');
-  // Disposable interoperability harness only: keep exercising native Highlight
-  // edits while #124 suspends its production interaction/creation tools. The
-  // annotations smoke suite independently checks the production locks.
-  if (readOnlyReason === null) annotations.setLocked({ type: LockModeType.None });
-
   return { surface, annotations };
 }
 

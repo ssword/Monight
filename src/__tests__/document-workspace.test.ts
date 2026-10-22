@@ -208,6 +208,46 @@ describe('Document workspace adapter', () => {
     expect(workspace.markupSelection('highlight', {})).toBe(false);
   });
 
+  it("offers the active Document's selected Annotation with the Document it belongs to", async () => {
+    let activePath = '/second.pdf';
+    const workspace = createDocumentWorkspace({
+      dispatchReaderAction: vi.fn(async () => ({ status: 'committed' as const, revision: 1 })),
+      snapshot: () => snapshot([], activePath),
+      isDocumentOpen: () => false,
+      defaultVisualState: () => ({
+        filterSettings: PRESETS.default,
+        zoomIntent: { kind: 'fit-width' },
+        viewMode: 'single',
+      }),
+      createSurface: async ({ filePath }) => {
+        const surface = createControllableSurface(filePath);
+        surface.rendering.selectedAnnotation = () => ({
+          id: `${filePath}#note`,
+          kind: 'note',
+          contents: '',
+          color: null,
+          anchor: null,
+        });
+        return surface;
+      },
+    });
+    for (const filePath of ['/first.pdf', '/second.pdf']) {
+      await workspace.intakeRuntime.open({
+        document: { canonicalPath: filePath, title: filePath.slice(1) },
+        bytes: new Uint8Array([1]),
+        activate: false,
+      });
+    }
+
+    expect(workspace.selectedAnnotation()).toMatchObject({
+      id: '/second.pdf#note',
+      filePath: '/second.pdf',
+    });
+
+    activePath = '/missing.pdf';
+    expect(workspace.selectedAnnotation()).toBeNull();
+  });
+
   it('reveals an Annotation on the rendering surface of the Document that owns it', async () => {
     const reveals = new Map<string, ReturnType<typeof vi.fn>>();
     const workspace = createDocumentWorkspace({

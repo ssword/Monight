@@ -56,6 +56,7 @@ function fakeContext(overrides: Partial<ReaderCommandContext> = {}) {
       calls.push('tab-bar');
     },
     editTextField: () => false,
+    selectedAnnotation: () => null,
     ...overrides,
   };
   return {
@@ -111,6 +112,32 @@ describe('Reader Commands', () => {
     expect(dispatched).toEqual([]);
   });
 
+  it('Edit ▸ Delete deletes the selected Annotation from the Document it was selected in', async () => {
+    const { context, dispatched } = fakeContext({
+      selectedAnnotation: () => ({
+        filePath: '/docs/report.pdf',
+        id: 'mark-1',
+        kind: 'highlight',
+        contents: '',
+        color: null,
+        anchor: null,
+      }),
+    });
+    expect(await runReaderCommand('edit.delete', context)).toBe(true);
+    expect(dispatched).toEqual([
+      {
+        type: 'editAnnotation',
+        filePath: '/docs/report.pdf',
+        annotationId: 'mark-1',
+        edit: { type: 'delete' },
+      },
+    ]);
+
+    const nothingSelected = fakeContext();
+    await runReaderCommand('edit.delete', nothingSelected.context);
+    expect(nothingSelected.dispatched).toEqual([]);
+  });
+
   it('Go to Page… does nothing when the request is cancelled', async () => {
     const { context, dispatched } = fakeContext({ requestPage: async () => null });
     await runReaderCommand('go.page', context);
@@ -144,12 +171,11 @@ describe('Reader Commands', () => {
   it('Tools ▸ Annotate goes through the control that offers each verified tool', async () => {
     const { context, calls } = fakeContext();
     await runReaderCommand('tools.annotate.textComment', context);
-    await runReaderCommand('tools.annotate.underline', context);
-    await runReaderCommand('tools.annotate.highlight', context); // Suspended by #124.
+    await runReaderCommand('tools.annotate.highlight', context);
     await runReaderCommand('tools.text-selection', context);
     expect(calls).toEqual([
       'markup-toolbar:textComment',
-      'highlight-button:underline',
+      'highlight-button:highlight',
       'tool:null',
     ]);
   });
@@ -185,6 +211,7 @@ const input = (overrides: Partial<ReaderCommandStateInput> = {}): ReaderCommandS
   canGoForward: false,
   tabBarKeptShown: false,
   textFieldFocused: false,
+  annotationSelected: false,
   ...overrides,
 });
 
@@ -251,8 +278,7 @@ describe('native menu state', () => {
     const states = readerCommandStates(
       input({ markup: { activeToolId: null, readOnlyReason: 'read-only' } }),
     );
-    expect(stateOf(states, 'tools.annotate.underline')?.enabled).toBe(false);
-    expect(stateOf(states, 'tools.annotate.highlight')).toBeUndefined();
+    expect(stateOf(states, 'tools.annotate.highlight')?.enabled).toBe(false);
     expect(stateOf(states, 'tools.annotate.textComment')?.enabled).toBe(false);
     expect(stateOf(states, 'tools.text-selection')?.enabled).toBe(true);
     expect(stateOf(states, 'view.zoom.in')?.enabled).toBe(true);
@@ -275,6 +301,30 @@ describe('native menu state', () => {
     const typing = readerCommandStates(input({ activeDocument: null, textFieldFocused: true }));
     expect(stateOf(typing, 'edit.undo')?.enabled).toBe(true);
     expect(stateOf(typing, 'edit.redo')?.enabled).toBe(true);
+  });
+
+  it('enables Delete only while an Annotation of an editable Document is selected and no text field is focused', () => {
+    expect(stateOf(readerCommandStates(input()), 'edit.delete')?.enabled).toBe(false);
+    expect(
+      stateOf(readerCommandStates(input({ annotationSelected: true })), 'edit.delete')?.enabled,
+    ).toBe(true);
+    expect(
+      stateOf(
+        readerCommandStates(input({ annotationSelected: true, textFieldFocused: true })),
+        'edit.delete',
+      )?.enabled,
+    ).toBe(false);
+    expect(
+      stateOf(
+        readerCommandStates(
+          input({
+            annotationSelected: true,
+            markup: { activeToolId: null, readOnlyReason: 'read-only' },
+          }),
+        ),
+        'edit.delete',
+      )?.enabled,
+    ).toBe(false);
   });
 
   it('disables page steps at the first and last page', () => {
@@ -433,6 +483,7 @@ describe('native menu listing', () => {
       {
         id: 'tools.annotate',
         items: [
+          { id: 'tools.annotate.highlight', text: 'Highlight' },
           { id: 'tools.annotate.underline', text: 'Underline' },
           { id: 'tools.annotate.strikeout', text: 'Strikethrough' },
           { id: 'tools.annotate.textComment', text: 'Text Note' },

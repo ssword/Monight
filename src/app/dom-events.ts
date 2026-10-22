@@ -151,7 +151,7 @@ export function setupEventListeners({
   const handleShortcut = async (e: KeyboardEvent) => {
     if (!keybindManager || e.defaultPrevented) return;
     // Tab controls own their arrow-key focus navigation. Other configurable
-    // reader shortcuts must be claimed before the ready-made viewer's listeners.
+    // reader shortcuts must be claimed before the EmbedPDF viewer's own listeners.
     if (
       ['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key) &&
       e

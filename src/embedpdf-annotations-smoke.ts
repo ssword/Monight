@@ -98,7 +98,7 @@ async function verifyProtectedDocuments(): Promise<void> {
       'Protected Document accepted a markup tool',
     );
     const container = document.querySelector<EmbedPdfContainer>('embedpdf-container');
-    if (!container) throw new Error('Missing protected ready-made viewer');
+    if (!container) throw new Error('Missing protected viewer');
     const registry = await container.registry;
     const commands = registry
       .getPlugin<import('@embedpdf/snippet').CommandsPlugin>('commands')
@@ -179,7 +179,7 @@ async function open(
   });
   surface.rendering.setVisible(true);
   const container = document.querySelector<EmbedPdfContainer>('embedpdf-container');
-  if (!container) throw new Error('Missing ready-made viewer');
+  if (!container) throw new Error('Missing viewer');
   const registry = await container.registry;
   const annotations = registry
     .getPlugin<import('@embedpdf/snippet').AnnotationPlugin>('annotation')
@@ -229,7 +229,7 @@ async function open(
   return { surface, annotations, history, engine: registry.getEngine(), registry };
 }
 
-/** Monight's markup toolbar replaces the ready-made Annotate mode and toolbar. */
+/** Monight's markup toolbar replaces the ready-made Annotate mode; no ready-made toolbar exists. */
 function verifyReadyMadeAnnotationToolbarUnreachable(
   registry: import('@embedpdf/snippet').PluginRegistry,
   documentId: string,
@@ -238,14 +238,13 @@ function verifyReadyMadeAnnotationToolbarUnreachable(
     .getPlugin<import('@embedpdf/snippet').CommandsPlugin>('commands')
     ?.provides();
   const ui = registry.getPlugin<import('@embedpdf/snippet').UIPlugin>('ui')?.provides();
-  if (!commands || !ui) throw new Error('Missing ready-made viewer UI');
+  if (!commands || !ui) throw new Error('Missing viewer commands or UI plugin');
   const annotate = commands.resolve('mode:annotate');
   check(!annotate.visible || annotate.disabled, 'Ready-made Annotate mode is reachable');
-  const scope = ui.forDocument(documentId);
-  scope.setActiveToolbar('top', 'secondary', 'annotation-toolbar');
+  const schema = ui.forDocument(documentId).getSchema();
   check(
-    !scope.isToolbarOpen('top', 'secondary', 'annotation-toolbar'),
-    'Ready-made annotation toolbar is reachable',
+    Object.keys(schema.toolbars).length === 0 && Object.keys(schema.selectionMenus).length === 0,
+    'A ready-made toolbar or selection menu is reachable',
   );
 }
 
@@ -456,12 +455,10 @@ const waitFor = async (condition: () => boolean, message: string): Promise<void>
   check(condition(), message);
 };
 
-/** The text-markup split button's two paths: mark the selection, or underline mode. */
-async function verifyTextMarkupSplitButton(): Promise<void> {
+/** The Highlight split button's two paths: mark the selection, or highlight mode. */
+async function verifyHighlightSplitButton(): Promise<void> {
   const green = '#7ED957';
-  const { surface, annotations, registry } = await open(
-    navigationPdf('Verified text-markup split button'),
-  );
+  const { surface, annotations, registry } = await open(navigationPdf('Highlight split button'));
   const documentId = registry
     .getPlugin<import('@embedpdf/snippet').DocumentManagerPlugin>('document-manager')
     ?.provides()
@@ -471,41 +468,34 @@ async function verifyTextMarkupSplitButton(): Promise<void> {
     ?.provides()
     .forDocument(documentId ?? '');
   if (!selection) throw new Error('Missing text selection capability');
-  const underlines = () =>
+  const highlights = () =>
     annotations
       .getAnnotations()
-      .filter(({ object }) => object.type === PdfAnnotationSubtype.UNDERLINE);
+      .filter(({ object }) => object.type === PdfAnnotationSubtype.HIGHLIGHT);
 
   check(
-    surface.rendering.markupSelection?.('underline', { strokeColor: green }) === false,
-    'Underline marked text with nothing selected',
+    surface.rendering.markupSelection?.('highlight', { strokeColor: green }) === false,
+    'Highlight marked text with nothing selected',
   );
   await selection
     .setSelection({ start: { page: 0, index: 0 }, end: { page: 0, index: 6 } })
     .toPromise();
   check(selection.getFormattedSelection().length === 1, 'Text selection did not take hold');
   check(
-    surface.rendering.markupSelection?.('highlight', { strokeColor: green }) === false,
-    'Suspended Highlight marked the selected text',
+    surface.rendering.markupSelection?.('highlight', { strokeColor: green }) === true,
+    'Highlight did not mark the selected text',
   );
-  surface.rendering.setActiveAnnotationTool?.('highlight');
-  check(annotations.getActiveTool() === null, 'Suspended Highlight mode was enabled');
-
-  check(
-    surface.rendering.markupSelection?.('underline', { strokeColor: green }) === true,
-    'Underline did not mark the selected text',
-  );
-  await waitFor(() => underlines().length === 1, 'The selected text was not underlined');
-  check(selection.getFormattedSelection().length === 0, 'The underlined selection remained');
-  check(surface.runtime.editing?.state().dirty, 'A new underline did not mark the Document dirty');
+  await waitFor(() => highlights().length === 1, 'The selected text was not highlighted');
+  check(selection.getFormattedSelection().length === 0, 'The highlighted selection remained');
+  check(surface.runtime.editing?.state().dirty, 'A new highlight did not mark the Document dirty');
   const saved = await surface.runtime.editing?.exportPdf();
-  if (!saved) throw new Error('Missing underlined export');
+  if (!saved) throw new Error('Missing highlighted export');
 
-  surface.rendering.setActiveAnnotationTool?.('underline', { strokeColor: '#B78CF2' });
+  surface.rendering.setActiveAnnotationTool?.('highlight', { strokeColor: '#B78CF2' });
   check(
-    annotations.getActiveTool()?.id === 'underline' &&
-      annotations.getTool('underline')?.defaults.strokeColor === '#B78CF2',
-    'Underline mode did not take the chosen colour',
+    annotations.getActiveTool()?.id === 'highlight' &&
+      annotations.getTool('highlight')?.defaults.strokeColor === '#B78CF2',
+    'Highlight mode did not take the chosen colour',
   );
   surface.rendering.setActiveAnnotationTool?.(null);
   await surface.runtime.destroy();
@@ -514,12 +504,12 @@ async function verifyTextMarkupSplitButton(): Promise<void> {
   const mark = reopened.annotations
     .getAnnotations()
     .map(({ object }) => object)
-    .find((object) => object.type === PdfAnnotationSubtype.UNDERLINE);
+    .find((object) => object.type === PdfAnnotationSubtype.HIGHLIGHT);
   check(
-    mark?.type === PdfAnnotationSubtype.UNDERLINE &&
+    mark?.type === PdfAnnotationSubtype.HIGHLIGHT &&
       mark.strokeColor?.toLowerCase() === green.toLowerCase() &&
       mark.segmentRects.length > 0,
-    `The saved underline lost its colour or text: ${JSON.stringify(mark)}`,
+    `The saved highlight lost its colour or text: ${JSON.stringify(mark)}`,
   );
   await reopened.surface.runtime.destroy();
 
@@ -528,15 +518,15 @@ async function verifyTextMarkupSplitButton(): Promise<void> {
     'Digitally signed PDFs are read-only to preserve their signatures',
   );
   check(
-    signed.surface.rendering.markupSelection?.('underline', { strokeColor: green }) === false,
-    'A protected Document accepted an underline',
+    signed.surface.rendering.markupSelection?.('highlight', { strokeColor: green }) === false,
+    'A protected Document accepted a highlight',
   );
   await signed.surface.runtime.destroy();
 }
 
 async function run() {
   await verifyProtectedDocuments();
-  await verifyTextMarkupSplitButton();
+  await verifyHighlightSplitButton();
   const original = navigationPdf('Native annotations');
   const failed = await open(original);
   const createNativeAnnotation = failed.engine.createPageAnnotation;
@@ -637,7 +627,7 @@ async function run() {
   await failed.surface.runtime.editing?.exportPdf();
   await failed.surface.runtime.destroy();
   let { surface, annotations, history } = await open(original);
-  check(annotations.isToolLocked('highlight'), 'Suspended Highlight is enabled');
+  check(!annotations.isToolLocked('highlight'), 'Highlight is locked');
   check(!annotations.isToolLocked('textComment'), 'Comment is locked');
   check(!annotations.isToolLocked('underline'), 'Admitted Underline is locked');
   check(!annotations.isToolLocked('strikeout'), 'Admitted Strikethrough is locked');

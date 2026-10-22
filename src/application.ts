@@ -2,6 +2,7 @@ import { getName, getTauriVersion, getVersion } from '@tauri-apps/api/app';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
+import { type AnnotationMenu, createAnnotationMenu } from './app/annotation-menu';
 import { hydrateChromeIcons } from './app/chrome-icons';
 import {
   type ChromePreferencesAuthority,
@@ -143,10 +144,17 @@ let readerSidebar: ReaderSidebar | null = null;
 let markupToolbar: MarkupToolbar | null = null;
 let highlightButton: HighlightButton | null = null;
 let rotateButton: RotateButton | null = null;
+let annotationMenu: AnnotationMenu | null = null;
 
 /** The toolbar controls that re-read the active Document on session and rendering changes. */
 const refreshReaderControls = (): void => {
-  for (const control of [readerSidebar, markupToolbar, highlightButton, rotateButton]) {
+  for (const control of [
+    readerSidebar,
+    markupToolbar,
+    highlightButton,
+    rotateButton,
+    annotationMenu,
+  ]) {
     control?.refresh();
   }
 };
@@ -187,6 +195,7 @@ const readerMenuState = (): ReaderCommandStateInput => {
     canGoForward: readerActions?.canGoForward() ?? false,
     tabBarKeptShown,
     textFieldFocused: isEditableTarget(document.activeElement),
+    annotationSelected: (documentWorkspace?.selectedAnnotation() ?? null) !== null,
     keybinds: activeKeybinds,
   };
 };
@@ -573,6 +582,19 @@ function mountRotateButton(): RotateButton | null {
   });
 }
 
+function mountAnnotationMenu(): AnnotationMenu | null {
+  const element = document.getElementById('annotation-menu');
+  if (!element) return null;
+  return createAnnotationMenu({
+    element,
+    selectedAnnotation: () => documentWorkspace?.selectedAnnotation() ?? null,
+    dispatchReaderAction: async (action) => {
+      const outcome = await readerActions?.dispatch(action);
+      if (outcome?.status === 'failure') showToast(String(outcome.error), 'error');
+    },
+  });
+}
+
 function mountMarkupToolbar(preferences: ChromePreferencesAuthority): MarkupToolbar | null {
   const bar = document.getElementById('markup-toolbar');
   const toggle = document.getElementById('markup-toolbar-toggle');
@@ -730,6 +752,9 @@ export async function initializeApplication(modules: ApplicationModules): Promis
 
     readerActions = modules.createReaderActions({
       initialSession: initialReadingSession,
+      // A note still being typed (⌘S, ⌃Tab, ⌘W or Quit with its field focused) is
+      // committed to its own Document first, so it is never dropped or misrouted.
+      commitPendingEdits: () => annotationMenu?.commitPendingNote(),
       defaultVisualState: defaultVisualState(),
       projection: {
         ...documentWorkspace.projection,
@@ -773,6 +798,7 @@ export async function initializeApplication(modules: ApplicationModules): Promis
     markupToolbar = mountMarkupToolbar(chromePreferences);
     highlightButton = mountHighlightButton(chromePreferences);
     rotateButton = mountRotateButton();
+    annotationMenu = mountAnnotationMenu();
     leaveMarkupToolOnEscape({
       activeMarkup: () => documentWorkspace?.activeMarkup() ?? null,
       setActiveTool: (toolId) => documentWorkspace?.setActiveAnnotationTool(toolId),
@@ -909,6 +935,7 @@ export async function initializeApplication(modules: ApplicationModules): Promis
       },
       selectedPages: () => readerSidebar?.selectedPages() ?? [],
       currentPage: () => readerMenuState().activeDocument?.currentPage || null,
+      selectedAnnotation: () => documentWorkspace?.selectedAnnotation() ?? null,
       editTextField: (kind) => {
         if (!isEditableTarget(document.activeElement)) return false;
         // The native Edit menu takes ⌘Z from the WebView; hand it back to the field.

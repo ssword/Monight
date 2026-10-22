@@ -6,6 +6,15 @@ import {
 } from '@embedpdf/models';
 import type { WrappedPdfiumModule } from '@embedpdf/pdfium';
 
+// Engine coupling: the pinned engine exposes no API to read or install an
+// annotation's appearance stream, so this reaches its direct (main-thread)
+// executor's PDFium module, page cache and memory manager, as the Page Rotation
+// setter does (embedpdf-native-annotation-editing.ts). That coupling is inherent
+// to correcting the generated appearance. It fails closed: if any part of the
+// executor is missing or behaves unexpectedly, it throws, the edit's correction
+// stays pending, and Save refuses to write bytes rather than saving a misplaced
+// appearance. Revalidate against the actual engine on every EmbedPDF upgrade.
+/** The parts of the pinned engine's direct executor this module reaches. */
 interface DirectExecutor {
   pdfiumModule: WrappedPdfiumModule;
   cache: {
@@ -19,6 +28,13 @@ interface DirectExecutor {
   memoryManager: { malloc(size: number): number; free(ptr: number): void };
 }
 
+/** A text markup whose regenerated appearance must be mapped to its /Rect. */
+export interface PendingMarkupAppearance {
+  readonly document: PdfDocumentObject;
+  readonly page: PdfPageObject;
+  readonly annotationId: string;
+}
+
 /**
  * The pinned generator uses QuadPoints for /BBox but retains a padded /Rect.
  * Re-install its simple Underline/StrikeOut stream with FPDFAnnot_SetAP, whose
@@ -27,9 +43,7 @@ interface DirectExecutor {
  */
 export function mapRegeneratedTextMarkupAppearance(
   engine: PdfEngine,
-  document: PdfDocumentObject,
-  page: PdfPageObject,
-  annotationId: string,
+  { document, page, annotationId }: PendingMarkupAppearance,
 ): void {
   const executor = Reflect.get(engine, 'executor') as DirectExecutor | undefined;
   if (!executor?.pdfiumModule?.FPDFAnnot_SetAP || !executor.getAnnotationByName)

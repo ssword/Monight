@@ -119,6 +119,8 @@ export function createEmbedPdfDocumentSurfaceFactory({
       revealAnnotation: (annotationId) => {
         if (!destroyPromise) openedViewer.revealAnnotation(annotationId);
       },
+      selectedAnnotation: () =>
+        !destroyPromise && editable() ? openedViewer.selectedAnnotation() : null,
       getScrollPosition: () => 0,
       getReadingPosition: () => openedViewer.readingPosition(),
       goToPage: (pageNumber, options) => project(() => openedViewer.goToPage(pageNumber), options),

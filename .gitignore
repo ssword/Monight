@@ -42,7 +42,6 @@ coverage/
 /artifacts/issue-94/
 /artifacts/issue-115-116/
 /artifacts/issue-116-admission/
-/artifacts/issue-124-highlight/
 /artifacts/text-markup-fixes/
 
 # Misc
@@ -63,3 +62,5 @@ CLAUDE.md
 
 PERFORMANCE_PRD.md
 skills-lock.json
+
+/artifacts/issue-124-highlight/

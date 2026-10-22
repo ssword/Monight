@@ -73,7 +73,11 @@ describe('setupEventListeners', () => {
   it('dispatches retained toolbar choices as typed Reader Actions', async () => {
     document.body.innerHTML = `
       <button id="print-file"></button>
-      <button id="preset-original" class="preset-btn"></button>
+      <button id="appearance-toggle"></button>
+      <div id="appearance-popover" class="hidden">
+        <div id="appearance-presets"></div>
+      </div>
+      <button id="legacy-strip-sepia" class="preset-btn" data-preset="sepia"></button>
     `;
     const dispatchReaderAction = vi.fn(async (_action: unknown) => undefined);
 
@@ -87,7 +91,8 @@ describe('setupEventListeners', () => {
       dispatchReaderAction,
     });
 
-    for (const id of ['print-file', 'preset-original']) {
+    // The old toolbar preset strip is gone: only the Appearance popover's presets apply.
+    for (const id of ['print-file', 'legacy-strip-sepia', 'preset-original']) {
       document.getElementById(id)?.click();
     }
     await vi.waitFor(() => expect(dispatchReaderAction).toHaveBeenCalledTimes(2));

@@ -87,21 +87,11 @@ fn build_app_menu(app: &AppHandle) -> Result<Submenu<Wry>, tauri::Error> {
     )
 }
 
-/// Undo and Redo are reader commands (Reader Actions on the Document's edits,
-/// or a focused text field's own typing); Cut, Copy, Paste and Select All stay
-/// the platform's own.
+/// Undo, Redo and Delete are reader commands (Reader Actions on the Document's
+/// edits, or a focused text field's own typing); Cut, Copy, Paste and Select All
+/// stay the platform's own.
 fn build_edit_menu(app: &AppHandle) -> Result<Submenu<Wry>, tauri::Error> {
-    let submenu = build_reader_menu(app, "Edit", EDIT_MENU)?;
-    for item in [
-        PredefinedMenuItem::separator(app)?,
-        PredefinedMenuItem::cut(app, None)?,
-        PredefinedMenuItem::copy(app, None)?,
-        PredefinedMenuItem::paste(app, None)?,
-        PredefinedMenuItem::select_all(app, None)?,
-    ] {
-        submenu.append(&item)?;
-    }
-    Ok(submenu)
+    build_reader_menu(app, "Edit", EDIT_MENU)
 }
 
 /// One entry of the reader menus (View, Go, Tools). Ids are the reader command
@@ -131,10 +121,31 @@ enum ReaderMenuEntry {
     Section {
         id: &'static str,
     },
+    /// One of the platform's own Edit items, which act on the focused text.
+    Platform(PlatformEditItem),
     Separator,
 }
 
-use ReaderMenuEntry::{Check, Command, Listed, Section, Separator};
+#[derive(Clone, Copy, Debug)]
+enum PlatformEditItem {
+    Cut,
+    Copy,
+    Paste,
+    SelectAll,
+}
+
+impl PlatformEditItem {
+    fn build(self, app: &AppHandle) -> Result<PredefinedMenuItem<Wry>, tauri::Error> {
+        match self {
+            Self::Cut => PredefinedMenuItem::cut(app, None),
+            Self::Copy => PredefinedMenuItem::copy(app, None),
+            Self::Paste => PredefinedMenuItem::paste(app, None),
+            Self::SelectAll => PredefinedMenuItem::select_all(app, None),
+        }
+    }
+}
+
+use ReaderMenuEntry::{Check, Command, Listed, Platform, Section, Separator};
 
 const fn command(id: &'static str, text: &'static str) -> ReaderMenuEntry {
     Command { id, text }
@@ -144,7 +155,18 @@ const fn check(id: &'static str, text: &'static str) -> ReaderMenuEntry {
     Check { id, text }
 }
 
-const EDIT_MENU: &[ReaderMenuEntry] = &[command("edit.undo", "Undo"), command("edit.redo", "Redo")];
+const EDIT_MENU: &[ReaderMenuEntry] = &[
+    command("edit.undo", "Undo"),
+    command("edit.redo", "Redo"),
+    Separator,
+    Platform(PlatformEditItem::Cut),
+    Platform(PlatformEditItem::Copy),
+    Platform(PlatformEditItem::Paste),
+    // Deletes the selected Annotation; Delete and Backspace by default (not shown
+    // as the item's accelerator, so text fields keep both keys).
+    command("edit.delete", "Delete"),
+    Platform(PlatformEditItem::SelectAll),
+];
 
 const VIEW_MENU: &[ReaderMenuEntry] = &[
     command("view.tab-bar", "Show Tab Bar"),
@@ -236,6 +258,7 @@ fn build_reader_menu(
             )?)?,
             Listed { id, text } => submenu.append(&Submenu::with_id(app, id, text, true)?)?,
             Section { .. } => {}
+            Platform(item) => submenu.append(&item.build(app)?)?,
             Separator => submenu.append(&PredefinedMenuItem::separator(app)?)?,
         }
     }
@@ -378,7 +401,7 @@ fn section_menu(app: &AppHandle, id: &str) -> Option<Submenu<Wry>> {
     })?;
     let first = entries.iter().find_map(|entry| match *entry {
         Command { id, .. } | Check { id, .. } | Listed { id, .. } => Some(id),
-        Section { .. } | Separator => None,
+        Section { .. } | Platform(_) | Separator => None,
     })?;
     app.menu()?.items().ok()?.into_iter().find_map(|item| {
         let submenu = item.as_submenu()?.clone();
@@ -650,6 +673,12 @@ mod tests {
             .map(|entry| match *entry {
                 Command { text, .. } | Check { text, .. } | Listed { text, .. } => text,
                 Section { .. } => "[section]",
+                Platform(item) => match item {
+                    PlatformEditItem::Cut => "Cut",
+                    PlatformEditItem::Copy => "Copy",
+                    PlatformEditItem::Paste => "Paste",
+                    PlatformEditItem::SelectAll => "Select All",
+                },
                 Separator => "-",
             })
             .collect()
@@ -663,7 +692,7 @@ mod tests {
                 Command { id, .. } | Check { id, .. } | Listed { id, .. } | Section { id } => {
                     Some(id)
                 }
-                Separator => None,
+                Platform(_) | Separator => None,
             })
             .collect()
     }
@@ -716,10 +745,23 @@ mod tests {
     }
 
     #[test]
-    fn edit_undo_and_redo_are_reader_commands() {
-        assert_eq!(titles(EDIT_MENU), ["Undo", "Redo"]);
+    fn edit_undo_redo_and_delete_are_reader_commands() {
+        assert_eq!(
+            titles(EDIT_MENU),
+            [
+                "Undo",
+                "Redo",
+                "-",
+                "Cut",
+                "Copy",
+                "Paste",
+                "Delete",
+                "Select All"
+            ]
+        );
         assert_eq!(reader_command("edit.undo"), Some("edit.undo"));
         assert_eq!(reader_command("edit.redo"), Some("edit.redo"));
+        assert_eq!(reader_command("edit.delete"), Some("edit.delete"));
     }
 
     #[test]

@@ -28,9 +28,16 @@ export interface VerifiedMarkupTool {
 }
 
 export const VERIFIED_MARKUP_TOOLS: readonly VerifiedMarkupTool[] = Object.freeze([
-  // #124 found colour/appearance drift on comment-only Highlight saves (#127).
-  // Keep creation absent until the follow-up passes the retained native matrix.
-  // See docs/issue-124-highlight-verification.md.
+  {
+    id: 'highlight',
+    label: 'Highlight',
+    icon: 'highlighter',
+    control: 'highlight-menu',
+    verification: [
+      'docs/issue-75-preview-verification.md',
+      'docs/issue-80-acrobat-verification.md',
+    ],
+  },
   {
     id: 'underline',
     label: 'Underline',
@@ -64,6 +71,16 @@ export function verifiedMarkupTools(
 ): readonly VerifiedMarkupTool[] {
   return control ? tools.filter((tool) => tool.control === control) : tools;
 }
+
+/**
+ * The text-markup Annotation kinds Monight edits: those its verified text-markup
+ * tools (the Highlight split button's) create, whose tool ids are the kinds.
+ * The save path's editable subtypes (EDITABLE_ANNOTATIONS in pdf_save.rs) admit
+ * the same markups.
+ */
+export const TEXT_MARKUP_KINDS: ReadonlySet<string> = new Set(
+  verifiedMarkupTools('highlight-menu').map(({ id }) => id),
+);
 
 /**
  * Whether the active Document takes edits (markup tools, Page Rotation). A

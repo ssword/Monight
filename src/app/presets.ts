@@ -50,11 +50,10 @@ export function setupAppearancePopover(
   let customChosen = false;
   let shownDocumentPath: string | null = null;
 
-  const presetOf = (button: Element): string =>
-    (button as HTMLElement).dataset.preset ?? button.id.replace('preset-', '');
+  const presetOf = (button: Element): string => (button as HTMLElement).dataset.preset ?? '';
 
   const showActive = (active: AppearancePresetId) => {
-    for (const button of document.querySelectorAll('.preset-btn')) {
+    for (const button of presetList?.querySelectorAll('.preset-btn') ?? []) {
       const checked = presetOf(button) === active;
       button.classList.toggle('active', checked);
       button.setAttribute('aria-checked', String(checked));
@@ -91,7 +90,7 @@ export function setupAppearancePopover(
     debugLog(`Applied preset: ${preset}`);
   };
 
-  document.addEventListener('click', (event) => {
+  presetList?.addEventListener('click', (event) => {
     const button = event.target instanceof Element ? event.target.closest('.preset-btn') : null;
     if (button) choose(presetOf(button));
   });
