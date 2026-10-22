@@ -67,22 +67,22 @@ describe('Highlight split button', () => {
     chosen = [];
   });
 
-  it('highlights the selected text at once in the current colour', async () => {
+  it('marks selected text with the first verified subtype in the current colour', async () => {
     await mount();
     selectedText = true;
 
     button().click();
 
-    expect(marked).toEqual([{ toolId: 'highlight', strokeColor: YELLOW }]);
+    expect(marked).toEqual([{ toolId: 'underline', strokeColor: YELLOW }]);
     expect(chosen).toEqual([]);
   });
 
-  it('enters highlight mode with nothing selected and leaves it on a second click', async () => {
+  it('enters the first verified markup mode and leaves it on a second click', async () => {
     const highlight = await mount();
 
     button().click();
     highlight.refresh();
-    expect(chosen).toEqual([{ toolId: 'highlight', strokeColor: YELLOW }]);
+    expect(chosen).toEqual([{ toolId: 'underline', strokeColor: YELLOW }]);
     expect(button().getAttribute('aria-pressed')).toBe('true');
 
     selectedText = true;
@@ -97,18 +97,19 @@ describe('Highlight split button', () => {
     const highlight = await mount();
 
     selectedText = true;
-    highlight.activate('highlight');
-    expect(marked).toEqual([{ toolId: 'highlight', strokeColor: YELLOW }]);
+    highlight.activate('underline');
+    expect(marked).toEqual([{ toolId: 'underline', strokeColor: YELLOW }]);
 
-    highlight.activate('highlight');
-    expect(chosen).toEqual([{ toolId: 'highlight', strokeColor: YELLOW }]);
+    highlight.activate('underline');
+    expect(chosen).toEqual([{ toolId: 'underline', strokeColor: YELLOW }]);
     expect(button().getAttribute('aria-pressed')).toBe('true');
 
-    highlight.activate('highlight');
+    highlight.activate('underline');
     expect(chosen[chosen.length - 1]).toEqual({ toolId: null });
 
     // Unverified or non-text-markup tools are not the button's to choose.
     highlight.activate('textComment');
+    highlight.activate('highlight'); // Suspended by #124.
     expect(chosen).toHaveLength(2);
   });
 
@@ -125,8 +126,8 @@ describe('Highlight split button', () => {
       [...menu.querySelectorAll<HTMLElement>('[data-highlight-tool]')].map(
         (item) => item.dataset.highlightTool,
       ),
-    ).toEqual(['highlight', 'underline', 'strikeout']);
-    expect(menu.textContent).not.toMatch(/Squiggly|Text Note/);
+    ).toEqual(['underline', 'strikeout']);
+    expect(menu.textContent).not.toMatch(/Highlight|Squiggly|Text Note/);
     expect(menu.dataset.tauriDragRegion).toBe('false');
   });
 
@@ -158,7 +159,7 @@ describe('Highlight split button', () => {
       [...document.querySelectorAll<HTMLElement>('[data-highlight-tool]')].map(
         (item) => item.dataset.highlightTool,
       ),
-    ).toEqual(['highlight', 'underline', 'strikeout', 'squiggly']);
+    ).toEqual(['underline', 'strikeout', 'squiggly']);
   });
 
   it('uses the chosen colour and remembers it across relaunches', async () => {
@@ -170,7 +171,7 @@ describe('Highlight split button', () => {
     selectedText = true;
     document.querySelector<HTMLElement>('[data-highlight-color="green"]')?.click();
     expect(document.getElementById('highlight-menu')?.hidden).toBe(true);
-    expect(marked).toEqual([{ toolId: 'highlight', strokeColor: '#7ED957' }]);
+    expect(marked).toEqual([{ toolId: 'underline', strokeColor: '#7ED957' }]);
     await preferences.flush();
     firstLaunch.destroy();
 
@@ -180,7 +181,7 @@ describe('Highlight split button', () => {
     ).toBe('true');
     selectedText = true;
     button().click();
-    expect(marked[marked.length - 1]).toEqual({ toolId: 'highlight', strokeColor: '#7ED957' });
+    expect(marked[marked.length - 1]).toEqual({ toolId: 'underline', strokeColor: '#7ED957' });
   });
 
   it('changes the colour of highlight mode without leaving it', async () => {
@@ -189,7 +190,7 @@ describe('Highlight split button', () => {
 
     document.querySelector<HTMLElement>('[data-highlight-color="purple"]')?.click();
 
-    expect(chosen[chosen.length - 1]).toEqual({ toolId: 'highlight', strokeColor: '#B78CF2' });
+    expect(chosen[chosen.length - 1]).toEqual({ toolId: 'underline', strokeColor: '#B78CF2' });
     expect(button().getAttribute('aria-pressed')).toBe('true');
   });
 

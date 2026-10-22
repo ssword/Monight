@@ -456,10 +456,12 @@ const waitFor = async (condition: () => boolean, message: string): Promise<void>
   check(condition(), message);
 };
 
-/** The Highlight split button's two paths: mark the selection, or highlight mode. */
-async function verifyHighlightSplitButton(): Promise<void> {
+/** The text-markup split button's two paths: mark the selection, or underline mode. */
+async function verifyTextMarkupSplitButton(): Promise<void> {
   const green = '#7ED957';
-  const { surface, annotations, registry } = await open(navigationPdf('Highlight split button'));
+  const { surface, annotations, registry } = await open(
+    navigationPdf('Verified text-markup split button'),
+  );
   const documentId = registry
     .getPlugin<import('@embedpdf/snippet').DocumentManagerPlugin>('document-manager')
     ?.provides()
@@ -469,34 +471,41 @@ async function verifyHighlightSplitButton(): Promise<void> {
     ?.provides()
     .forDocument(documentId ?? '');
   if (!selection) throw new Error('Missing text selection capability');
-  const highlights = () =>
+  const underlines = () =>
     annotations
       .getAnnotations()
-      .filter(({ object }) => object.type === PdfAnnotationSubtype.HIGHLIGHT);
+      .filter(({ object }) => object.type === PdfAnnotationSubtype.UNDERLINE);
 
   check(
-    surface.rendering.markupSelection?.('highlight', { strokeColor: green }) === false,
-    'Highlight marked text with nothing selected',
+    surface.rendering.markupSelection?.('underline', { strokeColor: green }) === false,
+    'Underline marked text with nothing selected',
   );
   await selection
     .setSelection({ start: { page: 0, index: 0 }, end: { page: 0, index: 6 } })
     .toPromise();
   check(selection.getFormattedSelection().length === 1, 'Text selection did not take hold');
   check(
-    surface.rendering.markupSelection?.('highlight', { strokeColor: green }) === true,
-    'Highlight did not mark the selected text',
+    surface.rendering.markupSelection?.('highlight', { strokeColor: green }) === false,
+    'Suspended Highlight marked the selected text',
   );
-  await waitFor(() => highlights().length === 1, 'The selected text was not highlighted');
-  check(selection.getFormattedSelection().length === 0, 'The highlighted selection remained');
-  check(surface.runtime.editing?.state().dirty, 'A new highlight did not mark the Document dirty');
-  const saved = await surface.runtime.editing?.exportPdf();
-  if (!saved) throw new Error('Missing highlighted export');
+  surface.rendering.setActiveAnnotationTool?.('highlight');
+  check(annotations.getActiveTool() === null, 'Suspended Highlight mode was enabled');
 
-  surface.rendering.setActiveAnnotationTool?.('highlight', { strokeColor: '#B78CF2' });
   check(
-    annotations.getActiveTool()?.id === 'highlight' &&
-      annotations.getTool('highlight')?.defaults.strokeColor === '#B78CF2',
-    'Highlight mode did not take the chosen colour',
+    surface.rendering.markupSelection?.('underline', { strokeColor: green }) === true,
+    'Underline did not mark the selected text',
+  );
+  await waitFor(() => underlines().length === 1, 'The selected text was not underlined');
+  check(selection.getFormattedSelection().length === 0, 'The underlined selection remained');
+  check(surface.runtime.editing?.state().dirty, 'A new underline did not mark the Document dirty');
+  const saved = await surface.runtime.editing?.exportPdf();
+  if (!saved) throw new Error('Missing underlined export');
+
+  surface.rendering.setActiveAnnotationTool?.('underline', { strokeColor: '#B78CF2' });
+  check(
+    annotations.getActiveTool()?.id === 'underline' &&
+      annotations.getTool('underline')?.defaults.strokeColor === '#B78CF2',
+    'Underline mode did not take the chosen colour',
   );
   surface.rendering.setActiveAnnotationTool?.(null);
   await surface.runtime.destroy();
@@ -505,12 +514,12 @@ async function verifyHighlightSplitButton(): Promise<void> {
   const mark = reopened.annotations
     .getAnnotations()
     .map(({ object }) => object)
-    .find((object) => object.type === PdfAnnotationSubtype.HIGHLIGHT);
+    .find((object) => object.type === PdfAnnotationSubtype.UNDERLINE);
   check(
-    mark?.type === PdfAnnotationSubtype.HIGHLIGHT &&
+    mark?.type === PdfAnnotationSubtype.UNDERLINE &&
       mark.strokeColor?.toLowerCase() === green.toLowerCase() &&
       mark.segmentRects.length > 0,
-    `The saved highlight lost its colour or text: ${JSON.stringify(mark)}`,
+    `The saved underline lost its colour or text: ${JSON.stringify(mark)}`,
   );
   await reopened.surface.runtime.destroy();
 
@@ -519,15 +528,15 @@ async function verifyHighlightSplitButton(): Promise<void> {
     'Digitally signed PDFs are read-only to preserve their signatures',
   );
   check(
-    signed.surface.rendering.markupSelection?.('highlight', { strokeColor: green }) === false,
-    'A protected Document accepted a highlight',
+    signed.surface.rendering.markupSelection?.('underline', { strokeColor: green }) === false,
+    'A protected Document accepted an underline',
   );
   await signed.surface.runtime.destroy();
 }
 
 async function run() {
   await verifyProtectedDocuments();
-  await verifyHighlightSplitButton();
+  await verifyTextMarkupSplitButton();
   const original = navigationPdf('Native annotations');
   const failed = await open(original);
   const createNativeAnnotation = failed.engine.createPageAnnotation;
@@ -628,7 +637,7 @@ async function run() {
   await failed.surface.runtime.editing?.exportPdf();
   await failed.surface.runtime.destroy();
   let { surface, annotations, history } = await open(original);
-  check(!annotations.isToolLocked('highlight'), 'Highlight is locked');
+  check(annotations.isToolLocked('highlight'), 'Suspended Highlight is enabled');
   check(!annotations.isToolLocked('textComment'), 'Comment is locked');
   check(!annotations.isToolLocked('underline'), 'Admitted Underline is locked');
   check(!annotations.isToolLocked('strikeout'), 'Admitted Strikethrough is locked');

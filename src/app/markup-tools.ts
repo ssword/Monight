@@ -28,16 +28,9 @@ export interface VerifiedMarkupTool {
 }
 
 export const VERIFIED_MARKUP_TOOLS: readonly VerifiedMarkupTool[] = Object.freeze([
-  {
-    id: 'highlight',
-    label: 'Highlight',
-    icon: 'highlighter',
-    control: 'highlight-menu',
-    verification: [
-      'docs/issue-75-preview-verification.md',
-      'docs/issue-80-acrobat-verification.md',
-    ],
-  },
+  // #124 found colour/appearance drift on comment-only Highlight saves (#127).
+  // Keep creation absent until the follow-up passes the retained native matrix.
+  // See docs/issue-124-highlight-verification.md.
   {
     id: 'underline',
     label: 'Underline',

@@ -144,11 +144,12 @@ describe('Reader Commands', () => {
   it('Tools ▸ Annotate goes through the control that offers each verified tool', async () => {
     const { context, calls } = fakeContext();
     await runReaderCommand('tools.annotate.textComment', context);
-    await runReaderCommand('tools.annotate.highlight', context);
+    await runReaderCommand('tools.annotate.underline', context);
+    await runReaderCommand('tools.annotate.highlight', context); // Suspended by #124.
     await runReaderCommand('tools.text-selection', context);
     expect(calls).toEqual([
       'markup-toolbar:textComment',
-      'highlight-button:highlight',
+      'highlight-button:underline',
       'tool:null',
     ]);
   });
@@ -250,7 +251,8 @@ describe('native menu state', () => {
     const states = readerCommandStates(
       input({ markup: { activeToolId: null, readOnlyReason: 'read-only' } }),
     );
-    expect(stateOf(states, 'tools.annotate.highlight')?.enabled).toBe(false);
+    expect(stateOf(states, 'tools.annotate.underline')?.enabled).toBe(false);
+    expect(stateOf(states, 'tools.annotate.highlight')).toBeUndefined();
     expect(stateOf(states, 'tools.annotate.textComment')?.enabled).toBe(false);
     expect(stateOf(states, 'tools.text-selection')?.enabled).toBe(true);
     expect(stateOf(states, 'view.zoom.in')?.enabled).toBe(true);
@@ -431,7 +433,6 @@ describe('native menu listing', () => {
       {
         id: 'tools.annotate',
         items: [
-          { id: 'tools.annotate.highlight', text: 'Highlight' },
           { id: 'tools.annotate.underline', text: 'Underline' },
           { id: 'tools.annotate.strikeout', text: 'Strikethrough' },
           { id: 'tools.annotate.textComment', text: 'Text Note' },

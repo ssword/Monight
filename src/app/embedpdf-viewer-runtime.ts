@@ -606,13 +606,13 @@ export async function createEmbedPdfViewerRuntime({
     },
     activeAnnotationTool: () => annotationScope.getActiveTool()?.id ?? null,
     setActiveAnnotationTool(toolId, defaults) {
-      if (destroyed) return;
+      if (destroyed || (toolId !== null && annotations.isToolLocked(toolId))) return;
       if (toolId !== null && defaults) annotations.setToolDefaults(toolId, { ...defaults });
       annotationScope.setActiveTool(toolId);
       closeReadyMadeAnnotationToolbar();
     },
     markupSelection(toolId, defaults) {
-      if (destroyed || readOnlyReason !== null) return false;
+      if (destroyed || readOnlyReason !== null || annotations.isToolLocked(toolId)) return false;
       const tool = annotations.getTool(toolId);
       const segments = selectionScope.getFormattedSelection();
       if (!tool?.interaction.textSelection || segments.length === 0) return false;
