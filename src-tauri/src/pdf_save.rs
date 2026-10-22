@@ -1425,7 +1425,7 @@ mod tests {
     }
 
     #[test]
-    fn external_text_markup_is_editable_and_must_survive_saves_unchanged() {
+    fn unverified_squiggly_markup_keeps_the_document_editable_and_survives_saves_unchanged() {
         use lopdf::{dictionary, Object};
         for subtype in ["Squiggly"] {
             let mut doc = lopdf::Document::load_mem(&pdf()).unwrap();
@@ -1505,7 +1505,7 @@ mod tests {
         let original =
             include_bytes!("../tests/fixtures/text-markup-verification/acrobat-text-markups.pdf");
         let mut document = lopdf::Document::load_mem(original).unwrap();
-        let mut deleted_ids = std::collections::HashSet::new();
+        let mut admitted_markup_ids = std::collections::HashSet::new();
         for (id, object) in document.objects.iter_mut() {
             let Ok(annotation) = object.as_dict_mut() else {
                 continue;
@@ -1515,10 +1515,10 @@ mod tests {
                 Some(b"Underline" | b"StrikeOut")
             ) {
                 annotation.set("Contents", Object::string_literal("Admission edit"));
-                deleted_ids.insert(*id);
+                admitted_markup_ids.insert(*id);
             }
         }
-        assert_eq!(deleted_ids.len(), 2);
+        assert_eq!(admitted_markup_ids.len(), 2);
         let mut edited = Vec::new();
         document.save_to(&mut edited).unwrap();
         verify_preservation(original, &edited).unwrap();
@@ -1535,7 +1535,7 @@ mod tests {
                 .filter(|entry| {
                     !entry
                         .as_reference()
-                        .is_ok_and(|id| deleted_ids.contains(&id))
+                        .is_ok_and(|id| admitted_markup_ids.contains(&id))
                 })
                 .collect::<Vec<_>>();
             document
