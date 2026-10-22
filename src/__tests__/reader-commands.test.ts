@@ -56,6 +56,7 @@ function fakeContext(overrides: Partial<ReaderCommandContext> = {}) {
       calls.push('tab-bar');
     },
     editTextField: () => false,
+    selectedAnnotation: () => null,
     ...overrides,
   };
   return {
@@ -109,6 +110,32 @@ describe('Reader Commands', () => {
     await runReaderCommand('edit.redo', context);
     expect(edited).toEqual(['undo', 'redo']);
     expect(dispatched).toEqual([]);
+  });
+
+  it('Edit ▸ Delete deletes the selected Annotation from the Document it was selected in', async () => {
+    const { context, dispatched } = fakeContext({
+      selectedAnnotation: () => ({
+        filePath: '/docs/report.pdf',
+        id: 'mark-1',
+        kind: 'highlight',
+        contents: '',
+        color: null,
+        anchor: null,
+      }),
+    });
+    expect(await runReaderCommand('edit.delete', context)).toBe(true);
+    expect(dispatched).toEqual([
+      {
+        type: 'editAnnotation',
+        filePath: '/docs/report.pdf',
+        annotationId: 'mark-1',
+        edit: { type: 'delete' },
+      },
+    ]);
+
+    const nothingSelected = fakeContext();
+    await runReaderCommand('edit.delete', nothingSelected.context);
+    expect(nothingSelected.dispatched).toEqual([]);
   });
 
   it('Go to Page… does nothing when the request is cancelled', async () => {
@@ -184,6 +211,7 @@ const input = (overrides: Partial<ReaderCommandStateInput> = {}): ReaderCommandS
   canGoForward: false,
   tabBarKeptShown: false,
   textFieldFocused: false,
+  annotationSelected: false,
   ...overrides,
 });
 
@@ -273,6 +301,30 @@ describe('native menu state', () => {
     const typing = readerCommandStates(input({ activeDocument: null, textFieldFocused: true }));
     expect(stateOf(typing, 'edit.undo')?.enabled).toBe(true);
     expect(stateOf(typing, 'edit.redo')?.enabled).toBe(true);
+  });
+
+  it('enables Delete only while an Annotation of an editable Document is selected and no text field is focused', () => {
+    expect(stateOf(readerCommandStates(input()), 'edit.delete')?.enabled).toBe(false);
+    expect(
+      stateOf(readerCommandStates(input({ annotationSelected: true })), 'edit.delete')?.enabled,
+    ).toBe(true);
+    expect(
+      stateOf(
+        readerCommandStates(input({ annotationSelected: true, textFieldFocused: true })),
+        'edit.delete',
+      )?.enabled,
+    ).toBe(false);
+    expect(
+      stateOf(
+        readerCommandStates(
+          input({
+            annotationSelected: true,
+            markup: { activeToolId: null, readOnlyReason: 'read-only' },
+          }),
+        ),
+        'edit.delete',
+      )?.enabled,
+    ).toBe(false);
   });
 
   it('disables page steps at the first and last page', () => {

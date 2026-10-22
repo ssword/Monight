@@ -1,4 +1,4 @@
-// Reader Commands (CONTEXT.md): the one table behind the native Edit ▸ Undo/Redo,
+// Reader Commands (CONTEXT.md): the one table behind the native Edit ▸ Undo/Redo/Delete,
 // View, Go and Tools menus, the toolbar controls and the shortcuts. Each command
 // names the typed Reader Action or chrome-preference change its toolbar control
 // makes (or calls that control's own entry point), and how its menu item's
@@ -32,7 +32,7 @@ import {
 } from '../scripts/filters';
 import type { KeybindConfig } from '../scripts/keybind-defaults';
 import type { ChromePreferences, ChromePreferencesAuthority } from './chrome-preferences';
-import type { ActiveMarkupState } from './document-workspace';
+import type { ActiveMarkupState, DocumentSelectedAnnotation } from './document-workspace';
 import { isEditableMarkup, VERIFIED_MARKUP_TOOLS, type VerifiedMarkupTool } from './markup-tools';
 import type { SidebarChoice } from './reader-sidebar';
 import { tabBarShown } from './tab-bar';
@@ -81,6 +81,8 @@ export interface ReaderCommandContext {
    * false when focus is not in an editable element.
    */
   readonly editTextField: (kind: 'undo' | 'redo') => boolean;
+  /** The active Document's selected Annotation (transient), with the Document it belongs to. */
+  readonly selectedAnnotation: () => DocumentSelectedAnnotation | null;
 }
 
 export interface ReaderCommandStateInput {
@@ -101,6 +103,8 @@ export interface ReaderCommandStateInput {
   readonly tabBarKeptShown: boolean;
   /** Whether focus is in an editable element, whose own typing Undo and Redo then edit. */
   readonly textFieldFocused: boolean;
+  /** Whether an Annotation is selected on the active Document. */
+  readonly annotationSelected: boolean;
   /**
    * The effective keybinds; each command's menu item shows its shortcut as
    * its accelerator. Absent: accelerators are left as they are.
@@ -202,6 +206,21 @@ const historyCommand = <Id extends 'edit.undo' | 'edit.redo'>(
 const staticCommands = [
   historyCommand('edit.undo', 'undo'),
   historyCommand('edit.redo', 'redo'),
+  {
+    // Edit ▸ Delete (Delete and Backspace by default; the keybinds leave those keys
+    // to text fields) deletes the selected Annotation from its own Document.
+    id: 'edit.delete',
+    run: (context) => {
+      const selected = context.selectedAnnotation();
+      if (!selected) return;
+      return context.dispatchReaderAction(
+        readerAction.editAnnotation(selected.filePath, selected.id, { type: 'delete' }),
+      );
+    },
+    state: (input) => ({
+      enabled: editableDocument(input) && input.annotationSelected && !input.textFieldFocused,
+    }),
+  },
   {
     id: 'view.tab-bar',
     run: (context) => context.toggleTabBar(),

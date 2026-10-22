@@ -419,6 +419,7 @@ function createModules(
           activePresentation: vi.fn(() => null),
           activeRenderingState: vi.fn(() => null),
           activeMarkup: vi.fn(() => null),
+          selectedAnnotation: vi.fn(() => null),
           activeReadingPosition: vi.fn(() => ({
             filePath: '/docs/report.pdf',
             readingPosition: { page: 4, location: 0.5 },

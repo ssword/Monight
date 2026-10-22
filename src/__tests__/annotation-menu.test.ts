@@ -219,23 +219,6 @@ describe('Annotation menu', () => {
     expect(menu().hidden).toBe(true);
   });
 
-  it('deletes the selected Annotation with Delete or Backspace, but not while typing', () => {
-    selected = highlight();
-    const view = mount();
-    view.refresh();
-
-    field()?.focus();
-    field()?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Backspace', bubbles: true }));
-    document
-      .getElementById('toolbar-search')
-      ?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Delete', bubbles: true }));
-    expect(edits).toEqual([]);
-
-    field()?.blur();
-    document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Backspace', bubbles: true }));
-    expect(edits).toEqual([{ filePath: REPORT, id: 'mark-1', edit: { type: 'delete' } }]);
-  });
-
   it('hides while its Annotation is scrolled out of view', () => {
     selected = highlight({ anchor: null });
     mount().refresh();
@@ -243,15 +226,22 @@ describe('Annotation menu', () => {
     expect(menu().hidden).toBe(true);
   });
 
-  it('stops listening once destroyed', () => {
+  it('leaves Delete and Backspace to the Edit ▸ Delete Reader Command', () => {
+    selected = highlight();
+    mount().refresh();
+
+    document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Delete', bubbles: true }));
+    document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Backspace', bubbles: true }));
+
+    expect(edits).toEqual([]);
+  });
+
+  it('hides once destroyed', () => {
     selected = highlight();
     const view = mount();
     view.refresh();
     view.destroy();
 
-    document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Delete', bubbles: true }));
-
-    expect(edits).toEqual([]);
     expect(menu().hidden).toBe(true);
   });
 });

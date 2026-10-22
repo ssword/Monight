@@ -1,10 +1,10 @@
 // The annotation menu: a small popover beneath the Annotation selected on the
 // page. It replaces EmbedPDF's ready-made annotation selection menu and comment
 // panel (ADR 0003) with the edits ADR 0002 verified: the Annotation's note (its
-// Contents), the colour of a text markup, and Delete. Delete and Backspace also
-// delete the selection while focus is not in a text field.
+// Contents), the colour of a text markup, and Delete. Each edit is an
+// editAnnotation Reader Action; the Delete and Backspace keys reach the same edit
+// through the Edit ▸ Delete Reader Command (reader-commands.ts).
 
-import { isEditableTarget } from '../lib/editable-target';
 import type { DocumentAnnotationKind } from '../reader/document-queries';
 import type { AnnotationEdit } from '../reader/native-pdf-editing';
 import { type ReaderAction, readerAction } from '../reader/reader-actions';
@@ -176,22 +176,10 @@ export function createAnnotationMenu({
   document.addEventListener('pointerdown', onPointerDown, true);
   document.addEventListener('pointerup', onPointerUp, true);
 
-  const onKeyDown = (event: KeyboardEvent) => {
-    if (event.key !== 'Delete' && event.key !== 'Backspace') return;
-    if (event.defaultPrevented || isEditableTarget(event.target)) return;
-    if (isEditableTarget(document.activeElement)) return;
-    const annotation = selectedAnnotation();
-    if (!annotation) return;
-    event.preventDefault();
-    edit(annotation, { type: 'delete' });
-  };
-  document.addEventListener('keydown', onKeyDown);
-
   return {
     refresh,
     commitPendingNote: commitNote,
     destroy() {
-      document.removeEventListener('keydown', onKeyDown);
       document.removeEventListener('pointerdown', onPointerDown, true);
       document.removeEventListener('pointerup', onPointerUp, true);
       hide();

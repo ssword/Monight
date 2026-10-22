@@ -195,6 +195,7 @@ const readerMenuState = (): ReaderCommandStateInput => {
     canGoForward: readerActions?.canGoForward() ?? false,
     tabBarKeptShown,
     textFieldFocused: isEditableTarget(document.activeElement),
+    annotationSelected: (documentWorkspace?.selectedAnnotation() ?? null) !== null,
     keybinds: activeKeybinds,
   };
 };
@@ -934,6 +935,7 @@ export async function initializeApplication(modules: ApplicationModules): Promis
       },
       selectedPages: () => readerSidebar?.selectedPages() ?? [],
       currentPage: () => readerMenuState().activeDocument?.currentPage || null,
+      selectedAnnotation: () => documentWorkspace?.selectedAnnotation() ?? null,
       editTextField: (kind) => {
         if (!isEditableTarget(document.activeElement)) return false;
         // The native Edit menu takes ⌘Z from the WebView; hand it back to the field.

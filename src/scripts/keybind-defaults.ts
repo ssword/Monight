@@ -94,6 +94,7 @@ export const KEYBIND_ACTIONS: Readonly<Record<string, KeybindAction>> = {
   Find: { displayName: 'Find in Document', action: 'find' },
   Undo: readerCommand('Undo', 'edit.undo'),
   Redo: readerCommand('Redo', 'edit.redo'),
+  Delete: readerCommand('Delete', 'edit.delete'),
   ZoomIn: { displayName: 'Zoom In', action: 'zoomIn' },
   ZoomOut: { displayName: 'Zoom Out', action: 'zoomOut' },
   ResetZoom: { displayName: 'Actual Size', action: 'resetZoom' },
@@ -227,6 +228,14 @@ export const KEYBIND_DEFAULTS_REVISIONS: readonly KeybindDefaultsRevision[] = [
     binds: {
       Undo: ['CmdOrCtrl+Z'],
       Redo: { mac: ['Cmd+Shift+Z'], other: ['Ctrl+Shift+Z', 'Ctrl+Y'] },
+    },
+  },
+  {
+    // Edit ▸ Delete removes the selected Annotation (#99), replacing the annotation
+    // menu's own key listener; text fields keep both keys for their typing.
+    version: 6,
+    binds: {
+      Delete: ['Delete', 'Backspace'],
     },
   },
 ];
