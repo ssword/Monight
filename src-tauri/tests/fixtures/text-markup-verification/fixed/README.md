@@ -26,3 +26,10 @@ Visual edits use a BBox equal to Rect, with identity mapping.
 | `selection.pdf` | `0bb3ac5ad4d421537c13d5609f03c4994603cbc691db7417c8cfd5855e1ce831` |
 | `fonts.pdf` | `0c48959e8b2218762f7ff3b95ba8254c7e93bdf861e7bb23c5ad05265773cb7f` |
 | `active.pdf` | `597c6902ce4488cbbf44774cb17eaabdc4c27e7a5de9005cb61a73d2d0649b85` |
+
+Native Preview return snapshots (same fixture, further native edits):
+
+| File | SHA-256 |
+| --- | --- |
+| `preview-return.pdf` | `3aecdba32a96f3811b45832e63ebf7c48e321bb55ca6549f73495054772557e6` |
+| `preview-return-monight.pdf` | `4c7ce6372e685a296e94045ded89a6d21a6bbeabb5733f766ac62bd500421eff` |

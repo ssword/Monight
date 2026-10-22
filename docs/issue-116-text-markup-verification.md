@@ -148,3 +148,11 @@ The owner's subsequent Acrobat rotation waiver applies only to #115. The final
 rotation-only build admits Rotate after Preview acceptance; neither Underline nor
 Strikethrough is admitted. Final `npm test` passed 621 tests in 66 files, and the
 application build and lint passed (five existing design-preview warnings).
+
+## Follow-up fixes for #118 and #119
+
+The [fix record](issue-118-119-text-markup-fixes.md) identifies the subsequent code
+revision, real-engine regressions, retained outputs, native Preview edit return,
+and Preview/Acrobat visual checks. The failures above describe the original
+candidate and remain provenance for the unchanged failure fixtures. Both tools
+remain absent pending the full #116 native admission matrix.
