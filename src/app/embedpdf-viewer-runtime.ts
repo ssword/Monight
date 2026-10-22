@@ -401,6 +401,13 @@ export async function createEmbedPdfViewerRuntime({
   );
 
   // Edit ▸ Copy copies the page text selection, as ⌘C (EmbedPDF's own shortcut) does.
+  // This stays a document `copy` listener rather than an `edit.copy` Reader Command:
+  // Edit ▸ Copy is the platform's own menu item (menu.rs), which on macOS goes through
+  // the responder chain and sends the WebView a native copy, and ⌘C must keep copying
+  // from text fields (Search, a note) exactly as the platform does. A custom menu item
+  // would have to reimplement that for every field. The `copy` event is the one place
+  // both the menu item and ⌘C arrive; it yields to editable focus and only takes over
+  // when the page has a text selection.
   const copyTextSelection = (event: ClipboardEvent) => {
     if (destroyed || target.dataset.visible !== 'true' || target.closest('[inert]')) return;
     if (isEditableTarget(document.activeElement) || !selectionScope.getState().selection) return;
