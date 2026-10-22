@@ -15,83 +15,179 @@
   pointer-events: none;
 }
 
+/* Unified toolbar — Preview proportions: title block leading, capsule groups trailing. */
 #toolbar {
+  position: relative;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  height: 48px;
-  padding: 0 12px;
-  gap: 12px;
+  height: var(--toolbar-height);
+  padding: 0 12px 0 16px;
+  gap: 10px;
   flex-shrink: 0;
+  color: var(--text-primary);
   background-color: var(--bg-secondary);
   border-bottom: 1px solid var(--border-color);
 }
 
-.toolbar-group,
-.preset-group {
+/* macOS overlay title bar: the traffic lights sit in the toolbar's leading
+   inset, over the sidebar column. Windows and Linux keep a native title bar. */
+:root[data-window-chrome="overlay"] {
+  --traffic-light-inset: 78px;
+}
+
+:root[data-window-chrome="overlay"] #toolbar {
+  padding-left: calc(var(--traffic-light-inset) + 8px);
+}
+
+.toolbar-title {
   display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.toolbar-group.file-info {
-  flex: 1;
+  flex-direction: column;
   justify-content: center;
-  overflow: hidden;
-}
-
-.toolbar-btn,
-.preset-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  height: 32px;
-  color: var(--text-primary);
-  background-color: transparent;
-  border: 1px solid var(--border-color);
-  border-radius: 4px;
-  cursor: pointer;
-  transition: all 0.2s ease;
-  user-select: none;
-}
-
-.toolbar-btn {
-  width: 32px;
-  font-size: 16px;
-}
-
-.preset-btn {
-  padding: 0 12px;
-  font-size: 13px;
-  font-weight: 500;
-  white-space: nowrap;
-}
-
-.toolbar-btn:hover,
-.preset-btn:hover {
-  background-color: var(--bg-primary);
-  border-color: var(--accent-color);
-}
-
-.toolbar-btn:active,
-.preset-btn:active {
-  background-color: var(--border-color);
-  transform: scale(0.98);
-}
-
-.preset-btn.active {
-  color: var(--text-on-accent);
-  background-color: var(--accent-color);
-  border-color: var(--accent-color);
+  min-width: 0;
+  flex: 0 1 auto;
+  line-height: 1.2;
 }
 
 .file-name {
   max-width: 100%;
   overflow: hidden;
   color: var(--text-primary);
-  font-size: 14px;
+  font-size: 13px;
+  font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.page-status {
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.page-status:empty {
+  display: none;
+}
+
+.toolbar-spacer {
+  flex: 1 1 auto;
+}
+
+.toolbar-capsule {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  height: 28px;
+  padding: 0 2px;
+  gap: 2px;
+  background-color: var(--capsule-bg);
+  border: 1px solid var(--border-color);
+  border-radius: var(--capsule-radius);
+}
+
+.toolbar-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 22px;
+  padding: 0;
+  color: var(--chrome-icon-color);
+  background-color: transparent;
+  border: 0;
+  border-radius: 5px;
+  cursor: pointer;
+  user-select: none;
+  transition:
+    background-color 0.12s ease,
+    color 0.12s ease;
+}
+
+.toolbar-btn:hover {
+  color: var(--text-primary);
+  background-color: var(--chrome-hover);
+}
+
+.toolbar-btn:active,
+.toolbar-btn[aria-expanded="true"] {
+  color: var(--text-primary);
+  background-color: var(--chrome-pressed);
+}
+
+.toolbar-btn:focus-visible,
+.preset-btn:focus-visible {
+  outline: 2px solid var(--accent-color);
+  outline-offset: 1px;
+}
+
+.toolbar-icon {
+  display: inline-flex;
+  width: 18px;
+  height: 18px;
+  pointer-events: none;
+}
+
+.toolbar-icon svg {
+  width: 100%;
+  height: 100%;
+}
+
+/* Appearance popover: page filter presets, with Custom sliders inline. */
+.toolbar-popover-anchor {
+  position: relative;
+}
+
+.appearance-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  width: 260px;
+  max-height: calc(100vh - var(--toolbar-height) - 16px);
+  padding: 4px;
+  gap: 2px;
+  overflow-y: auto;
+  background-color: var(--bg-elevated);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+}
+
+.appearance-popover.hidden {
+  display: none;
+}
+
+.appearance-presets {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.preset-btn {
+  display: flex;
+  align-items: center;
+  height: 26px;
+  padding: 0 10px;
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 13px;
+  text-align: left;
+  white-space: nowrap;
+  background-color: transparent;
+  border: 0;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.preset-btn:hover {
+  background-color: var(--chrome-hover);
+}
+
+.preset-btn.active {
+  color: var(--text-on-accent);
+  background-color: var(--accent-color);
 }
 
 #pdf-container {
@@ -124,22 +220,235 @@
   font-size: 14px;
 }
 
-@media (max-width: 768px) {
-  #toolbar {
-    height: auto;
-    min-height: 56px;
-    padding: 8px;
-    flex-wrap: wrap;
-  }
+/* Search field at the trailing edge; typing takes over the sidebar. */
+.toolbar-search {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: 0 1 200px;
+  min-width: 120px;
+  height: 28px;
+}
 
-  .toolbar-btn {
-    width: 36px;
-    height: 36px;
-    font-size: 18px;
-  }
+.toolbar-search-icon {
+  position: absolute;
+  left: 7px;
+  width: 14px;
+  height: 14px;
+  color: var(--chrome-icon-color);
+}
 
-  .toolbar-group.file-info {
-    order: 4;
-    width: 100%;
-  }
+.toolbar-search input {
+  width: 100%;
+  height: 100%;
+  padding: 0 8px 0 26px;
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 13px;
+  background-color: var(--capsule-bg);
+  border: 1px solid var(--border-color);
+  border-radius: var(--capsule-radius);
+  outline: none;
+}
+
+.toolbar-search input::placeholder {
+  color: var(--text-secondary);
+}
+
+.toolbar-search input:focus-visible {
+  border-color: var(--accent-color);
+  box-shadow: 0 0 0 2px var(--accent-glow);
+}
+
+/* Markup toolbar: verified annotation tools in a strip beneath the toolbar. */
+#markup-toolbar-toggle[aria-pressed="true"] {
+  color: var(--text-primary);
+  background-color: var(--chrome-pressed);
+}
+
+.markup-toolbar {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  height: 36px;
+  padding: 0 12px;
+  gap: 12px;
+  color: var(--text-primary);
+  background-color: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-color);
+}
+
+.markup-toolbar[hidden] {
+  display: none;
+}
+
+.markup-toolbar-tools {
+  display: flex;
+  align-items: center;
+  height: 28px;
+  padding: 0 2px;
+  gap: 2px;
+  background-color: var(--capsule-bg);
+  border: 1px solid var(--border-color);
+  border-radius: var(--capsule-radius);
+}
+
+/* The active tool uses the moonlight-warm accent, not system blue. */
+.markup-tool[aria-pressed="true"] {
+  color: var(--accent-ink);
+  background-color: var(--accent-glow);
+}
+
+.markup-tool:disabled {
+  cursor: default;
+  opacity: 0.4;
+}
+
+.markup-tool:disabled:hover {
+  color: var(--chrome-icon-color);
+  background-color: transparent;
+}
+
+.markup-toolbar-status {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Highlight split button: the icon carries the current colour as an underline. */
+.highlight-anchor {
+  position: relative;
+}
+
+.highlight-button {
+  position: relative;
+}
+
+.highlight-button::after {
+  content: "";
+  position: absolute;
+  right: 7px;
+  bottom: 4px;
+  left: 7px;
+  height: 3px;
+  background-color: var(--highlight-color, transparent);
+  border-radius: 2px;
+}
+
+.highlight-button[aria-pressed="true"] {
+  color: var(--accent-ink);
+  background-color: var(--accent-glow);
+}
+
+.highlight-anchor .toolbar-btn:disabled {
+  cursor: default;
+  opacity: 0.4;
+}
+
+.highlight-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  min-width: 150px;
+  padding: 4px;
+  gap: 2px;
+  background-color: var(--bg-elevated);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+}
+
+.highlight-menu[hidden] {
+  display: none;
+}
+
+.highlight-swatch {
+  width: 12px;
+  height: 12px;
+  background-color: var(--highlight-color);
+  border: 1px solid var(--border-color);
+  border-radius: 50%;
+}
+
+.toolbar-menu-separator {
+  height: 1px;
+  margin: 3px 6px;
+  background-color: var(--border-color);
+}
+
+/* Annotation menu: note, colour and Delete beneath the selected Annotation. */
+.annotation-menu {
+  position: fixed;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 240px;
+  padding: 8px;
+  color: var(--text-primary);
+  background-color: var(--bg-elevated);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+}
+
+.annotation-menu[hidden] {
+  display: none;
+}
+
+.annotation-menu-note {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 56px;
+  padding: 6px 8px;
+  font: inherit;
+  font-size: 13px;
+  color: inherit;
+  resize: vertical;
+  background-color: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+}
+
+.annotation-menu-note:focus-visible {
+  outline: 2px solid var(--accent-color);
+  outline-offset: 1px;
+}
+
+.annotation-menu-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.annotation-menu-colors {
+  display: flex;
+  gap: 6px;
+}
+
+.annotation-menu-colors[hidden] {
+  display: none;
+}
+
+.annotation-menu-swatch {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  cursor: pointer;
+}
+
+.annotation-menu-swatch[aria-checked="true"] {
+  outline: 2px solid var(--accent-ink);
+  outline-offset: 1px;
+}
+
+.annotation-menu-delete {
+  margin-left: auto;
 }

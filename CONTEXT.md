@@ -44,6 +44,10 @@ _Avoid_: Zoom level, scale
 A reader's semantic intent to change the active Document or its settled state, or to perform a Document-scoped effect such as link activation or printing. It is independent of whether it came from the toolbar, a keybind, a menu, search, or another input.
 _Avoid_: UI event, shortcut handler, menu command
 
+**Reader Command**:
+A named reader operation, such as Zoom In, Go to Page or Undo, offered alike by the native menu, the toolbar and keyboard shortcuts. It dispatches a Reader Action, changes a chrome preference, or opens the reader control that does; its id (for example `view.zoom.in`) is also its native menu item's id.
+_Avoid_: Menu command, menu item id, shortcut action
+
 **Document Intake**:
 The process by which one or more PDF paths become active Documents in the Reading Session. Each path has its own outcome, and an already-open path refers to the existing Document.
 _Avoid_: File-open flow, PDF intake, open handler

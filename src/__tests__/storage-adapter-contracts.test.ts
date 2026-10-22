@@ -21,6 +21,8 @@ const tauriStores = vi.hoisted(() => {
 
 vi.mock('@tauri-apps/plugin-store', () => ({ Store: { load: tauriStores.load } }));
 
+import { loadChromePreferences, type PersistedChromePreferences } from '../app/chrome-preferences';
+import { createChromePreferencesStorage } from '../app/chrome-preferences-storage';
 import { createReadingSessionStorage } from '../app/reading-session-storage';
 import { createRecentDocumentStorage } from '../app/recent-document-storage';
 import type { PersistedReadingSession } from '../reader/reader-actions';
@@ -93,12 +95,12 @@ function createLegacyValue(initial: unknown) {
 }
 
 const initialReadingSession: PersistedReadingSession = {
-  schemaVersion: 2,
+  schemaVersion: 3,
   activeDocumentPath: null,
   documents: [],
 };
 const replacementReadingSession: PersistedReadingSession = {
-  schemaVersion: 2,
+  schemaVersion: 3,
   activeDocumentPath: '/docs/report.pdf',
   documents: [
     {
@@ -169,5 +171,39 @@ describe('Recent Document storage contract', () => {
       replacement: replacementRecentDocuments,
       legacy: legacyRecentDocuments,
     };
+  });
+});
+
+describe('Chrome preferences storage', () => {
+  it('keeps chrome preferences in their own app-wide store across relaunches', async () => {
+    const firstLaunch = await loadChromePreferences(createChromePreferencesStorage(), {
+      debounceMs: 0,
+    });
+    firstLaunch.update({
+      sidebarVisible: true,
+      sidebarWidth: 280,
+      markupToolbarVisible: true,
+      highlightColor: 'blue',
+    });
+    await firstLaunch.flush();
+
+    const nextLaunch = await loadChromePreferences(createChromePreferencesStorage());
+
+    expect(nextLaunch.snapshot()).toEqual({
+      sidebarVisible: true,
+      sidebarMode: 'thumbnails',
+      sidebarWidth: 280,
+      markupToolbarVisible: true,
+      highlightColor: 'blue',
+    });
+    expect(tauriStores.values.get('chrome-preferences.json')?.get('chromePreferences')).toEqual({
+      schemaVersion: 1,
+      sidebarVisible: true,
+      sidebarMode: 'thumbnails',
+      sidebarWidth: 280,
+      markupToolbarVisible: true,
+      highlightColor: 'blue',
+    } satisfies PersistedChromePreferences);
+    expect(tauriStores.values.has('settings.json')).toBe(false);
   });
 });

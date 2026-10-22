@@ -91,6 +91,8 @@ export function createEmbedPdfDocumentSurfaceFactory({
       resolveLinkTarget: (target, options) => openedViewer.resolveLinkTarget(target, options),
       destroy,
     };
+    const editable = (): boolean =>
+      Boolean(openedViewer.editing && !openedViewer.editing.state().readOnlyReason);
     const project = (work: () => Promise<void>, options?: ReaderActionOptions): Promise<void> =>
       destroyPromise || options?.isCancelled?.() ? Promise.resolve() : work();
     const rendering: DocumentRendering = {
@@ -98,15 +100,27 @@ export function createEmbedPdfDocumentSurfaceFactory({
         return {
           currentPage: openedViewer.currentPage(),
           totalPages: openedViewer.pageCount(),
+          pageRotations: openedViewer.pageRotations(),
           zoom: openedViewer.currentZoom(),
           zoomIntent: openedViewer.zoomIntent(),
-          rotation: openedViewer.rotation(),
           fileName: title,
           filePath,
           viewMode: openedViewer.viewMode(),
         };
       },
-      openSearch: () => openedViewer.openSearch(),
+      activeAnnotationTool: () => openedViewer.activeAnnotationTool(),
+      setActiveAnnotationTool: (toolId, defaults) => {
+        if (destroyPromise) return;
+        if (toolId !== null && !editable()) return;
+        openedViewer.setActiveAnnotationTool(toolId, defaults);
+      },
+      markupSelection: (toolId, defaults) =>
+        !destroyPromise && editable() && openedViewer.markupSelection(toolId, defaults),
+      revealAnnotation: (annotationId) => {
+        if (!destroyPromise) openedViewer.revealAnnotation(annotationId);
+      },
+      selectedAnnotation: () =>
+        !destroyPromise && editable() ? openedViewer.selectedAnnotation() : null,
       getScrollPosition: () => 0,
       getReadingPosition: () => openedViewer.readingPosition(),
       goToPage: (pageNumber, options) => project(() => openedViewer.goToPage(pageNumber), options),
@@ -116,8 +130,6 @@ export function createEmbedPdfDocumentSurfaceFactory({
         project(() => openedViewer.setZoomIntent(intent), options),
       zoomIn: (options) => project(() => openedViewer.zoomIn(), options),
       zoomOut: (options) => project(() => openedViewer.zoomOut(), options),
-      setRotation: (rotation, options) =>
-        project(() => openedViewer.setRotation(rotation), options),
       setViewMode: (viewMode, options) =>
         project(() => openedViewer.setViewMode(viewMode), options),
       fitToPage: (options) => project(() => openedViewer.fitToPage(), options),
@@ -135,6 +147,7 @@ export function createEmbedPdfDocumentSurfaceFactory({
       content,
       renderThumbnail: (pageNumber, options) =>
         openedViewer.renderThumbnail(pageNumber, options?.maxWidth),
+      annotations: () => (destroyPromise ? [] : openedViewer.annotations()),
       destroy,
     };
     return { rendering, runtime } satisfies DocumentSurface;

@@ -1,4 +1,16 @@
 import assert from 'node:assert/strict';
+import {
+  assertCleanRun,
+  assertNoReadyMadeInterface,
+  menuItem,
+  openDocuments,
+  openReaderChrome,
+  pageStatus,
+  runMenuCommand,
+  selectText,
+  until,
+  viewerState,
+} from './embedpdf-reader-chrome.mjs';
 
 export async function verifyReading(browser, origin) {
   const page = await browser.newPage({ viewport: { width: 1280, height: 1000 } });
@@ -16,7 +28,9 @@ export async function verifyReading(browser, origin) {
   );
   const viewer = page.locator('.embedpdf-document-surface[data-visible="true"]');
   await viewer.locator('img[src^="blob:"]').first().waitFor({ state: 'visible' });
-  await page.getByRole('button', { name: 'Dark', exact: true }).click();
+  // The Appearance popover's presets filter the page only.
+  await page.click('#appearance-toggle');
+  await page.getByRole('radio', { name: 'Default', exact: true }).click();
   await page.waitForTimeout(300);
   const filters = await viewer.evaluate((surface) => {
     const container = surface.querySelector('embedpdf-container');
@@ -32,11 +46,11 @@ export async function verifyReading(browser, origin) {
     };
     return {
       page: inheritedFilters(root.querySelector('img[src^="blob:"]')),
-      chrome: inheritedFilters(root.querySelector('button')),
+      chrome: inheritedFilters(document.getElementById('appearance-toggle')),
     };
   });
   assert.equal(filters.page.length, 1, 'A preset must filter the reading surface exactly once');
-  assert.deepEqual(filters.chrome, [], 'A preset must not filter viewer chrome');
+  assert.deepEqual(filters.chrome, [], 'A preset must not filter the reader chrome');
   await page.evaluate(async () => {
     await window.readingSmoke.reader.dispatch({
       type: 'activateDocumentTarget',
@@ -131,7 +145,16 @@ export async function verifyReading(browser, origin) {
       const registry = await container.registry;
       registry.getPlugin('commands').provides().execute(id, undefined, 'ui');
     }, id);
+  // Monight's chrome replaces the whole ready-made interface; none of it renders.
+  await assertNoReadyMadeInterface(page, 'on the reading surface');
   await command('zoom:in');
+  await page.waitForTimeout(400);
+  assert.equal(
+    await page.evaluate(() => window.readingSmoke.workspace.activeRenderingState().zoom),
+    1.2,
+    'The hidden ready-made zoom command must not run',
+  );
+  await page.evaluate(() => window.readingSmoke.reader.dispatch({ type: 'zoomIn' }));
   await page.waitForTimeout(400);
   const viewerZoom = await page.evaluate(() => ({
     live: window.readingSmoke.workspace.activeRenderingState().zoomIntent,
@@ -141,42 +164,30 @@ export async function verifyReading(browser, origin) {
   assert.deepEqual(
     viewerZoom.saved,
     viewerZoom.live,
-    'Ready-made relative zoom must persist the resulting scale',
+    'Relative zoom must persist the resulting scale',
   );
-  await command('rotate:clockwise');
-  await page.waitForTimeout(400);
-  assert.equal(
-    await page.evaluate(
-      () => window.readingSmoke.reader.snapshot().documents[0].visualState.rotation,
-    ),
-    90,
-  );
-  await command('rotate:counter-clockwise');
-  await page.waitForTimeout(400);
-  await page.evaluate(async () => {
+  // Rotation is a Page Rotation edit of the PDF; the ready-made view rotation is unavailable.
+  const viewRotation = await page.evaluate(async () => {
     const container = document.querySelector(
       '.embedpdf-document-surface[data-visible="true"] embedpdf-container',
     );
     const registry = await container.registry;
     const commands = registry.getPlugin('commands').provides();
+    const resolved = ['rotate:clockwise', 'rotate:counter-clockwise'].map((id) => {
+      const command = commands.resolve(id);
+      return command.visible && !command.disabled;
+    });
     commands.execute('rotate:clockwise', undefined, 'ui');
-    await new Promise(requestAnimationFrame);
-    commands.execute('rotate:clockwise', undefined, 'ui');
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    return {
+      available: resolved,
+      viewerRotation: registry.getPlugin('rotate').provides().getRotation(),
+      saved: window.readingSmoke.reader.snapshot().documents[0].visualState,
+    };
   });
-  await page.waitForTimeout(400);
-  const rapidRotation = await page.evaluate(() => ({
-    saved: window.readingSmoke.reader.snapshot().documents[0].visualState.rotation,
-    live: window.readingSmoke.workspace.activeRenderingState().rotation,
-  }));
-  assert.deepEqual(
-    rapidRotation,
-    { saved: 180, live: 180 },
-    'A second viewer rotation during projection must not be lost',
-  );
-  await command('rotate:counter-clockwise');
-  await page.waitForTimeout(400);
-  await command('rotate:counter-clockwise');
-  await page.waitForTimeout(400);
+  assert.deepEqual(viewRotation.available, [false, false], 'View rotation commands must be hidden');
+  assert.equal(viewRotation.viewerRotation, 0, 'The ready-made viewer must not rotate the view');
+  assert.equal('rotation' in viewRotation.saved, false, 'Visual State must not contain rotation');
   await command('spread:odd');
   await page.waitForTimeout(400);
   assert.equal(
@@ -199,21 +210,18 @@ export async function verifyReading(browser, origin) {
     {
       path: '/docs/first.pdf',
       viewMode: 'continuous',
-      rotations: 0,
       zoomIntent: { kind: 'manual', scale: 2 },
       position: { page: 2, location: 0.25 },
     },
     {
       path: '/docs/second.pdf',
       viewMode: 'single',
-      rotations: 1,
       zoomIntent: { kind: 'fit-width' },
       position: { page: 2, location: 0 },
     },
     {
       path: '/docs/third.pdf',
       viewMode: 'spread',
-      rotations: 2,
       zoomIntent: { kind: 'fit-page' },
       position: { page: 1, location: 0 },
     },
@@ -223,8 +231,6 @@ export async function verifyReading(browser, origin) {
       const { reader, intake } = window.readingSmoke;
       await intake.open([scenario.path]);
       await reader.dispatch({ type: 'setViewMode', viewMode: scenario.viewMode });
-      for (let turn = 0; turn < scenario.rotations; turn++)
-        await reader.dispatch({ type: 'rotateClockwise' });
       await reader.dispatch({ type: 'setZoomIntent', zoomIntent: scenario.zoomIntent });
       await reader.dispatch({
         type: 'activateDocumentTarget',
@@ -241,7 +247,6 @@ export async function verifyReading(browser, origin) {
         ),
     }));
     assert.equal(state.live.viewMode, scenario.viewMode);
-    assert.equal(state.live.rotation, scenario.rotations * 90);
     assert.deepEqual(state.saved.readingPosition, scenario.position);
     assert.deepEqual(state.saved.visualState.zoomIntent, scenario.zoomIntent);
   }
@@ -278,7 +283,6 @@ export async function verifyReading(browser, origin) {
     await page.getByRole('tab', { name: scenario.path.split('/').pop(), exact: true }).click();
     await page.waitForTimeout(500);
     const live = await page.evaluate(() => window.readingSmoke.workspace.activeRenderingState());
-    assert.equal(live.rotation, scenario.rotations * 90);
     assert.equal(live.viewMode, scenario.viewMode);
     assert.deepEqual(live.zoomIntent, scenario.zoomIntent);
   }
@@ -305,7 +309,7 @@ export async function verifyReading(browser, origin) {
   const transform = await page.evaluate(() =>
     window.readingSmoke.workspace.viewTransform('/docs/first.pdf'),
   );
-  assert.equal(transform.viewingRotation, 0);
+  assert.equal('viewingRotation' in transform, false, 'Viewing has no rotation transform');
   assert.equal(transform.scale, 2);
   assert.deepEqual(transform.zoomIntent, { kind: 'manual', scale: 2 });
   assert.match(transform.filterCss, /invert\(0.95\)/);
@@ -383,38 +387,172 @@ export async function verifyReading(browser, origin) {
     Array.from(await window.readingSmoke.contents.get('/docs/native.pdf').getData()),
   );
   assert.match(new TextDecoder().decode(new Uint8Array(originalBytes)), /\/Rotate 90/);
-  for (const rotation of [0, 90, 180, 270]) {
-    await page.evaluate(async (rotation) => {
-      const { reader } = window.readingSmoke;
-      if (rotation) await reader.dispatch({ type: 'rotateClockwise' });
-      await reader.dispatch({ type: 'setZoomIntent', zoomIntent: { kind: 'manual', scale: 2 } });
-      await reader.dispatch({
-        type: 'activateDocumentTarget',
-        target: { readingPosition: { page: 2, location: 0.25 } },
-      });
-    }, rotation);
-    await page.waitForTimeout(400);
-    const native = await page.evaluate(async () => ({
-      transform: window.readingSmoke.workspace.viewTransform('/docs/native.pdf'),
-      position: window.readingSmoke.workspace.activeReadingPosition().readingPosition,
-      bytes: Array.from(await window.readingSmoke.contents.get('/docs/native.pdf').getData()),
-    }));
-    assert.equal(
-      native.transform.viewingRotation,
-      rotation,
-      'Viewing rotation must exclude the PDF native orientation',
-    );
-    assert.equal(native.position.page, 2);
-    assert.ok(
-      Math.abs(native.position.location - 0.25) < 0.01,
-      `Native orientation anchor: ${JSON.stringify(native.position)}`,
-    );
-    assert.deepEqual(
-      native.bytes,
-      originalBytes,
-      'Viewing transforms must leave Document Content bytes unchanged',
-    );
+  await page.evaluate(async () => {
+    const { reader } = window.readingSmoke;
+    await reader.dispatch({ type: 'setZoomIntent', zoomIntent: { kind: 'manual', scale: 2 } });
+    await reader.dispatch({
+      type: 'activateDocumentTarget',
+      target: { readingPosition: { page: 2, location: 0.25 } },
+    });
+  });
+  await page.waitForTimeout(400);
+  const native = await page.evaluate(async () => ({
+    position: window.readingSmoke.workspace.activeReadingPosition().readingPosition,
+    bytes: Array.from(await window.readingSmoke.contents.get('/docs/native.pdf').getData()),
+  }));
+  assert.equal(native.position.page, 2);
+  assert.ok(
+    Math.abs(native.position.location - 0.25) < 0.01,
+    `Native orientation anchor: ${JSON.stringify(native.position)}`,
+  );
+  assert.deepEqual(native.bytes, originalBytes, 'Viewing must leave Document Content unchanged');
+
+  // An upgrade discards a saved schema-two view rotation instead of editing the PDF.
+  await page.evaluate(async () => {
+    await window.readingSmoke.reader.flush();
+    const saved = JSON.parse(localStorage.getItem('reading-session'));
+    saved.schemaVersion = 2;
+    saved.activeDocumentPath = '/docs/native.pdf';
+    for (const document of saved.documents) document.visualState.rotation = 270;
+    localStorage.setItem('reading-session', JSON.stringify(saved));
+  });
+  await page.reload();
+  await page.waitForFunction(() => document.body.dataset.status !== 'loading');
+  assert.equal(
+    await page.getAttribute('body', 'data-status'),
+    'ready',
+    await page.getAttribute('body', 'data-error'),
+  );
+  await page.waitForTimeout(600);
+  const upgraded = await page.evaluate(async () => {
+    const { reader, contents, workspace } = window.readingSmoke;
+    const registry = await document.querySelector(
+      '.embedpdf-document-surface[data-visible="true"] embedpdf-container',
+    ).registry;
+    return {
+      snapshot: reader.snapshot(),
+      stored: JSON.parse(localStorage.getItem('reading-session')),
+      viewerRotation: registry.getPlugin('rotate').provides().getRotation(),
+      active: workspace.activeRenderingState().filePath,
+      bytes: Array.from(await contents.get('/docs/native.pdf').getData()),
+    };
+  });
+  assert.equal(upgraded.active, '/docs/native.pdf');
+  assert.equal(upgraded.stored.schemaVersion, 3);
+  for (const document of [...upgraded.snapshot.documents, ...upgraded.stored.documents]) {
+    assert.equal('rotation' in document.visualState, false, 'Migration must drop view rotation');
   }
+  assert.equal(upgraded.viewerRotation, 0, 'A migrated session must restore at 0 degrees');
+  assert.deepEqual(upgraded.bytes, originalBytes, 'Migration must leave the PDF byte-for-byte');
   await page.close();
   console.log('EmbedPDF Reading Session contract passed');
+  await verifyReadingChrome(browser, origin);
+}
+
+/** The reader's own toolbar, View menu and Appearance drive the viewer; nothing ready-made renders. */
+export async function verifyReadingChrome(browser, origin) {
+  const reader = await openReaderChrome(browser, origin, {
+    permissions: ['clipboard-read', 'clipboard-write'],
+  });
+  const { page } = reader;
+  try {
+    await assertNoReadyMadeInterface(page, 'on the splash screen');
+    await openDocuments(page, ['/smoke/moon.pdf']);
+    assert.equal(await pageStatus(page), 'Page 1 of 3');
+    await assertNoReadyMadeInterface(page, 'beside the reader chrome');
+
+    // Toolbar zoom group.
+    const { zoom: initialZoom } = await viewerState(page);
+    await page.click('#zoom-in');
+    await until(async () => (await viewerState(page)).zoom > initialZoom, 'Zoom In did not zoom');
+    await page.click('#zoom-out');
+    await until(
+      async () => Math.abs((await viewerState(page)).zoom - initialZoom) < 0.001,
+      'Zoom Out did not return to the previous scale',
+    );
+    await page.click('#zoom-to-fit');
+    await until(
+      async () => (await viewerState(page)).zoomLevel === 'fit-page',
+      'Zoom to Fit did not fit the page',
+    );
+
+    // View menu items run the same Reader Commands.
+    await runMenuCommand(page, 'view.zoom.actual-size');
+    await until(async () => (await viewerState(page)).zoom === 1, 'Actual Size did not apply');
+    await runMenuCommand(page, 'view.zoom.width');
+    await until(
+      async () => (await viewerState(page)).zoomLevel === 'fit-width',
+      'Zoom to Width did not apply',
+    );
+    await runMenuCommand(page, 'view.mode.spread');
+    await until(
+      async () => (await viewerState(page)).spreadMode === 'odd',
+      'Two Pages did not lay out a spread',
+    );
+    await until(
+      async () => (await menuItem(page, 'view.mode.spread'))?.checked === true,
+      'View ▸ Two Pages is not checked',
+    );
+    await runMenuCommand(page, 'view.mode.continuous');
+    await until(
+      async () =>
+        (await viewerState(page)).spreadMode === 'none' &&
+        (await menuItem(page, 'view.mode.continuous'))?.checked === true,
+      'Continuous Scroll did not apply',
+    );
+
+    // Appearance popover and View ▸ Appearance filter the page, never the chrome.
+    await page.click('#appearance-toggle');
+    await page.getByRole('radio', { name: 'Sepia', exact: true }).click();
+    await until(
+      async () => (await viewerState(page)).filter.includes('sepia'),
+      'The Sepia preset did not filter the page',
+    );
+    assert.equal(
+      await page.evaluate(() => getComputedStyle(document.getElementById('toolbar')).filter),
+      'none',
+      'Appearance must not filter the reader chrome',
+    );
+    await runMenuCommand(page, 'view.appearance.original');
+    await until(
+      async () => (await menuItem(page, 'view.appearance.original'))?.checked === true,
+      'View ▸ Appearance ▸ Original is not checked',
+    );
+    await page.keyboard.press('Escape');
+    await page.locator('#appearance-popover').waitFor({ state: 'hidden' });
+
+    // Edit ▸ Copy (and ⌘C) copy the page text selection: the ready-made Copy button is gone.
+    await page.click('#zoom-to-fit');
+    await selectText(page, { x: 73, y: 65 }, { x: 250, y: 65 });
+    await assertNoReadyMadeInterface(page, 'with page text selected');
+    await page.evaluate(() => navigator.clipboard.writeText(''));
+    await page.evaluate(() => document.execCommand('copy'));
+    await until(
+      async () => /moon first page/.test(await page.evaluate(() => navigator.clipboard.readText())),
+      'Edit ▸ Copy did not copy the page text selection',
+    );
+
+    // Slideshow takes the window over until Esc or View ▸ Slideshow ends it.
+    await page.click('#presentation-mode');
+    await page.waitForFunction(() => document.body.classList.contains('presentation-mode'));
+    await assertNoReadyMadeInterface(page, 'in Slideshow');
+    await page.keyboard.press('Escape');
+    await page.waitForFunction(() => !document.body.classList.contains('presentation-mode'));
+    await runMenuCommand(page, 'view.slideshow');
+    await page.waitForFunction(() => document.body.classList.contains('presentation-mode'));
+    await runMenuCommand(page, 'view.slideshow');
+    await page.waitForFunction(() => !document.body.classList.contains('presentation-mode'));
+
+    // Print hands the Document's PDF to the platform print path (last: on Linux and
+    // Windows that is the WebView's own print of the PDF, which headless Chromium never finishes).
+    await page.click('#print-file');
+    await page.locator('iframe[src^="blob:"]').waitFor({ state: 'attached' });
+
+    await assertCleanRun(reader);
+    console.log(
+      'EmbedPDF reader chrome: toolbar, View menu, Appearance, Copy, Slideshow and Print: PASS',
+    );
+  } finally {
+    await reader.close();
+  }
 }

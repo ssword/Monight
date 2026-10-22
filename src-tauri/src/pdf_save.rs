@@ -350,10 +350,16 @@ fn write_pdf(
     Ok(reopened)
 }
 
-const EDITABLE_ANNOTATIONS: &[&[u8]] = &[b"Highlight", b"Text", b"Popup"];
+const EDITABLE_ANNOTATIONS: &[&[u8]] =
+    &[b"Highlight", b"Text", b"Popup", b"Underline", b"StrikeOut"];
 // Never edited by Monight (the viewer locks them); saving must carry them through
-// unchanged. Text markup beyond highlights arrives from Preview, Acrobat, and others.
-const PRESERVED_ANNOTATIONS: &[&[u8]] = &[b"Link", b"Underline", b"StrikeOut", b"Squiggly"];
+// unchanged. Unverified Squiggly markup can arrive from other PDF readers.
+const PRESERVED_ANNOTATIONS: &[&[u8]] = &[b"Link", b"Squiggly"];
+
+/// A Popup belongs to an Annotation Monight edits: any editable subtype but Popup.
+fn is_editable_popup_parent(subtype: &[u8]) -> bool {
+    subtype != b"Popup" && EDITABLE_ANNOTATIONS.contains(&subtype)
+}
 
 fn is_supported_annotation(subtype: &[u8]) -> bool {
     EDITABLE_ANNOTATIONS.contains(&subtype) || PRESERVED_ANNOTATIONS.contains(&subtype)
@@ -406,9 +412,7 @@ fn prepare_supported_popups(bytes: &[u8]) -> Result<Option<Vec<u8>>, String> {
                                     .ok()
                                     .and_then(|parent| parent.get(b"Subtype").ok())
                                     .and_then(|subtype| subtype.as_name().ok())
-                                    .is_some_and(|subtype| {
-                                        subtype == b"Highlight" || subtype == b"Text"
-                                    })
+                                    .is_some_and(is_editable_popup_parent)
                         })
                 } else {
                     false
@@ -734,18 +738,28 @@ fn verify_preservation(original: &[u8], bytes: &[u8]) -> Result<(), String> {
                         && !a.has(key)
                         && [b"NM".as_slice(), b"AP", b"PDFIUM_HasGeneratedAP"].contains(&key)
                 };
+                // Page Rotation is a Document edit: a page's own /Rotate may change to
+                // any quarter turn (or be removed to inherit again), never to anything else.
+                let rotation_edit = |key: &[u8]| {
+                    page && key == b"Rotate"
+                        && b.get(key).map_or(true, |rotation| {
+                            rotation.as_i64().is_ok_and(|degrees| degrees % 90 == 0)
+                        })
+                };
                 let keys = a.iter().map(|(k, _)| k).chain(b.iter().map(|(k, _)| k));
-                keys.filter(|k| !(page && k.as_slice() == b"Annots") && !generated(k))
-                    .all(|key| {
-                        let segment = format!("/{}", String::from_utf8_lossy(key));
-                        match (a.get(key), b.get(key)) {
-                            (Ok(a), Ok(b)) => within(segment, a, b, before, after, seen, path),
-                            _ => {
-                                path.push(segment);
-                                false
-                            }
+                keys.filter(|k| {
+                    !(page && k.as_slice() == b"Annots") && !generated(k) && !rotation_edit(k)
+                })
+                .all(|key| {
+                    let segment = format!("/{}", String::from_utf8_lossy(key));
+                    match (a.get(key), b.get(key)) {
+                        (Ok(a), Ok(b)) => within(segment, a, b, before, after, seen, path),
+                        _ => {
+                            path.push(segment);
+                            false
                         }
-                    })
+                    }
+                })
             }
             (Object::Array(a), Object::Array(b)) => {
                 if a.len() != b.len() {
@@ -1209,7 +1223,7 @@ mod tests {
             .unwrap()
             .as_dict_mut()
             .unwrap()
-            .set("Rotate", 90);
+            .set("MediaBox", vec![0.into(), 0.into(), 300.into(), 300.into()]);
         let mut bytes = Vec::new();
         damaged.save_to(&mut bytes).unwrap();
         let selected = writer.authorize(&dir.join("damaged.pdf")).unwrap();
@@ -1218,6 +1232,120 @@ mod tests {
             .is_err());
         assert!(!dir.join("damaged.pdf").exists());
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    fn with_page_rotation(
+        original: &[u8],
+        pages_rotation: Option<i64>,
+        page: lopdf::Object,
+    ) -> Vec<u8> {
+        let mut document = lopdf::Document::load_mem(original).unwrap();
+        let id = *document.get_pages().values().next().unwrap();
+        if let Some(inherited) = pages_rotation {
+            let parent = document
+                .get_dictionary(id)
+                .unwrap()
+                .get(b"Parent")
+                .unwrap()
+                .as_reference()
+                .unwrap();
+            document
+                .get_object_mut(parent)
+                .unwrap()
+                .as_dict_mut()
+                .unwrap()
+                .set("Rotate", inherited);
+        }
+        document
+            .get_object_mut(id)
+            .unwrap()
+            .as_dict_mut()
+            .unwrap()
+            .set("Rotate", page);
+        let mut bytes = Vec::new();
+        document.save_to(&mut bytes).unwrap();
+        bytes
+    }
+
+    fn first_page_rotation(bytes: &[u8]) -> Option<i64> {
+        let document = lopdf::Document::load_mem(bytes).unwrap();
+        let id = *document.get_pages().values().next().unwrap();
+        document
+            .get_dictionary(id)
+            .unwrap()
+            .get(b"Rotate")
+            .ok()
+            .map(|rotation| rotation.as_i64().unwrap())
+    }
+
+    #[test]
+    fn page_rotation_is_saved_like_an_annotation_edit_with_conflict_detection() {
+        let dir = directory();
+        let source = dir.join("source.pdf");
+        let original = pdf();
+        std::fs::write(&source, &original).unwrap();
+        let writer = PdfSave::default();
+        let token = writer.capture_source(&source, &original).unwrap();
+        let rotated = with_page_rotation(&original, None, 90.into());
+        let reopened = writer.write_original(&token, &rotated).unwrap();
+        assert_eq!(first_page_rotation(&reopened), Some(90));
+        assert_eq!(
+            first_page_rotation(&std::fs::read(&source).unwrap()),
+            Some(90)
+        );
+        // Rotating back is a further edit of the saved version.
+        let restored = with_page_rotation(&reopened, None, 0.into());
+        assert_eq!(
+            first_page_rotation(&writer.write_original(&token, &restored).unwrap()),
+            Some(0)
+        );
+        std::fs::write(&source, b"external changes").unwrap();
+        assert!(writer
+            .write_original(&token, &rotated)
+            .unwrap_err()
+            .contains("conflict"));
+        assert_eq!(std::fs::read(&source).unwrap(), b"external changes");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn page_rotation_edits_accept_only_quarter_turns_including_over_inherited_rotation() {
+        let original = with_page_rotation(&pdf(), Some(90), lopdf::Object::Null);
+        let mut document = lopdf::Document::load_mem(&original).unwrap();
+        let id = *document.get_pages().values().next().unwrap();
+        document
+            .get_object_mut(id)
+            .unwrap()
+            .as_dict_mut()
+            .unwrap()
+            .remove(b"Rotate");
+        let mut inherited = Vec::new();
+        document.save_to(&mut inherited).unwrap();
+        for rotation in [0, 180, 270, -90, 450] {
+            verify_preservation(
+                &inherited,
+                &with_page_rotation(&inherited, None, rotation.into()),
+            )
+            .unwrap();
+        }
+        for rotation in [
+            lopdf::Object::from(45),
+            lopdf::Object::Real(90.5),
+            "90".into(),
+        ] {
+            assert!(verify_preservation(
+                &inherited,
+                &with_page_rotation(&inherited, None, rotation)
+            )
+            .unwrap_err()
+            .ends_with("/Rotate"));
+        }
+        // The inherited value itself is Document structure, not a Page Rotation edit.
+        assert!(verify_preservation(
+            &inherited,
+            &with_page_rotation(&inherited, Some(180), 90.into())
+        )
+        .is_err());
     }
 
     #[test]
@@ -1297,9 +1425,9 @@ mod tests {
     }
 
     #[test]
-    fn external_text_markup_is_editable_and_must_survive_saves_unchanged() {
+    fn unverified_squiggly_markup_keeps_the_document_editable_and_survives_saves_unchanged() {
         use lopdf::{dictionary, Object};
-        for subtype in ["Underline", "StrikeOut", "Squiggly"] {
+        for subtype in ["Squiggly"] {
             let mut doc = lopdf::Document::load_mem(&pdf()).unwrap();
             let markup = doc.add_object(dictionary! {
                 "Subtype" => subtype,
@@ -1307,7 +1435,7 @@ mod tests {
                 "QuadPoints" => vec![72.into(), 685.into(), 260.into(), 685.into(), 72.into(), 650.into(), 260.into(), 650.into()],
             });
             let page = *doc.get_pages().values().next().unwrap();
-            let mut save = |doc: &mut lopdf::Document, annots: Vec<Object>| {
+            let save = |doc: &mut lopdf::Document, annots: Vec<Object>| {
                 doc.get_object_mut(page)
                     .unwrap()
                     .as_dict_mut()
@@ -1328,6 +1456,123 @@ mod tests {
                 "{subtype}"
             );
         }
+    }
+
+    #[test]
+    fn native_admission_snapshots_pass_save_preservation() {
+        macro_rules! admission {
+            ($file:literal) => {
+                include_bytes!(concat!(
+                    "../tests/fixtures/text-markup-verification/admission/",
+                    $file,
+                    ".pdf"
+                ))
+                .as_slice()
+            };
+        }
+        let acrobat_original =
+            include_bytes!("../tests/fixtures/text-markup-verification/acrobat-text-markups.pdf");
+        for (original, edited, deleted) in [
+            (
+                admission!("acrobat-edited-snapshot"),
+                admission!("acrobat-roundtrip-final"),
+                admission!("acrobat-monight-deleted"),
+            ),
+            (
+                admission!("preview-edited-snapshot"),
+                admission!("preview-roundtrip-final"),
+                admission!("preview-monight-deleted"),
+            ),
+            (
+                acrobat_original.as_slice(),
+                admission!("acrobat-origin-edited"),
+                admission!("acrobat-origin-deleted"),
+            ),
+            (
+                admission!("preview-origin-input"),
+                admission!("preview-origin-edited"),
+                admission!("preview-origin-deleted"),
+            ),
+        ] {
+            verify_preservation(original, edited).unwrap();
+            verify_preservation(original, deleted).unwrap();
+        }
+    }
+
+    #[test]
+    fn admitted_native_text_markups_can_be_edited_and_deleted_with_their_popups() {
+        use lopdf::Object;
+        let original =
+            include_bytes!("../tests/fixtures/text-markup-verification/acrobat-text-markups.pdf");
+        let mut document = lopdf::Document::load_mem(original).unwrap();
+        let mut admitted_markup_ids = std::collections::HashSet::new();
+        for (id, object) in document.objects.iter_mut() {
+            let Ok(annotation) = object.as_dict_mut() else {
+                continue;
+            };
+            if matches!(
+                annotation.get(b"Subtype").and_then(Object::as_name).ok(),
+                Some(b"Underline" | b"StrikeOut")
+            ) {
+                annotation.set("Contents", Object::string_literal("Admission edit"));
+                admitted_markup_ids.insert(*id);
+            }
+        }
+        assert_eq!(admitted_markup_ids.len(), 2);
+        let mut edited = Vec::new();
+        document.save_to(&mut edited).unwrap();
+        verify_preservation(original, &edited).unwrap();
+        for page in document.get_pages().values() {
+            let entries = document
+                .get_dictionary(*page)
+                .unwrap()
+                .get(b"Annots")
+                .and_then(Object::as_array)
+                .cloned()
+                .unwrap_or_default();
+            let retained = entries
+                .into_iter()
+                .filter(|entry| {
+                    !entry
+                        .as_reference()
+                        .is_ok_and(|id| admitted_markup_ids.contains(&id))
+                })
+                .collect::<Vec<_>>();
+            document
+                .get_dictionary_mut(*page)
+                .unwrap()
+                .set("Annots", retained);
+        }
+        let mut deleted = Vec::new();
+        document.save_to(&mut deleted).unwrap();
+        let prepared = prepare_save(&deleted).unwrap();
+        verify_preservation(original, &prepared).unwrap();
+        let saved = lopdf::Document::load_mem(&prepared).unwrap();
+        let mut popups = 0;
+        for page in saved.get_pages().values() {
+            let entries = saved
+                .get_dictionary(*page)
+                .unwrap()
+                .get(b"Annots")
+                .unwrap()
+                .as_array()
+                .unwrap();
+            for entry in entries {
+                let (_, object) = saved.dereference(entry).unwrap();
+                let annotation = object.as_dict().unwrap();
+                let subtype = annotation.get(b"Subtype").unwrap().as_name().unwrap();
+                assert!(!matches!(subtype, b"Underline" | b"StrikeOut"));
+                if subtype == b"Popup" {
+                    popups += 1;
+                    let parent = annotation.get(b"Parent").unwrap().as_reference().unwrap();
+                    assert!(entries
+                        .iter()
+                        .any(|item| item.as_reference().ok() == Some(parent)));
+                }
+            }
+        }
+        assert_eq!(popups, 4, "Unrelated Text/Highlight popups must survive");
+        assert_eq!(prepare_save(&prepared).unwrap(), prepared);
     }
 
     #[test]
@@ -1773,6 +2018,58 @@ mod tests {
             PathBuf::from(alias_selection.canonical_path),
             source.canonicalize().unwrap()
         );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn real_embedpdf_page_rotation_saves_with_its_annotations_unchanged() {
+        let original = include_bytes!("../tests/fixtures/native-annotations/original.pdf");
+        let rotated = include_bytes!("../tests/fixtures/native-annotations/rotated.pdf");
+        let dir = directory();
+        let source = dir.join("source.pdf");
+        std::fs::write(&source, original).unwrap();
+        let writer = PdfSave::default();
+        let token = writer.capture_source(&source, original).unwrap();
+        let reopened = writer
+            .write_original(&token, &prepare_save(rotated).unwrap())
+            .unwrap();
+        let document = lopdf::Document::load_mem(&reopened).unwrap();
+        let rotations: Vec<_> = document
+            .get_pages()
+            .values()
+            .map(|id| {
+                document
+                    .get_dictionary(*id)
+                    .unwrap()
+                    .get(b"Rotate")
+                    .map_or(0, |rotation| rotation.as_i64().unwrap())
+            })
+            .collect();
+        assert_eq!(rotations, vec![90, 0, 0]);
+        let page = document
+            .get_dictionary(*document.get_pages().get(&1).unwrap())
+            .unwrap();
+        let (_, annots) = document.dereference(page.get(b"Annots").unwrap()).unwrap();
+        let subtypes: Vec<_> = annots
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|entry| {
+                let (_, annotation) = document.dereference(entry).unwrap();
+                annotation
+                    .as_dict()
+                    .unwrap()
+                    .get(b"Subtype")
+                    .unwrap()
+                    .as_name()
+                    .unwrap()
+                    .to_vec()
+            })
+            .collect();
+        for subtype in [b"Highlight".as_slice(), b"Text"] {
+            assert!(subtypes.iter().any(|s| s == subtype));
+        }
+        assert_eq!(subtypes.iter().filter(|s| *s == b"Link").count(), 2);
         std::fs::remove_dir_all(dir).unwrap();
     }
 

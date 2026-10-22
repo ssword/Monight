@@ -3,7 +3,7 @@ import { registerKeybindActions } from '../app/keybinds';
 import type { KeybindManager } from '../scripts/keybind-manager';
 
 const readingSession = (activeDocumentPath: string | null = null) => ({
-  schemaVersion: 2 as const,
+  schemaVersion: 3 as const,
   revision: 0,
   activeDocumentPath,
   documents: activeDocumentPath
@@ -18,7 +18,7 @@ const readingSession = (activeDocumentPath: string | null = null) => ({
 });
 
 describe('reader visual input adapters', () => {
-  it('dispatches keybind zoom as the same typed Reader Action', async () => {
+  it('runs zoom, page-step, slideshow and full screen keybinds as their Reader Commands', async () => {
     const handlers = new Map<string, () => void | Promise<void>>();
     const keybindManager = {
       registerAction: (name: string, handler: () => void | Promise<void>) => {
@@ -26,6 +26,7 @@ describe('reader visual input adapters', () => {
       },
     } as unknown as KeybindManager;
     const dispatchReaderAction = vi.fn(async () => undefined);
+    const runReaderCommand = vi.fn(async () => true);
 
     registerKeybindActions({
       keybindManager,
@@ -36,15 +37,37 @@ describe('reader visual input adapters', () => {
       updateTabBarVisibility: vi.fn(),
       updateUI: vi.fn(),
       openSearch: vi.fn(),
-      togglePresentationMode: vi.fn(async () => undefined),
       goToPage: vi.fn(async () => undefined),
-      goToRelativePage: vi.fn(async () => undefined),
+      runReaderCommand,
       dispatchReaderAction,
     });
 
-    await handlers.get('zoomIn')?.();
+    for (const action of [
+      'zoomIn',
+      'zoomOut',
+      'resetZoom',
+      'fitToPage',
+      'fitToWidth',
+      'nextPage',
+      'previousPage',
+      'presentationMode',
+      'toggleFullscreen',
+    ]) {
+      await handlers.get(action)?.();
+    }
 
-    expect(dispatchReaderAction).toHaveBeenCalledWith({ type: 'zoomIn' });
+    expect(runReaderCommand.mock.calls).toEqual([
+      ['view.zoom.in'],
+      ['view.zoom.out'],
+      ['view.zoom.actual-size'],
+      ['view.zoom.fit'],
+      ['view.zoom.width'],
+      ['go.next-page'],
+      ['go.previous-page'],
+      ['view.slideshow'],
+      ['view.full-screen'],
+    ]);
+    expect(dispatchReaderAction).not.toHaveBeenCalled();
   });
 
   it('dispatches close and reopen keybinds as typed Reader Actions', async () => {
@@ -65,9 +88,8 @@ describe('reader visual input adapters', () => {
       updateTabBarVisibility: vi.fn(),
       updateUI: vi.fn(),
       openSearch: vi.fn(),
-      togglePresentationMode: vi.fn(async () => undefined),
       goToPage: vi.fn(async () => undefined),
-      goToRelativePage: vi.fn(async () => undefined),
+      runReaderCommand: vi.fn(async () => true),
       dispatchReaderAction,
     });
 
@@ -98,14 +120,40 @@ describe('reader visual input adapters', () => {
       updateTabBarVisibility: vi.fn(),
       updateUI: vi.fn(),
       openSearch: vi.fn(),
-      togglePresentationMode: vi.fn(async () => undefined),
       goToPage: vi.fn(async () => undefined),
-      goToRelativePage: vi.fn(async () => undefined),
+      runReaderCommand: vi.fn(async () => true),
       dispatchReaderAction,
     });
 
     await handlers.get('print')?.();
 
     expect(dispatchReaderAction).toHaveBeenCalledWith({ type: 'printDocument' });
+  });
+
+  it('runs reader-command shortcuts as the Reader Command they name', async () => {
+    const handlers = new Map<string, (event: unknown, data?: string) => void | Promise<void>>();
+    const runReaderCommand = vi.fn(async () => true);
+    registerKeybindActions({
+      keybindManager: {
+        registerAction: (name: string, handler: () => void | Promise<void>) => {
+          handlers.set(name, handler);
+        },
+      } as unknown as KeybindManager,
+      getReadingSessionSnapshot: () => readingSession(),
+      getActivePageCount: async () => 0,
+      openPdfAndRefresh: vi.fn(async () => undefined),
+      openSettings: vi.fn(async () => undefined),
+      updateTabBarVisibility: vi.fn(),
+      updateUI: vi.fn(),
+      openSearch: vi.fn(),
+      goToPage: vi.fn(async () => undefined),
+      runReaderCommand,
+      dispatchReaderAction: vi.fn(async () => undefined),
+    });
+
+    await handlers.get('readerCommand')?.({}, 'view.sidebar.thumbnails');
+    await handlers.get('readerCommand')?.({});
+
+    expect(runReaderCommand.mock.calls).toEqual([['view.sidebar.thumbnails']]);
   });
 });

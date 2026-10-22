@@ -2,7 +2,13 @@ import type { ViewMode } from '../lib/document-features';
 import type { PdfLinkTarget } from '../lib/pdf-links';
 import { type FilterSettings, PRESETS } from '../scripts/filters';
 import { createDocumentQuery, type DocumentQuery, type DocumentRuntime } from './document-queries';
-import type { NativePdfSaveAdapter, PdfSaveDestination } from './native-pdf-editing';
+import type {
+  AnnotationEdit,
+  NativePdfSaveAdapter,
+  PageRotationDirection,
+  PdfSaveDestination,
+} from './native-pdf-editing';
+import { createNavigationHistories, type NavigationDirection } from './navigation-history';
 import {
   createReadingSession,
   type DocumentPathReconciliation,
@@ -30,7 +36,6 @@ export type ZoomIntent =
 export interface ReadingSessionVisualState {
   readonly filterSettings: Readonly<FilterSettings>;
   readonly zoomIntent: ZoomIntent;
-  readonly rotation: number;
   readonly viewMode: ViewMode;
 }
 
@@ -41,8 +46,14 @@ export interface ReadingSessionDocument {
   readonly visualState?: ReadingSessionVisualState;
 }
 
+/**
+ * Schema 3 removed view rotation from Visual State; rotation is now a Page Rotation stored
+ * in the PDF itself.
+ */
+export const READING_SESSION_SCHEMA_VERSION = 3 as const;
+
 export interface PersistedReadingSession {
-  readonly schemaVersion: 2;
+  readonly schemaVersion: typeof READING_SESSION_SCHEMA_VERSION;
   readonly activeDocumentPath: string | null;
   readonly documents: readonly ReadingSessionDocument[];
 }
@@ -83,6 +94,11 @@ export interface ReaderProjection {
     options?: ReaderActionOptions,
   ): Promise<void>;
   getPageCount?(filePath: string): number | Promise<number>;
+  /**
+   * Where the reader is in a Document right now, which may not have settled into
+   * the Reading Session yet; null when the projection cannot tell.
+   */
+  currentReadingPosition?(filePath: string): ReadingPosition | null;
   closeDocument?(filePath: string, nextActiveDocumentPath: string | null): Promise<void>;
   exitPresentation?(options?: PresentationExitOptions): Promise<RestorePresentation | undefined>;
   applyZoomIntent?(
@@ -95,7 +111,6 @@ export interface ReaderProjection {
     direction: 'in' | 'out',
     options?: ReaderActionOptions,
   ): Promise<ZoomIntent>;
-  applyRotation?(filePath: string, rotation: number, options?: ReaderActionOptions): Promise<void>;
   applyViewMode?(
     filePath: string,
     viewMode: ViewMode,
@@ -118,15 +133,21 @@ export type ReaderAction =
       filePath: string;
       readingPosition?: RestorableReadingPosition;
     }
-  | { type: 'goToPage'; page: number; filePath?: string }
+  | {
+      type: 'goToPage';
+      page: number;
+      filePath?: string;
+      /** Go to Page… is a jump recorded in Navigation History; thumbnails and surface navigation are not. */
+      recordHistory?: boolean;
+    }
+  | { type: 'goBack'; filePath?: string }
+  | { type: 'goForward'; filePath?: string }
   | { type: 'goToNextPage'; filePath?: string }
   | { type: 'goToPreviousPage'; filePath?: string }
   | { type: 'settleReadingPosition'; filePath: string; readingPosition: ReadingPosition }
   | { type: 'setZoomIntent'; zoomIntent: ZoomIntent; filePath?: string }
   | { type: 'zoomIn'; filePath?: string }
   | { type: 'zoomOut'; filePath?: string }
-  | { type: 'rotateClockwise'; filePath?: string }
-  | { type: 'rotateCounterClockwise'; filePath?: string }
   | { type: 'setViewMode'; viewMode: ViewMode; filePath?: string }
   | { type: 'cycleViewMode'; filePath?: string }
   | { type: 'setFilterSettings'; filterSettings: FilterSettings; filePath?: string }
@@ -139,6 +160,22 @@ export type ReaderAction =
     }
   | { type: 'activateDocumentTarget'; filePath: string; target: PdfLinkTarget }
   | { type: 'printDocument'; filePath?: string }
+  | {
+      type: 'rotatePages';
+      /** 1-based page numbers whose Page Rotation turns by a quarter turn. */
+      pages: readonly number[];
+      direction: PageRotationDirection;
+      filePath?: string;
+    }
+  | {
+      type: 'editAnnotation';
+      /** The Document the Annotation was selected in, captured then (never the active one). */
+      filePath: string;
+      annotationId: string;
+      edit: AnnotationEdit;
+    }
+  | { type: 'undoEdit'; filePath?: string }
+  | { type: 'redoEdit'; filePath?: string }
   | { type: 'discardAndReloadDocument'; filePath?: string }
   | { type: 'saveDocument'; filePath?: string }
   | { type: 'saveDocumentAs'; filePath?: string }
@@ -157,16 +194,23 @@ export const readerAction = {
   zoomOut: (filePath?: string): ReaderAction => withOptionalFilePath({ type: 'zoomOut' }, filePath),
   setZoomIntent: (zoomIntent: ZoomIntent, filePath?: string): ReaderAction =>
     withOptionalFilePath({ type: 'setZoomIntent', zoomIntent }, filePath),
-  rotateClockwise: (filePath?: string): ReaderAction =>
-    withOptionalFilePath({ type: 'rotateClockwise' }, filePath),
-  rotateCounterClockwise: (filePath?: string): ReaderAction =>
-    withOptionalFilePath({ type: 'rotateCounterClockwise' }, filePath),
   cycleViewMode: (filePath?: string): ReaderAction =>
     withOptionalFilePath({ type: 'cycleViewMode' }, filePath),
   setViewMode: (viewMode: ViewMode, filePath?: string): ReaderAction =>
     withOptionalFilePath({ type: 'setViewMode', viewMode }, filePath),
   setFilterSettings: (filterSettings: FilterSettings, filePath?: string): ReaderAction =>
     withOptionalFilePath({ type: 'setFilterSettings', filterSettings }, filePath),
+  rotatePages: (
+    pages: readonly number[],
+    direction: PageRotationDirection,
+    filePath?: string,
+  ): ReaderAction => withOptionalFilePath({ type: 'rotatePages', pages, direction }, filePath),
+  editAnnotation: (filePath: string, annotationId: string, edit: AnnotationEdit): ReaderAction => ({
+    type: 'editAnnotation',
+    filePath,
+    annotationId,
+    edit,
+  }),
 };
 
 export type DispatchReaderAction = (action: ReaderAction) => Promise<void>;
@@ -215,7 +259,24 @@ interface CreateReaderActionsOptions {
   persist: (snapshot: ReadingSessionSnapshot) => Promise<void>;
   persistenceDebounceMs?: number;
   onObserverError?: (error: unknown) => void;
+  /**
+   * Commits edits the reader has made but not yet dispatched, such as a note still
+   * being typed, as Reader Actions naming their own Document. Called before the
+   * reader leaves, saves, reverts or closes a Document, and before Quit decides
+   * about unsaved Documents; returns the commit to wait for, if there was one.
+   */
+  commitPendingEdits?: () => Promise<unknown> | undefined;
 }
+
+/** Actions that must see the reader's pending edits as Document edits first. */
+const COMMITS_PENDING_EDITS: ReadonlySet<ReaderAction['type']> = new Set([
+  'activateDocument',
+  'saveDocument',
+  'saveDocumentAs',
+  'discardAndReloadDocument',
+  'closeDocument',
+  'removeDocument',
+]);
 
 export interface ReaderActions {
   dispatch(action: ReaderAction, options?: ReaderActionOptions): Promise<ReaderActionOutcome>;
@@ -226,6 +287,9 @@ export interface ReaderActions {
   isDocumentOpen(filePath: string): boolean;
   snapshot(): ReadingSessionSnapshot;
   observe(observer: (snapshot: ReadingSessionSnapshot) => void): () => void;
+  /** Navigation History for a Document (default: the active one); observers run on snapshot commits. */
+  canGoBack(filePath?: string): boolean;
+  canGoForward(filePath?: string): boolean;
   quiesce(): Promise<void>;
   flush(): Promise<void>;
   captureRecoveryDraft(filePath: string): Promise<ReaderActionOutcome>;
@@ -280,7 +344,6 @@ function visualStatesEqual(
     left.zoomIntent.kind === right.zoomIntent.kind &&
     (left.zoomIntent.kind !== 'manual' ||
       (right.zoomIntent.kind === 'manual' && left.zoomIntent.scale === right.zoomIntent.scale)) &&
-    left.rotation === right.rotation &&
     left.viewMode === right.viewMode &&
     filterKeys.every((key) => left.filterSettings[key] === right.filterSettings[key])
   );
@@ -290,7 +353,6 @@ function createDefaultVisualState(): ReadingSessionVisualState {
   return {
     filterSettings: { ...PRESETS.default },
     zoomIntent: { kind: 'manual', scale: 1 },
-    rotation: 0,
     viewMode: 'single',
   };
 }
@@ -338,10 +400,6 @@ function filterSettingsEqual(
   );
 }
 
-function normalizeRotation(rotation: number): number {
-  return (((Math.round(rotation / 90) * 90) % 360) + 360) % 360;
-}
-
 function nextViewMode(viewMode: ViewMode): ViewMode {
   switch (viewMode) {
     case 'single':
@@ -380,7 +438,7 @@ function activateDocumentTransition(
       )
     : session.documents;
   return {
-    schemaVersion: 2,
+    schemaVersion: READING_SESSION_SCHEMA_VERSION,
     activeDocumentPath: document.filePath,
     documents,
   };
@@ -400,6 +458,7 @@ export function createReaderActions({
   persist,
   persistenceDebounceMs = 250,
   onObserverError,
+  commitPendingEdits,
 }: CreateReaderActionsOptions): ReaderActions {
   const normalizedInitialSession: PersistedReadingSession = {
     ...initialSession,
@@ -556,6 +615,57 @@ export function createReaderActions({
       await session.flush().catch(() => undefined);
     }
     return { status: 'committed', revision: committed.revision };
+  };
+
+  const navigationHistories = createNavigationHistories();
+  /** How a move to a Reading Position affects Navigation History. */
+  type HistoryEffect = 'none' | 'record' | NavigationDirection;
+  /**
+   * Projects a Document to a Reading Position and settles it. A recorded jump
+   * remembers where the reader was, live, just before it; Back and Forward
+   * remember it on the opposite side.
+   */
+  const moveToReadingPosition = async (
+    filePath: string,
+    expectedGeneration: number,
+    readingPosition: ReadingPosition,
+    options: ReaderActionOptions | undefined,
+    history: HistoryEffect = 'none',
+  ): Promise<ReaderActionOutcome> => {
+    const origin =
+      projection.currentReadingPosition?.(filePath) ??
+      session.snapshot().documents.find((item) => item.filePath === filePath)?.readingPosition;
+    try {
+      await projection.goToReadingPosition(filePath, readingPosition, {
+        isCancelled: () => cancelled(filePath, expectedGeneration, options),
+      });
+    } catch (error) {
+      if (cancelled(filePath, expectedGeneration, options)) {
+        return { status: 'no-op', revision: revision() };
+      }
+      return { status: 'failure', error, revision: revision() };
+    }
+    if (cancelled(filePath, expectedGeneration, options)) {
+      return { status: 'no-op', revision: revision() };
+    }
+    // History changes before the commit so snapshot observers see it.
+    if (origin && history === 'record' && !readingPositionsEqual(origin, readingPosition)) {
+      navigationHistories.record(filePath, origin);
+    } else if (history === 'back' || history === 'forward') {
+      navigationHistories.stepped(filePath, history, origin ?? null);
+    }
+    const latest = session.snapshot();
+    const documents = latest.documents.map((document) =>
+      document.filePath === filePath ? { ...document, readingPosition } : document,
+    );
+    return commit(
+      {
+        schemaVersion: READING_SESSION_SCHEMA_VERSION,
+        activeDocumentPath: latest.activeDocumentPath,
+        documents,
+      },
+      'deferred',
+    );
   };
 
   const projectActivation = async (
@@ -719,6 +829,29 @@ export function createReaderActions({
       ),
     );
 
+  /**
+   * Applies an edit to a Document's native editing session; protected
+   * Documents refuse with their reason.
+   */
+  const editDocument = (
+    requestedPath: string | undefined,
+    options: ReaderActionOptions | undefined,
+    edit: (editing: DocumentRuntime['editing']) => void,
+  ): Promise<ReaderActionOutcome> =>
+    routeRelativeDocumentAction(requestedPath, async (filePath, expectedGeneration) => {
+      const edited = await runDocumentRuntimeOperation(
+        filePath,
+        expectedGeneration,
+        options,
+        async ({ editing }) => {
+          const readOnlyReason = editing?.state().readOnlyReason;
+          if (readOnlyReason) throw new Error(readOnlyReason);
+          edit(editing);
+        },
+      );
+      return edited.status === 'ready' ? { status: 'performed', revision: revision() } : edited;
+    });
+
   const enqueueSettledUpdate = (
     filePath: string,
     kind: AbsoluteActionKind,
@@ -738,7 +871,11 @@ export function createReaderActions({
         item.filePath === routedPath ? updated : item,
       );
       return commit(
-        { schemaVersion: 2, activeDocumentPath: current.activeDocumentPath, documents },
+        {
+          schemaVersion: READING_SESSION_SCHEMA_VERSION,
+          activeDocumentPath: current.activeDocumentPath,
+          documents,
+        },
         'deferred',
       );
     });
@@ -766,7 +903,11 @@ export function createReaderActions({
         : item,
     );
     return commit(
-      { schemaVersion: 2, activeDocumentPath: latest.activeDocumentPath, documents },
+      {
+        schemaVersion: READING_SESSION_SCHEMA_VERSION,
+        activeDocumentPath: latest.activeDocumentPath,
+        documents,
+      },
       'deferred',
     );
   };
@@ -866,7 +1007,13 @@ export function createReaderActions({
       if (activeDocumentPath !== current.activeDocumentPath) changed = true;
       if (!changed) return { status: 'no-op', revision: current.revision };
 
-      return commit({ schemaVersion: 2, activeDocumentPath, documents }, 'immediate');
+      for (const [requestedPath, canonicalPath] of canonicalByRequestedPath) {
+        navigationHistories.rename(requestedPath, canonicalPath);
+      }
+      return commit(
+        { schemaVersion: READING_SESSION_SCHEMA_VERSION, activeDocumentPath, documents },
+        'immediate',
+      );
     });
 
   const quiesce = async (): Promise<void> => {
@@ -889,6 +1036,26 @@ export function createReaderActions({
         capturedDocumentTails.every(([filePath, tail]) => lanes.get(filePath)?.tail === tail);
       if (unchanged) return;
     }
+  };
+
+  /**
+   * Dispatches the reader's pending edits; returns the commit to wait for, or null when
+   * nothing was pending (so the caller keeps its synchronous routing order). A failed
+   * commit is reported, not thrown.
+   */
+  const commitEditsInProgress = (): Promise<void> | null => {
+    let committing: Promise<unknown> | undefined;
+    try {
+      committing = commitPendingEdits?.();
+    } catch (error) {
+      onObserverError?.(error);
+    }
+    return committing
+      ? committing.then(
+          () => undefined,
+          (error) => onObserverError?.(error),
+        )
+      : null;
   };
 
   // A discard decision authorizes only the live runtime and revision the reader saw.
@@ -950,7 +1117,11 @@ export function createReaderActions({
           const latest = session.snapshot();
           const latestTransition = closeDocumentTransition(latest, action.filePath);
           if (!latestTransition) return { status: 'no-op', revision: latest.revision };
-          const outcome = await commit({ schemaVersion: 2, ...latestTransition }, 'immediate');
+          navigationHistories.discard(action.filePath);
+          const outcome = await commit(
+            { schemaVersion: READING_SESSION_SCHEMA_VERSION, ...latestTransition },
+            'immediate',
+          );
           await removeRuntime(action.filePath);
           if (action.type === 'closeDocument') {
             recentlyClosedDocumentPaths.push(action.filePath);
@@ -1252,10 +1423,11 @@ export function createReaderActions({
           replacementSource = undefined;
           if (oldSource) void pdfSaveAdapter.releaseSource?.(oldSource).catch(() => undefined);
           editing.markSaved(exportedRevision);
+          navigationHistories.rename(filePath, selected.canonicalPath);
           const latest = session.snapshot();
           return commit(
             {
-              schemaVersion: 2,
+              schemaVersion: READING_SESSION_SCHEMA_VERSION,
               activeDocumentPath:
                 latest.activeDocumentPath === filePath
                   ? selected.canonicalPath
@@ -1370,10 +1542,17 @@ export function createReaderActions({
     pendingCloses.size === 0 &&
     [...runtimes.keys()].every(mayDestroy);
 
+  const canGo = (filePath: string | undefined, direction: NavigationDirection): boolean => {
+    const targetPath = filePath ?? session.snapshot().activeDocumentPath;
+    return targetPath !== null && navigationHistories.canGo(targetPath, direction);
+  };
+
   const reader: ReaderActions = {
     async dispatch(action, options) {
       if (shutdownRequested && action.type !== 'settleReadingPosition')
         return { status: 'no-op', revision: revision() };
+      const committing = COMMITS_PENDING_EDITS.has(action.type) ? commitEditsInProgress() : null;
+      if (committing) await committing;
       if (action.type === 'discardAndReloadDocument') {
         const filePath = action.filePath ?? session.snapshot().activeDocumentPath;
         if (!filePath) return { status: 'no-op', revision: revision() };
@@ -1471,7 +1650,11 @@ export function createReaderActions({
             return document;
           });
           return commit(
-            { schemaVersion: 2, activeDocumentPath: current.activeDocumentPath, documents },
+            {
+              schemaVersion: READING_SESSION_SCHEMA_VERSION,
+              activeDocumentPath: current.activeDocumentPath,
+              documents,
+            },
             'immediate',
           );
         });
@@ -1602,7 +1785,7 @@ export function createReaderActions({
           let next: PersistedReadingSession = existingDocument
             ? current
             : {
-                schemaVersion: 2,
+                schemaVersion: READING_SESSION_SCHEMA_VERSION,
                 activeDocumentPath: current.activeDocumentPath,
                 documents: [...current.documents, document],
               };
@@ -1702,29 +1885,73 @@ export function createReaderActions({
               page: resolved.pageNumber,
               location: resolved.location ?? 0,
             };
-            try {
-              await projection.goToReadingPosition(filePath, readingPosition, {
-                isCancelled: () => cancelled(filePath, expectedGeneration, options),
-              });
-            } catch (error) {
-              if (cancelled(filePath, expectedGeneration, options)) {
-                return { status: 'no-op', revision: revision() };
-              }
-              return { status: 'failure', error, revision: revision() };
-            }
-            if (cancelled(filePath, expectedGeneration, options)) {
-              return { status: 'no-op', revision: revision() };
-            }
-            const latest = session.snapshot();
-            const documents = latest.documents.map((document) =>
-              document.filePath === filePath ? { ...document, readingPosition } : document,
-            );
-            return commit(
-              { schemaVersion: 2, activeDocumentPath: latest.activeDocumentPath, documents },
-              'deferred',
+            // Links, outline entries, search results and Annotations are jumps.
+            return moveToReadingPosition(
+              filePath,
+              expectedGeneration,
+              readingPosition,
+              options,
+              'record',
             );
           },
         );
+      }
+
+      if (action.type === 'goBack' || action.type === 'goForward') {
+        const direction: NavigationDirection = action.type === 'goBack' ? 'back' : 'forward';
+        return routeRelativeDocumentAction(
+          action.filePath,
+          async (filePath, expectedGeneration) => {
+            if (cancelled(filePath, expectedGeneration, options)) {
+              return { status: 'no-op', revision: revision() };
+            }
+            const target = navigationHistories.target(filePath, direction);
+            if (!target) return { status: 'no-op', revision: revision() };
+            const readingPosition =
+              'location' in target ? target : { page: target.page, location: 0 };
+            return moveToReadingPosition(
+              filePath,
+              expectedGeneration,
+              readingPosition,
+              options,
+              direction,
+            );
+          },
+        );
+      }
+
+      if (action.type === 'rotatePages') {
+        const pages = [...new Set(action.pages)].sort((a, b) => a - b);
+        if (
+          pages.length === 0 ||
+          !pages.every((page) => Number.isInteger(page) && page >= 1) ||
+          (action.direction !== 'clockwise' && action.direction !== 'counterclockwise')
+        ) {
+          return { status: 'no-op', revision: revision() };
+        }
+        // Page Rotation is a Document edit: it shares the native editing undo timeline,
+        // unsaved accounting, Recovery Drafts, and Save path with Annotation edits.
+        return editDocument(action.filePath, options, (editing) => {
+          if (!editing?.rotatePages) throw new Error('Page Rotation editing is unavailable');
+          editing.rotatePages(pages, action.direction);
+        });
+      }
+
+      if (action.type === 'editAnnotation') {
+        // An Annotation edit belongs to the Document it was selected in, so it is
+        // routed there explicitly, even after the reader has moved to another.
+        return editDocument(action.filePath, options, (editing) => {
+          if (!editing?.editAnnotation) throw new Error('Annotation editing is unavailable');
+          editing.editAnnotation(action.annotationId, action.edit);
+        });
+      }
+
+      if (action.type === 'undoEdit' || action.type === 'redoEdit') {
+        return editDocument(action.filePath, options, (editing) => {
+          const edit = action.type === 'undoEdit' ? editing?.undo : editing?.redo;
+          if (!editing || !edit) throw new Error('Undo is unavailable for this Document');
+          edit.call(editing);
+        });
       }
 
       if (action.type === 'printDocument') {
@@ -1815,26 +2042,6 @@ export function createReaderActions({
                 projectionOptions,
               );
               return validZoomIntent(zoomIntent) ? { ...current, zoomIntent } : null;
-            },
-          ),
-        );
-      }
-
-      if (action.type === 'rotateClockwise' || action.type === 'rotateCounterClockwise') {
-        return routeRelativeDocumentAction(action.filePath, (filePath, expectedGeneration) =>
-          projectVisualState(
-            filePath,
-            expectedGeneration,
-            options,
-            async (current, projectionOptions) => {
-              const rotation = normalizeRotation(
-                current.rotation + (action.type === 'rotateClockwise' ? 90 : -90),
-              );
-              if (!projection.applyRotation) {
-                throw new Error('Reader projection cannot apply rotation');
-              }
-              await projection.applyRotation(filePath, rotation, projectionOptions);
-              return { ...current, rotation };
             },
           ),
         );
@@ -1934,27 +2141,11 @@ export function createReaderActions({
             if (page === document.readingPosition.page) {
               return { status: 'no-op', revision: current.revision };
             }
-            const readingPosition = { page, location: 0 };
-            try {
-              await projection.goToReadingPosition(filePath, readingPosition, {
-                isCancelled: () => cancelled(filePath, expectedGeneration, options),
-              });
-            } catch (error) {
-              if (cancelled(filePath, expectedGeneration, options)) {
-                return { status: 'no-op', revision: revision() };
-              }
-              return { status: 'failure', error, revision: revision() };
-            }
-            if (cancelled(filePath, expectedGeneration, options)) {
-              return { status: 'no-op', revision: revision() };
-            }
-            const latest = session.snapshot();
-            const documents = latest.documents.map((item) =>
-              item.filePath === filePath ? { ...item, readingPosition } : item,
-            );
-            return commit(
-              { schemaVersion: 2, activeDocumentPath: latest.activeDocumentPath, documents },
-              'deferred',
+            return moveToReadingPosition(
+              filePath,
+              expectedGeneration,
+              { page, location: 0 },
+              options,
             );
           },
         );
@@ -1971,36 +2162,24 @@ export function createReaderActions({
           if (cancelled(filePath, expectedGeneration, options)) {
             return { status: 'no-op', revision: revision() };
           }
-          const readingPosition = { page: action.page, location: 0 };
-          try {
-            await projection.goToReadingPosition(filePath, readingPosition, {
-              isCancelled: () => cancelled(filePath, expectedGeneration, options),
-            });
-          } catch (error) {
-            if (cancelled(filePath, expectedGeneration, options)) {
-              return { status: 'no-op', revision: revision() };
-            }
-            return { status: 'failure', error, revision: revision() };
-          }
-          if (cancelled(filePath, expectedGeneration, options)) {
-            return { status: 'no-op', revision: revision() };
-          }
-          const latest = session.snapshot();
-          const documents = latest.documents.map((item) =>
-            item.filePath === filePath ? { ...item, readingPosition } : item,
-          );
-          return commit(
-            { schemaVersion: 2, activeDocumentPath: latest.activeDocumentPath, documents },
-            'deferred',
+          return moveToReadingPosition(
+            filePath,
+            expectedGeneration,
+            { page: action.page, location: 0 },
+            options,
+            action.recordHistory ? 'record' : 'none',
           );
         },
       );
     },
     prepareShutdown() {
       if (shutdownPreparation) return shutdownPreparation;
+      // Committed before the shutdown refuses new Reader Actions.
+      const committing = commitEditsInProgress();
       shutdownRequested = true;
       shutdownPreparation = enqueueDecision(async () => {
         try {
+          await committing;
           await quiesce();
           // Runtime identity survives Save As; no Document is removed during preparation.
           for (const { runtime } of [...runtimes.values()]) {
@@ -2052,6 +2231,8 @@ export function createReaderActions({
     },
     snapshot: session.snapshot,
     observe: session.observe,
+    canGoBack: (filePath) => canGo(filePath, 'back'),
+    canGoForward: (filePath) => canGo(filePath, 'forward'),
     quiesce,
     flush: session.flush,
     hasUnsavedPdfWork: () =>

@@ -1,11 +1,8 @@
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 import { debugLog } from '../lib/debug-log';
-import {
-  type DispatchReaderAction,
-  type ReadingSessionSnapshot,
-  readerAction,
-} from '../reader/reader-actions';
+import type { DispatchReaderAction, ReadingSessionSnapshot } from '../reader/reader-actions';
 import type { KeybindManager } from '../scripts/keybind-manager';
+import { LEGACY_KEYBIND_COMMANDS } from './reader-commands';
 
 interface KeybindContext {
   keybindManager: KeybindManager | null;
@@ -16,10 +13,16 @@ interface KeybindContext {
   updateTabBarVisibility: () => void;
   updateUI: () => void;
   openSearch: () => void;
-  togglePresentationMode: () => Promise<void>;
   goToPage: (page: number) => Promise<void>;
-  goToRelativePage: (direction: 'next' | 'previous') => Promise<void>;
+  /** Runs a native View, Go or Tools command (reader-commands.ts) by id. */
+  runReaderCommand: (id: string) => Promise<boolean>;
   dispatchReaderAction: DispatchReaderAction;
+}
+
+/** Enter Full Screen: fills the screen with the window without presenting. */
+export async function toggleWindowFullScreen(): Promise<void> {
+  const currentWindow = getCurrentWebviewWindow();
+  await currentWindow.setFullscreen(!(await currentWindow.isFullscreen()));
 }
 
 // Register all keybind actions with the KeybindManager
@@ -32,9 +35,8 @@ export function registerKeybindActions({
   updateTabBarVisibility,
   updateUI,
   openSearch,
-  togglePresentationMode,
   goToPage,
-  goToRelativePage,
+  runReaderCommand,
   dispatchReaderAction,
 }: KeybindContext): void {
   if (!keybindManager) {
@@ -107,16 +109,6 @@ export function registerKeybindActions({
   });
 
   // PDF navigation (requires active tab)
-  keybindManager.registerAction('nextPage', async () => {
-    await goToRelativePage('next');
-    updateUI();
-  });
-
-  keybindManager.registerAction('previousPage', async () => {
-    await goToRelativePage('previous');
-    updateUI();
-  });
-
   keybindManager.registerAction('firstPage', async () => {
     await goToPage(1);
     updateUI();
@@ -129,46 +121,18 @@ export function registerKeybindActions({
     updateUI();
   });
 
-  // Zoom
-  keybindManager.registerAction('zoomIn', async () => {
-    await dispatchReaderAction(readerAction.zoomIn());
-  });
+  // Zoom, page steps, Slideshow and full screen predate `readerCommand` but run
+  // the same commands as the native menu.
+  for (const [action, commandId] of Object.entries(LEGACY_KEYBIND_COMMANDS)) {
+    keybindManager.registerAction(action, async () => {
+      await runReaderCommand(commandId);
+    });
+  }
 
-  keybindManager.registerAction('zoomOut', async () => {
-    await dispatchReaderAction(readerAction.zoomOut());
-  });
-
-  keybindManager.registerAction('resetZoom', async () => {
-    await dispatchReaderAction(readerAction.setZoomIntent({ kind: 'manual', scale: 1 }));
-  });
-
-  // Fit modes
-  keybindManager.registerAction('fitToWidth', async () => {
-    await dispatchReaderAction(readerAction.setZoomIntent({ kind: 'fit-width' }));
-  });
-
-  keybindManager.registerAction('fitToPage', async () => {
-    await dispatchReaderAction(readerAction.setZoomIntent({ kind: 'fit-page' }));
-  });
-
-  // Rotation
-  keybindManager.registerAction('rotateRight', async () => {
-    await dispatchReaderAction(readerAction.rotateClockwise());
-  });
-
-  keybindManager.registerAction('rotateLeft', async () => {
-    await dispatchReaderAction(readerAction.rotateCounterClockwise());
-  });
-
-  // Fullscreen
-  keybindManager.registerAction('toggleFullscreen', async () => {
-    const currentWindow = getCurrentWebviewWindow();
-    const isFullscreen = await currentWindow.isFullscreen();
-    await currentWindow.setFullscreen(!isFullscreen);
-  });
-
-  keybindManager.registerAction('presentationMode', async () => {
-    await togglePresentationMode();
+  // Shortcuts for Reader Commands (view modes, sidebar modes, markup
+  // toolbar, Go to Page…) name the command in their data.
+  keybindManager.registerAction('readerCommand', async (_e, commandId) => {
+    if (commandId) await runReaderCommand(commandId);
   });
 
   debugLog('All keybind actions registered');

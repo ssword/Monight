@@ -10,6 +10,10 @@ import {
 } from '@embedpdf/snippet';
 import type { ViewMode } from '../lib/document-features';
 import type { PdfLinkTarget } from '../lib/pdf-links';
+import type {
+  DocumentAnnotationKind,
+  DocumentAnnotationSnapshot,
+} from '../reader/document-queries';
 import type { ReadingPosition, ZoomIntent } from '../reader/reader-actions';
 
 interface EmbedPdfDestination {
@@ -151,38 +155,20 @@ export function embedPdfLinkGeometries(path: readonly EventTarget[]): EmbedPdfLi
 }
 
 // EmbedPDF 2.15.0 DOM integration. Revalidate against the actual runtime on upgrade.
+/** The viewer's scrolling viewport; its only child holds the laid-out pages. */
+export const EMBEDPDF_VIEWPORT_SELECTOR = '.bg-bg-app[style*="overflow: auto"]';
+
 export function embedPdfReadingFilterStyle(): string {
   return `
-    .bg-bg-app[style*="overflow: auto"] {
+    ${EMBEDPDF_VIEWPORT_SELECTOR} {
       /* The virtual scroller already preserves page offsets with spacers.
          WebKit scroll anchoring otherwise adds a page when one is evicted. */
       overflow-anchor: none;
     }
-    .bg-bg-app[style*="overflow: auto"] > div {
+    ${EMBEDPDF_VIEWPORT_SELECTOR} > div {
       filter: var(--monight-reading-filter, none);
     }
   `;
-}
-
-// EmbedPDF 2.15.0 has no bookmark activation hook. Capture its ready-made rows,
-// preserving tree indices (titles need not be unique) and leaving expand buttons
-// alone. Actual-runtime contracts guard this pinned DOM integration; revalidate on upgrade.
-export function embedPdfOutlinePath(event: Event): number[] | null {
-  const path = event.composedPath();
-  const origin = path[0];
-  if (!(origin instanceof Element) || origin.closest('button')) return null;
-  const tree = origin.closest('.outline-tree');
-  let item = origin.closest('.select-none');
-  if (!tree || !item || !tree.contains(item)) return null;
-  const indices: number[] = [];
-  while (item && tree.contains(item)) {
-    const parent: HTMLElement | null = item.parentElement;
-    if (!parent) return null;
-    indices.unshift([...parent.children].indexOf(item));
-    if (parent === tree) return indices;
-    item = parent.closest('.select-none');
-  }
-  return null;
 }
 
 export function zoomIntentFromEmbedPdfLevel(level: ZoomLevel): ZoomIntent {
@@ -193,23 +179,6 @@ export function zoomIntentFromEmbedPdfLevel(level: ZoomLevel): ZoomIntent {
 export function embedPdfZoomLevelFromIntent(intent: ZoomIntent): ZoomLevel {
   if (intent.kind === 'manual') return intent.scale;
   return intent.kind === 'fit-width' ? ZoomMode.FitWidth : ZoomMode.FitPage;
-}
-
-export function embedPdfRotationFromDegrees(degrees: number): Rotation {
-  switch (((degrees % 360) + 360) % 360) {
-    case 90:
-      return Rotation.Degree90;
-    case 180:
-      return Rotation.Degree180;
-    case 270:
-      return Rotation.Degree270;
-    default:
-      return Rotation.Degree0;
-  }
-}
-
-export function degreesFromEmbedPdfRotation(rotation: Rotation): number {
-  return rotation * 90;
 }
 
 interface EmbedPdfScrollMetrics {
@@ -263,6 +232,41 @@ export function restoreEmbedPdfReadingPositionCoordinates(
   }
 }
 
+interface EmbedPdfRect {
+  readonly origin: { readonly x: number; readonly y: number };
+  readonly size: { readonly width: number; readonly height: number };
+}
+
+/**
+ * The normalized Reading Position location of a search hit: the reading-order
+ * leading edge of its highlight rects, in the same convention that
+ * restoreEmbedPdfReadingPositionCoordinates maps back to page coordinates.
+ */
+export function embedPdfSearchHitLocation(
+  pageSize: { readonly width: number; readonly height: number },
+  rotation: Rotation,
+  rects: readonly EmbedPdfRect[],
+): number {
+  if (rects.length === 0 || pageSize.width <= 0 || pageSize.height <= 0) return 0;
+  const left = Math.min(...rects.map((rect) => rect.origin.x));
+  const top = Math.min(...rects.map((rect) => rect.origin.y));
+  const right = Math.max(...rects.map((rect) => rect.origin.x + rect.size.width));
+  const bottom = Math.max(...rects.map((rect) => rect.origin.y + rect.size.height));
+  const location = (() => {
+    switch (rotation) {
+      case Rotation.Degree90:
+        return left / pageSize.width;
+      case Rotation.Degree180:
+        return 1 - bottom / pageSize.height;
+      case Rotation.Degree270:
+        return 1 - right / pageSize.width;
+      default:
+        return top / pageSize.height;
+    }
+  })();
+  return Math.min(1, Math.max(0, location));
+}
+
 export function embedPdfLayoutForViewMode(viewMode: ViewMode): {
   scrollStrategy: ScrollStrategy;
   spreadMode: SpreadMode;
@@ -281,4 +285,79 @@ export function viewModeForEmbedPdfLayout(
 ): ViewMode {
   if (spreadMode !== SpreadMode.None) return 'spread';
   return scrollStrategy === ScrollStrategy.Horizontal ? 'single' : 'continuous';
+}
+
+const LISTED_ANNOTATION_KINDS: ReadonlyMap<PdfAnnotationSubtype, DocumentAnnotationKind> = new Map([
+  [PdfAnnotationSubtype.HIGHLIGHT, 'highlight'],
+  [PdfAnnotationSubtype.UNDERLINE, 'underline'],
+  [PdfAnnotationSubtype.STRIKEOUT, 'strikeout'],
+  [PdfAnnotationSubtype.SQUIGGLY, 'squiggly'],
+  [PdfAnnotationSubtype.TEXT, 'note'],
+]);
+
+interface EmbedPdfAnnotationPage {
+  readonly size: { readonly width: number; readonly height: number };
+  readonly rotation?: Rotation;
+}
+
+/** Room left above a revealed Annotation, in PDF points, so it never sits under the viewer's page inset. */
+const ANNOTATION_REVEAL_MARGIN = 24;
+
+/** Just above the displayed top edge of a page-space rect, as a fraction of the displayed page height. */
+function annotationLocation(
+  { origin, size }: TrackedAnnotation['object']['rect'],
+  page: EmbedPdfAnnotationPage | undefined,
+): number {
+  if (!page) return 0;
+  const { width, height } = page.size;
+  const location = (() => {
+    switch (page.rotation ?? Rotation.Degree0) {
+      case Rotation.Degree90:
+        return width > 0 ? (origin.x - ANNOTATION_REVEAL_MARGIN) / width : 0;
+      case Rotation.Degree180:
+        return height > 0 ? 1 - (origin.y + size.height + ANNOTATION_REVEAL_MARGIN) / height : 0;
+      case Rotation.Degree270:
+        return width > 0 ? 1 - (origin.x + size.width + ANNOTATION_REVEAL_MARGIN) / width : 0;
+      default:
+        return height > 0 ? (origin.y - ANNOTATION_REVEAL_MARGIN) / height : 0;
+    }
+  })();
+  return Math.min(1, Math.max(0, location));
+}
+
+const isoDate = (value: unknown): string | null =>
+  value instanceof Date && !Number.isNaN(value.getTime()) ? value.toISOString() : null;
+
+/** Text-markup and note Annotations of any author, by page then from the top of the page. */
+export function embedPdfAnnotationSnapshots(
+  annotations: readonly TrackedAnnotation[],
+  pages: readonly EmbedPdfAnnotationPage[],
+): DocumentAnnotationSnapshot[] {
+  const snapshots: DocumentAnnotationSnapshot[] = [];
+  for (const { commitState, object } of annotations) {
+    const kind = LISTED_ANNOTATION_KINDS.get(object.type);
+    if (!kind || commitState === 'deleted') continue;
+    const page = object.pageIndex + 1;
+    const color =
+      'strokeColor' in object && typeof object.strokeColor === 'string'
+        ? object.strokeColor
+        : 'color' in object && typeof object.color === 'string'
+          ? object.color
+          : null;
+    snapshots.push({
+      id: object.id,
+      kind,
+      pageNumber: page,
+      readingPosition: { page, location: annotationLocation(object.rect, pages[object.pageIndex]) },
+      author: object.author ?? '',
+      contents: object.contents ?? '',
+      color,
+      modified: isoDate(object.modified) ?? isoDate(object.created),
+    });
+  }
+  return snapshots.sort(
+    (left, right) =>
+      left.pageNumber - right.pageNumber ||
+      left.readingPosition.location - right.readingPosition.location,
+  );
 }

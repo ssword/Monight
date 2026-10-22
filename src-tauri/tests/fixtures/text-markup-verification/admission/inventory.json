@@ -1,0 +1,764 @@
+{
+  "monight-created-snapshot.pdf": {
+    "sha256": "4279029d96823863d707d7203552a54606dba4efa9bb5ab951311cbf787c6dd6",
+    "pages": [
+      {
+        "rotation": 0,
+        "mediaBox": [0, 0, 612, 792],
+        "decodedContentSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "annotations": [
+          {
+            "/Subtype": "/Underline",
+            "/Contents": "Monight Underline admission 116",
+            "/T": "Guest",
+            "/NM": "9b82dc7f-2de8-4be5-9a6e-8a5427a793cb",
+            "/Rect": [72.0, 718.0, 113.0, 735.0],
+            "/QuadPoints": [72.0, 735.0, 113.0, 735.0, 72.0, 718.0, 113.0, 718.0],
+            "appearance": {
+              "sha256": "3a8fa73042ef445d07355216976d9719281f3eb6b2c20e19290c0954b16d5c7f",
+              "BBox": [72, 718, 113, 735],
+              "Matrix": [1, 0, 0, 1, 0, 0]
+            }
+          },
+          {
+            "/Subtype": "/StrikeOut",
+            "/Contents": "Monight Strikethrough admission 116",
+            "/T": "Guest",
+            "/NM": "d959e433-1522-4e13-be4b-6fea71b7548b",
+            "/Rect": [72.0, 655.0, 110.0, 670.0],
+            "/QuadPoints": [72.0, 670.0, 110.0, 670.0, 72.0, 655.0, 110.0, 655.0],
+            "appearance": {
+              "sha256": "dafa352f0b63e94b45a0ed96d865722dcbce26d1d88f7bcbe2dee84e7f0f7eaf",
+              "BBox": [72, 655, 110, 670],
+              "Matrix": [1, 0, 0, 1, 0, 0]
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "acrobat-edited-snapshot.pdf": {
+    "sha256": "b7a05f7efc14252bdff2ddfc17937227ea4b14d29e910a27ea4db7a87981b9ad",
+    "pages": [
+      {
+        "rotation": 0,
+        "mediaBox": [0, 0, 612, 792],
+        "decodedContentSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "annotations": [
+          {
+            "/Subtype": "/Underline",
+            "/Contents": "Acrobat edited Underline 116",
+            "/T": "ssword",
+            "/NM": "9b82dc7f-2de8-4be5-9a6e-8a5427a793cb",
+            "/Rect": [72.0, 718.0, 113.0, 735.0],
+            "/QuadPoints": [72.0, 735.0, 113.0, 735.0, 72.0, 718.0, 113.0, 718.0],
+            "appearance": {
+              "sha256": "3a8fa73042ef445d07355216976d9719281f3eb6b2c20e19290c0954b16d5c7f",
+              "BBox": [72, 718, 113, 735],
+              "Matrix": [1, 0, 0, 1, 0, 0]
+            }
+          },
+          {
+            "/Subtype": "/StrikeOut",
+            "/Contents": "Acrobat edited Strikethrough 116",
+            "/T": "ssword",
+            "/NM": "d959e433-1522-4e13-be4b-6fea71b7548b",
+            "/Rect": [72.0, 655.0, 110.0, 670.0],
+            "/QuadPoints": [72.0, 670.0, 110.0, 670.0, 72.0, 655.0, 110.0, 655.0],
+            "appearance": {
+              "sha256": "dafa352f0b63e94b45a0ed96d865722dcbce26d1d88f7bcbe2dee84e7f0f7eaf",
+              "BBox": [72, 655, 110, 670],
+              "Matrix": [1, 0, 0, 1, 0, 0]
+            }
+          },
+          {
+            "/Subtype": "/Popup",
+            "/Rect": [612.0, 621.0, 816.0, 735.0]
+          },
+          {
+            "/Subtype": "/Popup",
+            "/Rect": [612.0, 556.0, 816.0, 670.0]
+          }
+        ]
+      }
+    ]
+  },
+  "acrobat-deleted-return.pdf": {
+    "sha256": "5fc43117a96edd2f2ba19885887cc3ec27dcafc79f691b693d2753267203cfbe",
+    "pages": [
+      {
+        "rotation": 0,
+        "mediaBox": [0, 0, 612, 792],
+        "decodedContentSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "annotations": []
+      }
+    ]
+  },
+  "acrobat-roundtrip-final.pdf": {
+    "sha256": "73454c620e773e4b9e0150dd6dbe686a059a1e08e463c788a6cc54167c3c022b",
+    "pages": [
+      {
+        "rotation": 0,
+        "mediaBox": [0, 0, 612, 792],
+        "decodedContentSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "annotations": [
+          {
+            "/Subtype": "/Underline",
+            "/Contents": "Monight re-edited Acrobat Underline 116",
+            "/T": "ssword",
+            "/NM": "9b82dc7f-2de8-4be5-9a6e-8a5427a793cb",
+            "/Rect": [72.0, 718.0, 113.0, 735.0],
+            "/QuadPoints": [72.0, 735.0, 113.0, 735.0, 72.0, 718.0, 113.0, 718.0],
+            "appearance": {
+              "sha256": "3a8fa73042ef445d07355216976d9719281f3eb6b2c20e19290c0954b16d5c7f",
+              "BBox": [72, 718, 113, 735],
+              "Matrix": [1, 0, 0, 1, 0, 0]
+            }
+          },
+          {
+            "/Subtype": "/StrikeOut",
+            "/Contents": "Monight re-edited Acrobat Strikethrough 116",
+            "/T": "ssword",
+            "/NM": "d959e433-1522-4e13-be4b-6fea71b7548b",
+            "/Rect": [72.0, 655.0, 110.0, 670.0],
+            "/QuadPoints": [72.0, 670.0, 110.0, 670.0, 72.0, 655.0, 110.0, 655.0],
+            "appearance": {
+              "sha256": "dafa352f0b63e94b45a0ed96d865722dcbce26d1d88f7bcbe2dee84e7f0f7eaf",
+              "BBox": [72, 655, 110, 670],
+              "Matrix": [1, 0, 0, 1, 0, 0]
+            }
+          },
+          {
+            "/Subtype": "/Popup",
+            "/NM": "8be2121a-10c9-495c-8de5-05c3d9ba4568",
+            "/Rect": [612.0, 621.0, 816.0, 735.0]
+          },
+          {
+            "/Subtype": "/Popup",
+            "/NM": "fedba775-365d-4cb0-b8a4-6106d2e787a2",
+            "/Rect": [612.0, 556.0, 816.0, 670.0]
+          }
+        ]
+      }
+    ]
+  },
+  "acrobat-monight-deleted.pdf": {
+    "sha256": "81cac0996235f3b274d829507ac76a6905e4dec454986b58eb882f077f9adaf2",
+    "pages": [
+      {
+        "rotation": 0,
+        "mediaBox": [0, 0, 612, 792],
+        "decodedContentSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "annotations": []
+      }
+    ]
+  },
+  "acrobat-origin-edited.pdf": {
+    "sha256": "2378a2c39aa9a67c80a2d8d566b21c89a9d9da694a86c706c84d5c7bd23e9e17",
+    "pages": [
+      {
+        "rotation": 0,
+        "mediaBox": [0, 0, 612, 792],
+        "decodedContentSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "annotations": [
+          {
+            "/Subtype": "/Link",
+            "/NM": "2d70e975-354d-49de-a5b4-9a842fd642f0",
+            "/Rect": [72.0, 650.0, 260.0, 685.0],
+            "appearance": {
+              "sha256": "fadd7265a7c89283b4da9159874dd219396c3ab1a4a7ec0680c762c3f39e53cd",
+              "BBox": [72, 650, 260, 685],
+              "Matrix": [1, 0, 0, 1, 0, 0]
+            }
+          },
+          {
+            "/Subtype": "/Link",
+            "/NM": "be5297ec-2b87-4068-ae8b-5fa369fb3371",
+            "/Rect": [72.0, 590.0, 260.0, 625.0],
+            "appearance": {
+              "sha256": "71141dadc56153522e787976983e642c2a920e0ce70037fd467265a9a7923986",
+              "BBox": [72, 590, 260, 625],
+              "Matrix": [1, 0, 0, 1, 0, 0]
+            }
+          },
+          {
+            "/Subtype": "/Text",
+            "/Contents": "Monight re-edited Acrobat note 80",
+            "/T": "ssword",
+            "/NM": "comment-native",
+            "/Rect": [260.0, 668.0, 280.0, 688.0],
+            "appearance": {
+              "sha256": "7fceb40e552be73213f404e02063b2476096a9ed00a950b437432017d60430ed",
+              "BBox": [260, 668, 280, 688],
+              "Matrix": [1, 0, 0, 1, 0, 0]
+            }
+          },
+          {
+            "/Subtype": "/Text",
+            "/Contents": "Attributed comment",
+            "/T": "Ada Lovelace",
+            "/NM": "attributed-comment-native",
+            "/Rect": [300.0, 628.0, 320.0, 648.0],
+            "appearance": {
+              "sha256": "19705602f79c8896fee2973bd2392bf8bc87ead2fe37dbeacc85231a3959ce3f",
+              "BBox": [300, 628, 320, 648],
+              "Matrix": [1, 0, 0, 1, 0, 0]
+            }
+          },
+          {
+            "/Subtype": "/Popup",
+            "/Rect": [0.0, 0.0, 200.0, 100.0]
+          },
+          {
+            "/Subtype": "/Popup",
+            "/NM": "b75c4b02-77f3-464f-a53f-9bc778a97691",
+            "/Rect": [612.0, 574.0, 816.0, 688.0]
+          },
+          {
+            "/Subtype": "/Highlight",
+            "/Contents": "Acrobat native highlight 80",
+            "/T": "ssword",
+            "/NM": "8ba2511d-eef0-d145-a668-37271eff681f",
+            "/Rect": [71.133, 713.733, 238.274, 743.211],
+            "/QuadPoints": [72.0, 742.344, 237.407, 742.344, 72.0, 714.6, 237.407, 714.6],
+            "appearance": {
+              "sha256": "633b0f394a58a81ef3dcc5045596bfedb627d0b52f3954cb48868e71f9773469",
+              "BBox": [0, 0, 167.141, 29.4778],
+              "Matrix": [1, 0, 0, 1, 0, 0]
+            }
+          },
+          {
+            "/Subtype": "/Popup",
+            "/NM": "dfcb381c-db50-4f26-9e27-2e3739fa41e8",
+            "/Rect": [612.0, 628.344, 816.0, 742.344]
+          },
+          {
+            "/Subtype": "/Text",
+            "/Contents": "Acrobat native note 80",
+            "/T": "ssword",
+            "/NM": "ee6ff9dc-c343-e24e-a355-70961149933a",
+            "/Rect": [258.61, 721.304, 282.61, 745.304],
+            "appearance": {
+              "sha256": "0a2f8559fe217bd6e1daa46a33af8b29dbc55371cf6cd62279b7e1977e8dd440",
+              "BBox": [0, 0, 24, 24],
+              "Matrix": []
+            }
+          },
+          {
+            "/Subtype": "/Popup",
+            "/NM": "9500cd8a-9642-4e37-8518-f5a4659351cc",
+            "/Rect": [612.0, 631.304, 816.0, 745.304]
+          },
+          {
+            "/Subtype": "/Underline",
+            "/Contents": "Monight edited Acrobat-origin Underline 116",
+            "/T": "ssword",
+            "/NM": "04c155b3-7898-904b-8f7a-348769607c21",
+            "/Rect": [63.7267, 412.866, 140.297, 444.078],
+            "/QuadPoints": [72.0, 442.344, 132.024, 442.344, 72.0, 414.6, 132.024, 414.6],
+            "appearance": {
+              "sha256": "2f7917a2c1941cc158ee3b075ad38a92a61cf4078602436bf889348bfc72d93d",
+              "BBox": [63.7267, 412.866, 140.297, 444.078],
+              "Matrix": [1, 0, 0, 1, -63.7267, -412.866]
+            }
+          },
+          {
+            "/Subtype": "/Popup",
+            "/NM": "4486f1bf-941c-4ca8-9a72-b4daede9209b",
+            "/Rect": [612.0, 328.344, 816.0, 442.344]
+          },
+          {
+            "/Subtype": "/StrikeOut",
+            "/Contents": "Monight edited Acrobat-origin Strikethrough 116",
+            "/T": "ssword",
+            "/NM": "0258cd6b-6a09-5843-84d2-79519026a9d1",
+            "/Rect": [130.423, 412.866, 204.304, 444.078],
+            "/QuadPoints": [138.696, 442.344, 196.031, 442.344, 138.696, 414.6, 196.031, 414.6],
+            "appearance": {
+              "sha256": "9d4dd42b1bdb50dfe3abd16a5d31abfe07d28d74bad657968b86a01f782f57c5",
+              "BBox": [130.423, 412.866, 204.304, 444.078],
+              "Matrix": [1, 0, 0, 1, -130.423, -412.866]
+            }
+          },
+          {
+            "/Subtype": "/Popup",
+            "/NM": "7c08ce37-ea46-4be0-a41e-d469e3a301d0",
+            "/Rect": [612.0, 328.344, 816.0, 442.344]
+          }
+        ]
+      },
+      {
+        "rotation": 0,
+        "mediaBox": [0, 0, 612, 792],
+        "decodedContentSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "annotations": []
+      },
+      {
+        "rotation": 0,
+        "mediaBox": [0, 0, 612, 792],
+        "decodedContentSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "annotations": []
+      }
+    ]
+  },
+  "acrobat-origin-deleted.pdf": {
+    "sha256": "dfc610a3c458e06d974cc7b102b7ea131ad3b2185cd5b939713cd6331659e6dd",
+    "pages": [
+      {
+        "rotation": 0,
+        "mediaBox": [0, 0, 612, 792],
+        "decodedContentSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "annotations": [
+          {
+            "/Subtype": "/Link",
+            "/NM": "2d70e975-354d-49de-a5b4-9a842fd642f0",
+            "/Rect": [72.0, 650.0, 260.0, 685.0],
+            "appearance": {
+              "sha256": "fadd7265a7c89283b4da9159874dd219396c3ab1a4a7ec0680c762c3f39e53cd",
+              "BBox": [72, 650, 260, 685],
+              "Matrix": [1, 0, 0, 1, 0, 0]
+            }
+          },
+          {
+            "/Subtype": "/Link",
+            "/NM": "be5297ec-2b87-4068-ae8b-5fa369fb3371",
+            "/Rect": [72.0, 590.0, 260.0, 625.0],
+            "appearance": {
+              "sha256": "71141dadc56153522e787976983e642c2a920e0ce70037fd467265a9a7923986",
+              "BBox": [72, 590, 260, 625],
+              "Matrix": [1, 0, 0, 1, 0, 0]
+            }
+          },
+          {
+            "/Subtype": "/Text",
+            "/Contents": "Monight re-edited Acrobat note 80",
+            "/T": "ssword",
+            "/NM": "comment-native",
+            "/Rect": [260.0, 668.0, 280.0, 688.0],
+            "appearance": {
+              "sha256": "7fceb40e552be73213f404e02063b2476096a9ed00a950b437432017d60430ed",
+              "BBox": [260, 668, 280, 688],
+              "Matrix": [1, 0, 0, 1, 0, 0]
+            }
+          },
+          {
+            "/Subtype": "/Text",
+            "/Contents": "Attributed comment",
+            "/T": "Ada Lovelace",
+            "/NM": "attributed-comment-native",
+            "/Rect": [300.0, 628.0, 320.0, 648.0],
+            "appearance": {
+              "sha256": "19705602f79c8896fee2973bd2392bf8bc87ead2fe37dbeacc85231a3959ce3f",
+              "BBox": [300, 628, 320, 648],
+              "Matrix": [1, 0, 0, 1, 0, 0]
+            }
+          },
+          {
+            "/Subtype": "/Popup",
+            "/Rect": [0.0, 0.0, 200.0, 100.0]
+          },
+          {
+            "/Subtype": "/Popup",
+            "/NM": "b75c4b02-77f3-464f-a53f-9bc778a97691",
+            "/Rect": [612.0, 574.0, 816.0, 688.0]
+          },
+          {
+            "/Subtype": "/Highlight",
+            "/Contents": "Acrobat native highlight 80",
+            "/T": "ssword",
+            "/NM": "8ba2511d-eef0-d145-a668-37271eff681f",
+            "/Rect": [71.133, 713.733, 238.274, 743.211],
+            "/QuadPoints": [72.0, 742.344, 237.407, 742.344, 72.0, 714.6, 237.407, 714.6],
+            "appearance": {
+              "sha256": "633b0f394a58a81ef3dcc5045596bfedb627d0b52f3954cb48868e71f9773469",
+              "BBox": [0, 0, 167.141, 29.4778],
+              "Matrix": [1, 0, 0, 1, 0, 0]
+            }
+          },
+          {
+            "/Subtype": "/Popup",
+            "/NM": "dfcb381c-db50-4f26-9e27-2e3739fa41e8",
+            "/Rect": [612.0, 628.344, 816.0, 742.344]
+          },
+          {
+            "/Subtype": "/Text",
+            "/Contents": "Acrobat native note 80",
+            "/T": "ssword",
+            "/NM": "ee6ff9dc-c343-e24e-a355-70961149933a",
+            "/Rect": [258.61, 721.304, 282.61, 745.304],
+            "appearance": {
+              "sha256": "0a2f8559fe217bd6e1daa46a33af8b29dbc55371cf6cd62279b7e1977e8dd440",
+              "BBox": [0, 0, 24, 24],
+              "Matrix": []
+            }
+          },
+          {
+            "/Subtype": "/Popup",
+            "/NM": "9500cd8a-9642-4e37-8518-f5a4659351cc",
+            "/Rect": [612.0, 631.304, 816.0, 745.304]
+          }
+        ]
+      },
+      {
+        "rotation": 0,
+        "mediaBox": [0, 0, 612, 792],
+        "decodedContentSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "annotations": []
+      },
+      {
+        "rotation": 0,
+        "mediaBox": [0, 0, 612, 792],
+        "decodedContentSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "annotations": []
+      }
+    ]
+  },
+  "preview-edited-snapshot.pdf": {
+    "sha256": "d2cff286bda5b325b40c687c336a985509d1642fefb002925bfc7aca5a264cf3",
+    "pages": [
+      {
+        "rotation": 0,
+        "mediaBox": [0, 0, 612, 792],
+        "decodedContentSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "annotations": [
+          {
+            "/Subtype": "/Underline",
+            "/Contents": "Preview edited Underline 116",
+            "/T": "Guest",
+            "/NM": "9b82dc7f-2de8-4be5-9a6e-8a5427a793cb",
+            "/Rect": [72.0, 718.0, 113.0, 735.0],
+            "/QuadPoints": [72.0, 735.0, 113.0, 735.0, 72.0, 718.0, 113.0, 718.0],
+            "appearance": {
+              "sha256": "3a8fa73042ef445d07355216976d9719281f3eb6b2c20e19290c0954b16d5c7f",
+              "BBox": [72, 718, 113, 735],
+              "Matrix": [1, 0, 0, 1, 0, 0]
+            }
+          },
+          {
+            "/Subtype": "/StrikeOut",
+            "/Contents": "Preview edited Strikethrough 116",
+            "/T": "Guest",
+            "/NM": "d959e433-1522-4e13-be4b-6fea71b7548b",
+            "/Rect": [72.0, 655.0, 110.0, 670.0],
+            "/QuadPoints": [72.0, 670.0, 110.0, 670.0, 72.0, 655.0, 110.0, 655.0],
+            "appearance": {
+              "sha256": "dafa352f0b63e94b45a0ed96d865722dcbce26d1d88f7bcbe2dee84e7f0f7eaf",
+              "BBox": [72, 655, 110, 670],
+              "Matrix": [1, 0, 0, 1, 0, 0]
+            }
+          },
+          {
+            "/Subtype": "/Popup",
+            "/Rect": [117.0, 739.0, 189.0, 775.0]
+          },
+          {
+            "/Subtype": "/Popup",
+            "/Rect": [114.0, 674.0, 186.0, 710.0]
+          }
+        ]
+      }
+    ]
+  },
+  "preview-deleted-return.pdf": {
+    "sha256": "26f400b276a6638ac76c9b396c2a127a9904f1d3966c1fd3a5a40419dc0db148",
+    "pages": [
+      {
+        "rotation": 0,
+        "mediaBox": [0, 0, 612, 792],
+        "decodedContentSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "annotations": [
+          {
+            "/Subtype": "/Popup",
+            "/Rect": [117.0, 739.0, 189.0, 775.0]
+          },
+          {
+            "/Subtype": "/Popup",
+            "/Rect": [114.0, 674.0, 186.0, 710.0]
+          }
+        ]
+      }
+    ]
+  },
+  "preview-roundtrip-final.pdf": {
+    "sha256": "435412f332f9dbf84d014b90d65d1e1b90aedd84471c9f56c45a4bfa115b2160",
+    "pages": [
+      {
+        "rotation": 0,
+        "mediaBox": [0, 0, 612, 792],
+        "decodedContentSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "annotations": [
+          {
+            "/Subtype": "/Underline",
+            "/Contents": "Monight re-edited Preview Underline 116",
+            "/T": "Guest",
+            "/NM": "9b82dc7f-2de8-4be5-9a6e-8a5427a793cb",
+            "/Rect": [72.0, 718.0, 113.0, 735.0],
+            "/QuadPoints": [72.0, 735.0, 113.0, 735.0, 72.0, 718.0, 113.0, 718.0],
+            "appearance": {
+              "sha256": "3a8fa73042ef445d07355216976d9719281f3eb6b2c20e19290c0954b16d5c7f",
+              "BBox": [72, 718, 113, 735],
+              "Matrix": [1, 0, 0, 1, 0, 0]
+            }
+          },
+          {
+            "/Subtype": "/StrikeOut",
+            "/Contents": "Monight re-edited Preview Strikethrough 116",
+            "/T": "Guest",
+            "/NM": "d959e433-1522-4e13-be4b-6fea71b7548b",
+            "/Rect": [72.0, 655.0, 110.0, 670.0],
+            "/QuadPoints": [72.0, 670.0, 110.0, 670.0, 72.0, 655.0, 110.0, 655.0],
+            "appearance": {
+              "sha256": "dafa352f0b63e94b45a0ed96d865722dcbce26d1d88f7bcbe2dee84e7f0f7eaf",
+              "BBox": [72, 655, 110, 670],
+              "Matrix": [1, 0, 0, 1, 0, 0]
+            }
+          },
+          {
+            "/Subtype": "/Popup",
+            "/NM": "6a8b39a2-0cbe-4167-802d-b9b491c4d662",
+            "/Rect": [117.0, 739.0, 189.0, 775.0]
+          },
+          {
+            "/Subtype": "/Popup",
+            "/NM": "7f3a1a6a-93a1-422f-849c-f507893d26bc",
+            "/Rect": [114.0, 674.0, 186.0, 710.0]
+          }
+        ]
+      }
+    ]
+  },
+  "preview-monight-deleted.pdf": {
+    "sha256": "2092159650fb58b77edd8523a91187599d73a87adc0d15567f5ecaa54bce51e7",
+    "pages": [
+      {
+        "rotation": 0,
+        "mediaBox": [0, 0, 612, 792],
+        "decodedContentSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "annotations": []
+      }
+    ]
+  },
+  "preview-origin-edited.pdf": {
+    "sha256": "0a4f1290e3e85884316c3b018e1964964883a5646d16df237986947c6bfcfb04",
+    "pages": [
+      {
+        "rotation": 270,
+        "mediaBox": [0, 0, 612, 792],
+        "decodedContentSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "annotations": [
+          {
+            "/Subtype": "/Link",
+            "/NM": "2d70e975-354d-49de-a5b4-9a842fd642f0",
+            "/Rect": [72.0, 650.0, 260.0, 685.0],
+            "appearance": {
+              "sha256": "fadd7265a7c89283b4da9159874dd219396c3ab1a4a7ec0680c762c3f39e53cd",
+              "BBox": [72, 650, 260, 685],
+              "Matrix": [1, 0, 0, 1, 0, 0]
+            }
+          },
+          {
+            "/Subtype": "/Link",
+            "/NM": "be5297ec-2b87-4068-ae8b-5fa369fb3371",
+            "/Rect": [72.0, 590.0, 260.0, 625.0],
+            "appearance": {
+              "sha256": "71141dadc56153522e787976983e642c2a920e0ce70037fd467265a9a7923986",
+              "BBox": [72, 590, 260, 625],
+              "Matrix": [1, 0, 0, 1, 0, 0]
+            }
+          },
+          {
+            "/Subtype": "/Text",
+            "/Contents": "Native comment",
+            "/T": "Guest",
+            "/NM": "comment-native",
+            "/Rect": [260.0, 668.0, 280.0, 688.0],
+            "appearance": {
+              "sha256": "7fceb40e552be73213f404e02063b2476096a9ed00a950b437432017d60430ed",
+              "BBox": [260, 668, 280, 688],
+              "Matrix": [1, 0, 0, 1, 0, 0]
+            }
+          },
+          {
+            "/Subtype": "/Popup",
+            "/Rect": [0.0, 0.0, 200.0, 100.0]
+          },
+          {
+            "/Subtype": "/Text",
+            "/Contents": "Preview native note 75",
+            "/T": "Andrew Chen",
+            "/NM": "4dff1e09-a128-4342-a0b3-6b31c140ce9d",
+            "/Rect": [220.6667, 372.0833, 244.6667, 396.0833],
+            "appearance": {
+              "sha256": "3f882850d585011c7ed5151a9aaa89abbde6a2e6bf9f7126fe3671de5e3b46c2",
+              "BBox": [0, 0, 24, 24],
+              "Matrix": []
+            }
+          },
+          {
+            "/Subtype": "/Popup",
+            "/Rect": [0.0, 0.0, 200.0, 100.0]
+          },
+          {
+            "/Subtype": "/Highlight",
+            "/Contents": "Preview native highlight 75",
+            "/T": "Andrew Chen",
+            "/NM": "e5272c47-b113-4cdd-b549-383eb680c90d",
+            "/Rect": [72.0, 414.4805, 268.056, 738.4805],
+            "/QuadPoints": [
+              72.0, 738.4805, 237.408, 738.4805, 72.0, 714.4805, 237.408, 714.4805, 72.0, 438.4805,
+              268.056, 438.4805, 72.0, 414.4805, 268.056, 414.4805
+            ],
+            "appearance": {
+              "sha256": "35b2af0a2edad4cc9da10f730c1b5d731047f3e342a4ccf4c46bcefd9112801e",
+              "BBox": [0, 0, 196.056, 324],
+              "Matrix": []
+            }
+          },
+          {
+            "/Subtype": "/Popup",
+            "/NM": "51456c5a-5ac6-4e74-ba66-2d452175927f",
+            "/Rect": [272.056, 742.4805, 344.056, 778.4805]
+          }
+        ]
+      },
+      {
+        "rotation": 0,
+        "mediaBox": [0, 0, 612, 792],
+        "decodedContentSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "annotations": [
+          {
+            "/Subtype": "/Underline",
+            "/Contents": "Monight edited Preview-origin Underline 116",
+            "/T": "Andrew Chen",
+            "/NM": "30791b5e-1064-4d78-a031-0337cf46b31a",
+            "/Rect": [72.0, 714.4805, 132.024, 738.4805],
+            "/QuadPoints": [72.0, 738.4805, 132.024, 738.4805, 72.0, 714.4805, 132.024, 714.4805],
+            "appearance": {
+              "sha256": "4990d7ee93cbc6a5c2f5baf682663d123d37b2f487df71024294dc4b5f5de8fe",
+              "BBox": [0, 0, 60.024, 24],
+              "Matrix": []
+            }
+          },
+          {
+            "/Subtype": "/StrikeOut",
+            "/Contents": "Monight edited Preview-origin Strikethrough 116",
+            "/T": "Andrew Chen",
+            "/NM": "d5f3e590-2869-4434-b43e-65de8971a039",
+            "/Rect": [138.696, 714.4805, 216.072, 738.4805],
+            "/QuadPoints": [
+              138.696, 738.4805, 216.072, 738.4805, 138.696, 714.4805, 216.072, 714.4805
+            ],
+            "appearance": {
+              "sha256": "78fb0af83d42466fdc3af7e8c8c1f3b4a5de4520588e9b21896d98374392e1cf",
+              "BBox": [0, 0, 77.376, 24],
+              "Matrix": []
+            }
+          }
+        ]
+      },
+      {
+        "rotation": 0,
+        "mediaBox": [0, 0, 612, 792],
+        "decodedContentSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "annotations": []
+      }
+    ]
+  },
+  "preview-origin-deleted.pdf": {
+    "sha256": "70df1057820c0738cb212f3d97fee17982958a3b5c1f00a23c27e74087535f6e",
+    "pages": [
+      {
+        "rotation": 270,
+        "mediaBox": [0, 0, 612, 792],
+        "decodedContentSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "annotations": [
+          {
+            "/Subtype": "/Link",
+            "/NM": "2d70e975-354d-49de-a5b4-9a842fd642f0",
+            "/Rect": [72.0, 650.0, 260.0, 685.0],
+            "appearance": {
+              "sha256": "fadd7265a7c89283b4da9159874dd219396c3ab1a4a7ec0680c762c3f39e53cd",
+              "BBox": [72, 650, 260, 685],
+              "Matrix": [1, 0, 0, 1, 0, 0]
+            }
+          },
+          {
+            "/Subtype": "/Link",
+            "/NM": "be5297ec-2b87-4068-ae8b-5fa369fb3371",
+            "/Rect": [72.0, 590.0, 260.0, 625.0],
+            "appearance": {
+              "sha256": "71141dadc56153522e787976983e642c2a920e0ce70037fd467265a9a7923986",
+              "BBox": [72, 590, 260, 625],
+              "Matrix": [1, 0, 0, 1, 0, 0]
+            }
+          },
+          {
+            "/Subtype": "/Text",
+            "/Contents": "Native comment",
+            "/T": "Guest",
+            "/NM": "comment-native",
+            "/Rect": [260.0, 668.0, 280.0, 688.0],
+            "appearance": {
+              "sha256": "7fceb40e552be73213f404e02063b2476096a9ed00a950b437432017d60430ed",
+              "BBox": [260, 668, 280, 688],
+              "Matrix": [1, 0, 0, 1, 0, 0]
+            }
+          },
+          {
+            "/Subtype": "/Popup",
+            "/Rect": [0.0, 0.0, 200.0, 100.0]
+          },
+          {
+            "/Subtype": "/Text",
+            "/Contents": "Preview native note 75",
+            "/T": "Andrew Chen",
+            "/NM": "4dff1e09-a128-4342-a0b3-6b31c140ce9d",
+            "/Rect": [220.6667, 372.0833, 244.6667, 396.0833],
+            "appearance": {
+              "sha256": "3f882850d585011c7ed5151a9aaa89abbde6a2e6bf9f7126fe3671de5e3b46c2",
+              "BBox": [0, 0, 24, 24],
+              "Matrix": []
+            }
+          },
+          {
+            "/Subtype": "/Popup",
+            "/Rect": [0.0, 0.0, 200.0, 100.0]
+          },
+          {
+            "/Subtype": "/Highlight",
+            "/Contents": "Preview native highlight 75",
+            "/T": "Andrew Chen",
+            "/NM": "e5272c47-b113-4cdd-b549-383eb680c90d",
+            "/Rect": [72.0, 414.4805, 268.056, 738.4805],
+            "/QuadPoints": [
+              72.0, 738.4805, 237.408, 738.4805, 72.0, 714.4805, 237.408, 714.4805, 72.0, 438.4805,
+              268.056, 438.4805, 72.0, 414.4805, 268.056, 414.4805
+            ],
+            "appearance": {
+              "sha256": "35b2af0a2edad4cc9da10f730c1b5d731047f3e342a4ccf4c46bcefd9112801e",
+              "BBox": [0, 0, 196.056, 324],
+              "Matrix": []
+            }
+          },
+          {
+            "/Subtype": "/Popup",
+            "/NM": "51456c5a-5ac6-4e74-ba66-2d452175927f",
+            "/Rect": [272.056, 742.4805, 344.056, 778.4805]
+          }
+        ]
+      },
+      {
+        "rotation": 0,
+        "mediaBox": [0, 0, 612, 792],
+        "decodedContentSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "annotations": []
+      },
+      {
+        "rotation": 0,
+        "mediaBox": [0, 0, 612, 792],
+        "decodedContentSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "annotations": []
+      }
+    ]
+  }
+}

@@ -24,7 +24,14 @@ Rotate follows Preview: it changes the rotation of the selected pages, or of the
 - Page rotation is a Document edit with the same unsaved indicator, undo, Recovery Draft, automatic and explicit Save path, external-conflict detection, and protection rules as an Annotation edit. There is no second path for writing the PDF.
 - Rotation leaves Visual State. Rotation values in existing Reading Sessions are discarded on migration rather than converted into edits of the reader's files.
 - Printing reproduces the PDF's own page rotation.
-- Rotate is not shown until rotated pages, including their existing Annotations, pass round-trip verification with Preview and Acrobat in both directions.
+- Rotate is not shown until rotated pages, including their existing Annotations, pass round-trip verification with Preview in both directions.
+
+Amended 2026-10-22 by the owner's explicit instruction on #115: Acrobat Page
+Rotation verification is waived because persisting page rotation requires a paid
+Acrobat subscription. The originally required Acrobat rotation matrix is no
+longer an admission gate. Preview round trips, native save/file-safety checks,
+and preservation and editability of existing Annotations remain required.
+ADR 0002's Preview/Acrobat verification for annotation tools is unchanged.
 
 ## Considered options
 

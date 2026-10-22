@@ -106,7 +106,7 @@ export async function openPDFFile(intake: DocumentIntake | null): Promise<number
 // Update print menu state based on whether a PDF is loaded
 export async function updatePrintMenuState(hasDocument: boolean): Promise<void> {
   try {
-    await invoke('set_print_enabled', { enabled: hasDocument });
+    await invoke('set_menu_item_states', { items: [{ id: 'print', enabled: hasDocument }] });
     debugLog(`Print menu ${hasDocument ? 'enabled' : 'disabled'}`);
   } catch (error) {
     console.error('Failed to update print menu state:', error);

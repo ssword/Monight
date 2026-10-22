@@ -4,9 +4,7 @@ import { getCurrentWebview } from '@tauri-apps/api/webview';
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 import { debugLog } from '../lib/debug-log';
 import type { DocumentIntake } from '../reader/document-intake';
-import { type DispatchReaderAction, readerAction } from '../reader/reader-actions';
-import type { KeybindManager } from '../scripts/keybind-manager';
-import type { SettingsManager } from '../scripts/settings';
+import type { DispatchReaderAction } from '../reader/reader-actions';
 import { showToast } from './dialogs';
 import { intakeFiles, reportDocumentIntakeOutcomes } from './file-actions';
 
@@ -21,9 +19,8 @@ export interface ExternalOpenPayload {
 interface TauriListenerContext {
   intake: DocumentIntake | null;
   getActiveDocumentPath: () => string | null;
-  settingsManager: SettingsManager | null;
-  keybindManager: KeybindManager | null;
-  isMac: boolean;
+  /** Reloads the effective keybinds into shortcuts and menu accelerators. */
+  reloadKeybinds: () => Promise<void>;
   openPdfAndRefresh: () => Promise<void>;
   handleStartupExternalOpenPayloads: (payloads: readonly ExternalOpenPayload[]) => Promise<void>;
   reloadSettings: () => Promise<void>;
@@ -32,14 +29,14 @@ interface TauriListenerContext {
   updateTabBarVisibility: () => void;
   updatePrintMenuState: () => Promise<void>;
   dispatchReaderAction: DispatchReaderAction;
+  /** Runs a native View, Go or Tools menu item; see reader-commands.ts. */
+  runReaderCommand: (id: string) => Promise<boolean>;
 }
 
 export async function setupTauriListeners({
   intake,
   getActiveDocumentPath,
-  settingsManager,
-  keybindManager,
-  isMac,
+  reloadKeybinds,
   openPdfAndRefresh,
   handleStartupExternalOpenPayloads,
   reloadSettings,
@@ -48,6 +45,7 @@ export async function setupTauriListeners({
   updateTabBarVisibility,
   updatePrintMenuState,
   dispatchReaderAction,
+  runReaderCommand,
 }: TauriListenerContext): Promise<void> {
   const handleExternalOpenPayload = async (payload: ExternalOpenPayload) => {
     debugLog('External Document request:', payload);
@@ -144,24 +142,9 @@ export async function setupTauriListeners({
     await dispatchReaderAction({ type: 'printDocument' });
   });
 
-  await listen('menu-zoom-in', async () => {
-    await dispatchReaderAction(readerAction.zoomIn());
-  });
-
-  await listen('menu-zoom-out', async () => {
-    await dispatchReaderAction(readerAction.zoomOut());
-  });
-
-  await listen('menu-reset-zoom', async () => {
-    await dispatchReaderAction(readerAction.setZoomIntent({ kind: 'manual', scale: 1 }));
-  });
-
-  await listen('menu-toggle-fullscreen', async () => {
-    debugLog('Menu toggle fullscreen event received');
-    const currentWindow = getCurrentWebviewWindow();
-    const isFullscreen = await currentWindow.isFullscreen();
-    await currentWindow.setFullscreen(!isFullscreen);
-    debugLog(`Fullscreen ${!isFullscreen ? 'enabled' : 'disabled'}`);
+  // View, Go and Tools items arrive as reader command ids (reader-commands.ts).
+  await listen<unknown>('reader-command', async (event) => {
+    if (typeof event.payload === 'string') await runReaderCommand(event.payload);
   });
 
   await listen('menu-close-tab', async () => {
@@ -180,15 +163,7 @@ export async function setupTauriListeners({
   // Listen for keybinds changed event from settings window
   await listen('keybinds-changed', async () => {
     debugLog('Keybinds changed event received, reloading keybinds...');
-    if (settingsManager && keybindManager) {
-      const settings = await settingsManager.load();
-      // Override Settings keybind for macOS with Cmd+,
-      if (isMac && settings.keybinds.Settings) {
-        settings.keybinds.Settings.binds = ['Cmd+,'];
-      }
-      keybindManager.loadFromSettings(settings);
-      debugLog('Keybinds reloaded successfully');
-    }
+    await reloadKeybinds();
   });
 
   await listen('settings-changed', async () => {

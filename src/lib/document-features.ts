@@ -1,39 +1,14 @@
+import type { PdfLinkTarget } from './pdf-links';
+
 export type ViewMode = 'single' | 'continuous' | 'spread';
-
-export const VIEW_MODE_SEQUENCE: readonly ViewMode[] = ['single', 'continuous', 'spread'];
-
-export function nextViewMode(mode: ViewMode): ViewMode {
-  const currentIndex = VIEW_MODE_SEQUENCE.indexOf(mode);
-  return VIEW_MODE_SEQUENCE[(currentIndex + 1) % VIEW_MODE_SEQUENCE.length];
-}
-
-export function viewModeLabel(mode: ViewMode): string {
-  switch (mode) {
-    case 'single':
-      return 'Single page';
-    case 'continuous':
-      return 'Continuous scroll';
-    case 'spread':
-      return 'Two-page spread';
-  }
-}
-
-export function viewModeIcon(mode: ViewMode): string {
-  switch (mode) {
-    case 'single':
-      return '⊟';
-    case 'continuous':
-      return '⊞';
-    case 'spread':
-      return '▥';
-  }
-}
 
 export interface PdfSearchMatch {
   pageNumber: number;
   pageOccurrence: number;
   index: number;
   excerpt: string;
+  /** Normalized position of the hit within its page (0 = top), when known. */
+  location?: number;
 }
 
 export function findPageTextMatches(
@@ -131,6 +106,8 @@ export interface PdfOutlineItem {
   title: string;
   pageNumber: number | null;
   url?: string;
+  /** Where activating the entry goes; absent when the entry has no destination or action. */
+  target?: PdfLinkTarget;
   bold: boolean;
   italic: boolean;
   items: PdfOutlineItem[];

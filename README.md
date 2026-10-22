@@ -4,19 +4,33 @@ Monight is a cross-platform PDF reader built with Tauri and TypeScript. It combi
 
 ## Features
 
-- Multi-tab PDF viewing
-- Single-page, continuous-scroll, and two-page spread layouts
-- Adjustable zoom, fit-to-page/width, rotation, and cursor-anchored pinch/wheel zoom
-- Full-document text search (`Cmd/Ctrl+F`)
-- Table of contents and lazy-rendered page thumbnails
-- PDF-native highlights and comments with explicit Save and Save As
-- Exact page and scroll-position restoration
-- Recent Documents on the launch screen
-- Password prompts for encrypted PDFs
-- Fullscreen presentation mode (`Shift+F11`)
-- Dark mode presets and a custom filter configurator
-- Customizable keyboard shortcuts
-- Native file dialogs and system menu integration
+Monight's reader chrome is modelled on macOS Preview and drawn entirely by Monight; EmbedPDF
+renders the pages and annotations underneath (see [ADR 0003](docs/adr/0003-preview-style-chrome-over-headless-embedpdf.md)).
+
+- Unified toolbar: sidebar toggle and mode menu, file name with "Page N of M", Zoom Out / Zoom to
+  Fit / Zoom In, Appearance, Highlight split button, Rotate, Markup toolbar, Slideshow, Print, Open,
+  and a Search field
+- Sidebar with Thumbnails (multi-select, filtered like the page), Table of Contents, and Highlights
+  and Notes; search results take it over while a search is active
+- Full-document text search from the toolbar Search field (`Cmd/Ctrl+F`)
+- Continuous Scroll, Single Page, and Two Pages layouts; Actual Size, Zoom to Fit, Zoom to Width,
+  and cursor-anchored pinch/wheel zoom
+- Back and Forward through each Document's jumps (links, Table of Contents, search results, Go to
+  Page)
+- PDF-native highlights in five colours, underline, strikethrough, and text notes, offering only the
+  tools verified with Preview and Acrobat
+- Annotation menu beside the selected annotation: edit its note, recolour it, or delete it
+  (`Delete`)
+- Page rotation saved into the PDF, like Preview's Rotate
+- Undo and Redo, automatic saving, explicit Save and Save As, and Recovery Drafts for unsaved edits
+- Native View, Go, and Tools menus with Preview's shortcuts as defaults; every shortcut is
+  customizable
+- Night-reading Appearance presets (Default, Original, Redeye, Sepia, Custom sliders) that filter the
+  page only; the chrome follows the system light or dark appearance
+- In-window tabs for several Documents, hidden while only one is open
+- Slideshow (`Shift+Cmd+F`) and Full Screen
+- Exact page and scroll-position restoration, and Recent Documents on the launch screen
+- Password prompts for encrypted PDFs; protected and signed PDFs stay read-only with an explanation
 
 ## Tech Stack
 - Tauri 2 (Rust backend + WebView)
@@ -34,7 +48,10 @@ and the [issue 66 verification record](docs/issue-66-verification.md).
 
 `npm test` covers the reader and substitute EmbedPDF adapters. Run
 `npm run test:embedpdf-offline` separately for the actual EmbedPDF runtime in Chromium
-(install its browser with `npx playwright install chromium` if needed). This browser check
+(install its browser with `npx playwright install chromium` if needed). Besides the EmbedPDF
+contracts, it runs the real reader (`index.html`) against an in-memory stand-in for the native
+side and drives its chrome end to end: toolbar, sidebar modes, search, markup toolbar, Highlight
+split button, annotation menu, and the View, Go, Tools and Edit menu commands. This browser check
 does not establish packaged Tauri behavior or native annotation interoperability.
 
 ## Project Structure

@@ -316,18 +316,6 @@ pub async fn open_settings(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-/// Enable or disable the Print menu item
-#[command]
-pub fn set_print_enabled(app: AppHandle, enabled: bool) {
-    if let Some(menu) = app.menu() {
-        if let Some(item) = menu.get("print") {
-            if let Some(menu_item) = item.as_menuitem() {
-                menu_item.set_enabled(enabled).ok();
-            }
-        }
-    }
-}
-
 /// Fit the main window for comfortable PDF reading.
 #[command]
 pub fn fit_main_window_for_pdf(app: AppHandle, fill_available_height: bool) -> Result<(), String> {

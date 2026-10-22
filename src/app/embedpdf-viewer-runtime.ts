@@ -1,16 +1,18 @@
+import type { Rect } from '@embedpdf/models';
 import EmbedPDF, {
   type AnnotationCapability,
   type CommandsCapability,
   type DocumentManagerCapability,
+  type HistoryCapability,
+  type PdfAnnotationObject,
   type PluginRegistry,
-  type RotateCapability,
   type Rotation,
   type ScrollCapability,
   ScrollStrategy,
+  type SelectionCapability,
   type SpreadCapability,
   SpreadMode,
   type ThumbnailCapability,
-  type UICapability,
   type ViewportCapability,
   type ZoomCapability,
   ZoomMode,
@@ -21,12 +23,15 @@ import type {
   SearchProgress,
   ViewMode,
 } from '../lib/document-features';
+import { isEditableTarget } from '../lib/editable-target';
 import type { PdfLinkTarget } from '../lib/pdf-links';
 import type {
   DocumentContentMetadata,
   PdfPasswordRequester,
   ResolvedDocumentLinkTarget,
 } from '../reader/document-content';
+import type { DocumentAnnotationSnapshot } from '../reader/document-queries';
+import type { AnnotationToolDefaults, SelectedAnnotation } from '../reader/document-rendering';
 import type { AnnotationDisplayName, NativePdfEditing } from '../reader/native-pdf-editing';
 import type {
   ReadingPosition,
@@ -37,16 +42,16 @@ import type { DocumentSurfaceCallbacks } from './document-workspace';
 import { createEmbedPdfNativeAnnotationEditing } from './embedpdf-native-annotation-editing';
 import {
   captureEmbedPdfReadingPosition,
-  degreesFromEmbedPdfRotation,
+  EMBEDPDF_VIEWPORT_SELECTOR,
+  embedPdfAnnotationSnapshots,
   embedPdfDestinationReadingPosition,
   embedPdfLayoutForViewMode,
   embedPdfLinkGeometries,
   embedPdfLinkTarget,
   embedPdfLinkTargetAtGeometry,
-  embedPdfOutlinePath,
   embedPdfPageNumberForEventPath,
   embedPdfReadingFilterStyle,
-  embedPdfRotationFromDegrees,
+  embedPdfSearchHitLocation,
   embedPdfZoomLevelFromIntent,
   isEmbedPdfLinkHitArea,
   restoreEmbedPdfReadingPositionCoordinates,
@@ -58,7 +63,8 @@ import {
   preloadEmbedPdfLocalFonts,
 } from './embedpdf-offline-configuration';
 import { prepareEmbedPdfPrintDocument } from './embedpdf-print-preparation';
-import { removeEmbedPdfCommandShortcuts } from './embedpdf-shortcuts';
+import { installInkSelectionGeometry } from './embedpdf-selection-geometry';
+import { monightOwnsEmbedPdfCommand, removeEmbedPdfCommandShortcuts } from './embedpdf-shortcuts';
 
 interface EmbedPdfOpenRequest {
   readonly bytes: Uint8Array;
@@ -79,12 +85,16 @@ export interface EmbedPdfViewerRuntime {
   readonly editing?: NativePdfEditing;
   preparePrintDocument(): Promise<Uint8Array>;
   open(request: EmbedPdfOpenRequest): Promise<void>;
-  openSearch(): void;
+  activeAnnotationTool(): string | null;
+  setActiveAnnotationTool(toolId: string | null, defaults?: AnnotationToolDefaults): void;
+  /** Marks the text selection with a text-markup tool; false when nothing is selected. */
+  markupSelection(toolId: string, defaults: AnnotationToolDefaults): boolean;
   pageCount(): number;
+  /** Each page's live Page Rotation (quarter turns), in page order. */
+  pageRotations(): readonly number[];
   currentPage(): number;
   currentZoom(): number;
   zoomIntent(): ZoomIntent;
-  rotation(): number;
   viewMode(): ViewMode;
   readingPosition(): ReadingPosition;
   goToPage(pageNumber: number): Promise<void>;
@@ -92,7 +102,6 @@ export interface EmbedPdfViewerRuntime {
   setZoomIntent(intent: ZoomIntent): Promise<void>;
   zoomIn(): Promise<void>;
   zoomOut(): Promise<void>;
-  setRotation(rotation: number): Promise<void>;
   setViewMode(viewMode: ViewMode): Promise<void>;
   fitToPage(): Promise<void>;
   applyFilter(filterCss: string): void;
@@ -108,6 +117,12 @@ export interface EmbedPdfViewerRuntime {
     options: { isCancelled: () => boolean },
   ): Promise<ResolvedDocumentLinkTarget | null>;
   renderThumbnail(pageNumber: number, maxWidth?: number): Promise<HTMLCanvasElement>;
+  /** Live text-markup and note Annotations of any author. */
+  annotations(): readonly DocumentAnnotationSnapshot[];
+  /** Selects an Annotation, so Monight's annotation menu opens beside it. */
+  revealAnnotation(annotationId: string): void;
+  /** The single selected Annotation and where it sits in the window; null when none. */
+  selectedAnnotation(): SelectedAnnotation | null;
   destroy(): Promise<void>;
 }
 
@@ -145,14 +160,21 @@ const createSearchMatch = (
   result: {
     readonly charIndex: number;
     readonly context: Parameters<typeof searchExcerpt>[0];
+    readonly rects?: Parameters<typeof embedPdfSearchHitLocation>[2];
   },
   pageNumber: number,
   pageOccurrence: number,
+  page:
+    | { readonly size: { width: number; height: number }; readonly rotation?: Rotation }
+    | undefined,
 ): PdfSearchMatch => ({
   pageNumber,
   pageOccurrence,
   index: result.charIndex,
   excerpt: searchExcerpt(result.context),
+  ...(page && result.rects
+    ? { location: embedPdfSearchHitLocation(page.size, page.rotation ?? 0, result.rects) }
+    : {}),
 });
 
 async function blobToCanvas(blob: Blob, maxWidth?: number): Promise<HTMLCanvasElement> {
@@ -200,7 +222,7 @@ export async function createEmbedPdfViewerRuntime({
   for (const [shortcut, commandId] of [...commands.getAllShortcuts()]) {
     if (configuredCommands.has(commandId)) continue;
     configuredCommands.add(commandId);
-    if (/^(zoom:|rotate:|scroll:|document:|panel:toggle-search$)/.test(commandId)) {
+    if (monightOwnsEmbedPdfCommand(commandId)) {
       removeEmbedPdfCommandShortcuts(commands, commandId, [shortcut]);
     } else {
       const original = commands.getCommandByShortcut(shortcut);
@@ -218,20 +240,17 @@ export async function createEmbedPdfViewerRuntime({
   const annotations = requireCapability<AnnotationCapability>(registry, 'annotation');
   const scroll = requireCapability<ScrollCapability>(registry, 'scroll');
   const zoom = requireCapability<ZoomCapability>(registry, 'zoom');
-  const rotate = requireCapability<RotateCapability>(registry, 'rotate');
   const spread = requireCapability<SpreadCapability>(registry, 'spread');
   const thumbnails = requireCapability<ThumbnailCapability>(registry, 'thumbnail');
-  const ui = requireCapability<UICapability>(registry, 'ui');
   const viewport = requireCapability<ViewportCapability>(registry, 'viewport');
   const engine = registry.getEngine();
+  installInkSelectionGeometry(engine);
   const unsubscribers: Array<() => void> = [];
   const documentId = `monight-${crypto.randomUUID()}`;
-  const uiScope = ui.forDocument(documentId);
   let sourceBytes = new Uint8Array();
   let fileName = '';
   let documentObject: ReturnType<DocumentManagerCapability['getDocument']> = null;
   let selectedViewMode: ViewMode = 'single';
-  let selectedRotation = 0;
   let selectedScrollStrategy = ScrollStrategy.Vertical;
   let selectedSpreadMode = SpreadMode.None;
   let destroyed = false;
@@ -240,7 +259,7 @@ export async function createEmbedPdfViewerRuntime({
   let selectedZoomIntent: ZoomIntent | null = null;
   let layoutEpoch = 0;
   let observationEpoch = 0;
-  const projectionDepth = { page: 0, zoom: 0, rotation: 0, viewMode: 0 };
+  const projectionDepth = { page: 0, zoom: 0, viewMode: 0 };
   let initialLayoutReady = false;
   let resolveInitialLayout!: () => void;
   const initialLayoutReadyPromise = new Promise<void>((resolve) => {
@@ -253,19 +272,57 @@ export async function createEmbedPdfViewerRuntime({
   };
   const scrollScope = scroll.forDocument(documentId);
   const annotationScope = annotations.forDocument(documentId);
-  const rotateScope = rotate.forDocument(documentId);
+  const selectionScope = requireCapability<SelectionCapability>(registry, 'selection').forDocument(
+    documentId,
+  );
   const spreadScope = spread.forDocument(documentId);
   const thumbnailScope = thumbnails.forDocument(documentId);
   const zoomScope = zoom.forDocument(documentId);
+  const store = registry.getStore();
+  const historyScope = requireCapability<HistoryCapability>(registry, 'history').forDocument(
+    documentId,
+  );
   const { editing, onAnnotationEvent } = createEmbedPdfNativeAnnotationEditing({
     annotations,
     annotationScope,
     currentDocument,
     engine,
+    history: historyScope,
+    pageRotationChanged(pageIndexes) {
+      // Keep the viewer's copy of each page in step, then re-lay out (SET_ROTATION with
+      // the unchanged view rotation) and re-render the turned pages.
+      const core = store.getState().core.documents[documentId];
+      const live = currentDocument();
+      for (const index of pageIndexes) {
+        const page = core?.document?.pages[index];
+        const rotation = live.pages[index]?.rotation;
+        if (page && rotation !== undefined) page.rotation = rotation;
+      }
+      store.dispatch({
+        type: 'SET_ROTATION',
+        payload: { rotation: core?.rotation ?? 0, documentId },
+      });
+      store.dispatch({
+        type: 'REFRESH_PAGES',
+        payload: { documentId, pageIndexes: [...pageIndexes] },
+      });
+      for (const index of pageIndexes) annotationScope.invalidatePageAppearances(index);
+    },
     readOnlyReason,
     stateChanged: callbacks.stateChanged,
   });
-  unsubscribers.push(annotationScope.onAnnotationEvent(onAnnotationEvent));
+  unsubscribers.push(
+    annotationScope.onAnnotationEvent(onAnnotationEvent),
+    // Edit ▸ Undo and Redo follow whether there is an edit to undo or redo.
+    historyScope.onHistoryChange(() => {
+      if (!destroyed) callbacks.stateChanged();
+    }),
+    // Edits already report a state change; loading the PDF's Annotations must too,
+    // so listings such as Highlights and Notes see them once they arrive.
+    annotationScope.onAnnotationEvent((event) => {
+      if (event.type === 'loaded' && !destroyed) callbacks.stateChanged();
+    }),
+  );
   const currentPageNumber = () => scrollScope.getCurrentPage();
   const currentReadingPosition = (metrics = scrollScope.getMetrics()): ReadingPosition =>
     captureEmbedPdfReadingPosition(
@@ -304,11 +361,8 @@ export async function createEmbedPdfViewerRuntime({
       pageNumber,
     );
   };
-  const requestLinkTarget = async (
-    target: NonNullable<ReturnType<typeof embedPdfLinkTargetAtGeometry>>,
-  ): Promise<void> => {
-    if (destroyed) return;
-    const monightTarget = embedPdfLinkTarget(target, (destination) => {
+  const monightLinkTarget = (target: Parameters<typeof embedPdfLinkTarget>[0]) =>
+    embedPdfLinkTarget(target, (destination) => {
       const page = currentDocument().pages[destination.pageIndex];
       return embedPdfDestinationReadingPosition(
         destination,
@@ -316,34 +370,21 @@ export async function createEmbedPdfViewerRuntime({
         page?.size.height ?? 0,
       );
     });
+  const requestLinkTarget = async (
+    target: NonNullable<ReturnType<typeof embedPdfLinkTargetAtGeometry>>,
+  ): Promise<void> => {
+    if (destroyed) return;
+    const monightTarget = monightLinkTarget(target);
     if (!monightTarget || !callbacks.linkTargetRequested) return;
     await callbacks.linkTargetRequested(monightTarget);
   };
-  const requestOutlineTarget = async (indices: number[]): Promise<void> => {
-    const result = await engine.getBookmarks(currentDocument()).toPromise();
-    let bookmarks = result.bookmarks;
-    for (const [depth, index] of indices.entries()) {
-      const bookmark = bookmarks[index];
-      if (!bookmark) return;
-      if (depth === indices.length - 1 && bookmark.target) {
-        await requestLinkTarget(bookmark.target);
-      }
-      bookmarks = bookmark.children ?? [];
-    }
-  };
   const interceptEmbedPdfLink = (event: Event): void => {
-    const outlinePath = embedPdfOutlinePath(event);
-    const target = outlinePath ? null : linkTargetForEvent(event);
-    if (!outlinePath && !target) return;
+    const target = linkTargetForEvent(event);
+    if (!target) return;
     event.stopImmediatePropagation();
     if (event.type !== 'click') return;
     event.preventDefault();
-    const activation = outlinePath
-      ? requestOutlineTarget(outlinePath)
-      : target
-        ? requestLinkTarget(target)
-        : Promise.resolve();
-    void activation.catch((error) => {
+    void requestLinkTarget(target).catch((error) => {
       console.error('Failed to activate EmbedPDF link:', error);
     });
   };
@@ -359,7 +400,55 @@ export async function createEmbedPdfViewerRuntime({
     () => shadowRoot.removeEventListener('click', interceptEmbedPdfLink, { capture: true }),
   );
 
+  // Edit ▸ Copy copies the page text selection, as ⌘C (EmbedPDF's own shortcut) does.
+  // This stays a document `copy` listener rather than an `edit.copy` Reader Command:
+  // Edit ▸ Copy is the platform's own menu item (menu.rs), which on macOS goes through
+  // the responder chain and sends the WebView a native copy, and ⌘C must keep copying
+  // from text fields (Search, a note) exactly as the platform does. A custom menu item
+  // would have to reimplement that for every field. The `copy` event is the one place
+  // both the menu item and ⌘C arrive; it yields to editable focus and only takes over
+  // when the page has a text selection.
+  const copyTextSelection = (event: ClipboardEvent) => {
+    if (destroyed || target.dataset.visible !== 'true' || target.closest('[inert]')) return;
+    if (isEditableTarget(document.activeElement) || !selectionScope.getState().selection) return;
+    event.preventDefault();
+    selectionScope.copyToClipboard();
+  };
+  document.addEventListener('copy', copyTextSelection);
+  unsubscribers.push(() => document.removeEventListener('copy', copyTextSelection));
+
+  // Where an Annotation sits in the window, for Monight's annotation menu; null
+  // while it is scrolled out of the viewer.
+  const annotationAnchor = (object: { pageIndex: number; rect: Rect }) => {
+    const viewportElement = shadowRoot.querySelector(EMBEDPDF_VIEWPORT_SELECTOR);
+    const pages = viewportElement?.firstElementChild;
+    const position = scrollScope.getRectPositionForPage(object.pageIndex, object.rect);
+    if (!viewportElement || !pages || !position) return null;
+    const content = pages.getBoundingClientRect();
+    const visible = viewportElement.getBoundingClientRect();
+    const anchor = {
+      left: content.left + position.origin.x,
+      top: content.top + position.origin.y,
+      width: position.size.width,
+      height: position.size.height,
+    };
+    const inView =
+      anchor.top + anchor.height > visible.top &&
+      anchor.top < visible.bottom &&
+      anchor.left + anchor.width > visible.left &&
+      anchor.left < visible.right;
+    return inView ? anchor : null;
+  };
+  let selectedAnnotationIds = '';
   unsubscribers.push(
+    // Monight's annotation menu follows the selection.
+    annotationScope.onStateChange((state) => {
+      const ids = state.selectedUids.join('\n');
+      if (destroyed || ids === selectedAnnotationIds) return;
+      selectedAnnotationIds = ids;
+      callbacks.stateChanged();
+    }),
+    annotationScope.onActiveToolChange(() => callbacks.stateChanged()),
     scroll.onPageChange((event) => {
       if (event.documentId !== documentId) return;
       callbacks.stateChanged();
@@ -374,7 +463,7 @@ export async function createEmbedPdfViewerRuntime({
       const epoch = ++observationEpoch;
       const position = currentReadingPosition(metrics);
       // Layout changes emit intermediate metrics synchronously, before the zoom
-      // or rotate notification. Give that notification time to cancel the sample.
+      // notification. Give that notification time to cancel the sample.
       void waitForPresentationFrames().then(() => {
         if (
           destroyed ||
@@ -430,20 +519,6 @@ export async function createEmbedPdfViewerRuntime({
         void withProjection('page', () => scrollToPosition(anchor));
       }
     }),
-    rotate.onRotateChange((event) => {
-      if (event.documentId !== documentId) return;
-      const nextRotation = degreesFromEmbedPdfRotation(event.rotation);
-      const delta = (nextRotation - selectedRotation + 360) % 360;
-      selectedRotation = nextRotation;
-      callbacks.stateChanged();
-      // setRotation records its target before calling the viewer, making its own
-      // event delta zero. A distinct user turn must survive an in-flight render.
-      if (delta === 90) {
-        void callbacks.rotationRequested?.('clockwise');
-      } else if (delta === 270) {
-        void callbacks.rotationRequested?.('counter-clockwise');
-      }
-    }),
     spread.onSpreadChange((event) => {
       if (event.documentId !== documentId) return;
       if (event.spreadMode === selectedSpreadMode) return;
@@ -456,7 +531,8 @@ export async function createEmbedPdfViewerRuntime({
     if (destroyed) return;
     readingAnchor = 'location' in position ? { ...position } : { page: position.page, location: 0 };
     const page = currentDocument().pages[position.page - 1];
-    const rotation = (((page?.rotation ?? 0) + rotateScope.getRotation()) % 4) as Rotation;
+    // Page Rotation is the only rotation; Monight never applies a view rotation.
+    const rotation: Rotation = page?.rotation ?? 0;
     scrollScope.scrollToPage({
       pageNumber: position.page,
       pageCoordinates:
@@ -565,16 +641,50 @@ export async function createEmbedPdfViewerRuntime({
       await waitForInitialLayout(request.signal);
       if (request.signal?.aborted) throw new Error('Document Intake interrupted');
     },
-    openSearch() {
-      if (!uiScope.isSidebarOpen('right', 'main', 'search-panel')) {
-        uiScope.setActiveSidebar('right', 'main', 'search-panel');
+    activeAnnotationTool: () => annotationScope.getActiveTool()?.id ?? null,
+    setActiveAnnotationTool(toolId, defaults) {
+      if (destroyed) return;
+      if (toolId !== null && defaults) annotations.setToolDefaults(toolId, { ...defaults });
+      annotationScope.setActiveTool(toolId);
+    },
+    markupSelection(toolId, defaults) {
+      if (destroyed || readOnlyReason !== null) return false;
+      const tool = annotations.getTool(toolId);
+      const segments = selectionScope.getFormattedSelection();
+      if (!tool?.interaction.textSelection || segments.length === 0) return false;
+      annotations.setToolDefaults(toolId, { ...defaults });
+      const toolDefaults = annotations.getTool(toolId)?.defaults ?? tool.defaults;
+      // As EmbedPDF's own text-markup tools do: one native markup per page, with
+      // the marked text kept alongside for listings such as Highlights and Notes.
+      const text = new Promise<string | undefined>((resolve) =>
+        selectionScope.getSelectedText().wait(
+          (lines) => resolve(lines.join('\n')),
+          () => resolve(undefined),
+        ),
+      );
+      for (const segment of segments) {
+        const id = crypto.randomUUID();
+        void text.then((selectedText) => {
+          if (destroyed) return;
+          annotationScope.createAnnotation(segment.pageIndex, {
+            ...toolDefaults,
+            rect: segment.rect,
+            segmentRects: segment.segmentRects,
+            pageIndex: segment.pageIndex,
+            created: new Date(),
+            id,
+            ...(selectedText != null ? { custom: { text: selectedText } } : {}),
+          } as PdfAnnotationObject);
+        });
       }
+      selectionScope.clear();
+      return true;
     },
     pageCount: () => documentObject?.pageCount ?? 0,
+    pageRotations: () => documentObject?.pages.map(({ rotation }) => rotation) ?? [],
     currentPage: currentPageNumber,
     currentZoom: () => zoomScope.getState().currentZoomLevel,
     zoomIntent: () => zoomIntentFromEmbedPdfLevel(zoomScope.getState().zoomLevel),
-    rotation: () => degreesFromEmbedPdfRotation(rotateScope.getRotation()),
     viewMode: () => selectedViewMode,
     readingPosition: currentReadingPosition,
     goToPage: (pageNumber) =>
@@ -594,11 +704,6 @@ export async function createEmbedPdfViewerRuntime({
     },
     zoomIn: () => withProjection('zoom', () => zoomScope.zoomIn()),
     zoomOut: () => withProjection('zoom', () => zoomScope.zoomOut()),
-    setRotation: (rotation) =>
-      withProjection('rotation', () => {
-        selectedRotation = ((rotation % 360) + 360) % 360;
-        rotateScope.setRotation(embedPdfRotationFromDegrees(rotation));
-      }),
     setViewMode: (viewMode) =>
       withProjection('viewMode', () => {
         const layout = embedPdfLayoutForViewMode(viewMode);
@@ -628,7 +733,12 @@ export async function createEmbedPdfViewerRuntime({
           const pageNumber = page + 1;
           const pageOccurrence = pageOccurrences.get(pageNumber) ?? 0;
           pageOccurrences.set(pageNumber, pageOccurrence + 1);
-          return createSearchMatch(result, pageNumber, pageOccurrence);
+          return createSearchMatch(
+            result,
+            pageNumber,
+            pageOccurrence,
+            currentDocument().pages[page],
+          );
         });
         progressMatches.push(...pageMatches);
         options.onProgress?.({
@@ -645,7 +755,12 @@ export async function createEmbedPdfViewerRuntime({
         const pageNumber = match.pageIndex + 1;
         const pageOccurrence = occurrences.get(pageNumber) ?? 0;
         occurrences.set(pageNumber, pageOccurrence + 1);
-        return createSearchMatch(match, pageNumber, pageOccurrence);
+        return createSearchMatch(
+          match,
+          pageNumber,
+          pageOccurrence,
+          currentDocument().pages[match.pageIndex],
+        );
       });
     },
     async outline(options) {
@@ -667,10 +782,14 @@ export async function createEmbedPdfViewerRuntime({
           target?.type === 'destination'
             ? target.destination?.pageIndex
             : target?.action?.destination?.pageIndex;
+        const linkTarget = bookmark.target
+          ? monightLinkTarget(bookmark.target as Parameters<typeof monightLinkTarget>[0])
+          : null;
         return {
           title: bookmark.title,
           pageNumber: typeof pageIndex === 'number' ? pageIndex + 1 : null,
           ...(target?.action?.uri ? { url: target.action.uri } : {}),
+          ...(linkTarget ? { target: linkTarget } : {}),
           bold: false,
           italic: false,
           items: (bookmark.children ?? []).map((child) =>
@@ -715,6 +834,31 @@ export async function createEmbedPdfViewerRuntime({
         .renderThumb(pageNumber - 1, window.devicePixelRatio || 1)
         .toPromise();
       return blobToCanvas(blob, maxWidth);
+    },
+    annotations: () =>
+      documentObject
+        ? embedPdfAnnotationSnapshots(annotationScope.getAnnotations(), documentObject.pages)
+        : [],
+    revealAnnotation(annotationId) {
+      if (destroyed) return;
+      const annotation = annotationScope.getAnnotationById(annotationId);
+      if (!annotation || annotation.commitState === 'deleted') return;
+      annotationScope.selectAnnotation(annotation.object.pageIndex, annotationId);
+    },
+    selectedAnnotation() {
+      if (destroyed || !documentObject) return null;
+      const selected = annotationScope.getSelectedAnnotations();
+      const [tracked] = selected;
+      if (selected.length !== 1 || !tracked || tracked.commitState === 'deleted') return null;
+      const [snapshot] = embedPdfAnnotationSnapshots([tracked], documentObject.pages);
+      if (!snapshot) return null;
+      return {
+        id: snapshot.id,
+        kind: snapshot.kind,
+        contents: snapshot.contents,
+        color: snapshot.color,
+        anchor: annotationAnchor(tracked.object),
+      };
     },
     async destroy() {
       if (destroyed) return;

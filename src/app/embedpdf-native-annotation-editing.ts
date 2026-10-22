@@ -3,27 +3,46 @@ import {
   type PdfAnnotationObject,
   type PdfDocumentObject,
   type PdfEngine,
+  PdfErrorCode,
   type PdfTask,
   Task,
 } from '@embedpdf/models';
 import {
   type AnnotationCapability,
+  type HistoryScope,
   PdfAnnotationSubtype,
+  type Rotation,
   type TrackedAnnotation,
 } from '@embedpdf/snippet';
-import type { NativePdfEditing } from '../reader/native-pdf-editing';
+import type {
+  AnnotationEdit,
+  NativePdfEditing,
+  PageRotationDirection,
+} from '../reader/native-pdf-editing';
 import { embedPdfAnnotationToolIds } from './embedpdf-offline-configuration';
+import {
+  mapRegeneratedTextMarkupAppearance,
+  type PendingMarkupAppearance,
+} from './embedpdf-text-markup-appearance';
 
+/** The fields a text markup's appearance is drawn from; any change regenerates it. */
+const textMarkupAppearanceFields = [
+  'rect',
+  'segmentRects',
+  'strokeColor',
+  'opacity',
+  'strokeWidth',
+  'blendMode',
+] as const;
+
+/** The supported editable fields a saved Annotation must keep. */
 const verifiedFields = [
   'id',
   'type',
   'pageIndex',
-  'rect',
   'contents',
   'author',
-  'strokeColor',
-  'opacity',
-  'segmentRects',
+  ...textMarkupAppearanceFields,
 ] as const;
 
 /** Compare the supported editable fields, tolerating PDF float serialization only. */
@@ -54,7 +73,11 @@ function nativeAnnotationMatches(
   });
 }
 
-const preservingEngines = new WeakSet<PdfEngine>();
+// Plugin commit may swallow individual mutation failures. Keep failed appearance
+// corrections, by Document and Annotation, until an export repairs them or fails
+// before any bytes can be saved. One map per engine, whose appearance preservation
+// is installed once.
+const pendingMarkupAppearances = new WeakMap<PdfEngine, Map<string, PendingMarkupAppearance>>();
 
 /** The icon a note displays: an absent or unrecognized /Name means the default /Note. */
 function noteIcon({ name, icon }: { name?: PdfAnnotationName; icon?: PdfAnnotationName }) {
@@ -63,18 +86,60 @@ function noteIcon({ name, icon }: { name?: PdfAnnotationName; icon?: PdfAnnotati
 }
 
 /**
+ * Comment-only text-markup edits must keep their native appearance; actual visual
+ * edits regenerate it and correct its coordinate box before saving (#119).
  * Keep a note's existing appearance stream, such as Preview's or Acrobat's own icon,
  * when an update leaves that icon unchanged. The pinned engine otherwise replaces it
  * with PDFium's 20pt icon on every contents edit. Writing an absent icon name (Preview
  * omits /Name) also deletes the stream, even with appearance regeneration disabled.
  */
-function preserveNativeNoteAppearances(engine: PdfEngine): void {
-  if (preservingEngines.has(engine)) return;
-  preservingEngines.add(engine);
+function preserveNativeAnnotationAppearances(
+  engine: PdfEngine,
+): Map<string, PendingMarkupAppearance> {
+  const installed = pendingMarkupAppearances.get(engine);
+  if (installed) return installed;
+  const pending = new Map<string, PendingMarkupAppearance>();
+  pendingMarkupAppearances.set(engine, pending);
   const update = engine.updatePageAnnotation.bind(engine);
   engine.updatePageAnnotation = (doc, page, annotation, options) => {
-    if (annotation.type !== PdfAnnotationSubtype.TEXT)
+    const textMarkup =
+      annotation.type === PdfAnnotationSubtype.UNDERLINE ||
+      annotation.type === PdfAnnotationSubtype.STRIKEOUT;
+    if (annotation.type !== PdfAnnotationSubtype.TEXT && !textMarkup)
       return update(doc, page, annotation, options);
+    if (textMarkup) {
+      const task: PdfTask<boolean> = new Task();
+      engine.getPageAnnotations(doc, page).wait(
+        (native) => {
+          const existing = native.find(({ id }) => id === annotation.id);
+          const regenerateAppearance =
+            options?.regenerateAppearance !== false &&
+            !(
+              existing?.type === annotation.type &&
+              nativeAnnotationMatches(annotation, existing, textMarkupAppearanceFields)
+            );
+          update(doc, page, annotation, { ...options, regenerateAppearance }).wait(
+            (ok) => {
+              try {
+                if (ok && regenerateAppearance) {
+                  const key = `${doc.id}:${annotation.id}`;
+                  const markup = { document: doc, page, annotationId: annotation.id };
+                  pending.set(key, markup);
+                  mapRegeneratedTextMarkupAppearance(engine, markup);
+                  pending.delete(key);
+                }
+                task.resolve(ok);
+              } catch (error) {
+                task.reject({ code: PdfErrorCode.CantSetAnnotContent, message: String(error) });
+              }
+            },
+            (error) => task.fail(error),
+          );
+        },
+        (error) => task.fail(error),
+      );
+      return task;
+    }
     const note: PdfAnnotationObject = { ...annotation, name: noteIcon(annotation) };
     const task: PdfTask<boolean> = new Task();
     engine.getPageAnnotations(doc, page).wait(
@@ -97,6 +162,38 @@ function preserveNativeNoteAppearances(engine: PdfEngine): void {
     );
     return task;
   };
+  return pending;
+}
+
+type SetPageRotation = (document: PdfDocumentObject, pageIndex: number, rotation: Rotation) => void;
+
+/**
+ * The single Page Rotation write mechanism: PDFium's own page-rotation setter on the live
+ * Document. The pinned engine exposes no API for it, so this narrow adapter reaches the
+ * direct (main-thread) executor. Everything that serializes the live Document (Save, Save
+ * As, Recovery Drafts, printing) then carries the rotation through `saveAsCopy`.
+ */
+function pdfiumPageRotationSetter(engine: PdfEngine): SetPageRotation | null {
+  const executor: unknown = Reflect.get(engine, 'executor');
+  if (!executor || typeof executor !== 'object') return null;
+  const pdfium: unknown = Reflect.get(executor, 'pdfiumModule');
+  const cache: unknown = Reflect.get(executor, 'cache');
+  const setRotation =
+    pdfium && typeof pdfium === 'object' && Reflect.get(pdfium, 'FPDFPage_SetRotation');
+  const getContext = cache && typeof cache === 'object' && Reflect.get(cache, 'getContext');
+  if (typeof setRotation !== 'function' || typeof getContext !== 'function') return null;
+  return (document, pageIndex, rotation) => {
+    const context = getContext.call(cache, document.id) as
+      | { acquirePage(index: number): { pagePtr: number; release(): void } }
+      | undefined;
+    if (!context) throw new Error('Page Rotation is unavailable: the Document is not open');
+    const page = context.acquirePage(pageIndex);
+    try {
+      setRotation.call(pdfium, page.pagePtr, rotation);
+    } finally {
+      page.release();
+    }
+  };
 }
 
 export function createEmbedPdfNativeAnnotationEditing({
@@ -104,6 +201,8 @@ export function createEmbedPdfNativeAnnotationEditing({
   annotationScope,
   currentDocument,
   engine,
+  history,
+  pageRotationChanged,
   readOnlyReason,
   stateChanged,
 }: {
@@ -111,10 +210,32 @@ export function createEmbedPdfNativeAnnotationEditing({
   annotationScope: ReturnType<AnnotationCapability['forDocument']>;
   currentDocument: () => PdfDocumentObject;
   engine: PdfEngine;
+  /** The viewer's undo timeline, shared with Annotation edits. */
+  history?: HistoryScope;
+  /** Re-lays out and re-renders pages whose live Page Rotation changed. */
+  pageRotationChanged?: (pageIndexes: readonly number[]) => void;
   readOnlyReason: string | null;
   stateChanged: () => void;
 }) {
-  preserveNativeNoteAppearances(engine);
+  const pendingAppearances = preserveNativeAnnotationAppearances(engine);
+  const setPageRotation = pdfiumPageRotationSetter(engine);
+  // The viewer opens Documents with normalized rotation: Annotation geometry stays in
+  // unrotated page space and each page's rotation is applied when laying it out. A Page
+  // Rotation therefore changes only the page, never its Annotations' coordinates.
+  const turnPages = (pageIndexes: readonly number[], quarterTurns: number): void => {
+    const document = currentDocument();
+    if (!setPageRotation) throw new Error('Page Rotation editing is unavailable');
+    for (const index of pageIndexes) {
+      const page = document.pages[index];
+      if (!page) throw new Error(`Page ${index + 1} does not exist`);
+      const rotation = ((((page.rotation + quarterTurns) % 4) + 4) % 4) as Rotation;
+      setPageRotation(document, index, rotation);
+      page.rotation = rotation;
+    }
+    editRevision += 1;
+    pageRotationChanged?.(pageIndexes);
+    stateChanged();
+  };
   let editRevision = 0;
   let savedRevision = 0;
   let retryNativeAnnotations = false;
@@ -206,13 +327,31 @@ export function createEmbedPdfNativeAnnotationEditing({
           }
         }
       }
+      for (const [key, pending] of pendingAppearances) {
+        if (pending.document.id !== document.id) continue;
+        if (expected.some(({ id }) => id === pending.annotationId))
+          mapRegeneratedTextMarkupAppearance(engine, { ...pending, document });
+        pendingAppearances.delete(key);
+      }
       const buffer = await engine.saveAsCopy(document).toPromise();
       // The pinned plugin can resolve commit() despite a failed individual mutation.
       // Reopen exported bytes and check native fields before permitting a disk write.
       const verification = await engine
-        .openDocumentBuffer({ id: `verify-${crypto.randomUUID()}`, content: buffer })
+        // The viewer's own (normalized) geometry, so markup on rotated pages compares exactly.
+        .openDocumentBuffer(
+          { id: `verify-${crypto.randomUUID()}`, content: buffer },
+          { normalizeRotation: true },
+        )
         .toPromise();
       try {
+        if (
+          verification.pages.length !== document.pages.length ||
+          verification.pages.some(
+            (page, index) => page.rotation !== document.pages[index]?.rotation,
+          )
+        ) {
+          throw new Error('Page Rotation verification failed; unsaved edits were retained');
+        }
         const actual = (
           await Promise.all(
             verification.pages.map((page) =>
@@ -246,6 +385,53 @@ export function createEmbedPdfNativeAnnotationEditing({
       editRevision = Math.max(editRevision, revision);
       savedRevision = 0;
       stateChanged();
+    },
+    rotatePages(pages: readonly number[], direction: PageRotationDirection) {
+      if (readOnlyReason) throw new Error(readOnlyReason);
+      const document = currentDocument();
+      const pageIndexes = [...new Set(pages)].map((page) => page - 1);
+      if (
+        pageIndexes.length === 0 ||
+        pageIndexes.some((index) => !Number.isInteger(index) || !document.pages[index])
+      )
+        throw new Error('Choose pages that exist in this Document to rotate');
+      if (!setPageRotation) throw new Error('Page Rotation editing is unavailable');
+      const turn = direction === 'clockwise' ? 1 : -1;
+      const command = {
+        execute: () => turnPages(pageIndexes, turn),
+        undo: () => turnPages(pageIndexes, -turn),
+        metadata: { pageRotation: pageIndexes },
+      };
+      if (history) history.register(command, 'page-rotation');
+      else command.execute();
+    },
+    editAnnotation(annotationId: string, edit: AnnotationEdit) {
+      if (readOnlyReason) throw new Error(readOnlyReason);
+      const annotation = annotationScope.getAnnotationById(annotationId);
+      if (!annotation || annotation.commitState === 'deleted')
+        throw new Error('The Annotation no longer exists');
+      const { pageIndex } = annotation.object;
+      if (edit.type === 'delete') annotationScope.deleteAnnotation(pageIndex, annotationId);
+      else
+        annotationScope.updateAnnotation(
+          pageIndex,
+          annotationId,
+          edit.type === 'contents'
+            ? { contents: edit.contents }
+            : { strokeColor: edit.strokeColor },
+        );
+    },
+    canUndo: () => !readOnlyReason && (history?.canUndo() ?? false),
+    canRedo: () => !readOnlyReason && (history?.canRedo() ?? false),
+    undo() {
+      if (readOnlyReason) throw new Error(readOnlyReason);
+      if (!history) throw new Error('Undo is unavailable for this Document');
+      history.undo();
+    },
+    redo() {
+      if (readOnlyReason) throw new Error(readOnlyReason);
+      if (!history) throw new Error('Redo is unavailable for this Document');
+      history.redo();
     },
     setAnnotationDisplayName(displayName) {
       for (const toolId of embedPdfAnnotationToolIds()) {

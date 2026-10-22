@@ -36,7 +36,7 @@ const mocks = vi.hoisted(() => {
   let restorationBarrier = Promise.resolve();
   let useRealRestoration = false;
   let savedReadingSession: PersistedReadingSession = {
-    schemaVersion: 2,
+    schemaVersion: 3,
     activeDocumentPath: '/docs/report.pdf',
     documents: [
       {
@@ -112,7 +112,7 @@ const mocks = vi.hoisted(() => {
       confirmationChoices = [];
       useRealRestoration = false;
       savedReadingSession = {
-        schemaVersion: 2,
+        schemaVersion: 3,
         activeDocumentPath: '/docs/report.pdf',
         documents: [
           {
@@ -169,6 +169,7 @@ vi.mock('@tauri-apps/api/webviewWindow', () => {
     }),
     unminimize: vi.fn(async () => undefined),
     isFullscreen: vi.fn(async () => false),
+    onResized: vi.fn(async () => vi.fn()),
     setFullscreen: vi.fn(async () => undefined),
   };
   const auxiliaryWindow = {
@@ -247,17 +248,17 @@ vi.mock('../app/startup-restoration', async (importOriginal) => {
   };
 });
 vi.mock('../app/ui', () => ({
+  applyWindowChrome: vi.fn(),
   renderRecentFiles: vi.fn(),
   showSplash: vi.fn(),
   showViewer: vi.fn(),
-  updateActivePresetButton: vi.fn(),
   updateKeyboardHints: vi.fn(),
   updateTabBarVisibility: vi.fn(),
   updateUI: vi.fn(),
 }));
 vi.mock('../lib/debug-log', () => ({ debugLog: vi.fn() }));
 vi.mock('../reader/reading-session-store', () => ({
-  EMPTY_READING_SESSION: { schemaVersion: 2, activeDocumentPath: null, documents: [] },
+  EMPTY_READING_SESSION: { schemaVersion: 3, activeDocumentPath: null, documents: [] },
   loadReadingSession: vi.fn(async () => mocks.savedReadingSession()),
 }));
 vi.mock('../reader/recent-documents', () => ({
@@ -319,7 +320,7 @@ function createModules(
 ): ApplicationModules {
   let remainingSessionFlushFailures = options.sessionFlushFailures ?? 0;
   const session: ReadingSessionSnapshot = {
-    schemaVersion: 2,
+    schemaVersion: 3,
     revision: 0,
     activeDocumentPath: '/docs/report.pdf',
     documents: [
@@ -340,6 +341,8 @@ function createModules(
     isDocumentOpen: vi.fn(() => true),
     snapshot: vi.fn(() => session),
     observe: vi.fn(() => vi.fn()),
+    canGoBack: vi.fn(() => false),
+    canGoForward: vi.fn(() => false),
     quiesce: vi.fn(async () => {
       mocks.events.push('flush:actions-quiesce');
     }),
@@ -415,11 +418,12 @@ function createModules(
           access: vi.fn(() => null),
           activePresentation: vi.fn(() => null),
           activeRenderingState: vi.fn(() => null),
+          activeMarkup: vi.fn(() => null),
+          selectedAnnotation: vi.fn(() => null),
           activeReadingPosition: vi.fn(() => ({
             filePath: '/docs/report.pdf',
             readingPosition: { page: 4, location: 0.5 },
           })),
-          openActiveSearch: vi.fn(),
           setAnnotationDisplayName: options.annotationDisplayNameChanged ?? vi.fn(),
         };
       },
@@ -455,14 +459,12 @@ function createLifecycleSurface(filePath: string): {
       totalPages: 12,
       zoom: 1,
       zoomIntent: { kind: 'manual' as const, scale: 1 },
-      rotation: 0,
       fileName: filePath.split('/').pop() ?? filePath,
       filePath,
       viewMode: 'single' as const,
     }),
     getReadingPosition: () => readingPosition,
     applyFilter: vi.fn(),
-    setRotation: vi.fn(async () => undefined),
     setViewMode: vi.fn(async () => undefined),
     setZoomIntent: vi.fn(async () => undefined),
     goToReadingPosition: vi.fn(async (position) => {
@@ -617,7 +619,7 @@ describe('application lifecycle composition', () => {
   it('persists completed foreground changes while retaining interrupted Reading Session Documents', async () => {
     mocks.setUseRealRestoration(true);
     mocks.setSavedReadingSession({
-      schemaVersion: 2,
+      schemaVersion: 3,
       activeDocumentPath: '/docs/active.pdf',
       documents: [
         {

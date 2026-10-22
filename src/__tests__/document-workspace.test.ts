@@ -23,7 +23,7 @@ import { PRESETS } from '../scripts/filters';
 const snapshot = (
   documents: ReadingSessionSnapshot['documents'],
   activeDocumentPath: string | null,
-): ReadingSessionSnapshot => ({ schemaVersion: 2, revision: 1, activeDocumentPath, documents });
+): ReadingSessionSnapshot => ({ schemaVersion: 3, revision: 1, activeDocumentPath, documents });
 
 interface ControllableSurface {
   readonly rendering: DocumentRendering;
@@ -60,14 +60,12 @@ function createControllableSurface(
       totalPages: 12,
       zoom: 1,
       zoomIntent: { kind: 'manual' as const, scale: 1 },
-      rotation: 0,
       fileName: filePath.split('/').pop() ?? filePath,
       filePath,
       viewMode: 'single' as const,
     }),
     getReadingPosition: () => ({ page: currentPage, location: 0 }),
     applyFilter: vi.fn(),
-    setRotation: vi.fn(async () => undefined),
     setViewMode: vi.fn(async () => undefined),
     setZoomIntent: vi.fn(async () => undefined),
     goToReadingPosition: vi.fn(async (position: RestorableReadingPosition) => {
@@ -102,7 +100,6 @@ describe('Document workspace adapter', () => {
       defaultVisualState: () => ({
         filterSettings: PRESETS.default,
         zoomIntent: { kind: 'fit-width' },
-        rotation: 0,
         viewMode: 'single',
       }),
       createSurface: async ({ filePath }) => {
@@ -134,11 +131,161 @@ describe('Document workspace adapter', () => {
     );
   });
 
+  it('routes markup tool choice to the active Document and reports whether it can be edited', async () => {
+    const reason = 'Digitally signed PDFs are read-only to preserve their signatures';
+    const tools = new Map<string, string | null>();
+    const toolDefaults = new Map<string, { strokeColor?: string }>();
+    const marks: Array<{ filePath: string; toolId: string; strokeColor?: string }> = [];
+    let activePath = '/editable.pdf';
+    const workspace = createDocumentWorkspace({
+      dispatchReaderAction: vi.fn(async () => ({ status: 'committed' as const, revision: 1 })),
+      snapshot: () => snapshot([], activePath),
+      isDocumentOpen: () => false,
+      defaultVisualState: () => ({
+        filterSettings: PRESETS.default,
+        zoomIntent: { kind: 'fit-width' },
+        viewMode: 'single',
+      }),
+      createSurface: async ({ filePath }) => {
+        const surface = createControllableSurface(filePath);
+        tools.set(filePath, null);
+        surface.rendering.activeAnnotationTool = () => tools.get(filePath) ?? null;
+        surface.rendering.setActiveAnnotationTool = (toolId, defaults) => {
+          tools.set(filePath, toolId);
+          if (defaults) toolDefaults.set(filePath, defaults);
+        };
+        surface.rendering.markupSelection = (toolId, defaults) => {
+          marks.push({ filePath, toolId, ...defaults });
+          return true;
+        };
+        surface.runtime.editing = {
+          state: () => ({
+            revision: 0,
+            dirty: false,
+            readOnlyReason: filePath === '/signed.pdf' ? reason : null,
+          }),
+          exportPdf: async () => new Uint8Array([1]),
+          markSaved: vi.fn(),
+          canUndo: () => filePath === '/editable.pdf',
+          canRedo: () => false,
+        };
+        return surface;
+      },
+    });
+    for (const filePath of ['/editable.pdf', '/signed.pdf']) {
+      await workspace.intakeRuntime.open({
+        document: { canonicalPath: filePath, title: filePath.slice(1) },
+        bytes: new Uint8Array([1]),
+        activate: false,
+      });
+    }
+
+    workspace.setActiveAnnotationTool('textComment');
+    expect(workspace.activeMarkup()).toEqual({
+      activeToolId: 'textComment',
+      readOnlyReason: null,
+      canUndo: true,
+      canRedo: false,
+    });
+    expect(tools.get('/signed.pdf')).toBeNull();
+    workspace.setActiveAnnotationTool('highlight', { strokeColor: '#7ED957' });
+    expect(toolDefaults.get('/editable.pdf')).toEqual({ strokeColor: '#7ED957' });
+    expect(workspace.markupSelection('highlight', { strokeColor: '#7ED957' })).toBe(true);
+    expect(marks).toEqual([
+      { filePath: '/editable.pdf', toolId: 'highlight', strokeColor: '#7ED957' },
+    ]);
+
+    activePath = '/signed.pdf';
+    expect(workspace.activeMarkup()).toEqual({
+      activeToolId: null,
+      readOnlyReason: reason,
+      canUndo: false,
+      canRedo: false,
+    });
+
+    activePath = '/missing.pdf';
+    expect(workspace.activeMarkup()).toBeNull();
+    expect(workspace.markupSelection('highlight', {})).toBe(false);
+  });
+
+  it("offers the active Document's selected Annotation with the Document it belongs to", async () => {
+    let activePath = '/second.pdf';
+    const workspace = createDocumentWorkspace({
+      dispatchReaderAction: vi.fn(async () => ({ status: 'committed' as const, revision: 1 })),
+      snapshot: () => snapshot([], activePath),
+      isDocumentOpen: () => false,
+      defaultVisualState: () => ({
+        filterSettings: PRESETS.default,
+        zoomIntent: { kind: 'fit-width' },
+        viewMode: 'single',
+      }),
+      createSurface: async ({ filePath }) => {
+        const surface = createControllableSurface(filePath);
+        surface.rendering.selectedAnnotation = () => ({
+          id: `${filePath}#note`,
+          kind: 'note',
+          contents: '',
+          color: null,
+          anchor: null,
+        });
+        return surface;
+      },
+    });
+    for (const filePath of ['/first.pdf', '/second.pdf']) {
+      await workspace.intakeRuntime.open({
+        document: { canonicalPath: filePath, title: filePath.slice(1) },
+        bytes: new Uint8Array([1]),
+        activate: false,
+      });
+    }
+
+    expect(workspace.selectedAnnotation()).toMatchObject({
+      id: '/second.pdf#note',
+      filePath: '/second.pdf',
+    });
+
+    activePath = '/missing.pdf';
+    expect(workspace.selectedAnnotation()).toBeNull();
+  });
+
+  it('reveals an Annotation on the rendering surface of the Document that owns it', async () => {
+    const reveals = new Map<string, ReturnType<typeof vi.fn>>();
+    const workspace = createDocumentWorkspace({
+      dispatchReaderAction: vi.fn(async () => ({ status: 'committed' as const, revision: 1 })),
+      snapshot: () => snapshot([], null),
+      isDocumentOpen: () => false,
+      defaultVisualState: () => ({
+        filterSettings: PRESETS.default,
+        zoomIntent: { kind: 'fit-width' },
+        viewMode: 'single',
+      }),
+      createSurface: async ({ filePath }) => {
+        const surface = createControllableSurface(filePath);
+        const revealAnnotation = vi.fn();
+        reveals.set(filePath, revealAnnotation);
+        return { ...surface, rendering: { ...surface.rendering, revealAnnotation } };
+      },
+    });
+    for (const filePath of ['/first.pdf', '/second.pdf']) {
+      await workspace.intakeRuntime.open({
+        document: { canonicalPath: filePath, title: filePath.slice(1) },
+        bytes: new Uint8Array([1]),
+        activate: false,
+      });
+    }
+
+    workspace.revealAnnotation('/second.pdf', 'note-7');
+    workspace.revealAnnotation('/closed.pdf', 'note-1');
+
+    expect(reveals.get('/first.pdf')).not.toHaveBeenCalled();
+    expect(reveals.get('/second.pdf')).toHaveBeenCalledExactlyOnceWith('note-7');
+  });
+
   it('routes edited tab close through Cancel and Discard and retires viewer callbacks on reopen', async () => {
     let reader: ReaderActions;
     let choice: 'cancel' | 'discard' = 'cancel';
     const callbacks: DocumentSurfaceCallbacks[] = [];
-    const initialSession = { schemaVersion: 2 as const, documents: [], activeDocumentPath: null };
+    const initialSession = { schemaVersion: 3 as const, documents: [], activeDocumentPath: null };
     const workspace = createDocumentWorkspace({
       dispatchReaderAction: (action, options) => reader.dispatch(action, options),
       snapshot: () => reader?.snapshot() ?? { ...initialSession, revision: 0 },
@@ -146,7 +293,6 @@ describe('Document workspace adapter', () => {
       defaultVisualState: () => ({
         filterSettings: PRESETS.default,
         zoomIntent: { kind: 'fit-width' },
-        rotation: 0,
         viewMode: 'single',
       }),
       createSurface: async ({ filePath, callbacks: events }) => {
@@ -204,7 +350,7 @@ describe('Document workspace adapter', () => {
     let reader: ReaderActions;
     let editRevision = 0;
     let savedRevision = 0;
-    const initialSession = { schemaVersion: 2 as const, documents: [], activeDocumentPath: null };
+    const initialSession = { schemaVersion: 3 as const, documents: [], activeDocumentPath: null };
     const workspace = createDocumentWorkspace({
       dispatchReaderAction: (action, options) => reader.dispatch(action, options),
       captureRecoveryDraft: (filePath) => reader.captureRecoveryDraft(filePath),
@@ -213,7 +359,6 @@ describe('Document workspace adapter', () => {
       defaultVisualState: () => ({
         filterSettings: PRESETS.default,
         zoomIntent: { kind: 'fit-width' },
-        rotation: 0,
         viewMode: 'single',
       }),
       recoveryDraftAdapter: {
@@ -282,7 +427,7 @@ describe('Document workspace adapter', () => {
     const openedBytes: number[][] = [];
     const reportError = vi.fn();
     const choice = vi.fn(async () => 'recover' as const);
-    const initialSession = { schemaVersion: 2 as const, documents: [], activeDocumentPath: null };
+    const initialSession = { schemaVersion: 3 as const, documents: [], activeDocumentPath: null };
     let reader: ReaderActions;
     const workspace = createDocumentWorkspace({
       dispatchReaderAction: (action, options) => reader.dispatch(action, options),
@@ -291,7 +436,6 @@ describe('Document workspace adapter', () => {
       defaultVisualState: () => ({
         filterSettings: PRESETS.default,
         zoomIntent: { kind: 'fit-width' },
-        rotation: 0,
         viewMode: 'single',
       }),
       recoveryDraftAdapter: {
@@ -333,7 +477,6 @@ describe('Document workspace adapter', () => {
       defaultVisualState: () => ({
         filterSettings: PRESETS.default,
         zoomIntent: { kind: 'fit-width' },
-        rotation: 0,
         viewMode: 'single',
       }),
       recoveryDraftAdapter: {
@@ -369,7 +512,7 @@ describe('Document workspace adapter', () => {
     const callbacks: DocumentSurfaceCallbacks[] = [];
     let revision = 0;
     let reader: ReaderActions;
-    const initialSession = { schemaVersion: 2 as const, documents: [], activeDocumentPath: null };
+    const initialSession = { schemaVersion: 3 as const, documents: [], activeDocumentPath: null };
     const write = vi.fn(async () => undefined);
     const reportError = vi.fn();
     const recoveryDraftAdapter = {
@@ -386,7 +529,6 @@ describe('Document workspace adapter', () => {
       defaultVisualState: () => ({
         filterSettings: PRESETS.default,
         zoomIntent: { kind: 'fit-width' },
-        rotation: 0,
         viewMode: 'single',
       }),
       recoveryDraftAdapter,
@@ -441,7 +583,7 @@ describe('Document workspace adapter', () => {
     const callbacks: DocumentSurfaceCallbacks[] = [];
     let revision = 0;
     let reader: ReaderActions;
-    const initialSession = { schemaVersion: 2 as const, documents: [], activeDocumentPath: null };
+    const initialSession = { schemaVersion: 3 as const, documents: [], activeDocumentPath: null };
     const autosaveDocument = vi.fn(
       async (_filePath: string): Promise<ReaderActionOutcome> => ({
         status: 'performed',
@@ -458,7 +600,6 @@ describe('Document workspace adapter', () => {
       defaultVisualState: () => ({
         filterSettings: PRESETS.default,
         zoomIntent: { kind: 'fit-width' },
-        rotation: 0,
         viewMode: 'single',
       }),
       reportError,
@@ -531,7 +672,6 @@ describe('Document workspace adapter', () => {
       defaultVisualState: () => ({
         filterSettings: PRESETS.default,
         zoomIntent: { kind: 'manual', scale: 1 },
-        rotation: 0,
         viewMode: 'single',
       }),
       createSurface: vi.fn(async () => {
@@ -547,7 +687,6 @@ describe('Document workspace adapter', () => {
           visualState: {
             filterSettings: PRESETS.default,
             zoomIntent: { kind: 'manual', scale: 1 },
-            rotation: 0,
             viewMode: 'single',
           },
         },
@@ -558,7 +697,6 @@ describe('Document workspace adapter', () => {
           visualState: {
             filterSettings: PRESETS.default,
             zoomIntent: { kind: 'fit-width' },
-            rotation: 0,
             viewMode: 'continuous',
           },
         },
@@ -586,7 +724,6 @@ describe('Document workspace adapter', () => {
     let current = snapshot([], null);
     const rendering = {
       applyFilter: vi.fn(),
-      setRotation: vi.fn(async () => undefined),
       setViewMode: vi.fn(async () => undefined),
       setZoomIntent: vi.fn(async () => undefined),
       goToReadingPosition: vi.fn(async () => undefined),
@@ -629,7 +766,6 @@ describe('Document workspace adapter', () => {
       defaultVisualState: () => ({
         filterSettings: PRESETS.default,
         zoomIntent: { kind: 'manual', scale: 1 },
-        rotation: 0,
         viewMode: 'single',
       }),
       createSurface,
@@ -656,6 +792,12 @@ describe('Document workspace adapter', () => {
         readingPosition: { page: 4, location: 0 },
       },
     });
+    // Navigation History reads the live position before a jump settles.
+    expect(workspace.projection.currentReadingPosition?.('/docs/report.pdf')).toEqual({
+      page: 4,
+      location: 0,
+    });
+    expect(workspace.projection.currentReadingPosition?.('/docs/other.pdf')).toBeNull();
   });
 
   it('does not treat an unrestored Reading Session entry as a live Document runtime', () => {
@@ -671,7 +813,6 @@ describe('Document workspace adapter', () => {
       defaultVisualState: () => ({
         filterSettings: PRESETS.default,
         zoomIntent: { kind: 'manual', scale: 1 },
-        rotation: 0,
         viewMode: 'single',
       }),
       createSurface: vi.fn(async () => {
@@ -693,7 +834,6 @@ describe('Document workspace adapter', () => {
       defaultVisualState: () => ({
         filterSettings: PRESETS.default,
         zoomIntent: { kind: 'manual', scale: 1 },
-        rotation: 0,
         viewMode: 'single',
       }),
       createSurface: vi.fn(async ({ callbacks }) => {
@@ -723,11 +863,10 @@ describe('Document workspace adapter', () => {
     let reader: ReaderActions;
     let originCallbacks: DocumentSurfaceCallbacks | undefined;
     let dirty = true;
-    const initialSession = { schemaVersion: 2 as const, activeDocumentPath: null, documents: [] };
+    const initialSession = { schemaVersion: 3 as const, activeDocumentPath: null, documents: [] };
     const visualState = {
       filterSettings: PRESETS.default,
       zoomIntent: { kind: 'fit-width' as const },
-      rotation: 90,
       viewMode: 'spread' as const,
     };
     const openedPaths: string[] = [];
@@ -825,11 +964,10 @@ describe('Document workspace adapter', () => {
     let saved = 0;
     const callbacks: DocumentSurfaceCallbacks[] = [];
     const loaded: number[] = [];
-    const initialSession = { schemaVersion: 2 as const, activeDocumentPath: null, documents: [] };
+    const initialSession = { schemaVersion: 3 as const, activeDocumentPath: null, documents: [] };
     const visualState = {
       filterSettings: PRESETS.default,
       zoomIntent: { kind: 'fit-width' as const },
-      rotation: 90,
       viewMode: 'spread' as const,
     };
     const adapter = {
@@ -916,7 +1054,7 @@ describe('Document workspace adapter', () => {
     let presentationActive = false;
     let reader: ReaderActions;
     const initialSession = {
-      schemaVersion: 2 as const,
+      schemaVersion: 3 as const,
       activeDocumentPath: null,
       documents: [],
     };
@@ -927,7 +1065,6 @@ describe('Document workspace adapter', () => {
       defaultVisualState: () => ({
         filterSettings: PRESETS.default,
         zoomIntent: { kind: 'manual', scale: 1 },
-        rotation: 0,
         viewMode: 'single',
       }),
       createSurface: vi.fn(async ({ filePath }) => {
@@ -1079,7 +1216,6 @@ describe('Document workspace adapter', () => {
       defaultVisualState: () => ({
         filterSettings: PRESETS.default,
         zoomIntent: { kind: 'manual', scale: 1 },
-        rotation: 0,
         viewMode: 'single',
       }),
       createSurface: vi.fn(
@@ -1125,12 +1261,11 @@ describe('Document workspace adapter', () => {
       visualState: {
         filterSettings: PRESETS.default,
         zoomIntent: { kind: 'fit-width' as const },
-        rotation: 90,
         viewMode: 'continuous' as const,
       },
     };
     const initialSession = {
-      schemaVersion: 2 as const,
+      schemaVersion: 3 as const,
       activeDocumentPath: savedDocument.filePath,
       documents: [savedDocument],
     };
@@ -1144,7 +1279,6 @@ describe('Document workspace adapter', () => {
       defaultVisualState: () => ({
         filterSettings: PRESETS.default,
         zoomIntent: { kind: 'manual', scale: 1 },
-        rotation: 0,
         viewMode: 'single',
       }),
       createSurface: vi.fn(async ({ filePath }) => {

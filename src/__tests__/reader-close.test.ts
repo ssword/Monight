@@ -26,7 +26,7 @@ async function workflow(options: {
   const persisted: string[] = [];
   const removed: string[] = [];
   const reader = createReaderActions({
-    initialSession: { schemaVersion: 2, documents: [], activeDocumentPath: null },
+    initialSession: { schemaVersion: 3, documents: [], activeDocumentPath: null },
     chooseUnsavedDocument: options.choose,
     saveEditsOnClose: options.saveEditsOnClose,
     projection: {

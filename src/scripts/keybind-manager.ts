@@ -1,16 +1,14 @@
 import { debugLog } from '../lib/debug-log';
+import { isEditableTarget } from '../lib/editable-target';
+import {
+  baseKeyFromCode,
+  keybindsMatch,
+  type ParsedKeybind,
+  parseAccelerator,
+} from './accelerators';
 import type { MoonightSettings } from './settings';
 
-/**
- * Parsed keybind structure for matching keyboard events
- */
-export interface ParsedKeybind {
-  key: string;
-  ctrl: boolean;
-  meta: boolean;
-  shift: boolean;
-  alt: boolean;
-}
+export type { ParsedKeybind } from './accelerators';
 
 /**
  * Action handler type - can be sync or async
@@ -40,51 +38,7 @@ export class KeybindManager {
    * Examples: "CmdOrCtrl+O", "CmdOrCtrl+Shift+T", "F11"
    */
   parseAccelerator(accel: string): ParsedKeybind {
-    const parts = accel.split('+').map((p) => p.trim().toLowerCase());
-    const result: ParsedKeybind = {
-      key: '',
-      ctrl: false,
-      meta: false,
-      shift: false,
-      alt: false,
-    };
-
-    for (const part of parts) {
-      switch (part) {
-        case 'cmdorctrl':
-          // Platform-aware: Cmd on Mac, Ctrl on Windows/Linux
-          result.meta = this.isMac;
-          result.ctrl = !this.isMac;
-          break;
-        case 'ctrl':
-        case 'control':
-          result.ctrl = true;
-          break;
-        case 'meta':
-        case 'cmd':
-        case 'command':
-          result.meta = true;
-          break;
-        case 'shift':
-          result.shift = true;
-          break;
-        case 'alt':
-        case 'option':
-          result.alt = true;
-          break;
-        case 'plus':
-          result.key = '+';
-          break;
-        case 'minus':
-          result.key = '-';
-          break;
-        default:
-          // The actual key - normalize to lowercase for matching
-          result.key = part.toLowerCase();
-      }
-    }
-
-    return result;
+    return parseAccelerator(accel, this.isMac);
   }
 
   /**
@@ -153,6 +107,20 @@ export class KeybindManager {
       return null;
     }
 
+    // Option and Shift change the character macOS reports (⌥⌘2 gives "™",
+    // ⇧⌘] gives "}"), so those chords also match by the physical key.
+    const physicalKey = e.altKey || e.shiftKey ? baseKeyFromCode(e.code) : null;
+    for (const key of physicalKey && physicalKey !== eventKey
+      ? [eventKey, physicalKey]
+      : [eventKey]) {
+      const bindingId = this.findBindingForKey(e, key);
+      if (bindingId) return bindingId;
+    }
+
+    return null;
+  }
+
+  private findBindingForKey(e: KeyboardEvent, eventKey: string): string | null {
     for (const [bindingId, keybinds] of this.keybinds) {
       for (const kb of keybinds) {
         const shiftMatches = kb.shift === e.shiftKey || (kb.key === '+' && !kb.shift && e.shiftKey);
@@ -172,20 +140,7 @@ export class KeybindManager {
   }
 
   private isEditableTarget(target: EventTarget | null): boolean {
-    if (!target || typeof target !== 'object') return false;
-
-    const element = target as {
-      tagName?: string;
-      isContentEditable?: boolean;
-    };
-    const tagName = element.tagName?.toLowerCase();
-
-    return (
-      tagName === 'input' ||
-      tagName === 'textarea' ||
-      tagName === 'select' ||
-      element.isContentEditable === true
-    );
+    return isEditableTarget(target);
   }
 
   /**
@@ -210,13 +165,7 @@ export class KeybindManager {
    * Check if two keybinds match (for conflict detection)
    */
   keybindsMatch(a: ParsedKeybind, b: ParsedKeybind): boolean {
-    return (
-      a.key === b.key &&
-      a.ctrl === b.ctrl &&
-      a.meta === b.meta &&
-      a.shift === b.shift &&
-      a.alt === b.alt
-    );
+    return keybindsMatch(a, b);
   }
 
   /**
