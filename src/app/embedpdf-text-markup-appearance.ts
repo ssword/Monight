@@ -6,6 +6,15 @@ import {
 } from '@embedpdf/models';
 import type { WrappedPdfiumModule } from '@embedpdf/pdfium';
 
+// Engine coupling: the pinned engine exposes no API to read or install an
+// annotation's appearance stream, so this reaches its direct (main-thread)
+// executor's PDFium module, page cache and memory manager, as the Page Rotation
+// setter does (embedpdf-native-annotation-editing.ts). That coupling is inherent
+// to correcting the generated appearance. It fails closed: if any part of the
+// executor is missing or behaves unexpectedly, it throws, the edit's correction
+// stays pending, and Save refuses to write bytes rather than saving a misplaced
+// appearance. Revalidate against the actual engine on every EmbedPDF upgrade.
+/** The parts of the pinned engine's direct executor this module reaches. */
 interface DirectExecutor {
   pdfiumModule: WrappedPdfiumModule;
   cache: {
