@@ -76,7 +76,9 @@ reported completion. Inspection confirms native `/Underline` on `moon` and
 `/StrikeOut` on `lower` in page 1's lower line, authored by `ssword`. Reader version
 is 26.002.21901, read from Acrobat's installed Info.plist. Saved page rotations
 remain `[0,0,0]`: the owner's report of a universal context-menu Rotate does not
-establish a persistent Page Rotation.
+establish a persistent Page Rotation. After the owner explicitly applied the
+command and saved again, the file's SHA-256 remained unchanged, confirming that
+the tested command only changes Acrobat's view (see the #115 record).
 
 Codex opened a copy, `acrobat-authored.pdf`, in the same candidate on the built-in
 display. The blue Underline and red Strikethrough initially aligned with their

@@ -65,6 +65,15 @@ then reported that the context-menu Rotate was universal. Saved-file inspection
 still shows `[0,0,0]`; this does not satisfy the Acrobat-authored persistent
 Page Rotation direction.
 
+The owner subsequently explicitly applied that Rotate command in the
+`acrobat-origin.pdf` tab, saved again and reported `rotated and saved`.
+Reinspection confirms that the file is byte-for-byte unchanged: SHA-256
+`dc7084f81ce46e8c6e95cd46c36eed60aa07fa99f788426c497cf89ed57237ea`, effective
+page rotations `[0,0,0]`, and no `/Rotate` in any page or its parent Pages
+dictionary. This observed command changes the reader's view, not the PDF's
+Page Rotation. This is a limitation of the tested Acrobat Reader workflow,
+not evidence of a Monight rotation-writing failure.
+
 Opened a copy in the candidate, edited both text-markup contents, rotated page 1
 left, and edited the existing Acrobat Text note and Highlight contents through
 their editors. The native save produced `[270,0,0]` and the exact contents:
@@ -132,15 +141,15 @@ because it reproduces [#118](https://github.com/ssword/Monight/issues/118).
 
 - Preview: finish the second return leg and explicit Highlight editing check.
 - Acrobat: complete persistent Page Rotation in the reverse direction and native
-  note/Highlight editing on rotated pages. The inspected file retains zero stored
-  rotations; merely seeing a universal Rotate command does not establish that a
-  page edit was applied. The owner was asked to apply it and save once more;
-  rotating all pages is valid if the resulting PDF actually stores the rotations.
-  View > Rotate View cannot satisfy this requirement.
+  note/Highlight editing on rotated pages. Applying the observed universal Rotate
+  and saving left the PDF byte-for-byte unchanged, with zero stored rotations.
+  This direction needs an Acrobat workflow capable of saving actual Page Rotation;
+  an all-page edit is valid, but view-only rotation cannot satisfy the requirement.
 - No Rotate admission: the reverse persistent-rotation and native edit cells
   remain unexecuted, rather than inferred from automated fixture contracts or
-  view-only rotation. The owner completed the requested mouse-only creation steps;
-  saved bytes did not establish Acrobat-authored Page Rotation.
+  view-only rotation. The owner completed the requested mouse-only creation and
+  explicit rotate/save steps; saved bytes establish that the tested Rotate command
+  does not persist Page Rotation.
 
 After verification, the saved temporary candidate was quit and the local app
 bundle rebuilt from the restored source gates. The archive above retains the
