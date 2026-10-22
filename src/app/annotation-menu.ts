@@ -84,12 +84,14 @@ export function createAnnotationMenu({
           return swatch;
         })
       : [];
-    const colours = document.createElement('div');
-    colours.className = 'annotation-menu-colors';
-    colours.setAttribute('role', 'radiogroup');
-    colours.setAttribute('aria-label', 'Colour');
-    colours.hidden = swatches.length === 0;
-    colours.append(...swatches);
+    const colors = document.createElement('div');
+    colors.className = 'annotation-menu-colors';
+    colors.setAttribute('role', 'radiogroup');
+    // Identifiers say color (as HIGHLIGHT_COLORS does); reader-facing labels say
+    // Colour, as the Highlight split button's do.
+    colors.setAttribute('aria-label', 'Colour');
+    colors.hidden = swatches.length === 0;
+    colors.append(...swatches);
 
     const remove = document.createElement('button');
     remove.type = 'button';
@@ -101,7 +103,7 @@ export function createAnnotationMenu({
 
     const actions = document.createElement('div');
     actions.className = 'annotation-menu-actions';
-    actions.append(colours, remove);
+    actions.append(colors, remove);
     element.replaceChildren(field, actions);
     hydrateChromeIcons(element);
     shown = {
