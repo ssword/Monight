@@ -5,21 +5,14 @@
 // editAnnotation Reader Action; the Delete and Backspace keys reach the same edit
 // through the Edit ▸ Delete Reader Command (reader-commands.ts).
 
-import type { DocumentAnnotationKind } from '../reader/document-queries';
 import type { AnnotationEdit } from '../reader/native-pdf-editing';
 import { type ReaderAction, readerAction } from '../reader/reader-actions';
 import { hydrateChromeIcons } from './chrome-icons';
 import type { DocumentSelectedAnnotation } from './document-workspace';
-import { HIGHLIGHT_COLORS } from './markup-tools';
+import { HIGHLIGHT_COLORS, TEXT_MARKUP_KINDS } from './markup-tools';
 
 /** Gap between the Annotation and the menu beneath it, in CSS pixels. */
 const MENU_OFFSET = 8;
-
-const TEXT_MARKUP_KINDS: ReadonlySet<DocumentAnnotationKind> = new Set([
-  'highlight',
-  'underline',
-  'strikeout',
-]);
 
 export interface AnnotationMenuOptions {
   readonly element: HTMLElement;

@@ -356,6 +356,11 @@ const EDITABLE_ANNOTATIONS: &[&[u8]] =
 // unchanged. Unverified Squiggly markup can arrive from other PDF readers.
 const PRESERVED_ANNOTATIONS: &[&[u8]] = &[b"Link", b"Squiggly"];
 
+/// A Popup belongs to an Annotation Monight edits: any editable subtype but Popup.
+fn is_editable_popup_parent(subtype: &[u8]) -> bool {
+    subtype != b"Popup" && EDITABLE_ANNOTATIONS.contains(&subtype)
+}
+
 fn is_supported_annotation(subtype: &[u8]) -> bool {
     EDITABLE_ANNOTATIONS.contains(&subtype) || PRESERVED_ANNOTATIONS.contains(&subtype)
 }
@@ -407,12 +412,7 @@ fn prepare_supported_popups(bytes: &[u8]) -> Result<Option<Vec<u8>>, String> {
                                     .ok()
                                     .and_then(|parent| parent.get(b"Subtype").ok())
                                     .and_then(|subtype| subtype.as_name().ok())
-                                    .is_some_and(|subtype| {
-                                        matches!(
-                                            subtype,
-                                            b"Highlight" | b"Text" | b"Underline" | b"StrikeOut"
-                                        )
-                                    })
+                                    .is_some_and(is_editable_popup_parent)
                         })
                 } else {
                     false
