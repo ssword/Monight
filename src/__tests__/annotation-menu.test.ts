@@ -43,12 +43,13 @@ describe('Annotation menu', () => {
         if (action.type !== 'editAnnotation') throw new Error(`Unexpected ${action.type}`);
         const { filePath, annotationId: id, edit } = action;
         edits.push({ filePath, id, edit });
-        if (selected?.filePath !== filePath) return;
+        if (selected?.filePath !== filePath) return Promise.resolve();
         if (edit.type === 'delete') selected = null;
         else if (selected?.id === id && edit.type === 'contents')
           selected = { ...selected, contents: edit.contents };
         else if (selected?.id === id && edit.type === 'color')
           selected = { ...selected, color: edit.strokeColor };
+        return Promise.resolve();
       },
     });
     mounted.push(view);
@@ -122,6 +123,38 @@ describe('Annotation menu', () => {
       },
     ]);
     expect(field()?.value).toBe('Remember this');
+  });
+
+  it('keeps a note typed in one Document with that Document when ⌃Tab switches Documents', () => {
+    selected = note();
+    const view = mount();
+    view.refresh();
+    (field() as HTMLTextAreaElement).value = 'Typed, then ⌃Tab';
+
+    // The other Document's selected note may even share the Annotation id.
+    selected = note({ filePath: '/docs/other.pdf', contents: 'Other note' });
+    view.refresh();
+
+    expect(edits).toEqual([
+      { filePath: REPORT, id: 'note-1', edit: { type: 'contents', contents: 'Typed, then ⌃Tab' } },
+    ]);
+    expect(field()?.value).toBe('Other note');
+  });
+
+  it('commits the note being typed on request, against its own Document', async () => {
+    selected = note();
+    const view = mount();
+    view.refresh();
+    (field() as HTMLTextAreaElement).value = 'Typed, then ⌘S';
+
+    await expect(view.commitPendingNote()).resolves.toBeUndefined();
+    expect(edits).toEqual([
+      { filePath: REPORT, id: 'note-1', edit: { type: 'contents', contents: 'Typed, then ⌘S' } },
+    ]);
+    // Nothing left to commit: the field still shows the note, now committed.
+    expect(view.commitPendingNote()).toBeUndefined();
+    expect(field()?.value).toBe('Typed, then ⌘S');
+    expect(edits).toHaveLength(1);
   });
 
   it('focuses the note of a new, empty text note so it can be typed at once', () => {

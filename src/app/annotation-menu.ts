@@ -26,12 +26,18 @@ export interface AnnotationMenuOptions {
   /** The active Document's selected Annotation; null when none or editing is unavailable. */
   readonly selectedAnnotation: () => DocumentSelectedAnnotation | null;
   /** Edits go out as Reader Actions naming the Document the Annotation was selected in. */
-  readonly dispatchReaderAction: (action: ReaderAction) => unknown;
+  readonly dispatchReaderAction: (action: ReaderAction) => Promise<unknown>;
 }
 
 export interface AnnotationMenu {
   /** Re-reads the selection; call on Reading Session and rendering changes. */
   refresh(): void;
+  /**
+   * Commits the note being typed (not yet committed by leaving its field) to the
+   * Document its Annotation belongs to; the dispatched edit, or undefined when
+   * nothing was pending. Reader Actions call it before switching, saving or closing.
+   */
+  commitPendingNote(): Promise<unknown> | undefined;
   destroy(): void;
 }
 
@@ -55,10 +61,10 @@ export function createAnnotationMenu({
   const edit = (annotation: { filePath: string; id: string }, change: AnnotationEdit) =>
     dispatchReaderAction(readerAction.editAnnotation(annotation.filePath, annotation.id, change));
 
-  const commitNote = () => {
-    if (!shown || shown.field.value === shown.committed) return;
+  const commitNote = (): Promise<unknown> | undefined => {
+    if (!shown || shown.field.value === shown.committed) return undefined;
     shown.committed = shown.field.value;
-    edit(shown, { type: 'contents', contents: shown.field.value });
+    return edit(shown, { type: 'contents', contents: shown.field.value });
   };
 
   const build = (annotation: DocumentSelectedAnnotation) => {
@@ -68,7 +74,7 @@ export function createAnnotationMenu({
     field.placeholder = 'Add a note';
     field.setAttribute('aria-label', 'Note');
     field.value = annotation.contents;
-    field.addEventListener('change', commitNote);
+    field.addEventListener('change', () => void commitNote());
 
     swatches = TEXT_MARKUP_KINDS.has(annotation.kind)
       ? HIGHLIGHT_COLORS.map((color) => {
@@ -183,6 +189,7 @@ export function createAnnotationMenu({
 
   return {
     refresh,
+    commitPendingNote: commitNote,
     destroy() {
       document.removeEventListener('keydown', onKeyDown);
       document.removeEventListener('pointerdown', onPointerDown, true);

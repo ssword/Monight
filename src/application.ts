@@ -751,6 +751,9 @@ export async function initializeApplication(modules: ApplicationModules): Promis
 
     readerActions = modules.createReaderActions({
       initialSession: initialReadingSession,
+      // A note still being typed (⌘S, ⌃Tab, ⌘W or Quit with its field focused) is
+      // committed to its own Document first, so it is never dropped or misrouted.
+      commitPendingEdits: () => annotationMenu?.commitPendingNote(),
       defaultVisualState: defaultVisualState(),
       projection: {
         ...documentWorkspace.projection,
