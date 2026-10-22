@@ -40,6 +40,7 @@ coverage/
 /artifacts/issue-75/
 /artifacts/issue-80/
 /artifacts/issue-94/
+/artifacts/issue-115-116/
 
 # Misc
 *.suo
