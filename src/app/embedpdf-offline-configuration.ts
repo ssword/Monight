@@ -1,4 +1,4 @@
-import { LockModeType, type PDFViewerConfig } from '@embedpdf/snippet';
+import { LockModeType, type PDFViewerConfig, type UISchema } from '@embedpdf/snippet';
 import {
   type AnnotationDisplayName,
   DEFAULT_ANNOTATION_DISPLAY_NAME,
@@ -13,6 +13,27 @@ export function embedPdfAnnotationToolIds(): readonly string[] {
   return VERIFIED_MARKUP_TOOLS.map(({ id }) => id);
 }
 
+/**
+ * The ready-made viewer's interface, emptied: no toolbar, page controls,
+ * sidebar, panel, menu, modal, or text/annotation selection menu is rendered.
+ * Monight's reader chrome replaces every part of it (ADR 0003); EmbedPDF keeps
+ * rendering the pages and their annotation layer.
+ */
+const HEADLESS_UI_SCHEMA: UISchema = {
+  id: 'monight-headless',
+  version: '1',
+  toolbars: {},
+  menus: {},
+  sidebars: {},
+  modals: {},
+  overlays: {},
+  selectionMenus: {},
+};
+
+/**
+ * EmbedPDF features (commands, their shortcuts, and tools) Monight does not
+ * offer, or offers through its own Reader Commands instead.
+ */
 const DISABLED_CATEGORIES = [
   'annotation',
   'redaction',
@@ -25,15 +46,15 @@ const DISABLED_CATEGORIES = [
   'document-capture',
   // Rotation is a Page Rotation edit of the PDF, never a view setting.
   'rotate',
-  // Monight's toolbar zoom group replaces the ready-made zoom controls.
+  // Monight's zoom group and View ▸ zoom commands own zooming.
   'zoom',
-  // Monight's own sidebar replaces the ready-made thumbnails and outline.
+  // Monight's sidebar owns thumbnails and the outline.
   'panel-sidebar',
-  // Monight's toolbar Search field and sidebar replace the ready-made search panel.
+  // Monight's toolbar Search field and sidebar own search.
   'panel-search',
   // Reading Session supports single, continuous, and odd-page spreads.
   'spread-even',
-  // Monight's markup toolbar replaces the ready-made Annotate mode and toolbar.
+  // Monight's markup toolbar and Highlight split button own the annotation tools.
   'mode-annotate',
 ] as const;
 
@@ -88,6 +109,7 @@ export function createEmbedPdfViewerConfig(
     worker: false,
     wasmUrl: EMBEDPDF_WASM_URL,
     tabBar: 'never',
+    ui: { schema: HEADLESS_UI_SCHEMA },
     fontFallback: {
       ...localFontFallback,
       ...(fontLoader ? { fontLoader } : {}),

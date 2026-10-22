@@ -155,14 +155,17 @@ export function embedPdfLinkGeometries(path: readonly EventTarget[]): EmbedPdfLi
 }
 
 // EmbedPDF 2.15.0 DOM integration. Revalidate against the actual runtime on upgrade.
+/** The viewer's scrolling viewport; its only child holds the laid-out pages. */
+export const EMBEDPDF_VIEWPORT_SELECTOR = '.bg-bg-app[style*="overflow: auto"]';
+
 export function embedPdfReadingFilterStyle(): string {
   return `
-    .bg-bg-app[style*="overflow: auto"] {
+    ${EMBEDPDF_VIEWPORT_SELECTOR} {
       /* The virtual scroller already preserves page offsets with spacers.
          WebKit scroll anchoring otherwise adds a page when one is evicted. */
       overflow-anchor: none;
     }
-    .bg-bg-app[style*="overflow: auto"] > div {
+    ${EMBEDPDF_VIEWPORT_SELECTOR} > div {
       filter: var(--monight-reading-filter, none);
     }
   `;

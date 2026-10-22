@@ -56,6 +56,8 @@ const createViewerRuntime = (
   markupSelection: vi.fn(() => false),
   annotations: () => [],
   revealAnnotation: vi.fn(),
+  selectedAnnotation: () => null,
+  editAnnotation: vi.fn(() => false),
   destroy: vi.fn(async () => undefined),
   ...overrides,
 });
@@ -199,7 +201,7 @@ describe('EmbedPDF Document surface', () => {
     ).toBeNull();
   });
 
-  it('matches a ready-made link hit area within the page that was clicked', () => {
+  it('matches an EmbedPDF link hit area within the page that was clicked', () => {
     const firstPageTarget = { type: 'destination', destination: { pageIndex: 2 } };
     const secondPageTarget = { type: 'destination', destination: { pageIndex: 3 } };
     const annotation = (pageIndex: number, target: typeof firstPageTarget) =>
@@ -386,7 +388,27 @@ describe('EmbedPDF Document surface', () => {
     expect(runtime.setZoomIntent).not.toHaveBeenCalled();
   });
 
-  it('configures the ready-made viewer as a local, read-only surface', () => {
+  it('renders none of the ready-made viewer interface; Monight chrome replaces all of it', () => {
+    for (const editable of [true, false]) {
+      const schema = createEmbedPdfViewerConfig(undefined, editable).ui?.schema;
+
+      // No toolbar, page controls overlay, sidebar or panel, menu, modal, or
+      // text/annotation selection menu: only the pages and their annotation layer remain.
+      expect(schema).toBeDefined();
+      for (const part of [
+        'toolbars',
+        'menus',
+        'sidebars',
+        'modals',
+        'overlays',
+        'selectionMenus',
+      ] as const) {
+        expect(Object.keys(schema?.[part] ?? {}), part).toEqual([]);
+      }
+    }
+  });
+
+  it('configures the viewer engine as a local, read-only surface', () => {
     const config = createEmbedPdfViewerConfig();
 
     expect(config.worker).toBe(false);
@@ -408,17 +430,17 @@ describe('EmbedPDF Document surface', () => {
         'document-print',
         'document-export',
         'document-protect',
-        // Monight's toolbar zoom group replaces the ready-made zoom controls.
+        // Monight's zoom group and View ▸ zoom commands own zooming.
         'zoom',
         // View rotation is gone; rotation is a Page Rotation edit of the PDF.
         'rotate',
-        // Monight's own sidebar replaces the ready-made thumbnails and outline.
+        // Monight's sidebar owns thumbnails and the outline.
         'panel-sidebar',
-        // Monight's toolbar Search field and sidebar replace the ready-made search panel.
+        // Monight's toolbar Search field and sidebar own search.
         'panel-search',
       ]),
     );
-    // Only the replaced controls are hidden; every other ready-made control stays.
+    // The engine commands Monight still relies on (layout, history, ⌘C) stay enabled.
     for (const retained of [
       'panel',
       'page',
@@ -487,14 +509,14 @@ describe('EmbedPDF Document surface', () => {
     expect(exportPdf).toHaveBeenCalledOnce();
   });
 
-  it('enables exactly the verified markup tools and never the ready-made annotation toolbar', () => {
+  it('enables exactly the verified markup tools and never the Annotate mode', () => {
     for (const editable of [true, false]) {
       const config = createEmbedPdfViewerConfig(undefined, editable);
 
       expect(config.annotations?.tools?.map(({ id }) => id)).toEqual(
         VERIFIED_MARKUP_TOOLS.map(({ id }) => id),
       );
-      // Monight's markup toolbar replaces the ready-made Annotate mode and its toolbar.
+      // Monight's markup toolbar and Highlight split button own the annotation tools.
       expect(config.disabledCategories).toContain('mode-annotate');
     }
   });
@@ -538,6 +560,56 @@ describe('EmbedPDF Document surface', () => {
     protectedDocument.surface.rendering.setActiveAnnotationTool?.('textComment');
     expect(protectedDocument.viewer.setActiveAnnotationTool).not.toHaveBeenCalled();
     expect(protectedDocument.surface.rendering.activeAnnotationTool?.()).toBeNull();
+  });
+
+  it('offers the selected Annotation for editing only on an editable Document', async () => {
+    const callbacks = {
+      readingPositionObserved: vi.fn(),
+      readingPositionSettled: vi.fn(),
+      stateChanged: vi.fn(),
+      pageNavigationRequested: vi.fn(async () => undefined),
+      zoomIntentRequested: vi.fn(async () => undefined),
+    };
+    const selection = {
+      id: 'note-1',
+      kind: 'note' as const,
+      contents: 'Moon',
+      color: '#FFCD45',
+      anchor: { left: 10, top: 20, width: 24, height: 24 },
+    };
+    const open = async (readOnlyReason: string | null) => {
+      const viewer = createViewerRuntime({
+        editing: {
+          state: () => ({ revision: 0, dirty: false, readOnlyReason }),
+          exportPdf: vi.fn(async () => new Uint8Array()),
+          markSaved: vi.fn(),
+        },
+        selectedAnnotation: () => selection,
+        editAnnotation: vi.fn(() => true),
+      });
+      const surface = await createEmbedPdfDocumentSurfaceFactory({
+        createViewer: async () => viewer,
+        assessEditing: async () => readOnlyReason,
+      })({ filePath: '/docs/a.pdf', title: 'a.pdf', bytes: new Uint8Array([1]), callbacks });
+      return { viewer, surface };
+    };
+
+    const editable = await open(null);
+    expect(editable.surface.rendering.selectedAnnotation?.()).toEqual(selection);
+    expect(
+      editable.surface.rendering.editAnnotation?.('note-1', { type: 'contents', contents: 'Sun' }),
+    ).toBe(true);
+    expect(editable.viewer.editAnnotation).toHaveBeenCalledWith('note-1', {
+      type: 'contents',
+      contents: 'Sun',
+    });
+
+    const protectedDocument = await open('Digitally signed PDFs are read-only');
+    expect(protectedDocument.surface.rendering.selectedAnnotation?.()).toBeNull();
+    expect(protectedDocument.surface.rendering.editAnnotation?.('note-1', { type: 'delete' })).toBe(
+      false,
+    );
+    expect(protectedDocument.viewer.editAnnotation).not.toHaveBeenCalled();
   });
 
   it('marks the text selection in a colour only on an editable Document', async () => {

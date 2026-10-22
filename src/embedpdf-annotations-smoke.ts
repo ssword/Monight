@@ -98,7 +98,7 @@ async function verifyProtectedDocuments(): Promise<void> {
       'Protected Document accepted a markup tool',
     );
     const container = document.querySelector<EmbedPdfContainer>('embedpdf-container');
-    if (!container) throw new Error('Missing protected ready-made viewer');
+    if (!container) throw new Error('Missing protected viewer');
     const registry = await container.registry;
     const commands = registry
       .getPlugin<import('@embedpdf/snippet').CommandsPlugin>('commands')
@@ -179,7 +179,7 @@ async function open(
   });
   surface.rendering.setVisible(true);
   const container = document.querySelector<EmbedPdfContainer>('embedpdf-container');
-  if (!container) throw new Error('Missing ready-made viewer');
+  if (!container) throw new Error('Missing viewer');
   const registry = await container.registry;
   const annotations = registry
     .getPlugin<import('@embedpdf/snippet').AnnotationPlugin>('annotation')
@@ -229,7 +229,7 @@ async function open(
   return { surface, annotations, history, engine: registry.getEngine(), registry };
 }
 
-/** Monight's markup toolbar replaces the ready-made Annotate mode and toolbar. */
+/** Monight's markup toolbar replaces the ready-made Annotate mode; no ready-made toolbar exists. */
 function verifyReadyMadeAnnotationToolbarUnreachable(
   registry: import('@embedpdf/snippet').PluginRegistry,
   documentId: string,
@@ -238,14 +238,13 @@ function verifyReadyMadeAnnotationToolbarUnreachable(
     .getPlugin<import('@embedpdf/snippet').CommandsPlugin>('commands')
     ?.provides();
   const ui = registry.getPlugin<import('@embedpdf/snippet').UIPlugin>('ui')?.provides();
-  if (!commands || !ui) throw new Error('Missing ready-made viewer UI');
+  if (!commands || !ui) throw new Error('Missing viewer commands or UI plugin');
   const annotate = commands.resolve('mode:annotate');
   check(!annotate.visible || annotate.disabled, 'Ready-made Annotate mode is reachable');
-  const scope = ui.forDocument(documentId);
-  scope.setActiveToolbar('top', 'secondary', 'annotation-toolbar');
+  const schema = ui.forDocument(documentId).getSchema();
   check(
-    !scope.isToolbarOpen('top', 'secondary', 'annotation-toolbar'),
-    'Ready-made annotation toolbar is reachable',
+    Object.keys(schema.toolbars).length === 0 && Object.keys(schema.selectionMenus).length === 0,
+    'A ready-made toolbar or selection menu is reachable',
   );
 }
 
