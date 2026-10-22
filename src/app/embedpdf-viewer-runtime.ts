@@ -1,3 +1,4 @@
+import type { Rect } from '@embedpdf/models';
 import EmbedPDF, {
   type AnnotationCapability,
   type CommandsCapability,
@@ -12,7 +13,6 @@ import EmbedPDF, {
   type SpreadCapability,
   SpreadMode,
   type ThumbnailCapability,
-  type UICapability,
   type ViewportCapability,
   type ZoomCapability,
   ZoomMode,
@@ -23,6 +23,7 @@ import type {
   SearchProgress,
   ViewMode,
 } from '../lib/document-features';
+import { isEditableTarget } from '../lib/editable-target';
 import type { PdfLinkTarget } from '../lib/pdf-links';
 import type {
   DocumentContentMetadata,
@@ -30,7 +31,11 @@ import type {
   ResolvedDocumentLinkTarget,
 } from '../reader/document-content';
 import type { DocumentAnnotationSnapshot } from '../reader/document-queries';
-import type { AnnotationToolDefaults } from '../reader/document-rendering';
+import type {
+  AnnotationEdit,
+  AnnotationToolDefaults,
+  SelectedAnnotation,
+} from '../reader/document-rendering';
 import type { AnnotationDisplayName, NativePdfEditing } from '../reader/native-pdf-editing';
 import type {
   ReadingPosition,
@@ -41,6 +46,7 @@ import type { DocumentSurfaceCallbacks } from './document-workspace';
 import { createEmbedPdfNativeAnnotationEditing } from './embedpdf-native-annotation-editing';
 import {
   captureEmbedPdfReadingPosition,
+  EMBEDPDF_VIEWPORT_SELECTOR,
   embedPdfAnnotationSnapshots,
   embedPdfDestinationReadingPosition,
   embedPdfLayoutForViewMode,
@@ -117,12 +123,14 @@ export interface EmbedPdfViewerRuntime {
   renderThumbnail(pageNumber: number, maxWidth?: number): Promise<HTMLCanvasElement>;
   /** Live text-markup and note Annotations of any author. */
   annotations(): readonly DocumentAnnotationSnapshot[];
-  /** Selects an Annotation so its ready-made selection and note affordances appear. */
+  /** Selects an Annotation, so Monight's annotation menu opens beside it. */
   revealAnnotation(annotationId: string): void;
+  /** The single selected Annotation and where it sits in the window; null when none. */
+  selectedAnnotation(): SelectedAnnotation | null;
+  /** Edits an Annotation (an unsaved, undoable edit); false when there is no such Annotation. */
+  editAnnotation(annotationId: string, edit: AnnotationEdit): boolean;
   destroy(): Promise<void>;
 }
-
-const READY_MADE_ANNOTATION_TOOLBAR = 'annotation-toolbar';
 
 const requireCapability = <T>(registry: PluginRegistry, pluginId: string): T => {
   const capability = registry.getPlugin(pluginId)?.provides?.() as T | undefined;
@@ -240,13 +248,11 @@ export async function createEmbedPdfViewerRuntime({
   const zoom = requireCapability<ZoomCapability>(registry, 'zoom');
   const spread = requireCapability<SpreadCapability>(registry, 'spread');
   const thumbnails = requireCapability<ThumbnailCapability>(registry, 'thumbnail');
-  const ui = requireCapability<UICapability>(registry, 'ui');
   const viewport = requireCapability<ViewportCapability>(registry, 'viewport');
   const engine = registry.getEngine();
   installInkSelectionGeometry(engine);
   const unsubscribers: Array<() => void> = [];
   const documentId = `monight-${crypto.randomUUID()}`;
-  const uiScope = ui.forDocument(documentId);
   let sourceBytes = new Uint8Array();
   let fileName = '';
   let documentObject: ReturnType<DocumentManagerCapability['getDocument']> = null;
@@ -400,16 +406,46 @@ export async function createEmbedPdfViewerRuntime({
     () => shadowRoot.removeEventListener('click', interceptEmbedPdfLink, { capture: true }),
   );
 
-  // Monight's markup toolbar replaces the ready-made annotation toolbar. Ready-made
-  // commands that remain (selection-menu Highlight) open it; close it at once.
-  const closeReadyMadeAnnotationToolbar = () => {
-    if (uiScope.isToolbarOpen('top', 'secondary', READY_MADE_ANNOTATION_TOOLBAR)) {
-      uiScope.closeToolbarSlot('top', 'secondary');
-    }
+  // Edit ▸ Copy copies the page text selection, as ⌘C (EmbedPDF's own shortcut) does.
+  const copyTextSelection = (event: ClipboardEvent) => {
+    if (destroyed || target.dataset.visible !== 'true' || target.closest('[inert]')) return;
+    if (isEditableTarget(document.activeElement) || !selectionScope.getState().selection) return;
+    event.preventDefault();
+    selectionScope.copyToClipboard();
   };
+  document.addEventListener('copy', copyTextSelection);
+  unsubscribers.push(() => document.removeEventListener('copy', copyTextSelection));
+
+  // Where an Annotation sits in the window, for Monight's annotation menu; null
+  // while it is scrolled out of the viewer.
+  const annotationAnchor = (object: { pageIndex: number; rect: Rect }) => {
+    const viewportElement = shadowRoot.querySelector(EMBEDPDF_VIEWPORT_SELECTOR);
+    const pages = viewportElement?.firstElementChild;
+    const position = scrollScope.getRectPositionForPage(object.pageIndex, object.rect);
+    if (!viewportElement || !pages || !position) return null;
+    const content = pages.getBoundingClientRect();
+    const visible = viewportElement.getBoundingClientRect();
+    const anchor = {
+      left: content.left + position.origin.x,
+      top: content.top + position.origin.y,
+      width: position.size.width,
+      height: position.size.height,
+    };
+    const inView =
+      anchor.top + anchor.height > visible.top &&
+      anchor.top < visible.bottom &&
+      anchor.left + anchor.width > visible.left &&
+      anchor.left < visible.right;
+    return inView ? anchor : null;
+  };
+  let selectedAnnotationIds = '';
   unsubscribers.push(
-    uiScope.onToolbarChanged(({ toolbarId }) => {
-      if (toolbarId === READY_MADE_ANNOTATION_TOOLBAR) closeReadyMadeAnnotationToolbar();
+    // Monight's annotation menu follows the selection.
+    annotationScope.onStateChange((state) => {
+      const ids = state.selectedUids.join('\n');
+      if (destroyed || ids === selectedAnnotationIds) return;
+      selectedAnnotationIds = ids;
+      callbacks.stateChanged();
     }),
     annotationScope.onActiveToolChange(() => callbacks.stateChanged()),
     scroll.onPageChange((event) => {
@@ -609,7 +645,6 @@ export async function createEmbedPdfViewerRuntime({
       if (destroyed) return;
       if (toolId !== null && defaults) annotations.setToolDefaults(toolId, { ...defaults });
       annotationScope.setActiveTool(toolId);
-      closeReadyMadeAnnotationToolbar();
     },
     markupSelection(toolId, defaults) {
       if (destroyed || readOnlyReason !== null) return false;
@@ -808,6 +843,37 @@ export async function createEmbedPdfViewerRuntime({
       const annotation = annotationScope.getAnnotationById(annotationId);
       if (!annotation || annotation.commitState === 'deleted') return;
       annotationScope.selectAnnotation(annotation.object.pageIndex, annotationId);
+    },
+    selectedAnnotation() {
+      if (destroyed || !documentObject) return null;
+      const selected = annotationScope.getSelectedAnnotations();
+      const [tracked] = selected;
+      if (selected.length !== 1 || !tracked || tracked.commitState === 'deleted') return null;
+      const [snapshot] = embedPdfAnnotationSnapshots([tracked], documentObject.pages);
+      if (!snapshot) return null;
+      return {
+        id: snapshot.id,
+        kind: snapshot.kind,
+        contents: snapshot.contents,
+        color: snapshot.color,
+        anchor: annotationAnchor(tracked.object),
+      };
+    },
+    editAnnotation(annotationId, edit) {
+      if (destroyed || readOnlyReason !== null) return false;
+      const annotation = annotationScope.getAnnotationById(annotationId);
+      if (!annotation || annotation.commitState === 'deleted') return false;
+      const { pageIndex } = annotation.object;
+      if (edit.type === 'delete') annotationScope.deleteAnnotation(pageIndex, annotationId);
+      else
+        annotationScope.updateAnnotation(
+          pageIndex,
+          annotationId,
+          edit.type === 'contents'
+            ? { contents: edit.contents }
+            : { strokeColor: edit.strokeColor },
+        );
+      return true;
     },
     async destroy() {
       if (destroyed) return;

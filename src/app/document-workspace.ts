@@ -7,9 +7,11 @@ import type { PdfPasswordRequester } from '../reader/document-content';
 import type { DocumentRuntimeIntake, DocumentRuntimeOpenRequest } from '../reader/document-intake';
 import type { DocumentQuery, DocumentRuntime } from '../reader/document-queries';
 import type {
+  AnnotationEdit,
   AnnotationToolDefaults,
   DocumentRendering,
   DocumentViewTransform,
+  SelectedAnnotation,
 } from '../reader/document-rendering';
 import type { AnnotationDisplayName } from '../reader/native-pdf-editing';
 import type {
@@ -112,6 +114,10 @@ export interface DocumentWorkspace {
   markupSelection(toolId: string, defaults: AnnotationToolDefaults): boolean;
   /** Selects an Annotation on its Document's rendering surface. */
   revealAnnotation(filePath: string, annotationId: string): void;
+  /** The active Document's selected Annotation; null when none or editing is unavailable. */
+  selectedAnnotation(): SelectedAnnotation | null;
+  /** Edits an Annotation of the active Document; false when refused. */
+  editAnnotation(annotationId: string, edit: AnnotationEdit): boolean;
   setAnnotationDisplayName(displayName: AnnotationDisplayName): void;
 }
 
@@ -875,6 +881,16 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
     },
     revealAnnotation(filePath, annotationId) {
       presented.get(filePath)?.rendering.revealAnnotation?.(annotationId);
+    },
+    selectedAnnotation() {
+      const filePath = options.snapshot().activeDocumentPath;
+      const rendering = filePath ? presented.get(filePath)?.rendering : undefined;
+      return rendering?.selectedAnnotation?.() ?? null;
+    },
+    editAnnotation(annotationId, edit) {
+      const filePath = options.snapshot().activeDocumentPath;
+      const rendering = filePath ? presented.get(filePath)?.rendering : undefined;
+      return rendering?.editAnnotation?.(annotationId, edit) ?? false;
     },
     setAnnotationDisplayName(displayName) {
       for (const documentState of presented.values()) {

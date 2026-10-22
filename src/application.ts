@@ -2,6 +2,7 @@ import { getName, getTauriVersion, getVersion } from '@tauri-apps/api/app';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
+import { type AnnotationMenu, createAnnotationMenu } from './app/annotation-menu';
 import { hydrateChromeIcons } from './app/chrome-icons';
 import {
   type ChromePreferencesAuthority,
@@ -143,10 +144,17 @@ let readerSidebar: ReaderSidebar | null = null;
 let markupToolbar: MarkupToolbar | null = null;
 let highlightButton: HighlightButton | null = null;
 let rotateButton: RotateButton | null = null;
+let annotationMenu: AnnotationMenu | null = null;
 
 /** The toolbar controls that re-read the active Document on session and rendering changes. */
 const refreshReaderControls = (): void => {
-  for (const control of [readerSidebar, markupToolbar, highlightButton, rotateButton]) {
+  for (const control of [
+    readerSidebar,
+    markupToolbar,
+    highlightButton,
+    rotateButton,
+    annotationMenu,
+  ]) {
     control?.refresh();
   }
 };
@@ -573,6 +581,17 @@ function mountRotateButton(): RotateButton | null {
   });
 }
 
+function mountAnnotationMenu(): AnnotationMenu | null {
+  const element = document.getElementById('annotation-menu');
+  if (!element) return null;
+  return createAnnotationMenu({
+    element,
+    selectedAnnotation: () => documentWorkspace?.selectedAnnotation() ?? null,
+    editAnnotation: (annotationId, edit) =>
+      documentWorkspace?.editAnnotation(annotationId, edit) ?? false,
+  });
+}
+
 function mountMarkupToolbar(preferences: ChromePreferencesAuthority): MarkupToolbar | null {
   const bar = document.getElementById('markup-toolbar');
   const toggle = document.getElementById('markup-toolbar-toggle');
@@ -773,6 +792,7 @@ export async function initializeApplication(modules: ApplicationModules): Promis
     markupToolbar = mountMarkupToolbar(chromePreferences);
     highlightButton = mountHighlightButton(chromePreferences);
     rotateButton = mountRotateButton();
+    annotationMenu = mountAnnotationMenu();
     leaveMarkupToolOnEscape({
       activeMarkup: () => documentWorkspace?.activeMarkup() ?? null,
       setActiveTool: (toolId) => documentWorkspace?.setActiveAnnotationTool(toolId),

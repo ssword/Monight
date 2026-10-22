@@ -1,4 +1,14 @@
 import assert from 'node:assert/strict';
+import {
+  assertCleanRun,
+  assertNoReadyMadeInterface,
+  menuItem,
+  openDocuments,
+  openReaderChrome,
+  pageStatus,
+  runMenuCommand,
+  until,
+} from './embedpdf-reader-chrome.mjs';
 
 export async function verifyNavigation(browser, origin) {
   const page = await browser.newPage({ viewport: { width: 1280, height: 1000 } });
@@ -181,7 +191,8 @@ export async function verifyNavigation(browser, origin) {
   await page.evaluate(async () => {
     await window.navigationSmoke.reader.dispatch({ type: 'goToPage', page: 1 });
   });
-  await viewer.getByRole('button', { name: 'Toggle Pointer Mode' }).click();
+  // Text selection (Tools ▸ Text Selection) replaces the ready-made Pointer Mode button.
+  await page.evaluate(() => window.navigationSmoke.workspace.setActiveAnnotationTool(null));
   await page.waitForTimeout(300);
   const pageImage = viewer.locator('img[src^="blob:"]').first();
   const box = await pageImage.boundingBox();
@@ -268,4 +279,90 @@ export async function verifyNavigation(browser, origin) {
   );
   await page.close();
   console.log('EmbedPDF navigation contract passed');
+  await verifyNavigationChrome(browser, origin);
+}
+
+/** The sidebar modes, Search field and Go menu move through a Document in the real reader. */
+export async function verifyNavigationChrome(browser, origin) {
+  const reader = await openReaderChrome(browser, origin);
+  const { page } = reader;
+  const sidebar = page.locator('#reader-sidebar');
+  const onPage = (number) =>
+    until(async () => (await pageStatus(page)) === `Page ${number} of 3`, `Not on page ${number}`);
+  try {
+    await openDocuments(page, ['/smoke/moon.pdf']);
+    await assertNoReadyMadeInterface(page, 'beside the sidebar');
+
+    // Sidebar toggle shows Thumbnails.
+    await page.click('#sidebar-toggle');
+    await sidebar.waitFor({ state: 'visible' });
+    assert.equal(await sidebar.getAttribute('data-sidebar-mode'), 'thumbnails');
+    await sidebar.locator('.sidebar-thumbnail').nth(2).waitFor({ state: 'visible' });
+    assert.equal(await sidebar.locator('.sidebar-thumbnail').count(), 3);
+
+    // The mode menu switches to the Table of Contents; an entry is a recorded jump
+    // (its chapter starts halfway down page 2, so page 3 fills most of the view).
+    await page.click('#sidebar-mode-toggle');
+    await page.click('#sidebar-mode-menu [data-sidebar-mode="tableOfContents"]');
+    await until(
+      async () => (await sidebar.getAttribute('data-sidebar-mode')) === 'tableOfContents',
+      'Table of Contents did not open',
+    );
+    assert.equal((await menuItem(page, 'go.back'))?.enabled, false);
+    await sidebar.locator('.sidebar-outline-link', { hasText: 'Chapter' }).first().click();
+    await until(async () => (await pageStatus(page)) !== 'Page 1 of 3', 'The entry did not jump');
+    await until(
+      async () => (await menuItem(page, 'go.back'))?.enabled === true,
+      'Go ▸ Back is not enabled after a jump',
+    );
+    const afterJump = await pageStatus(page);
+    await runMenuCommand(page, 'go.back');
+    await onPage(1);
+    await runMenuCommand(page, 'go.forward');
+    await until(async () => (await pageStatus(page)) === afterJump, 'Go ▸ Forward did not redo');
+
+    // A thumbnail goes to its page.
+    await page.click('#sidebar-mode-toggle');
+    await page.click('#sidebar-mode-menu [data-sidebar-mode="thumbnails"]');
+    await sidebar.locator('.sidebar-thumbnail[data-page="1"]').click();
+    await onPage(1);
+
+    // View ▸ sidebar items choose the mode the toolbar menu does.
+    await runMenuCommand(page, 'view.sidebar.annotations');
+    await sidebar.getByText('No Highlights or Notes').waitFor();
+    assert.equal((await menuItem(page, 'view.sidebar.annotations'))?.checked, true);
+    await runMenuCommand(page, 'view.sidebar.hidden');
+    await sidebar.waitFor({ state: 'hidden' });
+    assert.equal(await page.getAttribute('#sidebar-toggle', 'aria-pressed'), 'false');
+
+    // Find focuses the toolbar Search field; results take over the sidebar until cleared.
+    await page.keyboard.press('Control+F');
+    await page.waitForFunction(() => document.activeElement?.id === 'toolbar-search');
+    await page.fill('#toolbar-search', 'moon');
+    const results = sidebar.locator('.search-result');
+    await results.nth(2).waitFor({ state: 'visible' });
+    assert.equal(await sidebar.getAttribute('data-sidebar-mode'), 'search');
+    await results.filter({ hasText: 'moon second page' }).click();
+    await onPage(2);
+    await page.fill('#toolbar-search', '');
+    await sidebar.waitFor({ state: 'hidden' });
+
+    // Go menu paging and Go to Page….
+    await runMenuCommand(page, 'go.next-page');
+    await onPage(3);
+    assert.equal((await menuItem(page, 'go.next-page'))?.enabled, false);
+    await runMenuCommand(page, 'go.previous-page');
+    await onPage(2);
+    const goToPage = runMenuCommand(page, 'go.page');
+    await page.locator('#go-to-page-dialog input[name="page"]').fill('1');
+    await page.locator('#go-to-page-dialog button[type="submit"]').click();
+    await goToPage;
+    await onPage(1);
+    await assertNoReadyMadeInterface(page, 'after navigating');
+
+    await assertCleanRun(reader);
+    console.log('EmbedPDF reader chrome: sidebar modes, Search and Go menu: PASS');
+  } finally {
+    await reader.close();
+  }
 }

@@ -1,4 +1,16 @@
 import assert from 'node:assert/strict';
+import {
+  assertCleanRun,
+  assertNoReadyMadeInterface,
+  menuItem,
+  openDocuments,
+  openReaderChrome,
+  pageStatus,
+  runMenuCommand,
+  selectText,
+  until,
+  viewerState,
+} from './embedpdf-reader-chrome.mjs';
 
 export async function verifyReading(browser, origin) {
   const page = await browser.newPage({ viewport: { width: 1280, height: 1000 } });
@@ -16,7 +28,9 @@ export async function verifyReading(browser, origin) {
   );
   const viewer = page.locator('.embedpdf-document-surface[data-visible="true"]');
   await viewer.locator('img[src^="blob:"]').first().waitFor({ state: 'visible' });
-  await page.getByRole('button', { name: 'Dark', exact: true }).click();
+  // The Appearance popover's presets filter the page only.
+  await page.click('#appearance-toggle');
+  await page.getByRole('radio', { name: 'Default', exact: true }).click();
   await page.waitForTimeout(300);
   const filters = await viewer.evaluate((surface) => {
     const container = surface.querySelector('embedpdf-container');
@@ -32,11 +46,11 @@ export async function verifyReading(browser, origin) {
     };
     return {
       page: inheritedFilters(root.querySelector('img[src^="blob:"]')),
-      chrome: inheritedFilters(root.querySelector('button')),
+      chrome: inheritedFilters(document.getElementById('appearance-toggle')),
     };
   });
   assert.equal(filters.page.length, 1, 'A preset must filter the reading surface exactly once');
-  assert.deepEqual(filters.chrome, [], 'A preset must not filter viewer chrome');
+  assert.deepEqual(filters.chrome, [], 'A preset must not filter the reader chrome');
   await page.evaluate(async () => {
     await window.readingSmoke.reader.dispatch({
       type: 'activateDocumentTarget',
@@ -131,40 +145,8 @@ export async function verifyReading(browser, origin) {
       const registry = await container.registry;
       registry.getPlugin('commands').provides().execute(id, undefined, 'ui');
     }, id);
-  // Monight's toolbar zoom group replaces the ready-made zoom controls; every
-  // other ready-made control stays visible.
-  const readyMadeControls = await viewer.evaluate((surface) =>
-    Array.from(
-      surface.querySelector('embedpdf-container').shadowRoot.querySelectorAll('button'),
-      (button) => ({
-        label: button.getAttribute('aria-label') ?? '',
-        visible: button.checkVisibility() && button.getBoundingClientRect().width > 0,
-      }),
-    )
-      .filter(({ visible }) => visible)
-      .map(({ label }) => label),
-  );
-  // Monight's toolbar zoom group, Search field and sidebar replace these ready-made controls.
-  for (const hidden of ['Zoom Menu', 'Zoom Out', 'Zoom In', 'Search', 'Sidebar']) {
-    assert.ok(
-      !readyMadeControls.includes(hidden),
-      `Ready-made ${hidden} must be hidden: ${readyMadeControls}`,
-    );
-  }
-  for (const retained of [
-    'Document Menu',
-    'Page Settings',
-    'Toggle Pan Mode',
-    'Toggle Pointer Mode',
-    'Comment',
-    'Previous Page',
-    'Next Page',
-  ]) {
-    assert.ok(
-      readyMadeControls.includes(retained),
-      `Ready-made ${retained} must remain: ${readyMadeControls}`,
-    );
-  }
+  // Monight's chrome replaces the whole ready-made interface; none of it renders.
+  await assertNoReadyMadeInterface(page, 'on the reading surface');
   await command('zoom:in');
   await page.waitForTimeout(400);
   assert.equal(
@@ -464,4 +446,113 @@ export async function verifyReading(browser, origin) {
   assert.deepEqual(upgraded.bytes, originalBytes, 'Migration must leave the PDF byte-for-byte');
   await page.close();
   console.log('EmbedPDF Reading Session contract passed');
+  await verifyReadingChrome(browser, origin);
+}
+
+/** The reader's own toolbar, View menu and Appearance drive the viewer; nothing ready-made renders. */
+export async function verifyReadingChrome(browser, origin) {
+  const reader = await openReaderChrome(browser, origin, {
+    permissions: ['clipboard-read', 'clipboard-write'],
+  });
+  const { page } = reader;
+  try {
+    await assertNoReadyMadeInterface(page, 'on the splash screen');
+    await openDocuments(page, ['/smoke/moon.pdf']);
+    assert.equal(await pageStatus(page), 'Page 1 of 3');
+    await assertNoReadyMadeInterface(page, 'beside the reader chrome');
+
+    // Toolbar zoom group.
+    const { zoom: initialZoom } = await viewerState(page);
+    await page.click('#zoom-in');
+    await until(async () => (await viewerState(page)).zoom > initialZoom, 'Zoom In did not zoom');
+    await page.click('#zoom-out');
+    await until(
+      async () => Math.abs((await viewerState(page)).zoom - initialZoom) < 0.001,
+      'Zoom Out did not return to the previous scale',
+    );
+    await page.click('#zoom-to-fit');
+    await until(
+      async () => (await viewerState(page)).zoomLevel === 'fit-page',
+      'Zoom to Fit did not fit the page',
+    );
+
+    // View menu items run the same Reader Commands.
+    await runMenuCommand(page, 'view.zoom.actual-size');
+    await until(async () => (await viewerState(page)).zoom === 1, 'Actual Size did not apply');
+    await runMenuCommand(page, 'view.zoom.width');
+    await until(
+      async () => (await viewerState(page)).zoomLevel === 'fit-width',
+      'Zoom to Width did not apply',
+    );
+    await runMenuCommand(page, 'view.mode.spread');
+    await until(
+      async () => (await viewerState(page)).spreadMode === 'odd',
+      'Two Pages did not lay out a spread',
+    );
+    await until(
+      async () => (await menuItem(page, 'view.mode.spread'))?.checked === true,
+      'View ▸ Two Pages is not checked',
+    );
+    await runMenuCommand(page, 'view.mode.continuous');
+    await until(
+      async () =>
+        (await viewerState(page)).spreadMode === 'none' &&
+        (await menuItem(page, 'view.mode.continuous'))?.checked === true,
+      'Continuous Scroll did not apply',
+    );
+
+    // Appearance popover and View ▸ Appearance filter the page, never the chrome.
+    await page.click('#appearance-toggle');
+    await page.getByRole('radio', { name: 'Sepia', exact: true }).click();
+    await until(
+      async () => (await viewerState(page)).filter.includes('sepia'),
+      'The Sepia preset did not filter the page',
+    );
+    assert.equal(
+      await page.evaluate(() => getComputedStyle(document.getElementById('toolbar')).filter),
+      'none',
+      'Appearance must not filter the reader chrome',
+    );
+    await runMenuCommand(page, 'view.appearance.original');
+    await until(
+      async () => (await menuItem(page, 'view.appearance.original'))?.checked === true,
+      'View ▸ Appearance ▸ Original is not checked',
+    );
+    await page.keyboard.press('Escape');
+    await page.locator('#appearance-popover').waitFor({ state: 'hidden' });
+
+    // Edit ▸ Copy (and ⌘C) copy the page text selection: the ready-made Copy button is gone.
+    await page.click('#zoom-to-fit');
+    await selectText(page, { x: 73, y: 65 }, { x: 250, y: 65 });
+    await assertNoReadyMadeInterface(page, 'with page text selected');
+    await page.evaluate(() => navigator.clipboard.writeText(''));
+    await page.evaluate(() => document.execCommand('copy'));
+    await until(
+      async () => /moon first page/.test(await page.evaluate(() => navigator.clipboard.readText())),
+      'Edit ▸ Copy did not copy the page text selection',
+    );
+
+    // Slideshow takes the window over until Esc or View ▸ Slideshow ends it.
+    await page.click('#presentation-mode');
+    await page.waitForFunction(() => document.body.classList.contains('presentation-mode'));
+    await assertNoReadyMadeInterface(page, 'in Slideshow');
+    await page.keyboard.press('Escape');
+    await page.waitForFunction(() => !document.body.classList.contains('presentation-mode'));
+    await runMenuCommand(page, 'view.slideshow');
+    await page.waitForFunction(() => document.body.classList.contains('presentation-mode'));
+    await runMenuCommand(page, 'view.slideshow');
+    await page.waitForFunction(() => !document.body.classList.contains('presentation-mode'));
+
+    // Print hands the Document's PDF to the platform print path (last: on Linux and
+    // Windows that is the WebView's own print of the PDF, which headless Chromium never finishes).
+    await page.click('#print-file');
+    await page.locator('iframe[src^="blob:"]').waitFor({ state: 'attached' });
+
+    await assertCleanRun(reader);
+    console.log(
+      'EmbedPDF reader chrome: toolbar, View menu, Appearance, Copy, Slideshow and Print: PASS',
+    );
+  } finally {
+    await reader.close();
+  }
 }

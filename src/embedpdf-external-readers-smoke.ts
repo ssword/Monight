@@ -383,7 +383,7 @@ async function open(
   });
   surface.rendering.setVisible(true);
   const container = document.querySelector<EmbedPdfContainer>('embedpdf-container');
-  if (!container) throw new Error('Missing ready-made viewer');
+  if (!container) throw new Error('Missing viewer');
   const annotations = (await container.registry)
     .getPlugin<import('@embedpdf/snippet').AnnotationPlugin>('annotation')
     ?.provides();

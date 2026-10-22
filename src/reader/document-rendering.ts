@@ -1,4 +1,5 @@
 import type { ViewMode } from '../lib/document-features';
+import type { DocumentAnnotationKind } from './document-queries';
 import type {
   ReaderActionOptions,
   ReadingPosition,
@@ -36,6 +37,31 @@ export interface AnnotationToolDefaults {
   readonly strokeColor?: string;
 }
 
+/** Where an Annotation sits in the window, in CSS pixels. */
+export interface AnnotationAnchor {
+  readonly left: number;
+  readonly top: number;
+  readonly width: number;
+  readonly height: number;
+}
+
+/** The Annotation selected on an editable Document's surface (transient rendering state). */
+export interface SelectedAnnotation {
+  readonly id: string;
+  readonly kind: DocumentAnnotationKind;
+  /** The Annotation's note (its PDF Contents). */
+  readonly contents: string;
+  readonly color: string | null;
+  /** Null while the Annotation is scrolled out of view. */
+  readonly anchor: AnnotationAnchor | null;
+}
+
+/** An edit of one existing Annotation; each is an unsaved, undoable Document edit. */
+export type AnnotationEdit =
+  | { readonly type: 'contents'; readonly contents: string }
+  | { readonly type: 'color'; readonly strokeColor: string }
+  | { readonly type: 'delete' };
+
 export interface DocumentRendering {
   getState(): DocumentRenderingState;
   /** The transient annotation tool in use, or null for text selection. */
@@ -49,6 +75,10 @@ export interface DocumentRendering {
   markupSelection?(toolId: string, defaults: AnnotationToolDefaults): boolean;
   /** Selects an Annotation already scrolled into view; transient rendering state. */
   revealAnnotation?(annotationId: string): void;
+  /** The selected Annotation; null when none is selected or editing is unavailable. */
+  selectedAnnotation?(): SelectedAnnotation | null;
+  /** Edits an existing Annotation; false when refused (editing unavailable, or no such Annotation). */
+  editAnnotation?(annotationId: string, edit: AnnotationEdit): boolean;
   getScrollPosition(): number;
   getReadingPosition(): ReadingPosition;
   goToPage(pageNumber: number, options?: ReaderActionOptions): Promise<void>;

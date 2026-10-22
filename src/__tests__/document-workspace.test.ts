@@ -208,6 +208,51 @@ describe('Document workspace adapter', () => {
     expect(workspace.markupSelection('highlight', {})).toBe(false);
   });
 
+  it("offers the active Document's selected Annotation and routes its edits there", async () => {
+    let activePath = '/second.pdf';
+    const edits: Array<{ filePath: string; annotationId: string }> = [];
+    const workspace = createDocumentWorkspace({
+      dispatchReaderAction: vi.fn(async () => ({ status: 'committed' as const, revision: 1 })),
+      snapshot: () => snapshot([], activePath),
+      isDocumentOpen: () => false,
+      defaultVisualState: () => ({
+        filterSettings: PRESETS.default,
+        zoomIntent: { kind: 'fit-width' },
+        viewMode: 'single',
+      }),
+      createSurface: async ({ filePath }) => {
+        const surface = createControllableSurface(filePath);
+        surface.rendering.selectedAnnotation = () => ({
+          id: `${filePath}#note`,
+          kind: 'note',
+          contents: '',
+          color: null,
+          anchor: null,
+        });
+        surface.rendering.editAnnotation = (annotationId) => {
+          edits.push({ filePath, annotationId });
+          return true;
+        };
+        return surface;
+      },
+    });
+    for (const filePath of ['/first.pdf', '/second.pdf']) {
+      await workspace.intakeRuntime.open({
+        document: { canonicalPath: filePath, title: filePath.slice(1) },
+        bytes: new Uint8Array([1]),
+        activate: false,
+      });
+    }
+
+    expect(workspace.selectedAnnotation()?.id).toBe('/second.pdf#note');
+    expect(workspace.editAnnotation('note-7', { type: 'delete' })).toBe(true);
+    expect(edits).toEqual([{ filePath: '/second.pdf', annotationId: 'note-7' }]);
+
+    activePath = '/missing.pdf';
+    expect(workspace.selectedAnnotation()).toBeNull();
+    expect(workspace.editAnnotation('note-7', { type: 'delete' })).toBe(false);
+  });
+
   it('reveals an Annotation on the rendering surface of the Document that owns it', async () => {
     const reveals = new Map<string, ReturnType<typeof vi.fn>>();
     const workspace = createDocumentWorkspace({
