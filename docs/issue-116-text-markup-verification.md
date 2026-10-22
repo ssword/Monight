@@ -1,5 +1,9 @@
 # Issue #116: native Underline and Strikethrough round trips
 
+Subsequent status (2026-10-22): after #118/#119 fixes, the complete native matrix
+passed. Both tools are admitted by the [new admission record](issue-116-text-markup-admission.md).
+The following original failure record is retained as historical evidence.
+
 Status (2026-10-22): both subtypes failed native verification and remain absent.
 Underline creation placement is tracked in #118; regeneration of Acrobat-authored
 Underline and Strikethrough appearances is tracked in #119. Temporary admission

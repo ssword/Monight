@@ -125,8 +125,8 @@ describe('Highlight split button', () => {
       [...menu.querySelectorAll<HTMLElement>('[data-highlight-tool]')].map(
         (item) => item.dataset.highlightTool,
       ),
-    ).toEqual(['highlight']);
-    expect(menu.textContent).not.toMatch(/Underline|Strikethrough|Text Note/);
+    ).toEqual(['highlight', 'underline', 'strikeout']);
+    expect(menu.textContent).not.toMatch(/Squiggly|Text Note/);
     expect(menu.dataset.tauriDragRegion).toBe('false');
   });
 
@@ -142,8 +142,8 @@ describe('Highlight split button', () => {
       tools: [
         ...(await import('../app/markup-tools')).VERIFIED_MARKUP_TOOLS,
         {
-          id: 'underline',
-          label: 'Underline',
+          id: 'squiggly',
+          label: 'Squiggly',
           icon: 'highlighter',
           control: 'highlight-menu',
           verification: ['docs/example.md'],
@@ -158,7 +158,7 @@ describe('Highlight split button', () => {
       [...document.querySelectorAll<HTMLElement>('[data-highlight-tool]')].map(
         (item) => item.dataset.highlightTool,
       ),
-    ).toEqual(['highlight', 'underline']);
+    ).toEqual(['highlight', 'underline', 'strikeout', 'squiggly']);
   });
 
   it('uses the chosen colour and remembers it across relaunches', async () => {

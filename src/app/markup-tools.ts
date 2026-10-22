@@ -39,6 +39,20 @@ export const VERIFIED_MARKUP_TOOLS: readonly VerifiedMarkupTool[] = Object.freez
     ],
   },
   {
+    id: 'underline',
+    label: 'Underline',
+    icon: 'underline',
+    control: 'highlight-menu',
+    verification: ['docs/issue-116-text-markup-admission.md'],
+  },
+  {
+    id: 'strikeout',
+    label: 'Strikethrough',
+    icon: 'strikethrough',
+    control: 'highlight-menu',
+    verification: ['docs/issue-116-text-markup-admission.md'],
+  },
+  {
     id: 'textComment',
     label: 'Text Note',
     icon: 'sticky-note',
