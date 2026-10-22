@@ -336,7 +336,7 @@ export async function verifyNavigationChrome(browser, origin) {
     assert.equal(await page.getAttribute('#sidebar-toggle', 'aria-pressed'), 'false');
 
     // Find focuses the toolbar Search field; results take over the sidebar until cleared.
-    await page.keyboard.press('Control+F');
+    await page.keyboard.press('ControlOrMeta+F');
     await page.waitForFunction(() => document.activeElement?.id === 'toolbar-search');
     await page.fill('#toolbar-search', 'moon');
     const results = sidebar.locator('.search-result');

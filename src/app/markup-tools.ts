@@ -36,6 +36,7 @@ export const VERIFIED_MARKUP_TOOLS: readonly VerifiedMarkupTool[] = Object.freez
     verification: [
       'docs/issue-75-preview-verification.md',
       'docs/issue-80-acrobat-verification.md',
+      'docs/issue-124-127-highlight-admission.md',
     ],
   },
   {
