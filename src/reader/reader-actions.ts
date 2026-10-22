@@ -3,6 +3,7 @@ import type { PdfLinkTarget } from '../lib/pdf-links';
 import { type FilterSettings, PRESETS } from '../scripts/filters';
 import { createDocumentQuery, type DocumentQuery, type DocumentRuntime } from './document-queries';
 import type {
+  AnnotationEdit,
   NativePdfSaveAdapter,
   PageRotationDirection,
   PdfSaveDestination,
@@ -166,6 +167,13 @@ export type ReaderAction =
       direction: PageRotationDirection;
       filePath?: string;
     }
+  | {
+      type: 'editAnnotation';
+      /** The Document the Annotation was selected in, captured then (never the active one). */
+      filePath: string;
+      annotationId: string;
+      edit: AnnotationEdit;
+    }
   | { type: 'undoEdit'; filePath?: string }
   | { type: 'redoEdit'; filePath?: string }
   | { type: 'discardAndReloadDocument'; filePath?: string }
@@ -197,6 +205,12 @@ export const readerAction = {
     direction: PageRotationDirection,
     filePath?: string,
   ): ReaderAction => withOptionalFilePath({ type: 'rotatePages', pages, direction }, filePath),
+  editAnnotation: (filePath: string, annotationId: string, edit: AnnotationEdit): ReaderAction => ({
+    type: 'editAnnotation',
+    filePath,
+    annotationId,
+    edit,
+  }),
 };
 
 export type DispatchReaderAction = (action: ReaderAction) => Promise<void>;
@@ -1880,6 +1894,15 @@ export function createReaderActions({
         return editDocument(action.filePath, options, (editing) => {
           if (!editing?.rotatePages) throw new Error('Page Rotation editing is unavailable');
           editing.rotatePages(pages, action.direction);
+        });
+      }
+
+      if (action.type === 'editAnnotation') {
+        // An Annotation edit belongs to the Document it was selected in, so it is
+        // routed there explicitly, even after the reader has moved to another.
+        return editDocument(action.filePath, options, (editing) => {
+          if (!editing?.editAnnotation) throw new Error('Annotation editing is unavailable');
+          editing.editAnnotation(action.annotationId, action.edit);
         });
       }
 

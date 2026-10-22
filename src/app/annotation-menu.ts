@@ -6,8 +6,10 @@
 
 import { isEditableTarget } from '../lib/editable-target';
 import type { DocumentAnnotationKind } from '../reader/document-queries';
-import type { AnnotationEdit, SelectedAnnotation } from '../reader/document-rendering';
+import type { AnnotationEdit } from '../reader/native-pdf-editing';
+import { type ReaderAction, readerAction } from '../reader/reader-actions';
 import { hydrateChromeIcons } from './chrome-icons';
+import type { DocumentSelectedAnnotation } from './document-workspace';
 import { HIGHLIGHT_COLORS } from './markup-tools';
 
 /** Gap between the Annotation and the menu beneath it, in CSS pixels. */
@@ -22,9 +24,9 @@ const TEXT_MARKUP_KINDS: ReadonlySet<DocumentAnnotationKind> = new Set([
 export interface AnnotationMenuOptions {
   readonly element: HTMLElement;
   /** The active Document's selected Annotation; null when none or editing is unavailable. */
-  readonly selectedAnnotation: () => SelectedAnnotation | null;
-  /** Edits an Annotation of the active Document; false when refused. */
-  readonly editAnnotation: (annotationId: string, edit: AnnotationEdit) => boolean;
+  readonly selectedAnnotation: () => DocumentSelectedAnnotation | null;
+  /** Edits go out as Reader Actions naming the Document the Annotation was selected in. */
+  readonly dispatchReaderAction: (action: ReaderAction) => unknown;
 }
 
 export interface AnnotationMenu {
@@ -36,22 +38,30 @@ export interface AnnotationMenu {
 export function createAnnotationMenu({
   element,
   selectedAnnotation,
-  editAnnotation,
+  dispatchReaderAction,
 }: AnnotationMenuOptions): AnnotationMenu {
   element.hidden = true;
   element.setAttribute('role', 'dialog');
   element.setAttribute('aria-label', 'Annotation');
 
-  let shown: { id: string; field: HTMLTextAreaElement; committed: string } | null = null;
+  let shown: {
+    filePath: string;
+    id: string;
+    field: HTMLTextAreaElement;
+    committed: string;
+  } | null = null;
   let swatches: HTMLButtonElement[] = [];
+
+  const edit = (annotation: { filePath: string; id: string }, change: AnnotationEdit) =>
+    dispatchReaderAction(readerAction.editAnnotation(annotation.filePath, annotation.id, change));
 
   const commitNote = () => {
     if (!shown || shown.field.value === shown.committed) return;
     shown.committed = shown.field.value;
-    editAnnotation(shown.id, { type: 'contents', contents: shown.field.value });
+    edit(shown, { type: 'contents', contents: shown.field.value });
   };
 
-  const build = (annotation: SelectedAnnotation) => {
+  const build = (annotation: DocumentSelectedAnnotation) => {
     const field = document.createElement('textarea');
     field.className = 'annotation-menu-note';
     field.rows = 3;
@@ -70,7 +80,7 @@ export function createAnnotationMenu({
           swatch.dataset.strokeColor = color.strokeColor;
           swatch.style.setProperty('--highlight-color', color.strokeColor);
           swatch.addEventListener('click', () =>
-            editAnnotation(annotation.id, { type: 'color', strokeColor: color.strokeColor }),
+            edit(annotation, { type: 'color', strokeColor: color.strokeColor }),
           );
           return swatch;
         })
@@ -88,14 +98,19 @@ export function createAnnotationMenu({
     remove.setAttribute('aria-label', 'Delete');
     remove.title = 'Delete';
     remove.dataset.icon = 'trash';
-    remove.addEventListener('click', () => editAnnotation(annotation.id, { type: 'delete' }));
+    remove.addEventListener('click', () => edit(annotation, { type: 'delete' }));
 
     const actions = document.createElement('div');
     actions.className = 'annotation-menu-actions';
     actions.append(colours, remove);
     element.replaceChildren(field, actions);
     hydrateChromeIcons(element);
-    shown = { id: annotation.id, field, committed: annotation.contents };
+    shown = {
+      filePath: annotation.filePath,
+      id: annotation.id,
+      field,
+      committed: annotation.contents,
+    };
     return field;
   };
 
@@ -113,7 +128,7 @@ export function createAnnotationMenu({
       hide();
       return;
     }
-    if (shown?.id !== annotation.id) {
+    if (shown?.id !== annotation.id || shown.filePath !== annotation.filePath) {
       commitNote();
       const field = build(annotation);
       // A new, empty note is placed to be written: take the typing at once, or,
@@ -162,7 +177,7 @@ export function createAnnotationMenu({
     const annotation = selectedAnnotation();
     if (!annotation) return;
     event.preventDefault();
-    editAnnotation(annotation.id, { type: 'delete' });
+    edit(annotation, { type: 'delete' });
   };
   document.addEventListener('keydown', onKeyDown);
 

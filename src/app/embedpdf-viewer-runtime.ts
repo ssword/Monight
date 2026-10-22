@@ -31,11 +31,7 @@ import type {
   ResolvedDocumentLinkTarget,
 } from '../reader/document-content';
 import type { DocumentAnnotationSnapshot } from '../reader/document-queries';
-import type {
-  AnnotationEdit,
-  AnnotationToolDefaults,
-  SelectedAnnotation,
-} from '../reader/document-rendering';
+import type { AnnotationToolDefaults, SelectedAnnotation } from '../reader/document-rendering';
 import type { AnnotationDisplayName, NativePdfEditing } from '../reader/native-pdf-editing';
 import type {
   ReadingPosition,
@@ -127,8 +123,6 @@ export interface EmbedPdfViewerRuntime {
   revealAnnotation(annotationId: string): void;
   /** The single selected Annotation and where it sits in the window; null when none. */
   selectedAnnotation(): SelectedAnnotation | null;
-  /** Edits an Annotation (an unsaved, undoable edit); false when there is no such Annotation. */
-  editAnnotation(annotationId: string, edit: AnnotationEdit): boolean;
   destroy(): Promise<void>;
 }
 
@@ -858,22 +852,6 @@ export async function createEmbedPdfViewerRuntime({
         color: snapshot.color,
         anchor: annotationAnchor(tracked.object),
       };
-    },
-    editAnnotation(annotationId, edit) {
-      if (destroyed || readOnlyReason !== null) return false;
-      const annotation = annotationScope.getAnnotationById(annotationId);
-      if (!annotation || annotation.commitState === 'deleted') return false;
-      const { pageIndex } = annotation.object;
-      if (edit.type === 'delete') annotationScope.deleteAnnotation(pageIndex, annotationId);
-      else
-        annotationScope.updateAnnotation(
-          pageIndex,
-          annotationId,
-          edit.type === 'contents'
-            ? { contents: edit.contents }
-            : { strokeColor: edit.strokeColor },
-        );
-      return true;
     },
     async destroy() {
       if (destroyed) return;

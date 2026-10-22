@@ -15,7 +15,11 @@ import {
   type Rotation,
   type TrackedAnnotation,
 } from '@embedpdf/snippet';
-import type { NativePdfEditing, PageRotationDirection } from '../reader/native-pdf-editing';
+import type {
+  AnnotationEdit,
+  NativePdfEditing,
+  PageRotationDirection,
+} from '../reader/native-pdf-editing';
 import { embedPdfAnnotationToolIds } from './embedpdf-offline-configuration';
 import { mapRegeneratedTextMarkupAppearance } from './embedpdf-text-markup-appearance';
 
@@ -399,6 +403,22 @@ export function createEmbedPdfNativeAnnotationEditing({
       };
       if (history) history.register(command, 'page-rotation');
       else command.execute();
+    },
+    editAnnotation(annotationId: string, edit: AnnotationEdit) {
+      if (readOnlyReason) throw new Error(readOnlyReason);
+      const annotation = annotationScope.getAnnotationById(annotationId);
+      if (!annotation || annotation.commitState === 'deleted')
+        throw new Error('The Annotation no longer exists');
+      const { pageIndex } = annotation.object;
+      if (edit.type === 'delete') annotationScope.deleteAnnotation(pageIndex, annotationId);
+      else
+        annotationScope.updateAnnotation(
+          pageIndex,
+          annotationId,
+          edit.type === 'contents'
+            ? { contents: edit.contents }
+            : { strokeColor: edit.strokeColor },
+        );
     },
     canUndo: () => !readOnlyReason && (history?.canUndo() ?? false),
     canRedo: () => !readOnlyReason && (history?.canRedo() ?? false),

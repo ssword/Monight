@@ -7,7 +7,6 @@ import type { PdfPasswordRequester } from '../reader/document-content';
 import type { DocumentRuntimeIntake, DocumentRuntimeOpenRequest } from '../reader/document-intake';
 import type { DocumentQuery, DocumentRuntime } from '../reader/document-queries';
 import type {
-  AnnotationEdit,
   AnnotationToolDefaults,
   DocumentRendering,
   DocumentViewTransform,
@@ -97,6 +96,11 @@ interface DocumentWorkspaceOptions {
   renderingStateChanged?: () => void;
 }
 
+/** A selected Annotation and the Document it was selected in, whose edits it routes to. */
+export interface DocumentSelectedAnnotation extends SelectedAnnotation {
+  readonly filePath: string;
+}
+
 export interface DocumentWorkspace {
   readonly intakeRuntime: DocumentRuntimeIntake;
   readonly projection: ReaderProjection;
@@ -114,10 +118,11 @@ export interface DocumentWorkspace {
   markupSelection(toolId: string, defaults: AnnotationToolDefaults): boolean;
   /** Selects an Annotation on its Document's rendering surface. */
   revealAnnotation(filePath: string, annotationId: string): void;
-  /** The active Document's selected Annotation; null when none or editing is unavailable. */
-  selectedAnnotation(): SelectedAnnotation | null;
-  /** Edits an Annotation of the active Document; false when refused. */
-  editAnnotation(annotationId: string, edit: AnnotationEdit): boolean;
+  /**
+   * The active Document's selected Annotation, with the Document it belongs to;
+   * null when none or editing is unavailable.
+   */
+  selectedAnnotation(): DocumentSelectedAnnotation | null;
   setAnnotationDisplayName(displayName: AnnotationDisplayName): void;
 }
 
@@ -885,12 +890,8 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
     selectedAnnotation() {
       const filePath = options.snapshot().activeDocumentPath;
       const rendering = filePath ? presented.get(filePath)?.rendering : undefined;
-      return rendering?.selectedAnnotation?.() ?? null;
-    },
-    editAnnotation(annotationId, edit) {
-      const filePath = options.snapshot().activeDocumentPath;
-      const rendering = filePath ? presented.get(filePath)?.rendering : undefined;
-      return rendering?.editAnnotation?.(annotationId, edit) ?? false;
+      const annotation = rendering?.selectedAnnotation?.();
+      return filePath && annotation ? { ...annotation, filePath } : null;
     },
     setAnnotationDisplayName(displayName) {
       for (const documentState of presented.values()) {

@@ -2,10 +2,15 @@
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { type AnnotationMenu, createAnnotationMenu } from '../app/annotation-menu';
+import type { DocumentSelectedAnnotation } from '../app/document-workspace';
 import { HIGHLIGHT_COLORS } from '../app/markup-tools';
-import type { AnnotationEdit, SelectedAnnotation } from '../reader/document-rendering';
+import type { AnnotationEdit } from '../reader/native-pdf-editing';
+import type { ReaderAction } from '../reader/reader-actions';
 
-const note = (overrides: Partial<SelectedAnnotation> = {}): SelectedAnnotation => ({
+const REPORT = '/docs/report.pdf';
+
+const note = (overrides: Partial<DocumentSelectedAnnotation> = {}): DocumentSelectedAnnotation => ({
+  filePath: REPORT,
   id: 'note-1',
   kind: 'note',
   contents: '',
@@ -14,12 +19,14 @@ const note = (overrides: Partial<SelectedAnnotation> = {}): SelectedAnnotation =
   ...overrides,
 });
 
-const highlight = (overrides: Partial<SelectedAnnotation> = {}): SelectedAnnotation =>
+const highlight = (
+  overrides: Partial<DocumentSelectedAnnotation> = {},
+): DocumentSelectedAnnotation =>
   note({ id: 'mark-1', kind: 'highlight', contents: 'Remember this', ...overrides });
 
 describe('Annotation menu', () => {
-  let selected: SelectedAnnotation | null;
-  let edits: Array<{ id: string; edit: AnnotationEdit }>;
+  let selected: DocumentSelectedAnnotation | null;
+  let edits: Array<{ filePath: string; id: string; edit: AnnotationEdit }>;
   let mounted: AnnotationMenu[] = [];
 
   const menu = () => document.getElementById('annotation-menu') as HTMLElement;
@@ -32,14 +39,16 @@ describe('Annotation menu', () => {
     const view = createAnnotationMenu({
       element: menu(),
       selectedAnnotation: () => selected,
-      editAnnotation: (id, edit) => {
-        edits.push({ id, edit });
+      dispatchReaderAction: (action: ReaderAction) => {
+        if (action.type !== 'editAnnotation') throw new Error(`Unexpected ${action.type}`);
+        const { filePath, annotationId: id, edit } = action;
+        edits.push({ filePath, id, edit });
+        if (selected?.filePath !== filePath) return;
         if (edit.type === 'delete') selected = null;
         else if (selected?.id === id && edit.type === 'contents')
           selected = { ...selected, contents: edit.contents };
         else if (selected?.id === id && edit.type === 'color')
           selected = { ...selected, color: edit.strokeColor };
-        return true;
       },
     });
     mounted.push(view);
@@ -88,7 +97,11 @@ describe('Annotation menu', () => {
     input.dispatchEvent(new Event('change'));
 
     expect(edits).toEqual([
-      { id: 'note-1', edit: { type: 'contents', contents: 'Ask about the moon' } },
+      {
+        filePath: REPORT,
+        id: 'note-1',
+        edit: { type: 'contents', contents: 'Ask about the moon' },
+      },
     ]);
   });
 
@@ -102,7 +115,11 @@ describe('Annotation menu', () => {
     view.refresh();
 
     expect(edits).toEqual([
-      { id: 'note-1', edit: { type: 'contents', contents: 'Typed but not committed' } },
+      {
+        filePath: REPORT,
+        id: 'note-1',
+        edit: { type: 'contents', contents: 'Typed but not committed' },
+      },
     ]);
     expect(field()?.value).toBe('Remember this');
   });
@@ -143,7 +160,11 @@ describe('Annotation menu', () => {
     swatches()[2]?.click();
 
     expect(edits).toEqual([
-      { id: 'mark-1', edit: { type: 'color', strokeColor: HIGHLIGHT_COLORS[2].strokeColor } },
+      {
+        filePath: REPORT,
+        id: 'mark-1',
+        edit: { type: 'color', strokeColor: HIGHLIGHT_COLORS[2].strokeColor },
+      },
     ]);
     view.refresh();
     expect(swatches()[2]?.getAttribute('aria-checked')).toBe('true');
@@ -161,7 +182,7 @@ describe('Annotation menu', () => {
     button('Delete')?.click();
     view.refresh();
 
-    expect(edits).toEqual([{ id: 'mark-1', edit: { type: 'delete' } }]);
+    expect(edits).toEqual([{ filePath: REPORT, id: 'mark-1', edit: { type: 'delete' } }]);
     expect(menu().hidden).toBe(true);
   });
 
@@ -179,7 +200,7 @@ describe('Annotation menu', () => {
 
     field()?.blur();
     document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Backspace', bubbles: true }));
-    expect(edits).toEqual([{ id: 'mark-1', edit: { type: 'delete' } }]);
+    expect(edits).toEqual([{ filePath: REPORT, id: 'mark-1', edit: { type: 'delete' } }]);
   });
 
   it('hides while its Annotation is scrolled out of view', () => {

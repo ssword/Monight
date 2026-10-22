@@ -587,8 +587,10 @@ function mountAnnotationMenu(): AnnotationMenu | null {
   return createAnnotationMenu({
     element,
     selectedAnnotation: () => documentWorkspace?.selectedAnnotation() ?? null,
-    editAnnotation: (annotationId, edit) =>
-      documentWorkspace?.editAnnotation(annotationId, edit) ?? false,
+    dispatchReaderAction: async (action) => {
+      const outcome = await readerActions?.dispatch(action);
+      if (outcome?.status === 'failure') showToast(String(outcome.error), 'error');
+    },
   });
 }
 

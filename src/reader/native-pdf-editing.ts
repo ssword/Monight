@@ -14,6 +14,12 @@ export function normalizeAnnotationDisplayName(value: unknown): AnnotationDispla
 
 export type PageRotationDirection = 'clockwise' | 'counterclockwise';
 
+/** An edit of one existing Annotation; each is an unsaved, undoable Document edit. */
+export type AnnotationEdit =
+  | { readonly type: 'contents'; readonly contents: string }
+  | { readonly type: 'color'; readonly strokeColor: string }
+  | { readonly type: 'delete' };
+
 /** Live PDF edits are independent of durable Reading Session persistence. */
 export interface NativePdfEditing {
   state(): {
@@ -30,6 +36,11 @@ export interface NativePdfEditing {
    * one edit on the same undo timeline as Annotation edits.
    */
   rotatePages?(pages: readonly number[], direction: PageRotationDirection): void;
+  /**
+   * Edits one existing Annotation (its note, colour, or deletion) on the same undo
+   * timeline; throws when no such Annotation exists.
+   */
+  editAnnotation?(annotationId: string, edit: AnnotationEdit): void;
   /** Undoes the most recent edit (Annotation or Page Rotation). */
   undo?(): void;
   /** Reapplies the most recently undone edit. */

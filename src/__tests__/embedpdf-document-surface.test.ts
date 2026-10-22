@@ -57,7 +57,6 @@ const createViewerRuntime = (
   annotations: () => [],
   revealAnnotation: vi.fn(),
   selectedAnnotation: () => null,
-  editAnnotation: vi.fn(() => false),
   destroy: vi.fn(async () => undefined),
   ...overrides,
 });
@@ -585,7 +584,6 @@ describe('EmbedPDF Document surface', () => {
           markSaved: vi.fn(),
         },
         selectedAnnotation: () => selection,
-        editAnnotation: vi.fn(() => true),
       });
       const surface = await createEmbedPdfDocumentSurfaceFactory({
         createViewer: async () => viewer,
@@ -596,20 +594,9 @@ describe('EmbedPDF Document surface', () => {
 
     const editable = await open(null);
     expect(editable.surface.rendering.selectedAnnotation?.()).toEqual(selection);
-    expect(
-      editable.surface.rendering.editAnnotation?.('note-1', { type: 'contents', contents: 'Sun' }),
-    ).toBe(true);
-    expect(editable.viewer.editAnnotation).toHaveBeenCalledWith('note-1', {
-      type: 'contents',
-      contents: 'Sun',
-    });
 
     const protectedDocument = await open('Digitally signed PDFs are read-only');
     expect(protectedDocument.surface.rendering.selectedAnnotation?.()).toBeNull();
-    expect(protectedDocument.surface.rendering.editAnnotation?.('note-1', { type: 'delete' })).toBe(
-      false,
-    );
-    expect(protectedDocument.viewer.editAnnotation).not.toHaveBeenCalled();
   });
 
   it('marks the text selection in a colour only on an editable Document', async () => {
