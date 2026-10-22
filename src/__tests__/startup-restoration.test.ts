@@ -12,7 +12,7 @@ import type {
 } from '../reader/reader-actions';
 
 const emptySession: PersistedReadingSession = {
-  schemaVersion: 2,
+  schemaVersion: 3,
   activeDocumentPath: null,
   documents: [],
 };
@@ -28,7 +28,6 @@ function visualState(): ReadingSessionVisualState {
       extraBrightness: 0,
     },
     zoomIntent: { kind: 'fit-width' },
-    rotation: 0,
     viewMode: 'continuous',
   };
 }
@@ -252,7 +251,7 @@ describe('startup Reading Session workflow', () => {
       },
     );
     const session: PersistedReadingSession = {
-      schemaVersion: 2,
+      schemaVersion: 3,
       activeDocumentPath: '/docs/active.pdf',
       documents: [savedDocument('/docs/active.pdf', 2), savedDocument('/docs/background.pdf', 3)],
     };

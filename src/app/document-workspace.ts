@@ -6,7 +6,12 @@ import type { DocumentAccess, DocumentPresentation } from '../reader/document-ac
 import type { PdfPasswordRequester } from '../reader/document-content';
 import type { DocumentRuntimeIntake, DocumentRuntimeOpenRequest } from '../reader/document-intake';
 import type { DocumentQuery, DocumentRuntime } from '../reader/document-queries';
-import type { DocumentRendering, DocumentViewTransform } from '../reader/document-rendering';
+import type {
+  AnnotationToolDefaults,
+  DocumentRendering,
+  DocumentViewTransform,
+  SelectedAnnotation,
+} from '../reader/document-rendering';
 import type { AnnotationDisplayName } from '../reader/native-pdf-editing';
 import type {
   ReaderAction,
@@ -40,7 +45,6 @@ export interface DocumentSurfaceCallbacks {
   readonly stateChanged: () => void;
   readonly pageNavigationRequested: (page: number, options?: ReaderActionOptions) => Promise<void>;
   readonly zoomIntentRequested: (zoomIntent: ZoomIntent) => Promise<void>;
-  readonly rotationRequested?: (direction: 'clockwise' | 'counter-clockwise') => Promise<void>;
   readonly viewModeRequested?: (viewMode: ViewMode) => Promise<void>;
   readonly linkTargetRequested?: (
     target: PdfLinkTarget,
@@ -92,6 +96,11 @@ interface DocumentWorkspaceOptions {
   renderingStateChanged?: () => void;
 }
 
+/** A selected Annotation and the Document it was selected in, whose edits it routes to. */
+export interface DocumentSelectedAnnotation extends SelectedAnnotation {
+  readonly filePath: string;
+}
+
 export interface DocumentWorkspace {
   readonly intakeRuntime: DocumentRuntimeIntake;
   readonly projection: ReaderProjection;
@@ -101,9 +110,31 @@ export interface DocumentWorkspace {
   activeRenderingState(): ReturnType<DocumentRendering['getState']> | null;
   activeReadingPosition(): { filePath: string; readingPosition: ReadingPosition } | null;
   viewTransform(filePath: string): DocumentViewTransform | null;
-  openActiveSearch(): void;
+  /** The active Document's markup tool and why editing is unavailable, if it is. */
+  activeMarkup(): ActiveMarkupState | null;
+  /** Chooses a markup tool on the active Document, or null for text selection. */
+  setActiveAnnotationTool(toolId: string | null, defaults?: AnnotationToolDefaults): void;
+  /** Marks the active Document's text selection; false when nothing was marked. */
+  markupSelection(toolId: string, defaults: AnnotationToolDefaults): boolean;
+  /** Selects an Annotation on its Document's rendering surface. */
+  revealAnnotation(filePath: string, annotationId: string): void;
+  /**
+   * The active Document's selected Annotation, with the Document it belongs to;
+   * null when none or editing is unavailable.
+   */
+  selectedAnnotation(): DocumentSelectedAnnotation | null;
   setAnnotationDisplayName(displayName: AnnotationDisplayName): void;
 }
+
+export interface ActiveMarkupState {
+  readonly activeToolId: string | null;
+  readonly readOnlyReason: string | null;
+  /** Whether the Document has an edit to undo or redo (Edit ▸ Undo/Redo). */
+  readonly canUndo?: boolean;
+  readonly canRedo?: boolean;
+}
+
+const EDITING_UNAVAILABLE_REASON = 'Native editing safety inspection is unavailable';
 
 interface PresentedDocument {
   readonly identity: { filePath: string; title: string };
@@ -136,7 +167,6 @@ async function projectDocumentState(
 ): Promise<void> {
   if (documentState.visualState) {
     rendering.applyFilter(buildFilterCSS(documentState.visualState.filterSettings), options);
-    await rendering.setRotation(documentState.visualState.rotation, options);
     await rendering.setViewMode(documentState.visualState.viewMode, options);
     await rendering.setZoomIntent(documentState.visualState.zoomIntent, options);
   }
@@ -505,11 +535,6 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
           filePath: identity.filePath,
           zoomIntent,
         }),
-      rotationRequested: (direction) =>
-        dispatchSurfaceAction({
-          type: direction === 'clockwise' ? 'rotateClockwise' : 'rotateCounterClockwise',
-          filePath: identity.filePath,
-        }),
       viewModeRequested: (viewMode) =>
         dispatchSurfaceAction({
           type: 'setViewMode',
@@ -547,9 +572,6 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
       rendering: surface.rendering,
       presentation: {
         snapshot: () => surface.rendering.getState(),
-        ...(surface.rendering.openSearch
-          ? { openSearch: () => surface.rendering.openSearch?.() }
-          : {}),
       },
     };
   };
@@ -642,6 +664,8 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
     goToReadingPosition: (filePath, position, actionOptions) =>
       requireRendering(filePath).goToReadingPosition(position, actionOptions),
     getPageCount: (filePath) => requireRendering(filePath).getState().totalPages,
+    currentReadingPosition: (filePath) =>
+      presented.get(filePath)?.rendering.getReadingPosition() ?? null,
     async applyZoomIntent(filePath, zoomIntent, actionOptions) {
       const rendering = requireRendering(filePath);
       await rendering.setZoomIntent(zoomIntent, actionOptions);
@@ -654,8 +678,6 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
         : rendering.zoomOut(actionOptions));
       return cloneZoomIntent(rendering.getState().zoomIntent);
     },
-    applyRotation: (filePath, rotation, actionOptions) =>
-      requireRendering(filePath).setRotation(rotation, actionOptions),
     applyViewMode: (filePath, viewMode, actionOptions) =>
       requireRendering(filePath).setViewMode(viewMode, actionOptions),
     async applyFilterSettings(filePath, filterSettings, actionOptions) {
@@ -795,6 +817,14 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
     setDocumentOrder: () => undefined,
   };
 
+  /** The active Document's path and presented state; null without a presented one. */
+  const activeDocument = () => {
+    const filePath = options.snapshot().activeDocumentPath;
+    const documentState = filePath ? presented.get(filePath) : undefined;
+    return filePath && documentState ? { filePath, ...documentState } : null;
+  };
+  const activeRendering = () => activeDocument()?.rendering ?? null;
+
   return {
     intakeRuntime,
     projection,
@@ -805,8 +835,7 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
       return presentation ? { query, presentation } : null;
     },
     activePresentation() {
-      const filePath = options.snapshot().activeDocumentPath;
-      const rendering = filePath ? presented.get(filePath)?.rendering : null;
+      const rendering = activeRendering();
       return rendering
         ? {
             snapshot: () => rendering.getState(),
@@ -817,14 +846,12 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
         : null;
     },
     activeRenderingState() {
-      const filePath = options.snapshot().activeDocumentPath;
-      return filePath ? (presented.get(filePath)?.rendering.getState() ?? null) : null;
+      return activeRendering()?.getState() ?? null;
     },
     activeReadingPosition() {
-      const filePath = options.snapshot().activeDocumentPath;
-      const rendering = filePath ? presented.get(filePath)?.rendering : null;
-      return filePath && rendering
-        ? { filePath, readingPosition: rendering.getReadingPosition() }
+      const active = activeDocument();
+      return active
+        ? { filePath: active.filePath, readingPosition: active.rendering.getReadingPosition() }
         : null;
     },
     viewTransform(filePath) {
@@ -836,14 +863,35 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
       return {
         scale: state.zoom,
         zoomIntent: cloneZoomIntent(state.zoomIntent),
-        viewingRotation: state.rotation,
         viewMode: state.viewMode,
         filterCss: buildFilterCSS(visualState.filterSettings),
       };
     },
-    openActiveSearch() {
-      const filePath = options.snapshot().activeDocumentPath;
-      if (filePath) presented.get(filePath)?.rendering.openSearch?.();
+    activeMarkup() {
+      const documentState = activeDocument();
+      if (!documentState) return null;
+      const runtimeEditing = documentState.runtime.editing;
+      const editing = runtimeEditing?.state();
+      return {
+        activeToolId: documentState.rendering.activeAnnotationTool?.() ?? null,
+        readOnlyReason: editing ? editing.readOnlyReason : EDITING_UNAVAILABLE_REASON,
+        canUndo: runtimeEditing?.canUndo?.() ?? false,
+        canRedo: runtimeEditing?.canRedo?.() ?? false,
+      };
+    },
+    setActiveAnnotationTool(toolId, defaults) {
+      activeRendering()?.setActiveAnnotationTool?.(toolId, defaults);
+    },
+    markupSelection(toolId, defaults) {
+      return activeRendering()?.markupSelection?.(toolId, defaults) ?? false;
+    },
+    revealAnnotation(filePath, annotationId) {
+      presented.get(filePath)?.rendering.revealAnnotation?.(annotationId);
+    },
+    selectedAnnotation() {
+      const active = activeDocument();
+      const annotation = active?.rendering.selectedAnnotation?.();
+      return active && annotation ? { ...annotation, filePath: active.filePath } : null;
     },
     setAnnotationDisplayName(displayName) {
       for (const documentState of presented.values()) {

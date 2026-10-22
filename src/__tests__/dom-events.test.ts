@@ -2,6 +2,8 @@
 
 import { describe, expect, it, vi } from 'vitest';
 import { setupEventListeners } from '../app/dom-events';
+import { registerKeybindActions } from '../app/keybinds';
+import { type ReaderCommandContext, runReaderCommand } from '../app/reader-commands';
 import type { KeybindManager } from '../scripts/keybind-manager';
 
 describe('setupEventListeners', () => {
@@ -9,7 +11,7 @@ describe('setupEventListeners', () => {
     const windowAddEventListener = vi.spyOn(window, 'addEventListener');
     const handleEvent = vi.fn(async () => undefined);
     const keybindManager = {
-      matchEvent: vi.fn(() => 'open'),
+      matchEvent: vi.fn((event: KeyboardEvent) => (event.key === 'o' ? 'open' : null)),
       handleEvent,
     } as unknown as KeybindManager;
 
@@ -71,7 +73,11 @@ describe('setupEventListeners', () => {
   it('dispatches retained toolbar choices as typed Reader Actions', async () => {
     document.body.innerHTML = `
       <button id="print-file"></button>
-      <button id="preset-original" class="preset-btn"></button>
+      <button id="appearance-toggle"></button>
+      <div id="appearance-popover" class="hidden">
+        <div id="appearance-presets"></div>
+      </div>
+      <button id="legacy-strip-sepia" class="preset-btn" data-preset="sepia"></button>
     `;
     const dispatchReaderAction = vi.fn(async (_action: unknown) => undefined);
 
@@ -85,7 +91,8 @@ describe('setupEventListeners', () => {
       dispatchReaderAction,
     });
 
-    for (const id of ['print-file', 'preset-original']) {
+    // The old toolbar preset strip is gone: only the Appearance popover's presets apply.
+    for (const id of ['print-file', 'legacy-strip-sepia', 'preset-original']) {
       document.getElementById(id)?.click();
     }
     await vi.waitFor(() => expect(dispatchReaderAction).toHaveBeenCalledTimes(2));
@@ -104,5 +111,71 @@ describe('setupEventListeners', () => {
         },
       },
     ]);
+  });
+});
+
+describe('toolbar input adapters', () => {
+  const listen = (dispatchReaderAction: (action: unknown) => Promise<void>) =>
+    setupEventListeners({
+      sliderManager: null,
+      keybindManager: null,
+      openPdfAndRefresh: vi.fn(async () => undefined),
+      activateDocument: vi.fn(async () => undefined),
+      openRecentFile: vi.fn(async () => undefined),
+      clearRecentFiles: vi.fn(async () => undefined),
+      dispatchReaderAction,
+    });
+
+  it('dispatches the zoom group as the same Reader Actions as the zoom shortcuts', async () => {
+    const handlers = new Map<string, () => void | Promise<void>>();
+    const shortcutActions: unknown[] = [];
+    registerKeybindActions({
+      keybindManager: {
+        registerAction: (name: string, handler: () => void | Promise<void>) => {
+          handlers.set(name, handler);
+        },
+      } as unknown as KeybindManager,
+      getReadingSessionSnapshot: () => ({
+        schemaVersion: 3,
+        revision: 0,
+        activeDocumentPath: null,
+        documents: [],
+      }),
+      getActivePageCount: async () => 0,
+      openPdfAndRefresh: vi.fn(async () => undefined),
+      openSettings: vi.fn(async () => undefined),
+      updateTabBarVisibility: vi.fn(),
+      updateUI: vi.fn(),
+      openSearch: vi.fn(),
+      goToPage: vi.fn(async () => undefined),
+      // Zoom shortcuts run their Reader Commands, which dispatch the action.
+      runReaderCommand: (id) =>
+        runReaderCommand(id, {
+          dispatchReaderAction: async (action: unknown) => {
+            shortcutActions.push(action);
+          },
+        } as unknown as ReaderCommandContext),
+      dispatchReaderAction: vi.fn(async () => undefined),
+    });
+    for (const name of ['zoomOut', 'fitToPage', 'zoomIn']) await handlers.get(name)?.();
+
+    document.body.innerHTML = `
+      <div class="toolbar-capsule">
+        <button id="zoom-out"></button>
+        <button id="zoom-to-fit"></button>
+        <button id="zoom-in"></button>
+      </div>
+    `;
+    const dispatchReaderAction = vi.fn(async (_action: unknown) => undefined);
+    listen(dispatchReaderAction);
+    for (const id of ['zoom-out', 'zoom-to-fit', 'zoom-in']) document.getElementById(id)?.click();
+
+    await vi.waitFor(() => expect(dispatchReaderAction).toHaveBeenCalledTimes(3));
+    expect(dispatchReaderAction.mock.calls.map(([action]) => action)).toEqual([
+      { type: 'zoomOut' },
+      { type: 'setZoomIntent', zoomIntent: { kind: 'fit-page' } },
+      { type: 'zoomIn' },
+    ]);
+    expect(shortcutActions).toEqual(dispatchReaderAction.mock.calls.map(([action]) => action));
   });
 });

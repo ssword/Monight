@@ -2,6 +2,8 @@
 status: accepted
 ---
 
+The choice of EmbedPDF's ready-made interface below is superseded by [ADR 0003](0003-preview-style-chrome-over-headless-embedpdf.md), as are view-only rotation and the exclusion of document restructuring for page rotation only. EmbedPDF as engine and every other native-annotation, save, and file-safety decision remain in effect.
+
 # Adopt EmbedPDF's ready-made viewer and PDF-native annotations
 
 Monight will replace its PDF.js-based viewer with EmbedPDF's ready-made viewer to provide its native annotation and comment experience. Saved annotations must be written into the PDF itself and be portable to Preview and Acrobat, rather than existing only in Monight's annotation store or an exported copy.

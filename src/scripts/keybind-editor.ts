@@ -1,3 +1,4 @@
+import { acceleratorFromEvent } from './accelerators';
 import type { KeybindManager, ParsedKeybind } from './keybind-manager';
 import type { MoonightSettings } from './settings';
 
@@ -121,59 +122,14 @@ export class KeybindEditor {
    * Build captured keys array from keyboard event
    */
   private buildCapturedKeys(e: KeyboardEvent): void {
-    this.capturedKeys = [];
-
-    if (e.ctrlKey) {
-      this.capturedKeys.push('Ctrl');
-    }
-    if (e.metaKey) {
-      this.capturedKeys.push('Cmd');
-    }
-    if (e.shiftKey) {
-      this.capturedKeys.push('Shift');
-    }
-    if (e.altKey) {
-      this.capturedKeys.push('Alt');
-    }
-
-    // Add the main key (not modifiers)
-    if (!['Control', 'Alt', 'Shift', 'Meta'].includes(e.key)) {
-      let key = e.key;
-
-      // Handle special keys
-      if (key === ' ') {
-        key = 'Space';
-      } else if (key.length === 1) {
-        // Single character - uppercase for letters
-        key = key.toUpperCase();
-      }
-
-      this.capturedKeys.push(key);
-    }
+    this.capturedKeys = acceleratorFromEvent(e).split('+').filter(Boolean);
   }
 
   /**
    * Convert keyboard event to accelerator string
    */
   eventToAccelerator(e: KeyboardEvent): string {
-    const parts: string[] = [];
-
-    if (e.ctrlKey) parts.push('Ctrl');
-    if (e.metaKey) parts.push('Cmd');
-    if (e.shiftKey) parts.push('Shift');
-    if (e.altKey) parts.push('Alt');
-
-    if (!['Control', 'Alt', 'Shift', 'Meta'].includes(e.key)) {
-      let key = e.key;
-      if (key === ' ') {
-        key = 'Space';
-      } else if (key.length === 1) {
-        key = key.toUpperCase();
-      }
-      parts.push(key);
-    }
-
-    return parts.join('+');
+    return acceleratorFromEvent(e);
   }
 
   /**

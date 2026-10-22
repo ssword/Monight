@@ -87,9 +87,7 @@ describe('Tauri drag and drop events', () => {
   const context = (overrides: Record<string, unknown> = {}) => ({
     intake: {} as DocumentIntake,
     getActiveDocumentPath: () => null,
-    settingsManager: null,
-    keybindManager: null,
-    isMac: true,
+    reloadKeybinds: vi.fn(async () => undefined),
     openPdfAndRefresh: vi.fn(async () => undefined),
     handleStartupExternalOpenPayloads: vi.fn(async () => undefined),
     reloadSettings: vi.fn(async () => undefined),
@@ -98,6 +96,7 @@ describe('Tauri drag and drop events', () => {
     updateTabBarVisibility: vi.fn(),
     updatePrintMenuState: vi.fn(async () => undefined),
     dispatchReaderAction: vi.fn(async () => undefined),
+    runReaderCommand: vi.fn(async () => true),
     ...overrides,
   });
 
@@ -264,13 +263,33 @@ describe('Tauri drag and drop events', () => {
     expect(completed).toBe(true);
   });
 
-  it('dispatches native menu zoom as the same typed Reader Action', async () => {
-    const dispatchReaderAction = vi.fn(async () => undefined);
-    await setupTauriListeners(context({ dispatchReaderAction }));
+  it('runs View, Go and Tools menu items as reader commands', async () => {
+    const runReaderCommand = vi.fn(async () => true);
+    await setupTauriListeners(context({ runReaderCommand }));
 
-    await mocks.getListener('menu-zoom-in')?.();
+    await mocks.getListener('reader-command')?.({ payload: 'view.zoom.in' });
+    await mocks.getListener('reader-command')?.({ payload: 'go.page' });
 
-    expect(dispatchReaderAction).toHaveBeenCalledWith({ type: 'zoomIn' });
+    expect(runReaderCommand.mock.calls).toEqual([['view.zoom.in'], ['go.page']]);
+    expect(mocks.getListener('menu-zoom-in')).toBeUndefined();
+  });
+
+  it('reloads keybinds, and with them the menu accelerators, when Settings changes them', async () => {
+    const reloadKeybinds = vi.fn(async () => undefined);
+    await setupTauriListeners(context({ reloadKeybinds }));
+
+    await mocks.getListener('keybinds-changed')?.();
+
+    expect(reloadKeybinds).toHaveBeenCalledOnce();
+  });
+
+  it('ignores a malformed Reader Command', async () => {
+    const runReaderCommand = vi.fn(async () => true);
+    await setupTauriListeners(context({ runReaderCommand }));
+
+    await mocks.getListener('reader-command')?.({ payload: 42 });
+
+    expect(runReaderCommand).not.toHaveBeenCalled();
   });
 
   it('dispatches native menu printing as a semantic Reader Action', async () => {

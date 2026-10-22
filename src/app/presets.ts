@@ -1,69 +1,133 @@
 import { debugLog } from '../lib/debug-log';
-import { type FilterSettings, PRESETS } from '../scripts/filters';
+import {
+  APPEARANCE_PRESETS,
+  type AppearancePresetId,
+  type FilterSettings,
+  PRESETS,
+  presetForFilterSettings,
+} from '../scripts/filters';
 import type { SliderManager } from '../scripts/sliders';
 
-// Toggle dark mode configurator panel
-export function toggleDarkConfigurator(sliderManager: SliderManager | null): void {
-  const panel = document.getElementById('darkConfigurator');
-  if (!panel) return;
+type AppearanceSliders = Pick<SliderManager, 'initialize' | 'isInitialized' | 'setPreset'>;
 
-  const isHidden = panel.classList.contains('hidden');
-
-  if (isHidden) {
-    panel.classList.remove('hidden');
-    // Initialize sliders on first open
-    if (sliderManager && !sliderManager.isInitialized()) {
-      sliderManager.initialize();
-    }
-  } else {
-    panel.classList.add('hidden');
-  }
+export interface AppearancePopover {
+  /** Reflects the active Document's filter settings in the popover. */
+  show(activeDocumentPath: string | null, filterSettings: FilterSettings): void;
+  /** Chooses a preset as its button does; Custom opens the popover on the sliders. */
+  choose(preset: AppearancePresetId): void;
 }
 
-// Setup preset button handlers
-export function setupPresetButtons(
-  sliderManager: SliderManager | null,
-  onPresetApplied: (settings: FilterSettings) => void,
-): void {
-  const buttons = document.querySelectorAll('.preset-btn');
+/**
+ * The toolbar Appearance popover: an input adapter that offers the filter
+ * presets and, for Custom, the filter sliders inline. Choices go out only
+ * through `applyFilterSettings` (the active Document's filter Reader Action).
+ */
+export function setupAppearancePopover(
+  sliderManager: AppearanceSliders | null,
+  applyFilterSettings: (settings: FilterSettings) => void,
+): AppearancePopover {
+  const toggle = document.getElementById('appearance-toggle');
+  const popover = document.getElementById('appearance-popover');
+  const presetList = document.getElementById('appearance-presets');
+  const sliders = document.getElementById('appearance-sliders');
 
-  buttons.forEach((btn) => {
-    btn.addEventListener('click', () => {
-      // Extract preset name from button ID (e.g., 'preset-default' -> 'default')
-      const presetName = btn.id.replace('preset-', '');
+  if (presetList && !presetList.querySelector('.preset-btn')) {
+    for (const { id, label } of APPEARANCE_PRESETS) {
+      const button = document.createElement('button');
+      button.id = `preset-${id}`;
+      button.className = 'preset-btn';
+      button.type = 'button';
+      button.setAttribute('role', 'radio');
+      button.setAttribute('aria-checked', 'false');
+      button.dataset.preset = id;
+      button.textContent = label;
+      presetList.append(button);
+    }
+  }
 
-      // Handle custom button - toggle panel
-      if (presetName === 'custom') {
-        toggleDarkConfigurator(sliderManager);
-        // Update active button state
-        buttons.forEach((b) => {
-          b.classList.remove('active');
-        });
-        btn.classList.add('active');
-        return;
-      }
+  // Transient: Custom chosen for the active Document while its settings still
+  // match a named preset. Reset when another Document becomes active.
+  let customChosen = false;
+  let shownDocumentPath: string | null = null;
 
-      // Get preset settings
-      const settings = PRESETS[presetName];
-      if (!settings) {
-        console.error(`Unknown preset: ${presetName}`);
-        return;
-      }
+  const presetOf = (button: Element): string => (button as HTMLElement).dataset.preset ?? '';
 
-      // Update slider positions if initialized
-      if (sliderManager?.isInitialized()) {
-        sliderManager.setPreset(settings);
-      }
+  const showActive = (active: AppearancePresetId) => {
+    for (const button of presetList?.querySelectorAll('.preset-btn') ?? []) {
+      const checked = presetOf(button) === active;
+      button.classList.toggle('active', checked);
+      button.setAttribute('aria-checked', String(checked));
+    }
+    const showSliders = active === 'custom';
+    if (showSliders && sliderManager && !sliderManager.isInitialized()) {
+      sliderManager.initialize();
+    }
+    sliders?.classList.toggle('hidden', !showSliders);
+  };
 
-      onPresetApplied(settings);
+  const isOpen = () => (popover ? !popover.classList.contains('hidden') : false);
+  const setOpen = (open: boolean) => {
+    popover?.classList.toggle('hidden', !open);
+    toggle?.setAttribute('aria-expanded', String(open));
+  };
 
-      // Update active button state
-      buttons.forEach((b) => {
-        b.classList.remove('active');
-      });
-      btn.classList.add('active');
+  toggle?.addEventListener('click', () => setOpen(!isOpen()));
 
-      debugLog(`Applied preset: ${presetName}`);
-    });
+  const choose = (preset: string) => {
+    if (preset === 'custom') {
+      customChosen = true;
+      showActive('custom');
+      return;
+    }
+    const settings = PRESETS[preset];
+    if (!settings) {
+      console.error(`Unknown preset: ${preset}`);
+      return;
+    }
+    customChosen = false;
+    showActive(presetForFilterSettings(settings));
+    applyFilterSettings({ ...settings });
+    debugLog(`Applied preset: ${preset}`);
+  };
+
+  presetList?.addEventListener('click', (event) => {
+    const button = event.target instanceof Element ? event.target.closest('.preset-btn') : null;
+    if (button) choose(presetOf(button));
   });
+
+  document.addEventListener('pointerdown', (event) => {
+    if (!isOpen()) return;
+    const target = event.target instanceof Node ? event.target : null;
+    if (target && (popover?.contains(target) || toggle?.contains(target))) return;
+    setOpen(false);
+  });
+
+  document.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape' || !isOpen()) return;
+    event.preventDefault();
+    setOpen(false);
+    toggle?.focus();
+  });
+
+  return {
+    show(activeDocumentPath, filterSettings) {
+      if (activeDocumentPath !== shownDocumentPath) {
+        shownDocumentPath = activeDocumentPath;
+        customChosen = false;
+      }
+      sliderManager?.setPreset(filterSettings);
+      showActive(customChosen ? 'custom' : presetForFilterSettings(filterSettings));
+    },
+    choose(preset) {
+      choose(preset);
+      if (preset === 'custom') setOpen(true);
+    },
+  };
+}
+
+/** True when a keyboard event belongs to a control inside the Appearance popover. */
+export function isWithinAppearancePopover(event: Event): boolean {
+  return event
+    .composedPath()
+    .some((target) => target instanceof Element && target.id === 'appearance-popover');
 }

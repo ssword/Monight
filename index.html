@@ -8,6 +8,7 @@
     <link rel="stylesheet" href="/src/styles/reader-shell.css" />
     <link rel="stylesheet" href="/src/styles/configurator.css" />
     <link rel="stylesheet" href="/src/styles/tabs.css" />
+    <link rel="stylesheet" href="/src/styles/reader-sidebar.css" />
     <meta http-equiv="Content-Security-Policy"
           content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; frame-src blob:; img-src 'self' blob: data:" />
 </head>
@@ -15,11 +16,19 @@
     <div id="app">
         <!-- Splash screen shown when no PDF is loaded -->
         <div id="splash-container">
-            <h1 class="app-title">Monight</h1>
-            <h2 class="app-subtitle">墨页</h2>
-            <p class="app-version" id="version-info">Loading...</p>
-            <button id="splash-open-btn" class="splash-open-btn">Open PDF File</button>
-            <p class="hint-text">Press Cmd+O to open a PDF file</p>
+            <!-- Title-bar strip: drags the window and clears the macOS traffic lights -->
+            <div class="splash-titlebar" data-tauri-drag-region></div>
+            <div class="splash-brand">
+                <span class="splash-mark" data-icon="moon"></span>
+                <h1 class="app-title">Monight</h1>
+                <h2 class="app-subtitle">墨页</h2>
+                <p class="app-version" id="version-info">Loading...</p>
+            </div>
+            <button id="splash-open-btn" class="splash-open-btn" type="button">
+                <span class="splash-btn-icon" data-icon="folder-open"></span>
+                <span>Open PDF File</span>
+            </button>
+            <p class="hint-text">Open a PDF file to start reading</p>
             <section id="recent-files-section" class="recent-files hidden" aria-labelledby="recent-files-title">
                 <div class="recent-files-heading">
                     <h3 id="recent-files-title">Recent Documents</h3>
@@ -32,96 +41,142 @@
         <!-- PDF viewer container (hidden initially) -->
         <div id="viewer-container" class="hidden">
             <!-- Toolbar with controls -->
-            <div id="toolbar">
-                <!-- Filter preset group -->
-                <div class="toolbar-group preset-group">
-                    <button id="preset-default" class="preset-btn active" title="Default Dark Mode">
-                        <span>Default</span>
+            <div id="toolbar" role="toolbar" aria-label="Reader" data-tauri-drag-region="deep">
+                <!-- Sidebar toggle and mode dropdown -->
+                <div class="toolbar-capsule sidebar-mode-anchor" role="group" aria-label="Sidebar">
+                    <button id="sidebar-toggle" class="toolbar-btn" type="button" title="Show or Hide Sidebar" aria-label="Sidebar" aria-pressed="false" aria-controls="reader-sidebar">
+                        <span class="toolbar-icon" data-icon="sidebar"></span>
                     </button>
-                    <button id="preset-original" class="preset-btn" title="Original (No Filter)">
-                        <span>Original</span>
+                    <button id="sidebar-mode-toggle" class="toolbar-btn toolbar-btn-chevron" type="button" title="Sidebar View" aria-label="Sidebar View" aria-haspopup="menu" aria-expanded="false" aria-controls="sidebar-mode-menu">
+                        <span class="toolbar-icon" data-icon="chevron-down"></span>
                     </button>
-                    <button id="preset-redeye" class="preset-btn" title="Redeye Dark Mode">
-                        <span>Redeye</span>
-                    </button>
-                    <button id="preset-sepia" class="preset-btn" title="Sepia Mode">
-                        <span>Sepia</span>
-                    </button>
-                    <button id="preset-custom" class="preset-btn" title="Custom Dark Mode">
-                        <span>Custom</span>
-                    </button>
+                    <div id="sidebar-mode-menu" class="sidebar-mode-menu hidden" role="menu" aria-label="Sidebar view" data-tauri-drag-region="false">
+                        <button class="toolbar-menu-item" type="button" role="menuitemradio" aria-checked="true" data-sidebar-mode="hidden">Hide Sidebar</button>
+                        <button class="toolbar-menu-item" type="button" role="menuitemradio" aria-checked="false" data-sidebar-mode="thumbnails">Thumbnails</button>
+                        <button class="toolbar-menu-item" type="button" role="menuitemradio" aria-checked="false" data-sidebar-mode="tableOfContents">Table of Contents</button>
+                        <button class="toolbar-menu-item" type="button" role="menuitemradio" aria-checked="false" data-sidebar-mode="annotations">Highlights and Notes</button>
+                    </div>
                 </div>
 
-                <div class="toolbar-group viewer-tools">
-                    <button id="presentation-mode" class="toolbar-btn" title="Presentation Mode (Shift+F11)" aria-label="Start presentation mode">
-                        <span>▣</span>
-                    </button>
-                </div>
-
-                <!-- File info -->
-                <div class="toolbar-group file-info">
+                <!-- Title block: active Document and Page N of M -->
+                <div class="toolbar-title">
                     <span id="file-name" class="file-name">No file loaded</span>
+                    <span id="page-status" class="page-status" aria-live="polite"></span>
                 </div>
 
-                <!-- Actions -->
-                <div class="toolbar-group">
-                    <button id="print-file" class="toolbar-btn" title="Print (Ctrl+P)">
-                        <span>🖨</span>
+                <div class="toolbar-spacer"></div>
+
+                <!-- Zoom group -->
+                <div class="toolbar-capsule" role="group" aria-label="Zoom">
+                    <button id="zoom-out" class="toolbar-btn" type="button" title="Zoom Out" aria-label="Zoom Out">
+                        <span class="toolbar-icon" data-icon="zoom-out"></span>
                     </button>
-                    <button id="open-file" class="toolbar-btn" title="Open PDF (Ctrl+O)">
-                        <span>📂</span>
+                    <button id="zoom-to-fit" class="toolbar-btn" type="button" title="Zoom to Fit" aria-label="Zoom to Fit">
+                        <span class="toolbar-icon" data-icon="zoom-to-fit"></span>
                     </button>
+                    <button id="zoom-in" class="toolbar-btn" type="button" title="Zoom In" aria-label="Zoom In">
+                        <span class="toolbar-icon" data-icon="zoom-in"></span>
+                    </button>
+                </div>
+
+                <!-- Appearance: page filter presets for the active Document -->
+                <div class="toolbar-capsule toolbar-popover-anchor">
+                    <button id="appearance-toggle" class="toolbar-btn" type="button" title="Appearance" aria-label="Appearance" aria-haspopup="dialog" aria-expanded="false" aria-controls="appearance-popover">
+                        <span class="toolbar-icon" data-icon="palette"></span>
+                    </button>
+                    <div id="appearance-popover" class="appearance-popover hidden" role="dialog" aria-label="Appearance" data-tauri-drag-region="false">
+                        <div id="appearance-presets" class="appearance-presets" role="radiogroup" aria-label="Filter presets"></div>
+                        <div id="appearance-sliders" class="appearance-sliders hidden" role="group" aria-label="Custom filter">
+                        <div class="slider-group">
+                            <label id="brightnessSlider-label">Darkness</label>
+                            <div id="brightnessSlider" class="slider" aria-labelledby="brightnessSlider-label"></div>
+                        </div>
+                        <div class="slider-group">
+                            <label id="grayscaleSlider-label">Grayscale</label>
+                            <div id="grayscaleSlider" class="slider" aria-labelledby="grayscaleSlider-label"></div>
+                        </div>
+                        <div class="slider-group">
+                            <label id="invertSlider-label">Inversion</label>
+                            <div id="invertSlider" class="slider" aria-labelledby="invertSlider-label"></div>
+                        </div>
+                        <div class="slider-group">
+                            <label id="sepiaSlider-label">Sepia</label>
+                            <div id="sepiaSlider" class="slider" aria-labelledby="sepiaSlider-label"></div>
+                        </div>
+                        <div class="slider-group">
+                            <label id="hueSlider-label">Hue</label>
+                            <div id="hueSlider" class="slider" aria-labelledby="hueSlider-label"></div>
+                        </div>
+                        <div class="slider-group">
+                            <label id="extraBrightnessSlider-label">Brightness</label>
+                            <div id="extraBrightnessSlider" class="slider" aria-labelledby="extraBrightnessSlider-label"></div>
+                        </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Highlight split button: verified text markups (src/app/markup-tools.ts) -->
+                <div class="toolbar-capsule highlight-anchor" role="group" aria-label="Highlight">
+                    <button id="highlight-button" class="toolbar-btn highlight-button" type="button" title="Highlight" aria-label="Highlight" aria-pressed="false"></button>
+                    <button id="highlight-menu-toggle" class="toolbar-btn toolbar-btn-chevron" type="button" title="Highlight Colour" aria-label="Highlight Colour" aria-haspopup="menu" aria-expanded="false" aria-controls="highlight-menu">
+                        <span class="toolbar-icon" data-icon="chevron-down"></span>
+                    </button>
+                    <div id="highlight-menu" class="highlight-menu" role="menu" aria-label="Highlight colour" data-tauri-drag-region="false" hidden></div>
+                </div>
+
+                <!-- Rotate (rotate-button.ts): filled only once Page Rotation is verified. -->
+                <div id="rotate-control" class="toolbar-capsule" hidden></div>
+
+                <div class="toolbar-capsule">
+                    <button id="markup-toolbar-toggle" class="toolbar-btn" type="button" title="Show or Hide Markup Toolbar" aria-label="Markup Toolbar" aria-pressed="false" aria-controls="markup-toolbar">
+                        <span class="toolbar-icon" data-icon="markup"></span>
+                    </button>
+                </div>
+
+                <div class="toolbar-capsule">
+                    <button id="presentation-mode" class="toolbar-btn" type="button" title="Slideshow" aria-label="Slideshow">
+                        <span class="toolbar-icon" data-icon="presentation"></span>
+                    </button>
+                </div>
+
+                <div class="toolbar-capsule">
+                    <button id="print-file" class="toolbar-btn" type="button" title="Print" aria-label="Print">
+                        <span class="toolbar-icon" data-icon="printer"></span>
+                    </button>
+                    <button id="open-file" class="toolbar-btn" type="button" title="Open PDF" aria-label="Open PDF">
+                        <span class="toolbar-icon" data-icon="folder-open"></span>
+                    </button>
+                </div>
+
+                <!-- Search: typing takes over the sidebar with results -->
+                <div class="toolbar-search" role="search" data-tauri-drag-region="false">
+                    <span class="toolbar-icon toolbar-search-icon" data-icon="search"></span>
+                    <input id="toolbar-search" type="search" placeholder="Search" aria-label="Search" aria-controls="reader-sidebar" autocomplete="off" spellcheck="false">
                 </div>
             </div>
+
+            <!-- Markup toolbar: verified annotation tools (src/app/markup-tools.ts) -->
+            <div id="markup-toolbar" class="markup-toolbar" role="toolbar" aria-label="Markup" hidden></div>
 
             <!-- Tab Bar -->
             <div id="tab-bar" class="tab-bar hidden">
                 <div id="tab-container" class="tab-list" role="tablist" aria-label="Open documents">
                     <!-- Tabs rendered dynamically -->
                 </div>
-                <button id="new-tab-btn" class="new-tab-btn" title="Open New PDF (Ctrl+T)">+</button>
+                <button id="new-tab-btn" class="new-tab-btn" title="Open New PDF">+</button>
             </div>
 
             <div id="document-workspace" role="tabpanel">
+                <aside id="reader-sidebar" class="reader-sidebar" aria-label="Sidebar" hidden>
+                    <div class="reader-sidebar-content"></div>
+                    <div class="reader-sidebar-resizer" role="separator" tabindex="0"></div>
+                </aside>
                 <!-- PDF canvas container -->
                 <div id="pdf-container"></div>
             </div>
-        </div>
 
-        <!-- Dark Mode Configurator Overlay -->
-        <div id="darkConfigurator" class="dark-configurator hidden">
-            <div class="configurator-panel">
-                <div class="configurator-header">
-                    <h3>Custom Dark Mode</h3>
-                    <button id="close-configurator" class="close-btn">✕</button>
-                </div>
-                <div class="configurator-content">
-                    <div class="slider-group">
-                        <label>Darkness</label>
-                        <div id="brightnessSlider" class="slider"></div>
-                    </div>
-                    <div class="slider-group">
-                        <label>Grayscale</label>
-                        <div id="grayscaleSlider" class="slider"></div>
-                    </div>
-                    <div class="slider-group">
-                        <label>Inversion</label>
-                        <div id="invertSlider" class="slider"></div>
-                    </div>
-                    <div class="slider-group">
-                        <label>Sepia</label>
-                        <div id="sepiaSlider" class="slider"></div>
-                    </div>
-                    <div class="slider-group">
-                        <label>Hue</label>
-                        <div id="hueSlider" class="slider"></div>
-                    </div>
-                    <div class="slider-group">
-                        <label>Brightness</label>
-                        <div id="extraBrightnessSlider" class="slider"></div>
-                    </div>
-                </div>
-            </div>
+            <!-- Note, colour and Delete for the selected Annotation (src/app/annotation-menu.ts) -->
+            <div id="annotation-menu" class="annotation-menu" hidden></div>
         </div>
 
         <dialog id="password-dialog" class="app-dialog">
@@ -135,6 +190,21 @@
                 <div class="dialog-actions">
                     <button type="button" class="dialog-secondary" data-dialog-cancel>Cancel</button>
                     <button type="submit" class="dialog-primary">Unlock</button>
+                </div>
+            </form>
+        </dialog>
+
+        <dialog id="go-to-page-dialog" class="app-dialog">
+            <form method="dialog">
+                <h2>Go to Page</h2>
+                <p data-go-to-page-range>Enter a page.</p>
+                <label>
+                    Page
+                    <input name="page" type="number" inputmode="numeric" min="1" step="1" required />
+                </label>
+                <div class="dialog-actions">
+                    <button type="button" class="dialog-secondary" data-dialog-cancel>Cancel</button>
+                    <button type="submit" class="dialog-primary">Go</button>
                 </div>
             </form>
         </dialog>

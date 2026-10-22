@@ -131,14 +131,19 @@ describe('settings storage', () => {
     expect(store.values.has('annotations')).toBe(false);
     expect(settings.lastFilter).toEqual(legacy.lastFilter);
     expect(store.values.get('readingSession')).toEqual({
-      schemaVersion: 2,
+      schemaVersion: 3,
       activeDocumentPath: '/books/one.pdf',
       documents: [
-        expect.objectContaining({
+        {
           filePath: '/books/one.pdf',
           title: 'one.pdf',
           readingPosition: { page: 4, legacyOffset: 842 },
-        }),
+          visualState: {
+            filterSettings: legacySession.tabs[0].filterSettings,
+            zoomIntent: { kind: 'manual', scale: 1.25 },
+            viewMode: 'continuous',
+          },
+        },
       ],
     });
     expect(store.values.get('storageSchemaVersion')).toBe(SETTINGS_SCHEMA_VERSION);
@@ -147,6 +152,55 @@ describe('settings storage', () => {
     store.writes.length = 0;
     await new SettingsManager('settings').load();
     expect(store.writes).toEqual([]);
+  });
+
+  it('offers no view-rotation shortcut and ignores stored view-rotation bindings', async () => {
+    expect(Object.values(DEFAULT_SETTINGS.keybinds).map(({ action }) => action)).not.toEqual(
+      expect.arrayContaining([expect.stringMatching(/^rotate/)]),
+    );
+    store.reset({
+      storageSchemaVersion: SETTINGS_SCHEMA_VERSION,
+      keybinds: {
+        ...DEFAULT_SETTINGS.keybinds,
+        RotateClockwise: {
+          displayName: 'Rotate Right',
+          binds: ['CmdOrCtrl+R'],
+          action: 'rotateRight',
+        },
+        RotateCounterClockwise: {
+          displayName: 'Rotate Left',
+          binds: ['CmdOrCtrl+Shift+R'],
+          action: 'rotateLeft',
+        },
+      },
+    });
+
+    const settings = await new SettingsManager('settings').load();
+
+    expect(settings.keybinds).not.toHaveProperty('RotateClockwise');
+    expect(settings.keybinds).not.toHaveProperty('RotateCounterClockwise');
+  });
+
+  it('names Presentation Mode Slideshow while keeping a stored binding', async () => {
+    store.reset({
+      storageSchemaVersion: SETTINGS_SCHEMA_VERSION,
+      keybinds: {
+        ...DEFAULT_SETTINGS.keybinds,
+        PresentationMode: {
+          displayName: 'Presentation Mode',
+          binds: ['Ctrl+Alt+P'],
+          action: 'presentationMode',
+        },
+      },
+    });
+
+    const settings = await new SettingsManager('settings').load();
+
+    expect(settings.keybinds.PresentationMode).toEqual({
+      displayName: 'Slideshow',
+      binds: ['Ctrl+Alt+P'],
+      action: 'presentationMode',
+    });
   });
 
   it('writes only the requested concern and rejects keys not owned by the window', async () => {
@@ -190,7 +244,7 @@ describe('settings storage', () => {
     keybinds.OpenFile.binds = ['Ctrl+Alt+O'];
     await settingsWindow.set('keybinds', keybinds);
     await mainWindow.writePersistedReadingSession({
-      schemaVersion: 2,
+      schemaVersion: 3,
       activeDocumentPath: '/books/two.pdf',
       documents: [
         {
@@ -214,7 +268,7 @@ describe('settings storage', () => {
       { filePath: '/books/one.pdf', title: 'one.pdf', openedAt: 42 },
     ]);
     await mainWindow.writePersistedReadingSession({
-      schemaVersion: 2,
+      schemaVersion: 3,
       activeDocumentPath: '/books/one.pdf',
       documents: [
         {
@@ -235,7 +289,7 @@ describe('settings storage', () => {
     ]);
     expect(store.values.has('annotations')).toBe(false);
     expect(store.values.get('readingSession')).toEqual({
-      schemaVersion: 2,
+      schemaVersion: 3,
       activeDocumentPath: null,
       documents: [],
     });
@@ -259,5 +313,459 @@ describe('settings storage', () => {
 
     expect(store.values.has('recentFiles')).toBe(false);
     expect(store.writes).toContain('delete:recentFiles');
+  });
+});
+
+const bindsOf = (keybinds: Record<string, { binds: string[] }>) =>
+  Object.fromEntries(Object.entries(keybinds).map(([id, { binds }]) => [id, binds]));
+
+describe('Preview shortcut defaults', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    store.reset();
+  });
+
+  it('gives a fresh macOS install the Preview shortcuts', async () => {
+    const settings = await new SettingsManager('main', { platform: 'mac' }).load();
+
+    expect(bindsOf(settings.keybinds)).toMatchObject({
+      ViewContinuous: ['CmdOrCtrl+1'],
+      ViewSinglePage: ['CmdOrCtrl+2'],
+      ViewTwoPages: ['CmdOrCtrl+3'],
+      ResetZoom: ['CmdOrCtrl+0'],
+      FitToPage: ['CmdOrCtrl+9'],
+      FitToWidth: ['CmdOrCtrl+Shift+W'],
+      SidebarHidden: ['CmdOrCtrl+Alt+1'],
+      SidebarThumbnails: ['CmdOrCtrl+Alt+2'],
+      SidebarTableOfContents: ['CmdOrCtrl+Alt+3'],
+      SidebarAnnotations: ['CmdOrCtrl+Alt+4'],
+      MarkupToolbar: ['CmdOrCtrl+Shift+A'],
+      GoToPage: ['CmdOrCtrl+Alt+G'],
+      PresentationMode: ['CmdOrCtrl+Shift+F'],
+      Fullscreen: ['Ctrl+Cmd+F'],
+      NextTab: ['Ctrl+Tab', 'Cmd+Shift+]'],
+      PreviousTab: ['Ctrl+Shift+Tab', 'Cmd+Shift+['],
+    });
+    for (let position = 1; position <= 9; position += 1) {
+      expect(settings.keybinds[`SwitchToTab${position}`]).toMatchObject({
+        action: 'switchToTab',
+        data: String(position),
+        binds: [],
+      });
+    }
+  });
+
+  it('gives a fresh Windows or Linux install F11 Full Screen and Ctrl+Tab tab switching', async () => {
+    const settings = await new SettingsManager('main', { platform: 'other' }).load();
+
+    expect(bindsOf(settings.keybinds)).toMatchObject({
+      ViewSinglePage: ['CmdOrCtrl+2'],
+      SidebarThumbnails: ['CmdOrCtrl+Alt+2'],
+      Fullscreen: ['F11'],
+      NextTab: ['Ctrl+Tab', 'Ctrl+PageDown'],
+      PreviousTab: ['Ctrl+Shift+Tab', 'Ctrl+PageUp'],
+      SwitchToTab1: [],
+    });
+  });
+
+  // The keybind map an install stored before Preview's shortcuts.
+  const storedBeforePreview = (changes: Record<string, string[]> = {}) => {
+    const v1: Record<string, [string[], string, string?]> = {
+      OpenFile: [['CmdOrCtrl+O'], 'openFile'],
+      CloseTab: [['CmdOrCtrl+W'], 'closeTab'],
+      ReopenTab: [['CmdOrCtrl+Shift+T'], 'reopenTab'],
+      NextTab: [['CmdOrCtrl+Tab', 'CmdOrCtrl+PageDown'], 'nextTab'],
+      PreviousTab: [['CmdOrCtrl+Shift+Tab', 'CmdOrCtrl+PageUp'], 'previousTab'],
+      Print: [['CmdOrCtrl+P'], 'print'],
+      Find: [['CmdOrCtrl+F'], 'find'],
+      ZoomIn: [['CmdOrCtrl+=', 'CmdOrCtrl+Plus'], 'zoomIn'],
+      ZoomOut: [['CmdOrCtrl+-'], 'zoomOut'],
+      ResetZoom: [['CmdOrCtrl+0'], 'resetZoom'],
+      Settings: [['Alt+S'], 'openSettings'],
+      NextPage: [['ArrowRight', 'ArrowDown'], 'nextPage'],
+      PreviousPage: [['ArrowLeft', 'ArrowUp'], 'previousPage'],
+      FirstPage: [['Home'], 'firstPage'],
+      LastPage: [['End'], 'lastPage'],
+      FitToWidth: [['CmdOrCtrl+Shift+W'], 'fitToWidth'],
+      FitToPage: [['CmdOrCtrl+Shift+P'], 'fitToPage'],
+      ...Object.fromEntries(
+        [1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => [
+          `SwitchToTab${n}`,
+          [[`CmdOrCtrl+${n}`], 'switchToTab', String(n)],
+        ]),
+      ),
+      Fullscreen: [['F11'], 'toggleFullscreen'],
+      PresentationMode: [['Shift+F11'], 'presentationMode'],
+    };
+    return Object.fromEntries(
+      Object.entries(v1).map(([id, [binds, action, data]]) => [
+        id,
+        { displayName: id, binds: changes[id] ?? binds, action, ...(data ? { data } : {}) },
+      ]),
+    );
+  };
+
+  it('upgrades the shortcuts a reader never rebound to Preview defaults', async () => {
+    store.reset({ storageSchemaVersion: SETTINGS_SCHEMA_VERSION, keybinds: storedBeforePreview() });
+
+    const settings = await new SettingsManager('main', { platform: 'mac' }).load();
+
+    expect(bindsOf(settings.keybinds)).toMatchObject({
+      OpenFile: ['CmdOrCtrl+O'],
+      FitToPage: ['CmdOrCtrl+9'],
+      ViewContinuous: ['CmdOrCtrl+1'],
+      SidebarThumbnails: ['CmdOrCtrl+Alt+2'],
+      Fullscreen: ['Ctrl+Cmd+F'],
+      PresentationMode: ['CmdOrCtrl+Shift+F'],
+      NextTab: ['Ctrl+Tab', 'Cmd+Shift+]'],
+      SwitchToTab1: [],
+      SwitchToTab9: [],
+    });
+    expect(settings.keybinds.FitToPage.displayName).toBe('Zoom to Fit');
+  });
+
+  it('keeps every shortcut the reader rebound across the upgrade', async () => {
+    store.reset({
+      storageSchemaVersion: SETTINGS_SCHEMA_VERSION,
+      keybinds: storedBeforePreview({
+        Fullscreen: ['Ctrl+Alt+Enter'],
+        FitToPage: [],
+        SwitchToTab2: ['Alt+2'],
+      }),
+    });
+
+    const settings = await new SettingsManager('main', { platform: 'mac' }).load();
+
+    expect(bindsOf(settings.keybinds)).toMatchObject({
+      Fullscreen: ['Ctrl+Alt+Enter'],
+      FitToPage: [],
+      SwitchToTab2: ['Alt+2'],
+      SwitchToTab3: [],
+      ViewSinglePage: ['CmdOrCtrl+2'],
+    });
+  });
+
+  it('drops a new default that collides with a binding the reader chose', async () => {
+    store.reset({
+      storageSchemaVersion: SETTINGS_SCHEMA_VERSION,
+      keybinds: storedBeforePreview({
+        // Kept on purpose alongside another binding: the reader chose ⌘1 for tab 1.
+        SwitchToTab1: ['CmdOrCtrl+1', 'Alt+1'],
+        // The same chord written differently is still the reader's.
+        Find: ['CmdOrCtrl+F', 'Cmd+Shift+A'],
+        Print: ['Ctrl+Cmd+F'],
+      }),
+    });
+
+    const settings = await new SettingsManager('main', { platform: 'mac' }).load();
+
+    expect(bindsOf(settings.keybinds)).toMatchObject({
+      SwitchToTab1: ['CmdOrCtrl+1', 'Alt+1'],
+      ViewContinuous: [],
+      Find: ['CmdOrCtrl+F', 'Cmd+Shift+A'],
+      MarkupToolbar: [],
+      Print: ['Ctrl+Cmd+F'],
+      Fullscreen: [],
+      ViewSinglePage: ['CmdOrCtrl+2'],
+    });
+  });
+
+  it('migrates once in the main window and remembers dropped defaults', async () => {
+    store.reset({
+      storageSchemaVersion: SETTINGS_SCHEMA_VERSION,
+      keybinds: storedBeforePreview({ SwitchToTab1: ['CmdOrCtrl+1', 'Alt+1'] }),
+    });
+
+    await new SettingsManager('main', { platform: 'mac' }).load();
+    store.writes.length = 0;
+    const settingsWindow = await new SettingsManager('settings', { platform: 'mac' }).load();
+    const mainAgain = await new SettingsManager('main', { platform: 'mac' }).load();
+
+    expect(store.writes).toEqual([]);
+    expect(settingsWindow.keybinds.ViewContinuous.binds).toEqual([]);
+    expect(mainAgain.keybinds.ViewContinuous.binds).toEqual([]);
+    expect(mainAgain.keybinds.ViewSinglePage.binds).toEqual(['CmdOrCtrl+2']);
+  });
+
+  it('shows the upgrade to the Settings window before the main window stores it', async () => {
+    store.reset({ storageSchemaVersion: SETTINGS_SCHEMA_VERSION, keybinds: storedBeforePreview() });
+
+    const settings = await new SettingsManager('settings', { platform: 'other' }).load();
+
+    expect(store.writes).toEqual([]);
+    expect(settings.keybinds.FitToPage.binds).toEqual(['CmdOrCtrl+9']);
+  });
+
+  it('lets retired view-rotation bindings block no new default', async () => {
+    store.reset({
+      storageSchemaVersion: SETTINGS_SCHEMA_VERSION,
+      keybinds: {
+        ...storedBeforePreview(),
+        RotateClockwise: {
+          displayName: 'Rotate Right',
+          binds: ['CmdOrCtrl+2'],
+          action: 'rotateRight',
+        },
+      },
+    });
+
+    const settings = await new SettingsManager('main', { platform: 'mac' }).load();
+
+    expect(settings.keybinds.ViewSinglePage.binds).toEqual(['CmdOrCtrl+2']);
+  });
+});
+
+describe('Back and Forward shortcut defaults', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    store.reset();
+  });
+
+  const storedWithPreviewDefaults = async (rebind: Record<string, string[]> = {}) => {
+    // An install that stored the Preview defaults (revision 2) before Back and Forward.
+    const stored = structuredClone(
+      (await new SettingsManager('main', { platform: 'mac' }).load()).keybinds,
+    );
+    delete stored.GoBack;
+    delete stored.GoForward;
+    for (const [id, binds] of Object.entries(rebind)) stored[id].binds = binds;
+    store.reset({
+      storageSchemaVersion: SETTINGS_SCHEMA_VERSION,
+      keybinds: stored,
+      keybindDefaultsVersion: 2,
+    });
+  };
+
+  it('gives a fresh install ⌘[ Back and ⌘] Forward in the Go menu', async () => {
+    const settings = await new SettingsManager('main', { platform: 'mac' }).load();
+
+    expect(settings.keybinds.GoBack).toMatchObject({
+      displayName: 'Back',
+      binds: ['CmdOrCtrl+['],
+      action: 'readerCommand',
+      data: 'go.back',
+    });
+    expect(settings.keybinds.GoForward).toMatchObject({
+      displayName: 'Forward',
+      binds: ['CmdOrCtrl+]'],
+      action: 'readerCommand',
+      data: 'go.forward',
+    });
+  });
+
+  it('adds Back and Forward to an install upgraded from the Preview defaults', async () => {
+    await storedWithPreviewDefaults();
+
+    const settings = await new SettingsManager('main', { platform: 'other' }).load();
+
+    expect(settings.keybinds.GoBack.binds).toEqual(['CmdOrCtrl+[']);
+    expect(settings.keybinds.GoForward.binds).toEqual(['CmdOrCtrl+]']);
+  });
+
+  it('leaves ⌘[ with a reader who already chose it', async () => {
+    await storedWithPreviewDefaults({ Print: ['Cmd+['] });
+
+    const settings = await new SettingsManager('main', { platform: 'mac' }).load();
+
+    expect(settings.keybinds.Print.binds).toEqual(['Cmd+[']);
+    expect(settings.keybinds.GoBack.binds).toEqual([]);
+    expect(settings.keybinds.GoForward.binds).toEqual(['CmdOrCtrl+]']);
+  });
+});
+
+describe('Undo and Redo shortcuts', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    store.reset();
+  });
+
+  it('gives ⌘Z Undo and ⇧⌘Z Redo on macOS, and Ctrl+Y Redo elsewhere, as Reader Commands', async () => {
+    const mac = await new SettingsManager('main', { platform: 'mac' }).load();
+    expect(mac.keybinds.Undo).toEqual({
+      displayName: 'Undo',
+      binds: ['CmdOrCtrl+Z'],
+      action: 'readerCommand',
+      data: 'edit.undo',
+    });
+    expect(mac.keybinds.Redo).toEqual({
+      displayName: 'Redo',
+      binds: ['Cmd+Shift+Z'],
+      action: 'readerCommand',
+      data: 'edit.redo',
+    });
+
+    store.reset();
+    const other = await new SettingsManager('main', { platform: 'other' }).load();
+    expect(other.keybinds.Redo.binds).toEqual(['Ctrl+Shift+Z', 'Ctrl+Y']);
+  });
+
+  it('adds Undo and Redo to an install stored before them', async () => {
+    const stored = structuredClone(
+      (await new SettingsManager('main', { platform: 'mac' }).load()).keybinds,
+    );
+    delete stored.Undo;
+    delete stored.Redo;
+    store.reset({
+      storageSchemaVersion: SETTINGS_SCHEMA_VERSION,
+      keybinds: stored,
+      keybindDefaultsVersion: 3,
+    });
+
+    const settings = await new SettingsManager('main', { platform: 'mac' }).load();
+
+    expect(settings.keybinds.Undo.binds).toEqual(['CmdOrCtrl+Z']);
+    expect(settings.keybinds.Redo.binds).toEqual(['Cmd+Shift+Z']);
+  });
+});
+
+describe('Delete shortcut', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    store.reset();
+  });
+
+  it('gives Delete and Backspace to Edit ▸ Delete as a Reader Command', async () => {
+    const settings = await new SettingsManager('main', { platform: 'mac' }).load();
+
+    expect(settings.keybinds.Delete).toEqual({
+      displayName: 'Delete',
+      binds: ['Delete', 'Backspace'],
+      action: 'readerCommand',
+      data: 'edit.delete',
+    });
+  });
+
+  it('adds Delete to an install stored before it, without taking a key the reader chose', async () => {
+    const stored = structuredClone(
+      (await new SettingsManager('main', { platform: 'mac' }).load()).keybinds,
+    );
+    delete stored.Delete;
+    stored.Print.binds = ['Backspace'];
+    store.reset({
+      storageSchemaVersion: SETTINGS_SCHEMA_VERSION,
+      keybinds: stored,
+      keybindDefaultsVersion: 5,
+    });
+
+    const settings = await new SettingsManager('main', { platform: 'mac' }).load();
+
+    expect(settings.keybinds.Delete.binds).toEqual(['Delete']);
+    expect(settings.keybinds.Print.binds).toEqual(['Backspace']);
+  });
+});
+
+describe('Rotate shortcuts behind the Page Rotation gate', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    store.reset();
+  });
+
+  const closed = { platform: 'mac', pageRotationVerified: false } as const;
+  const open = { platform: 'mac', pageRotationVerified: true } as const;
+
+  it('offers no Rotate shortcut while Page Rotation is unverified', async () => {
+    const settings = await new SettingsManager('main', closed).load();
+
+    for (const { displayName } of Object.values(settings.keybinds))
+      expect(displayName).not.toMatch(/Rotate/);
+    expect(store.values.get('keybinds')).not.toHaveProperty('RotateLeft');
+    expect(store.values.get('keybinds')).not.toHaveProperty('RotateRight');
+  });
+
+  it('gives a fresh install ⌘L Rotate Left and ⌘R Rotate Right once verified', async () => {
+    const settings = await new SettingsManager('main', open).load();
+
+    expect(settings.keybinds.RotateLeft).toEqual({
+      displayName: 'Rotate Left',
+      binds: ['CmdOrCtrl+L'],
+      action: 'readerCommand',
+      data: 'tools.rotate.left',
+    });
+    expect(settings.keybinds.RotateRight).toMatchObject({
+      displayName: 'Rotate Right',
+      binds: ['CmdOrCtrl+R'],
+      data: 'tools.rotate.right',
+    });
+  });
+
+  it('gives an install upgraded while the gate was closed the Rotate defaults when it opens', async () => {
+    await new SettingsManager('main', closed).load();
+    const settingsWindow = new SettingsManager('settings', closed);
+    const edited = await settingsWindow.load();
+    await settingsWindow.set('keybinds', {
+      ...edited.keybinds,
+      Find: { ...edited.keybinds.Find, binds: ['CmdOrCtrl+F', 'CmdOrCtrl+R'] },
+    });
+
+    const settings = await new SettingsManager('main', open).load();
+    const settingsAfterward = await new SettingsManager('settings', open).load();
+
+    expect(settings.keybinds.RotateLeft.binds).toEqual(['CmdOrCtrl+L']);
+    // The reader chose ⌘R while Rotate was hidden; the new default gives way.
+    expect(settings.keybinds.RotateRight.binds).toEqual([]);
+    expect(settings.keybinds.Find.binds).toEqual(['CmdOrCtrl+F', 'CmdOrCtrl+R']);
+    expect(store.values.get('keybinds')).toHaveProperty('RotateLeft');
+    expect(settingsAfterward.keybinds.RotateLeft.binds).toEqual(['CmdOrCtrl+L']);
+    expect(settingsAfterward.keybinds.RotateRight.binds).toEqual([]);
+  });
+
+  it('gives the Rotate defaults to an install a later version upgraded while the gate was closed', async () => {
+    const { keybinds } = await new SettingsManager('main', closed).load();
+    store.reset({
+      storageSchemaVersion: SETTINGS_SCHEMA_VERSION,
+      keybindDefaultsVersion: 99,
+      keybinds,
+    });
+
+    const settings = await new SettingsManager('main', open).load();
+
+    expect(settings.keybinds.RotateLeft.binds).toEqual(['CmdOrCtrl+L']);
+    expect(settings.keybinds.RotateRight.binds).toEqual(['CmdOrCtrl+R']);
+    expect(store.values.get('keybinds')).toHaveProperty('RotateRight');
+  });
+
+  it('keeps a Rotate binding the reader changed after the gate opened', async () => {
+    await new SettingsManager('main', open).load();
+    const settingsWindow = new SettingsManager('settings', open);
+    const edited = await settingsWindow.load();
+    await settingsWindow.set('keybinds', {
+      ...edited.keybinds,
+      RotateLeft: { ...edited.keybinds.RotateLeft, binds: [] },
+    });
+
+    const settings = await new SettingsManager('main', open).load();
+
+    expect(settings.keybinds.RotateLeft.binds).toEqual([]);
+    expect(settings.keybinds.RotateRight.binds).toEqual(['CmdOrCtrl+R']);
+  });
+
+  it('hides stored Rotate shortcuts again if the gate is closed', async () => {
+    await new SettingsManager('main', open).load();
+
+    const settings = await new SettingsManager('settings', closed).load();
+
+    expect(settings.keybinds).not.toHaveProperty('RotateLeft');
+    expect(settings.keybinds).not.toHaveProperty('RotateRight');
+  });
+
+  it('lets retired view-rotation bindings block neither Rotate default', async () => {
+    store.reset({
+      storageSchemaVersion: SETTINGS_SCHEMA_VERSION,
+      keybindDefaultsVersion: 2,
+      keybinds: {
+        RotateClockwise: { displayName: 'Rotate', binds: ['CmdOrCtrl+R'], action: 'rotateRight' },
+        RotateCounterClockwise: {
+          displayName: 'Rotate',
+          binds: ['CmdOrCtrl+L'],
+          action: 'rotateLeft',
+        },
+      },
+    });
+
+    const settings = await new SettingsManager('main', { ...open, platform: 'other' }).load();
+
+    expect(settings.keybinds.RotateLeft.binds).toEqual(['CmdOrCtrl+L']);
+    expect(settings.keybinds.RotateRight.binds).toEqual(['CmdOrCtrl+R']);
+    expect(settings.keybinds).not.toHaveProperty('RotateClockwise');
   });
 });

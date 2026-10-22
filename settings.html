@@ -30,6 +30,35 @@
             --accent-color-soft: var(--brand-cream-soft);
             --accent-color-hover: #ffc978;
             --accent-glow: rgba(255, 212, 140, 0.3);
+            --accent-ink: var(--brand-cream);
+            --chrome-hover: rgba(251, 253, 255, 0.08);
+            --chrome-pressed: rgba(251, 253, 255, 0.14);
+            --danger-color: #c9464f;
+            --danger-color-hover: #e2606e;
+            --modal-backdrop: rgba(5, 11, 22, 0.72);
+
+            color-scheme: light dark;
+        }
+
+        /* Light appearance — kept in sync with src/styles/main.css */
+        @media (prefers-color-scheme: light) {
+            :root {
+                --bg-primary: #dde5ee;
+                --bg-secondary: var(--brand-paper);
+                --bg-elevated: var(--brand-paper);
+                --text-primary: var(--brand-night);
+                --text-secondary: var(--brand-blue);
+                --text-on-accent: var(--brand-night);
+                --border-color: #c9d6e4;
+                --accent-color: var(--brand-cream);
+                --accent-color-soft: var(--brand-cream-soft);
+                --accent-color-hover: #ffc978;
+                --accent-glow: rgba(255, 212, 140, 0.45);
+                --accent-ink: color-mix(in srgb, var(--brand-cream) 55%, var(--brand-night));
+                --chrome-hover: rgba(12, 24, 44, 0.06);
+                --chrome-pressed: rgba(12, 24, 44, 0.12);
+                --modal-backdrop: rgba(12, 24, 44, 0.32);
+            }
         }
 
         * {
@@ -61,12 +90,12 @@
         }
 
         .sidebar-item:hover {
-            background: var(--bg-elevated);
+            background: var(--chrome-hover);
             color: var(--text-primary);
         }
 
         .sidebar-item.active {
-            background: var(--bg-elevated);
+            background: var(--chrome-pressed);
             color: var(--text-primary);
             box-shadow: inset 3px 0 0 var(--accent-color);
         }
@@ -151,7 +180,7 @@
             left: 0;
             right: 0;
             bottom: 0;
-            background-color: #33455f;
+            background-color: var(--border-color);
             transition: 0.3s;
             border-radius: 26px;
         }
@@ -255,12 +284,13 @@
         }
 
         .btn-secondary {
-            background: var(--bg-elevated);
+            background: var(--chrome-hover);
+            border: 1px solid var(--border-color);
             color: var(--text-primary);
         }
 
         .btn-secondary:hover {
-            background: #2f5075;
+            background: var(--chrome-pressed);
         }
 
         /* Version Info */
@@ -318,7 +348,7 @@
         }
 
         .key-badge {
-            background: var(--bg-elevated);
+            background: var(--chrome-pressed);
             padding: 4px 10px;
             border-radius: 4px;
             font-size: 12px;
@@ -338,7 +368,7 @@
         }
 
         .keybind-remove {
-            background: #c9464f;
+            background: var(--danger-color);
             border: none;
             color: var(--brand-paper);
             width: 20px;
@@ -354,13 +384,13 @@
         }
 
         .keybind-remove:hover {
-            background: #e2606e;
+            background: var(--danger-color-hover);
         }
 
         .keybind-add {
             background: transparent;
             border: 1px dashed var(--accent-color);
-            color: var(--accent-color);
+            color: var(--accent-ink);
             padding: 4px 10px;
             border-radius: 4px;
             cursor: pointer;
@@ -369,7 +399,7 @@
         }
 
         .keybind-add:hover {
-            background: rgba(255, 212, 140, 0.12);
+            background: var(--chrome-hover);
         }
 
         .btn-sm {
@@ -384,7 +414,7 @@
             left: 0;
             width: 100%;
             height: 100%;
-            background: rgba(5, 11, 22, 0.72);
+            background: var(--modal-backdrop);
             display: flex;
             align-items: center;
             justify-content: center;

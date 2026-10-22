@@ -1,4 +1,14 @@
 import assert from 'node:assert/strict';
+import {
+  assertCleanRun,
+  assertNoReadyMadeInterface,
+  menuItem,
+  openDocuments,
+  openReaderChrome,
+  pageStatus,
+  runMenuCommand,
+  until,
+} from './embedpdf-reader-chrome.mjs';
 
 export async function verifyNavigation(browser, origin) {
   const page = await browser.newPage({ viewport: { width: 1280, height: 1000 } });
@@ -17,42 +27,40 @@ export async function verifyNavigation(browser, origin) {
   assert.equal(await page.getAttribute('body', 'data-status'), 'ready');
   const viewer = page.locator('.embedpdf-document-surface[data-visible="true"]');
   await viewer.locator('img[src^="blob:"]').first().waitFor({ state: 'visible' });
-  await page.evaluate(() => window.navigationSmoke.access().presentation.openSearch());
-  const input = viewer.locator('input[type="text"]').last();
-  await input.fill('moon');
-  await page.waitForFunction(() =>
-    document
-      .querySelector('embedpdf-container')
-      .shadowRoot.textContent.includes('moon lower match'),
+  const search = page.locator('#toolbar-search');
+  const monightSidebar = page.locator('#reader-sidebar');
+  const results = monightSidebar.locator('.search-result');
+  // Find focuses Monight's toolbar Search field; the ready-made search panel is gone.
+  await page.evaluate(() => document.activeElement?.blur?.());
+  await page.keyboard.press('Meta+F');
+  await page.waitForFunction(() => document.activeElement?.id === 'toolbar-search');
+  assert.equal(
+    await viewer.locator('[data-sidebar-id="search-panel"]').count(),
+    0,
+    'The ready-made search panel must not be reachable',
   );
+  assert.equal(await viewer.getByRole('button', { name: 'Search', exact: true }).count(), 0);
+  assert.equal(await monightSidebar.isHidden(), true);
+  await search.fill('moon');
+  await results.nth(2).waitFor({ state: 'visible' });
+  assert.equal(await monightSidebar.getAttribute('data-sidebar-mode'), 'search');
+  assert.deepEqual(await monightSidebar.locator('.search-result-page').allTextContents(), [
+    'Page 1',
+    'Page 2',
+  ]);
+  assert.deepEqual(await results.locator('mark').allTextContents(), ['moon', 'moon', 'moon']);
   await page.waitForTimeout(600);
   const before = await page.evaluate(() => ({
     snapshot: window.navigationSmoke.reader.snapshot(),
-    text: document.querySelector('embedpdf-container').shadowRoot.querySelector('[data-sidebar-id]')
-      .textContent,
+    text: document.getElementById('reader-sidebar').textContent,
   }));
-  const { matches, viewerQueries } = await page.evaluate(async () => {
-    const registry = await document.querySelector('embedpdf-container').registry;
-    const viewerQueries = [];
-    const unsubscribe = registry
-      .getPlugin('search')
-      .provides()
-      .onStateChange(({ state }) => viewerQueries.push(state.query));
-    const matches = await window.navigationSmoke.reader.query().search('sun');
-    unsubscribe();
-    return { matches, viewerQueries };
-  });
+  const matches = await page.evaluate(() => window.navigationSmoke.reader.query().search('sun'));
   assert.equal(matches.length, 1);
   assert.equal(matches[0].pageNumber, 3);
-  assert.ok(
-    viewerQueries.every((query) => query === 'moon'),
-    'A read-only query must not replace interactive search',
-  );
   await page.waitForTimeout(600);
   const after = await page.evaluate(() => ({
     snapshot: window.navigationSmoke.reader.snapshot(),
-    text: document.querySelector('embedpdf-container').shadowRoot.querySelector('[data-sidebar-id]')
-      .textContent,
+    text: document.getElementById('reader-sidebar').textContent,
   }));
   assert.deepEqual(
     after,
@@ -62,7 +70,7 @@ export async function verifyNavigation(browser, origin) {
   await page.evaluate(() => {
     window.navigationSmoke.actions.length = 0;
   });
-  await viewer.getByRole('button', { name: 'moon second page' }).click();
+  await results.filter({ hasText: 'moon second page' }).click();
   await page.waitForFunction(
     () => window.navigationSmoke.reader.snapshot().documents[0].readingPosition.page === 2,
   );
@@ -71,54 +79,71 @@ export async function verifyNavigation(browser, origin) {
     actions: window.navigationSmoke.actions,
     position: window.navigationSmoke.reader.snapshot().documents[0].readingPosition,
   }));
-  assert.equal(
-    navigation.actions.filter((action) => action.type === 'goToPage').length,
-    0,
-    'Completed viewer navigation must settle its position without a second page jump',
+  assert.deepEqual(
+    navigation.actions.map((action) => action.type),
+    ['activateDocumentTarget'],
+    'A search result must go to its hit through one go-to-target Reader Action',
   );
-  assert.ok(
-    await viewer
-      .getByRole('button', { name: 'moon second page' })
-      .evaluate((button) => button.classList.contains('bg-accent-light')),
-  );
-  // Exercise the retained shortcut matcher with a real shadow-DOM input event.
-  await input.focus();
-  await input.press('ArrowRight');
+  // Exercise the retained shortcut matcher with a real input event in the field.
+  await search.focus();
+  await search.press('ArrowRight');
   assert.deepEqual(
     await page.evaluate(() => window.navigationSmoke.shortcuts),
-    [],
-    'Caret keys inside the ready-made search field must not become Reader Actions',
+    ['find'],
+    'Caret keys inside the Search field must not become Reader Actions',
   );
-  await viewer.getByRole('button', { name: 'Sidebar', exact: true }).click();
-  // The pinned snippet renders icon-only, unnamed Thumbnails / Outline tabs.
-  await viewer.getByRole('tab').nth(1).click();
-  await viewer.locator('.outline-tree').waitFor({ state: 'visible' });
+  // Clearing the search restores the hidden sidebar without persisting the takeover.
+  await search.fill('');
+  await monightSidebar.waitFor({ state: 'hidden' });
+  assert.equal(
+    await page.evaluate(() => window.navigationSmoke.chromePreferences.snapshot().sidebarMode),
+    'thumbnails',
+  );
+  // Monight's own sidebar replaces the ready-made thumbnails and outline entirely.
+  assert.equal(await viewer.getByRole('button', { name: 'Sidebar', exact: true }).count(), 0);
+  assert.equal(await viewer.locator('[data-sidebar-id="sidebar-panel"]').count(), 0);
+  assert.equal(await viewer.locator('.outline-tree').count(), 0);
   let popupOpened = false;
   page.on('popup', async (popup) => {
     popupOpened = true;
     await popup.close();
   });
-  await viewer.getByText('Website', { exact: true }).click();
-  await page.waitForTimeout(300);
+  // The Table of Contents dispatches each outline entry's Document Query target.
+  const activateOutlineEntry = (path) =>
+    page.evaluate(async (indices) => {
+      const { reader } = window.navigationSmoke;
+      let items = await reader.query().outline();
+      let entry;
+      for (const index of indices) {
+        entry = items[index];
+        items = entry.items;
+      }
+      await reader.dispatch({
+        type: 'activateDocumentTarget',
+        filePath: reader.snapshot().activeDocumentPath,
+        target: entry.target,
+      });
+    }, path);
+  await activateOutlineEntry([1]);
   assert.deepEqual(
     await page.evaluate(() => window.navigationSmoke.externalUrls),
     ['https://example.com/outline'],
-    'Outline URLs must go through the captured Document Reader Action and external-link adapter',
+    'Outline URLs must go through the Document Reader Action and external-link adapter',
   );
   assert.equal(popupOpened, false, 'Outline links must not open a browser window directly');
-  await viewer.getByText('Blocked website', { exact: true }).click();
+  await activateOutlineEntry([2]);
   await page.waitForFunction(() => window.navigationSmoke.errors.length === 1);
   assert.equal(popupOpened, false);
-  await viewer.getByText('Chapter', { exact: true }).first().click();
+  await activateOutlineEntry([0]);
   await page.waitForFunction(() => {
     const position = window.navigationSmoke.reader.snapshot().documents[0].readingPosition;
     return position.page === 2 && Math.abs(position.location - 0.5) < 0.02;
   });
-  await viewer.getByText('Nested chapter', { exact: true }).click();
+  await activateOutlineEntry([0, 0]);
   await page.waitForFunction(
     () => window.navigationSmoke.reader.snapshot().documents[0].readingPosition.page === 3,
   );
-  await viewer.getByText('Chapter', { exact: true }).last().click();
+  await activateOutlineEntry([3]);
   await page.waitForFunction(
     () => window.navigationSmoke.reader.snapshot().documents[0].readingPosition.page === 1,
   );
@@ -142,19 +167,15 @@ export async function verifyNavigation(browser, origin) {
   assert.equal(retained.outline[0].items[0].pageNumber, 3);
   assert.ok(retained.thumbnail[0] > 0 && retained.thumbnail[0] <= 100 && retained.thumbnail[1] > 0);
   assert.equal(retained.unchanged, true);
-  await viewer.getByRole('tab').first().click();
-  await viewer.locator('[data-sidebar-id="sidebar-panel"]').getByText('3', { exact: true }).click();
+  await page.evaluate(async () => {
+    await window.navigationSmoke.reader.dispatch({ type: 'goToPage', page: 3 });
+  });
   await page.waitForFunction(
     () => window.navigationSmoke.reader.snapshot().documents[0].readingPosition.page === 3,
   );
-  await viewer.getByRole('button', { name: 'Sidebar', exact: true }).click();
-  await page.evaluate(() => window.navigationSmoke.access().presentation.openSearch());
-  const reopenedInput = viewer.locator('input[type="text"]').last();
-  await reopenedInput.fill('');
-  await reopenedInput.fill('moon');
-  const repeatedResults = viewer.getByRole('button', { name: 'moon first page moon lower match' });
-  await repeatedResults.nth(1).waitFor({ state: 'visible' });
-  await repeatedResults.nth(1).click();
+  await search.fill('moon');
+  await results.nth(2).waitFor({ state: 'visible' });
+  await results.nth(1).click();
   await page.waitForFunction(
     () => window.navigationSmoke.reader.snapshot().documents[0].readingPosition.page === 1,
   );
@@ -163,18 +184,15 @@ export async function verifyNavigation(browser, origin) {
     () => window.navigationSmoke.reader.snapshot().documents[0].readingPosition,
   );
   assert.ok(
-    repeatedPosition.location > 0.1 && repeatedPosition.location < 0.3,
+    repeatedPosition.location > 0.3 && repeatedPosition.location < 0.6,
     `The lower occurrence must settle beyond the first page-1 match: ${JSON.stringify(repeatedPosition)}`,
   );
-  assert.ok(
-    await repeatedResults.nth(1).evaluate((button) => button.classList.contains('bg-accent-light')),
-    'The ready-made viewer must visibly select the second same-page occurrence',
-  );
-  await viewer.getByRole('button', { name: 'Search', exact: true }).click();
+  await search.fill('');
   await page.evaluate(async () => {
     await window.navigationSmoke.reader.dispatch({ type: 'goToPage', page: 1 });
   });
-  await viewer.getByRole('button', { name: 'Toggle Pointer Mode' }).click();
+  // Text selection (Tools ▸ Text Selection) replaces the ready-made Pointer Mode button.
+  await page.evaluate(() => window.navigationSmoke.workspace.setActiveAnnotationTool(null));
   await page.waitForTimeout(300);
   const pageImage = viewer.locator('img[src^="blob:"]').first();
   const box = await pageImage.boundingBox();
@@ -208,18 +226,12 @@ export async function verifyNavigation(browser, origin) {
   assert.equal(popupOpened, false);
 
   await page.evaluate(() => window.navigationSmoke.open('/docs/second.pdf'));
-  await page.evaluate(() => window.navigationSmoke.access().presentation.openSearch());
-  const secondInput = viewer.locator('input[type="text"]').last();
-  assert.equal(
-    await secondInput.inputValue(),
-    '',
-    'Another Document must not inherit search UI state',
-  );
-  await secondInput.fill('absent');
-  await page.waitForTimeout(500);
-  assert.equal(await viewer.getByRole('button', { name: /moon/ }).count(), 0);
-  await secondInput.fill('moon');
-  await viewer.getByRole('button', { name: 'moon second page' }).waitFor();
+  assert.equal(await search.inputValue(), '', 'A cleared search must stay cleared');
+  await search.fill('absent');
+  await monightSidebar.getByText('No results').waitFor();
+  assert.equal(await results.count(), 0);
+  await search.fill('moon');
+  await results.filter({ hasText: 'moon second page' }).waitFor();
   const failedQuery = await page.evaluate(async () => {
     await window.navigationSmoke.failNextSearch();
     try {
@@ -231,29 +243,35 @@ export async function verifyNavigation(browser, origin) {
   });
   assert.equal(failedQuery, true, 'Read-only query errors must reach their caller');
   assert.ok(
-    await viewer.getByRole('button', { name: 'moon second page' }).isVisible(),
+    await results.filter({ hasText: 'moon second page' }).isVisible(),
     'A failed read-only query must not clear interactive results',
   );
   await page.evaluate(() => window.navigationSmoke.failNextSearch());
-  await secondInput.fill('failure');
-  await page.waitForTimeout(500);
-  assert.equal(
-    await viewer.getByRole('button', { name: /moon/ }).count(),
-    0,
-    'Search failures must clear previous results',
+  await search.fill('failure');
+  await monightSidebar.getByText('No results').waitFor();
+  assert.equal(await results.count(), 0, 'Search failures must clear previous results');
+  // Switching Documents re-runs the active search on the newly active Document.
+  await search.fill('moon');
+  await results.first().waitFor();
+  await page.evaluate(() =>
+    window.navigationSmoke.reader.dispatch({
+      type: 'activateDocument',
+      filePath: '/docs/first.pdf',
+    }),
   );
-  await secondInput.fill('');
-  await page.waitForTimeout(500);
-  assert.equal(await viewer.getByRole('button', { name: /moon/ }).count(), 0);
-  await page.evaluate(async () => {
-    await window.navigationSmoke.reader.dispatch({
-      type: 'closeDocument',
-      filePath: '/docs/second.pdf',
-    });
-    await window.navigationSmoke.open('/docs/second.pdf');
-    window.navigationSmoke.access().presentation.openSearch();
+  await results.nth(2).waitFor({ state: 'visible' });
+  await page.evaluate(() => {
+    window.navigationSmoke.actions.length = 0;
   });
-  assert.equal(await viewer.locator('input[type="text"]').last().inputValue(), '');
+  await results.filter({ hasText: 'moon second page' }).click();
+  await page.waitForFunction(() => window.navigationSmoke.actions.length > 0);
+  assert.equal(
+    await page.evaluate(() => window.navigationSmoke.actions[0].filePath),
+    '/docs/first.pdf',
+    'Results must belong to the newly active Document',
+  );
+  await search.fill('');
+  await monightSidebar.waitFor({ state: 'hidden' });
   assert.deepEqual(
     externalRequests,
     [],
@@ -261,4 +279,90 @@ export async function verifyNavigation(browser, origin) {
   );
   await page.close();
   console.log('EmbedPDF navigation contract passed');
+  await verifyNavigationChrome(browser, origin);
+}
+
+/** The sidebar modes, Search field and Go menu move through a Document in the real reader. */
+export async function verifyNavigationChrome(browser, origin) {
+  const reader = await openReaderChrome(browser, origin);
+  const { page } = reader;
+  const sidebar = page.locator('#reader-sidebar');
+  const onPage = (number) =>
+    until(async () => (await pageStatus(page)) === `Page ${number} of 3`, `Not on page ${number}`);
+  try {
+    await openDocuments(page, ['/smoke/moon.pdf']);
+    await assertNoReadyMadeInterface(page, 'beside the sidebar');
+
+    // Sidebar toggle shows Thumbnails.
+    await page.click('#sidebar-toggle');
+    await sidebar.waitFor({ state: 'visible' });
+    assert.equal(await sidebar.getAttribute('data-sidebar-mode'), 'thumbnails');
+    await sidebar.locator('.sidebar-thumbnail').nth(2).waitFor({ state: 'visible' });
+    assert.equal(await sidebar.locator('.sidebar-thumbnail').count(), 3);
+
+    // The mode menu switches to the Table of Contents; an entry is a recorded jump
+    // (its chapter starts halfway down page 2, so page 3 fills most of the view).
+    await page.click('#sidebar-mode-toggle');
+    await page.click('#sidebar-mode-menu [data-sidebar-mode="tableOfContents"]');
+    await until(
+      async () => (await sidebar.getAttribute('data-sidebar-mode')) === 'tableOfContents',
+      'Table of Contents did not open',
+    );
+    assert.equal((await menuItem(page, 'go.back'))?.enabled, false);
+    await sidebar.locator('.sidebar-outline-link', { hasText: 'Chapter' }).first().click();
+    await until(async () => (await pageStatus(page)) !== 'Page 1 of 3', 'The entry did not jump');
+    await until(
+      async () => (await menuItem(page, 'go.back'))?.enabled === true,
+      'Go ▸ Back is not enabled after a jump',
+    );
+    const afterJump = await pageStatus(page);
+    await runMenuCommand(page, 'go.back');
+    await onPage(1);
+    await runMenuCommand(page, 'go.forward');
+    await until(async () => (await pageStatus(page)) === afterJump, 'Go ▸ Forward did not redo');
+
+    // A thumbnail goes to its page.
+    await page.click('#sidebar-mode-toggle');
+    await page.click('#sidebar-mode-menu [data-sidebar-mode="thumbnails"]');
+    await sidebar.locator('.sidebar-thumbnail[data-page="1"]').click();
+    await onPage(1);
+
+    // View ▸ sidebar items choose the mode the toolbar menu does.
+    await runMenuCommand(page, 'view.sidebar.annotations');
+    await sidebar.getByText('No Highlights or Notes').waitFor();
+    assert.equal((await menuItem(page, 'view.sidebar.annotations'))?.checked, true);
+    await runMenuCommand(page, 'view.sidebar.hidden');
+    await sidebar.waitFor({ state: 'hidden' });
+    assert.equal(await page.getAttribute('#sidebar-toggle', 'aria-pressed'), 'false');
+
+    // Find focuses the toolbar Search field; results take over the sidebar until cleared.
+    await page.keyboard.press('Control+F');
+    await page.waitForFunction(() => document.activeElement?.id === 'toolbar-search');
+    await page.fill('#toolbar-search', 'moon');
+    const results = sidebar.locator('.search-result');
+    await results.nth(2).waitFor({ state: 'visible' });
+    assert.equal(await sidebar.getAttribute('data-sidebar-mode'), 'search');
+    await results.filter({ hasText: 'moon second page' }).click();
+    await onPage(2);
+    await page.fill('#toolbar-search', '');
+    await sidebar.waitFor({ state: 'hidden' });
+
+    // Go menu paging and Go to Page….
+    await runMenuCommand(page, 'go.next-page');
+    await onPage(3);
+    assert.equal((await menuItem(page, 'go.next-page'))?.enabled, false);
+    await runMenuCommand(page, 'go.previous-page');
+    await onPage(2);
+    const goToPage = runMenuCommand(page, 'go.page');
+    await page.locator('#go-to-page-dialog input[name="page"]').fill('1');
+    await page.locator('#go-to-page-dialog button[type="submit"]').click();
+    await goToPage;
+    await onPage(1);
+    await assertNoReadyMadeInterface(page, 'after navigating');
+
+    await assertCleanRun(reader);
+    console.log('EmbedPDF reader chrome: sidebar modes, Search and Go menu: PASS');
+  } finally {
+    await reader.close();
+  }
 }

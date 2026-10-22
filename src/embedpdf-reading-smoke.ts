@@ -1,9 +1,11 @@
 import { navigationPdf } from './__fixtures__/navigation-pdf';
+import { loadChromePreferences } from './app/chrome-preferences';
 import { createDocumentIntakeRuntime } from './app/document-intake-runtime';
 import { createDocumentWorkspace } from './app/document-workspace';
 import { setupEventListeners } from './app/dom-events';
 import { createEmbedPdfDocumentSurfaceFactory } from './app/embedpdf-document-surface';
 import { registerKeybindActions } from './app/keybinds';
+import { type ReaderCommandContext, runReaderCommand } from './app/reader-commands';
 import { restoreReadingSessionAtStartup } from './app/startup-restoration';
 import type { DocumentContent } from './reader/document-content';
 import {
@@ -11,16 +13,20 @@ import {
   type ReaderAction,
   type ReaderActions,
 } from './reader/reader-actions';
-import { EMPTY_READING_SESSION } from './reader/reading-session-store';
+import { loadReadingSession } from './reader/reading-session-store';
 import { PRESETS } from './scripts/filters';
 import { KeybindManager } from './scripts/keybind-manager';
-import { DEFAULT_SETTINGS } from './scripts/settings';
+import { defaultSettings } from './scripts/settings';
 import './styles/document-workspace.css';
 import './styles/reader-shell.css';
 
 async function run() {
-  const saved =
-    JSON.parse(localStorage.getItem('reading-session') ?? 'null') ?? EMPTY_READING_SESSION;
+  const saved = await loadReadingSession({
+    read: async () => JSON.parse(localStorage.getItem('reading-session') ?? 'null') ?? undefined,
+    write: async (session) => localStorage.setItem('reading-session', JSON.stringify(session)),
+    readLegacy: async () => undefined,
+    removeLegacy: async () => {},
+  });
   const actions: ReaderAction[] = [];
   const contents = new Map<string, DocumentContent>();
   const createSurface = createEmbedPdfDocumentSurfaceFactory();
@@ -36,7 +42,6 @@ async function run() {
     defaultVisualState: () => ({
       filterSettings: PRESETS.default,
       zoomIntent: { kind: 'manual', scale: 1 },
-      rotation: 0,
       viewMode: 'continuous',
     }),
     createSurface: async (request) => {
@@ -68,12 +73,32 @@ async function run() {
     runtime: workspace.intakeRuntime,
   });
   const manager = new KeybindManager(false);
-  manager.loadFromSettings(DEFAULT_SETTINGS);
+  manager.loadFromSettings(defaultSettings('other'));
   const goToPage = async (page: number) => {
     await dispatch({ type: 'goToPage', page });
   };
-  const goToRelativePage = async (direction: 'next' | 'previous') => {
-    await dispatch({ type: direction === 'next' ? 'goToNextPage' : 'goToPreviousPage' });
+  // Zoom shortcuts run their Reader Commands; this page has no other chrome.
+  const commandContext: ReaderCommandContext = {
+    dispatchReaderAction: async (action) => {
+      await dispatch(action);
+    },
+    preferences: await loadChromePreferences({
+      read: async () => undefined,
+      write: async () => {},
+    }),
+    sidebar: null,
+    markupToolbar: null,
+    highlightButton: null,
+    appearance: null,
+    setActiveTool: () => {},
+    toggleSlideshow: async () => {},
+    toggleFullScreen: async () => {},
+    requestPage: async () => null,
+    selectedPages: () => [],
+    currentPage: () => null,
+    toggleTabBar: () => {},
+    editTextField: () => false,
+    selectedAnnotation: () => null,
   };
   registerKeybindActions({
     keybindManager: manager,
@@ -83,10 +108,9 @@ async function run() {
     openSettings: async () => {},
     updateTabBarVisibility: () => {},
     updateUI: () => {},
-    openSearch: () => workspace.openActiveSearch(),
-    togglePresentationMode: async () => {},
+    openSearch: () => {},
     goToPage,
-    goToRelativePage,
+    runReaderCommand: (id) => runReaderCommand(id, commandContext),
     dispatchReaderAction: async (action) => {
       await dispatch(action);
     },

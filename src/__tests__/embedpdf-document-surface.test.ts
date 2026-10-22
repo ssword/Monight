@@ -10,11 +10,16 @@ import {
   embedPdfLinkTarget,
   embedPdfLinkTargetAtGeometry,
   embedPdfPageNumberForEventPath,
+  embedPdfSearchHitLocation,
   restoreEmbedPdfReadingPositionCoordinates,
 } from '../app/embedpdf-navigation-geometry';
 import { createEmbedPdfViewerConfig } from '../app/embedpdf-offline-configuration';
-import { removeEmbedPdfCommandShortcuts } from '../app/embedpdf-shortcuts';
+import {
+  monightOwnsEmbedPdfCommand,
+  removeEmbedPdfCommandShortcuts,
+} from '../app/embedpdf-shortcuts';
 import type { EmbedPdfViewerRuntime } from '../app/embedpdf-viewer-runtime';
+import { VERIFIED_MARKUP_TOOLS } from '../app/markup-tools';
 import { createDocumentIntake } from '../reader/document-intake';
 import { normalizeAnnotationDisplayName } from '../reader/native-pdf-editing';
 import { createReaderActions, type ReaderActions } from '../reader/reader-actions';
@@ -25,12 +30,11 @@ const createViewerRuntime = (
 ): EmbedPdfViewerRuntime => ({
   preparePrintDocument: vi.fn(async () => new Uint8Array([1, 2, 3])),
   open: vi.fn(async () => undefined),
-  openSearch: vi.fn(),
   pageCount: () => 2,
+  pageRotations: () => [0, 0],
   currentPage: () => 1,
   currentZoom: () => 1,
   zoomIntent: () => ({ kind: 'manual', scale: 1 }),
-  rotation: () => 0,
   viewMode: () => 'single',
   readingPosition: () => ({ page: 1, location: 0 }),
   goToPage: vi.fn(async () => undefined),
@@ -38,7 +42,6 @@ const createViewerRuntime = (
   setZoomIntent: vi.fn(async () => undefined),
   zoomIn: vi.fn(async () => undefined),
   zoomOut: vi.fn(async () => undefined),
-  setRotation: vi.fn(async () => undefined),
   setViewMode: vi.fn(async () => undefined),
   fitToPage: vi.fn(async () => undefined),
   applyFilter: vi.fn(),
@@ -48,8 +51,33 @@ const createViewerRuntime = (
   metadata: vi.fn(async () => null),
   resolveLinkTarget: vi.fn(async () => null),
   renderThumbnail: vi.fn(async () => document.createElement('canvas')),
+  activeAnnotationTool: () => null,
+  setActiveAnnotationTool: vi.fn(),
+  markupSelection: vi.fn(() => false),
+  annotations: () => [],
+  revealAnnotation: vi.fn(),
+  selectedAnnotation: () => null,
   destroy: vi.fn(async () => undefined),
   ...overrides,
+});
+
+describe('EmbedPDF shortcuts', () => {
+  it('leaves Undo, Redo, zoom, scrolling and search to Monight, which owns those commands', () => {
+    for (const id of [
+      'history:undo',
+      'history:redo',
+      'zoom:in',
+      'rotate:clockwise',
+      'scroll:next-page',
+      'document:print',
+      'panel:toggle-search',
+    ]) {
+      expect(monightOwnsEmbedPdfCommand(id), id).toBe(true);
+    }
+    for (const id of ['selection:copy', 'mode:pan', 'panel:toggle-sidebar']) {
+      expect(monightOwnsEmbedPdfCommand(id), id).toBe(false);
+    }
+  });
 });
 
 describe('EmbedPDF Document surface', () => {
@@ -90,6 +118,19 @@ describe('EmbedPDF Document surface', () => {
         location: 0.25,
       }),
     ).toEqual({ x: 100, y: 600 });
+  });
+
+  it('locates a search hit at the top of its first highlight rect in reading order', () => {
+    const size = { width: 400, height: 600 };
+    const rects = [
+      { origin: { x: 100, y: 300 }, size: { width: 50, height: 12 } },
+      { origin: { x: 40, y: 150 }, size: { width: 80, height: 12 } },
+    ];
+    expect(embedPdfSearchHitLocation(size, 0, rects)).toBe(0.25);
+    expect(embedPdfSearchHitLocation(size, 1, rects)).toBe(0.1);
+    expect(embedPdfSearchHitLocation(size, 2, rects)).toBe(0.48);
+    expect(embedPdfSearchHitLocation(size, 3, rects)).toBe(0.625);
+    expect(embedPdfSearchHitLocation(size, 0, [])).toBe(0);
   });
 
   it('maps every retained View Mode to a distinct EmbedPDF layout', () => {
@@ -159,7 +200,7 @@ describe('EmbedPDF Document surface', () => {
     ).toBeNull();
   });
 
-  it('matches a ready-made link hit area within the page that was clicked', () => {
+  it('matches an EmbedPDF link hit area within the page that was clicked', () => {
     const firstPageTarget = { type: 'destination', destination: { pageIndex: 2 } };
     const secondPageTarget = { type: 'destination', destination: { pageIndex: 3 } };
     const annotation = (pageIndex: number, target: typeof firstPageTarget) =>
@@ -234,10 +275,10 @@ describe('EmbedPDF Document surface', () => {
     let callbacks: DocumentSurfaceCallbacks | undefined;
     const runtime = createViewerRuntime({
       pageCount: () => 2,
+      pageRotations: () => [0, 1],
       currentPage: () => currentPage,
       currentZoom: () => zoom,
       zoomIntent: () => ({ kind: 'manual', scale: zoom }),
-      rotation: () => 0,
       viewMode: () => 'single',
       readingPosition: () => ({ page: currentPage, location: 0 }),
       goToPage: vi.fn(async (page) => {
@@ -308,6 +349,7 @@ describe('EmbedPDF Document surface', () => {
       zoom: 1.5,
       fileName: 'report.pdf',
       filePath: '/docs/report.pdf',
+      pageRotations: [0, 1],
     });
     expect(surface.rendering.getReadingPosition()).toEqual({ page: 2, location: 0 });
     expect(callbacks).toBeDefined();
@@ -322,7 +364,6 @@ describe('EmbedPDF Document surface', () => {
     const runtime = createViewerRuntime({
       preparePrintDocument,
       currentZoom: () => 1.75,
-      rotation: () => 1,
     });
     const factory = createEmbedPdfDocumentSurfaceFactory({
       createViewer: vi.fn(async () => runtime),
@@ -344,10 +385,29 @@ describe('EmbedPDF Document surface', () => {
     expect(preparePrintDocument).toHaveBeenCalledOnce();
     expect(runtime.applyFilter).not.toHaveBeenCalled();
     expect(runtime.setZoomIntent).not.toHaveBeenCalled();
-    expect(runtime.setRotation).not.toHaveBeenCalled();
   });
 
-  it('configures the ready-made viewer as a local, read-only surface', () => {
+  it('renders none of the ready-made viewer interface; Monight chrome replaces all of it', () => {
+    for (const editable of [true, false]) {
+      const schema = createEmbedPdfViewerConfig(undefined, editable).ui?.schema;
+
+      // No toolbar, page controls overlay, sidebar or panel, menu, modal, or
+      // text/annotation selection menu: only the pages and their annotation layer remain.
+      expect(schema).toBeDefined();
+      for (const part of [
+        'toolbars',
+        'menus',
+        'sidebars',
+        'modals',
+        'overlays',
+        'selectionMenus',
+      ] as const) {
+        expect(Object.keys(schema?.[part] ?? {}), part).toEqual([]);
+      }
+    }
+  });
+
+  it('configures the viewer engine as a local, read-only surface', () => {
     const config = createEmbedPdfViewerConfig();
 
     expect(config.worker).toBe(false);
@@ -369,8 +429,27 @@ describe('EmbedPDF Document surface', () => {
         'document-print',
         'document-export',
         'document-protect',
+        // Monight's zoom group and View ▸ zoom commands own zooming.
+        'zoom',
+        // View rotation is gone; rotation is a Page Rotation edit of the PDF.
+        'rotate',
+        // Monight's sidebar owns thumbnails and the outline.
+        'panel-sidebar',
+        // Monight's toolbar Search field and sidebar own search.
+        'panel-search',
       ]),
     );
+    // The engine commands Monight still relies on (layout, history, ⌘C) stay enabled.
+    for (const retained of [
+      'panel',
+      'page',
+      'spread',
+      'history',
+      'selection-copy',
+      'document-fullscreen',
+    ]) {
+      expect(config.disabledCategories).not.toContain(retained);
+    }
     expect(config.permissions).toEqual({
       enforceDocumentPermissions: true,
       overrides: {
@@ -429,6 +508,133 @@ describe('EmbedPDF Document surface', () => {
     expect(exportPdf).toHaveBeenCalledOnce();
   });
 
+  it('enables exactly the verified markup tools and never the Annotate mode', () => {
+    for (const editable of [true, false]) {
+      const config = createEmbedPdfViewerConfig(undefined, editable);
+
+      expect(config.annotations?.tools?.map(({ id }) => id)).toEqual(
+        VERIFIED_MARKUP_TOOLS.map(({ id }) => id),
+      );
+      // Monight's markup toolbar and Highlight split button own the annotation tools.
+      expect(config.disabledCategories).toContain('mode-annotate');
+    }
+  });
+
+  it('selects markup tools only on editable Documents', async () => {
+    const callbacks = {
+      readingPositionObserved: vi.fn(),
+      readingPositionSettled: vi.fn(),
+      stateChanged: vi.fn(),
+      pageNavigationRequested: vi.fn(async () => undefined),
+      zoomIntentRequested: vi.fn(async () => undefined),
+    };
+    const open = async (readOnlyReason: string | null) => {
+      let activeTool: string | null = null;
+      const viewer = createViewerRuntime({
+        editing: {
+          state: () => ({ revision: 0, dirty: false, readOnlyReason }),
+          exportPdf: vi.fn(async () => new Uint8Array()),
+          markSaved: vi.fn(),
+        },
+        activeAnnotationTool: () => activeTool,
+        setActiveAnnotationTool: vi.fn((toolId: string | null) => {
+          activeTool = toolId;
+        }),
+      });
+      const surface = await createEmbedPdfDocumentSurfaceFactory({
+        createViewer: async () => viewer,
+        assessEditing: async () => readOnlyReason,
+      })({ filePath: '/docs/a.pdf', title: 'a.pdf', bytes: new Uint8Array([1]), callbacks });
+      return { viewer, surface };
+    };
+
+    const editable = await open(null);
+    editable.surface.rendering.setActiveAnnotationTool?.('textComment');
+    expect(editable.surface.rendering.activeAnnotationTool?.()).toBe('textComment');
+    editable.surface.rendering.setActiveAnnotationTool?.(null);
+    expect(editable.surface.rendering.activeAnnotationTool?.()).toBeNull();
+
+    const reason = 'PDF permissions prohibit annotation editing; this Document is read-only';
+    const protectedDocument = await open(reason);
+    protectedDocument.surface.rendering.setActiveAnnotationTool?.('textComment');
+    expect(protectedDocument.viewer.setActiveAnnotationTool).not.toHaveBeenCalled();
+    expect(protectedDocument.surface.rendering.activeAnnotationTool?.()).toBeNull();
+  });
+
+  it('offers the selected Annotation for editing only on an editable Document', async () => {
+    const callbacks = {
+      readingPositionObserved: vi.fn(),
+      readingPositionSettled: vi.fn(),
+      stateChanged: vi.fn(),
+      pageNavigationRequested: vi.fn(async () => undefined),
+      zoomIntentRequested: vi.fn(async () => undefined),
+    };
+    const selection = {
+      id: 'note-1',
+      kind: 'note' as const,
+      contents: 'Moon',
+      color: '#FFCD45',
+      anchor: { left: 10, top: 20, width: 24, height: 24 },
+    };
+    const open = async (readOnlyReason: string | null) => {
+      const viewer = createViewerRuntime({
+        editing: {
+          state: () => ({ revision: 0, dirty: false, readOnlyReason }),
+          exportPdf: vi.fn(async () => new Uint8Array()),
+          markSaved: vi.fn(),
+        },
+        selectedAnnotation: () => selection,
+      });
+      const surface = await createEmbedPdfDocumentSurfaceFactory({
+        createViewer: async () => viewer,
+        assessEditing: async () => readOnlyReason,
+      })({ filePath: '/docs/a.pdf', title: 'a.pdf', bytes: new Uint8Array([1]), callbacks });
+      return { viewer, surface };
+    };
+
+    const editable = await open(null);
+    expect(editable.surface.rendering.selectedAnnotation?.()).toEqual(selection);
+
+    const protectedDocument = await open('Digitally signed PDFs are read-only');
+    expect(protectedDocument.surface.rendering.selectedAnnotation?.()).toBeNull();
+  });
+
+  it('marks the text selection in a colour only on an editable Document', async () => {
+    const callbacks = {
+      readingPositionObserved: vi.fn(),
+      readingPositionSettled: vi.fn(),
+      stateChanged: vi.fn(),
+      pageNavigationRequested: vi.fn(async () => undefined),
+      zoomIntentRequested: vi.fn(async () => undefined),
+    };
+    const open = async (readOnlyReason: string | null) => {
+      const viewer = createViewerRuntime({
+        editing: {
+          state: () => ({ revision: 0, dirty: false, readOnlyReason }),
+          exportPdf: vi.fn(async () => new Uint8Array()),
+          markSaved: vi.fn(),
+        },
+        markupSelection: vi.fn(() => true),
+      });
+      const surface = await createEmbedPdfDocumentSurfaceFactory({
+        createViewer: async () => viewer,
+        assessEditing: async () => readOnlyReason,
+      })({ filePath: '/docs/a.pdf', title: 'a.pdf', bytes: new Uint8Array([1]), callbacks });
+      return { viewer, surface };
+    };
+    const green = { strokeColor: '#7ED957' };
+
+    const editable = await open(null);
+    expect(editable.surface.rendering.markupSelection?.('highlight', green)).toBe(true);
+    expect(editable.viewer.markupSelection).toHaveBeenCalledWith('highlight', green);
+    editable.surface.rendering.setActiveAnnotationTool?.('highlight', green);
+    expect(editable.viewer.setActiveAnnotationTool).toHaveBeenCalledWith('highlight', green);
+
+    const protectedDocument = await open('PDF permissions prohibit annotation editing');
+    expect(protectedDocument.surface.rendering.markupSelection?.('highlight', green)).toBe(false);
+    expect(protectedDocument.viewer.markupSelection).not.toHaveBeenCalled();
+  });
+
   it('configures newly authored annotations with the selected display name', () => {
     const config = createEmbedPdfViewerConfig(
       undefined,
@@ -457,7 +663,7 @@ describe('EmbedPDF Document surface', () => {
       },
     });
     const initialSession = {
-      schemaVersion: 2 as const,
+      schemaVersion: 3 as const,
       activeDocumentPath: null,
       documents: [],
     };
@@ -469,7 +675,6 @@ describe('EmbedPDF Document surface', () => {
       defaultVisualState: () => ({
         filterSettings: PRESETS.default,
         zoomIntent: { kind: 'manual', scale: 1 },
-        rotation: 0,
         viewMode: 'single',
       }),
       createSurface,
@@ -503,13 +708,9 @@ describe('EmbedPDF Document surface', () => {
     expect(reader.query('/docs/report.pdf')).not.toBeNull();
     expect(document.querySelectorAll('.embedpdf-document-surface')).toHaveLength(1);
 
-    await surfaceCallbacks?.rotationRequested?.('clockwise');
     await surfaceCallbacks?.viewModeRequested?.('spread');
 
-    expect(reader.snapshot().documents[0]?.visualState).toMatchObject({
-      rotation: 90,
-      viewMode: 'spread',
-    });
+    expect(reader.snapshot().documents[0]?.visualState).toMatchObject({ viewMode: 'spread' });
   });
 
   it('keeps independent Intake outcomes and removes a failed provisional surface', async () => {
@@ -526,7 +727,7 @@ describe('EmbedPDF Document surface', () => {
         }),
     });
     const initialSession = {
-      schemaVersion: 2 as const,
+      schemaVersion: 3 as const,
       activeDocumentPath: null,
       documents: [],
     };
@@ -538,7 +739,6 @@ describe('EmbedPDF Document surface', () => {
       defaultVisualState: () => ({
         filterSettings: PRESETS.default,
         zoomIntent: { kind: 'manual', scale: 1 },
-        rotation: 0,
         viewMode: 'single',
       }),
       createSurface,
@@ -617,7 +817,7 @@ describe('EmbedPDF Document surface', () => {
     let finishSearch!: (
       matches: { pageNumber: number; pageOccurrence: number; index: number; excerpt: string }[],
     ) => void;
-    const initialSession = { schemaVersion: 2 as const, activeDocumentPath: null, documents: [] };
+    const initialSession = { schemaVersion: 3 as const, activeDocumentPath: null, documents: [] };
     let reader: ReaderActions;
     const workspace = createDocumentWorkspace({
       dispatchReaderAction: (action, options) => reader.dispatch(action, options),
@@ -626,7 +826,6 @@ describe('EmbedPDF Document surface', () => {
       defaultVisualState: () => ({
         filterSettings: PRESETS.default,
         zoomIntent: { kind: 'manual', scale: 1 },
-        rotation: 0,
         viewMode: 'continuous',
       }),
       createSurface: createEmbedPdfDocumentSurfaceFactory({
@@ -680,7 +879,6 @@ describe('EmbedPDF Document surface', () => {
     await callbacks[0].pageNavigationRequested(2);
     callbacks[0].readingPositionSettled({ page: 2, location: 0.8 });
     await callbacks[0].zoomIntentRequested({ kind: 'manual', scale: 4 });
-    await callbacks[0].rotationRequested?.('clockwise');
     await callbacks[0].viewModeRequested?.('spread');
     finishSearch([{ pageNumber: 2, pageOccurrence: 0, index: 0, excerpt: 'moon' }]);
     await expect(pendingSearch).resolves.toEqual([]);
@@ -768,17 +966,14 @@ describe('EmbedPDF Document surface', () => {
     });
 
     surface.rendering.applyFilter('brightness(0.8)');
-    surface.rendering.openSearch?.();
     await surface.rendering.setViewMode('continuous');
-    await surface.rendering.setRotation(90);
     await surface.rendering.setZoomIntent({ kind: 'fit-width' });
 
     expect(runtime.applyFilter).toHaveBeenCalledWith('brightness(0.8)');
-    expect(runtime.openSearch).toHaveBeenCalledOnce();
     expect(runtime.setViewMode).toHaveBeenCalledWith('continuous');
-    expect(runtime.setRotation).toHaveBeenCalledWith(90);
     expect(runtime.setZoomIntent).toHaveBeenCalledWith({ kind: 'fit-width' });
     expect(PRESETS.default).toBeDefined();
+    expect('openSearch' in surface.rendering).toBe(false);
   });
 
   it('ignores cancelled and disposed visual projections through the rendering contract', async () => {

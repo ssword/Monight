@@ -106,7 +106,7 @@ describe('shipped code-health invariants', () => {
     }
   });
 
-  it('keeps the EmbedPDF Document surface as seven single-purpose modules', () => {
+  it('keeps the EmbedPDF Document surface and engine adapters in single-purpose modules', () => {
     const appDirectory = new URL('../app/', import.meta.url);
     const modules = readdirSync(appDirectory, { encoding: 'utf8' })
       .filter((path) => path.startsWith('embedpdf-') && path.endsWith('.ts'))
@@ -118,12 +118,61 @@ describe('shipped code-health invariants', () => {
       'embedpdf-navigation-geometry.ts',
       'embedpdf-offline-configuration.ts',
       'embedpdf-print-preparation.ts',
+      'embedpdf-selection-geometry.ts',
       'embedpdf-shortcuts.ts',
+      'embedpdf-text-markup-appearance.ts',
       'embedpdf-viewer-runtime.ts',
     ]);
 
     const composition = readProjectFile('src/app/embedpdf-document-surface.ts');
     expect(composition).not.toMatch(/from ['"]@embedpdf\//);
     expect(composition).not.toMatch(/EmbedPDF\.init|createProductionViewer|onAnnotationEvent/);
+  });
+
+  it('ships no legacy toolbar, preset strip, or emoji toolbar icons', () => {
+    for (const page of readdirSync(new URL('../../', import.meta.url)).filter((path) =>
+      path.endsWith('.html'),
+    )) {
+      const markup = readProjectFile(page);
+      // Filter presets live only in the Appearance popover, built from APPEARANCE_PRESETS.
+      expect(markup, page).not.toMatch(/class="[^"]*\bpreset-btn\b/);
+      expect(markup, page).not.toMatch(/preset-group|toolbar-group|darkConfigurator/);
+      expect(markup, page).not.toMatch(/\p{Extended_Pictographic}/u);
+    }
+    const features = readProjectFile('src/lib/document-features.ts');
+    expect(features).not.toMatch(/viewModeIcon|viewModeLabel|VIEW_MODE_SEQUENCE/);
+  });
+
+  it('ships no stylesheet rule for a class or id nothing renders', () => {
+    const sourceDirectory = new URL('../', import.meta.url);
+    const rendered = [
+      readProjectFile('index.html'),
+      readProjectFile('settings.html'),
+      ...readdirSync(sourceDirectory, { encoding: 'utf8', recursive: true })
+        .filter((path) => path.endsWith('.ts') && !path.includes('__tests__'))
+        .map((path) => readFileSync(new URL(path, sourceDirectory), 'utf8')),
+    ].join('\n');
+    const stylesDirectory = new URL('../styles/', import.meta.url);
+    const unused = readdirSync(stylesDirectory)
+      .filter((path) => path.endsWith('.css'))
+      .flatMap((path) => {
+        const css = readFileSync(new URL(path, stylesDirectory), 'utf8').replace(
+          /\/\*[\s\S]*?\*\//g,
+          '',
+        );
+        const names = new Set(
+          [...css.matchAll(/(?<![\w-])[.#]([a-zA-Z][\w-]*)(?=[^{};]*\{)/g)].map(([, name]) => name),
+        );
+        return [...names]
+          .filter(
+            (name) =>
+              // Third-party slider markup, and toasts named by tone (`toast-${tone}`).
+              !name.startsWith('noUi-') && !/^toast-(error|info|success|warning)$/.test(name),
+          )
+          .filter((name) => !new RegExp(`(?<![\\w-])${name}(?![\\w-])`).test(rendered))
+          .map((name) => `${path}: ${name}`);
+      });
+
+    expect(unused).toEqual([]);
   });
 });

@@ -1,12 +1,13 @@
-/* Tab Bar Container */
+/* Document tab bar — macOS tabs: equal-width tabs under the toolbar, the active
+   tab merges with the toolbar, inactive tabs recede. Shown only with 2+ Documents. */
 #tab-bar {
   display: flex;
-  align-items: center;
-  background-color: var(--bg-secondary);
-  border-bottom: 1px solid var(--border-color);
-  height: 40px;
+  align-items: stretch;
+  height: 28px;
   flex-shrink: 0;
   overflow: hidden;
+  background-color: var(--bg-primary);
+  border-bottom: 1px solid var(--border-color);
 }
 
 #tab-bar.hidden {
@@ -16,61 +17,62 @@
 /* Tab List (Scrollable) */
 .tab-list {
   display: flex;
-  align-items: center;
+  align-items: stretch;
   flex: 1;
+  min-width: 0;
   overflow-x: auto;
   overflow-y: hidden;
-  scrollbar-width: thin;
-  scrollbar-color: var(--border-color) var(--bg-secondary);
+  scrollbar-width: none;
 }
 
 .tab-list::-webkit-scrollbar {
-  height: 4px;
-}
-
-.tab-list::-webkit-scrollbar-track {
-  background: var(--bg-secondary);
-}
-
-.tab-list::-webkit-scrollbar-thumb {
-  background: var(--border-color);
-  border-radius: 2px;
-}
-
-.tab-list::-webkit-scrollbar-thumb:hover {
-  background: var(--text-secondary);
+  display: none;
 }
 
 /* Individual Tab */
 .tab-item {
+  position: relative;
   display: flex;
   align-items: center;
-  position: relative;
-  border-right: 1px solid var(--border-color);
+  flex: 1 1 0;
   min-width: 120px;
-  max-width: 200px;
-  height: 100%;
-  flex-shrink: 0;
+  border-right: 1px solid var(--border-color);
+  background-color: var(--bg-primary);
+}
+
+.tab-item:last-child {
+  border-right: 0;
+}
+
+.tab-item.active {
+  background-color: var(--bg-secondary);
 }
 
 .tab {
   display: flex;
   align-items: center;
+  justify-content: center;
   width: 100%;
   min-width: 0;
   height: 100%;
-  padding: 8px 38px 8px 12px;
-  background-color: var(--bg-secondary);
-  border: none;
+  padding: 0 28px;
   color: var(--text-secondary);
-  cursor: pointer;
+  background: transparent;
+  border: none;
   font: inherit;
+  cursor: pointer;
   user-select: none;
-  transition: all 0.2s ease;
+  transition:
+    background-color 0.12s ease,
+    color 0.12s ease;
 }
 
-.tab:hover {
-  background-color: var(--bg-primary);
+.tab-item:not(.active):hover {
+  background-color: color-mix(in srgb, var(--bg-primary) 70%, var(--bg-secondary));
+}
+
+.tab:hover,
+.tab.active {
   color: var(--text-primary);
 }
 
@@ -79,58 +81,57 @@
   outline-offset: -2px;
 }
 
-.tab.active {
-  background-color: var(--bg-primary);
-  color: var(--text-primary);
-  border-bottom: 2px solid var(--accent-color);
-}
-
 /* Tab Title */
 .tab-title {
-  flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 13px;
-  direction: rtl;
-  text-align: left;
+  font-size: 12px;
 }
 
-/* Tab Close Button */
+.tab.active .tab-title {
+  font-weight: 500;
+}
+
+/* Tab Close Button — leading edge, revealed on hover like macOS tabs */
 .tab-close {
+  position: absolute;
+  left: 6px;
+  top: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 18px;
-  height: 18px;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  color: var(--text-secondary);
   background: none;
   border: none;
-  border-radius: 3px;
-  color: var(--text-secondary);
-  font-size: 16px;
+  border-radius: 4px;
+  font-size: 10px;
+  line-height: 1;
   cursor: pointer;
-  padding: 0;
   opacity: 0;
-  transition: all 0.2s ease;
-  position: absolute;
-  right: 10px;
-  top: 50%;
   transform: translateY(-50%);
+  transition:
+    opacity 0.12s ease,
+    background-color 0.12s ease;
 }
 
 .tab-item:hover .tab-close,
-.tab-item.active .tab-close,
 .tab-close:focus-visible {
   opacity: 1;
 }
 
 .tab-close:hover {
-  background-color: var(--border-color);
   color: var(--text-primary);
+  background-color: var(--chrome-pressed);
 }
 
-.tab-close:active {
-  transform: translateY(-50%) scale(0.9);
+.tab-close:focus-visible {
+  outline: 2px solid var(--accent-color);
+  outline-offset: 0;
 }
 
 /* New Tab Button */
@@ -138,55 +139,30 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 40px;
-  height: 100%;
-  background-color: var(--bg-secondary);
+  width: 28px;
+  flex-shrink: 0;
+  color: var(--text-secondary);
+  background-color: var(--bg-primary);
   border: none;
   border-left: 1px solid var(--border-color);
-  color: var(--text-secondary);
-  font-size: 20px;
+  font-size: 16px;
+  line-height: 1;
   cursor: pointer;
-  transition: all 0.2s ease;
-  flex-shrink: 0;
 }
 
 .new-tab-btn:hover {
-  background-color: var(--bg-primary);
-  color: var(--accent-color);
+  color: var(--text-primary);
+  background-color: var(--chrome-hover);
 }
 
-.new-tab-btn:active {
-  transform: scale(0.95);
-}
-
-/* Responsive Adjustments */
-@media (max-width: 768px) {
-  #tab-bar {
-    height: 44px;
-  }
-
-  .tab-item {
-    min-width: 100px;
-    max-width: 150px;
-  }
-
-  .tab {
-    padding: 8px 10px;
-    padding-right: 34px;
-  }
-
-  .tab-title {
-    font-size: 12px;
-  }
-
-  .new-tab-btn {
-    width: 44px;
-  }
+.new-tab-btn:focus-visible {
+  outline: 2px solid var(--accent-color);
+  outline-offset: -2px;
 }
 
 .tab-dirty-indicator {
   flex-shrink: 0;
-  color: var(--accent-color, #ffd48c);
+  color: var(--accent-ink, #ffd48c);
   margin-left: 6px;
 }
 
@@ -198,9 +174,9 @@
   color: inherit;
   border: 1px solid currentColor;
   border-radius: 4px;
-  padding: 2px 5px;
-  margin-right: 28px;
-  font-size: 11px;
+  padding: 1px 5px;
+  margin-right: 6px;
+  font-size: 10px;
   cursor: pointer;
 }
 

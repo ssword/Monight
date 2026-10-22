@@ -6,7 +6,7 @@ export const BENCHMARK_CATEGORIES = [
   },
   {
     id: 'zoom-rotate-latency',
-    label: 'Zoom and rotate latency in continuous mode on a many-page document',
+    label: 'Zoom latency in continuous mode on a many-page document',
     sourceIssues: ['#3'],
   },
   {

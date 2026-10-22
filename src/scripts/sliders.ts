@@ -11,6 +11,8 @@ export class SliderManager {
   private onUpdate: (settings: FilterSettings) => void;
   private initialized = false;
   private updateTimeout: number | null = null;
+  // The active Document's settings, so the sliders open where the page is.
+  private target: FilterSettings = { ...PRESETS.default };
 
   constructor(onUpdate: (settings: FilterSettings) => void) {
     this.onUpdate = onUpdate;
@@ -21,14 +23,15 @@ export class SliderManager {
    */
   initialize(): void {
     if (this.initialized) return;
+    const start = this.target;
 
     // Create each slider with appropriate ranges
-    this.createSlider('brightness', PRESETS.default.brightness, 0, 100, 1);
-    this.createSlider('grayscale', PRESETS.default.grayscale, 0, 100, 1);
-    this.createSlider('invert', PRESETS.default.invert, 0, 100, 1);
-    this.createSlider('sepia', PRESETS.default.sepia, 0, 100, 1);
-    this.createSlider('hue', PRESETS.default.hue, 0, 360, 1);
-    this.createSlider('extraBrightness', PRESETS.default.extraBrightness, -100, 200, 1);
+    this.createSlider('brightness', start.brightness, 0, 100, 1);
+    this.createSlider('grayscale', start.grayscale, 0, 100, 1);
+    this.createSlider('invert', start.invert, 0, 100, 1);
+    this.createSlider('sepia', start.sepia, 0, 100, 1);
+    this.createSlider('hue', start.hue, 0, 360, 1);
+    this.createSlider('extraBrightness', start.extraBrightness, -100, 200, 1);
 
     this.initialized = true;
     debugLog('SliderManager initialized');
@@ -130,6 +133,7 @@ export class SliderManager {
    * Update all sliders to match a preset
    */
   setPreset(settings: FilterSettings): void {
+    this.target = { ...settings };
     if (!this.initialized) return;
 
     // Update each slider without triggering updates

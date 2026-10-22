@@ -1,5 +1,6 @@
 import { inspectNativePdfEditing, nativePdfSaveAdapter } from './app/native-pdf-save-adapter';
 import 'nouislider/dist/nouislider.css';
+import { createChromePreferencesStorage } from './app/chrome-preferences-storage';
 import { createDocumentIntakeRuntime } from './app/document-intake-runtime';
 import { createDocumentWorkspace, type DocumentSurfaceProvider } from './app/document-workspace';
 import { createEmbedPdfDocumentSurfaceFactory } from './app/embedpdf-document-surface';
@@ -15,6 +16,7 @@ import './styles/dialogs.css';
 import './styles/document-workspace.css';
 import './styles/main.css';
 import './styles/reader-shell.css';
+import './styles/reader-sidebar.css';
 import './styles/tabs.css';
 
 const createDocumentSurface: DocumentSurfaceProvider = (options) =>
@@ -30,6 +32,7 @@ const startApplication = () =>
     createDocumentSurface,
     createReadingSessionStorage,
     createRecentDocumentStorage,
+    createChromePreferencesStorage,
     externalLinkAdapter: createTauriExternalLinkAdapter(),
     createReaderActions,
   });
