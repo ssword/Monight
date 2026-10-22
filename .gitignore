@@ -41,6 +41,7 @@ coverage/
 /artifacts/issue-80/
 /artifacts/issue-94/
 /artifacts/issue-115-116/
+/artifacts/text-markup-fixes/
 
 # Misc
 *.suo

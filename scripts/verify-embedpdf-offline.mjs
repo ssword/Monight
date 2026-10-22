@@ -5,6 +5,7 @@ import { verifyExternalReaders } from './verify-embedpdf-external-readers.mjs';
 import { verifyNavigation } from './verify-embedpdf-navigation.mjs';
 import { verifyReading } from './verify-embedpdf-reading.mjs';
 import { verifyScrolling } from './verify-embedpdf-scrolling.mjs';
+import { verifyTextMarkups } from './verify-embedpdf-text-markups.mjs';
 
 const port = 4178;
 const origin = `http://127.0.0.1:${port}`;
@@ -234,6 +235,7 @@ try {
   );
   await verifyReading(browser, origin);
   await verifyAnnotations(page, origin);
+  await verifyTextMarkups(page, origin);
   await verifyExternalReaders(page, origin);
   if (browserDiagnostics.some((entry) => entry.includes('monight-test-password'))) {
     throw new Error('The protected-document password entered browser diagnostics');
@@ -247,6 +249,7 @@ try {
   });
   try {
     await verifyScrolling(webkitBrowser, origin);
+    await verifyTextMarkups(await webkitBrowser.newPage(), origin);
   } finally {
     await webkitBrowser.close();
   }

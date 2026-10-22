@@ -61,6 +61,7 @@ import {
   preloadEmbedPdfLocalFonts,
 } from './embedpdf-offline-configuration';
 import { prepareEmbedPdfPrintDocument } from './embedpdf-print-preparation';
+import { installInkSelectionGeometry } from './embedpdf-selection-geometry';
 import { monightOwnsEmbedPdfCommand, removeEmbedPdfCommandShortcuts } from './embedpdf-shortcuts';
 
 interface EmbedPdfOpenRequest {
@@ -242,6 +243,7 @@ export async function createEmbedPdfViewerRuntime({
   const ui = requireCapability<UICapability>(registry, 'ui');
   const viewport = requireCapability<ViewportCapability>(registry, 'viewport');
   const engine = registry.getEngine();
+  installInkSelectionGeometry(engine);
   const unsubscribers: Array<() => void> = [];
   const documentId = `monight-${crypto.randomUUID()}`;
   const uiScope = ui.forDocument(documentId);
