@@ -4,7 +4,6 @@ import {
   type PdfDocumentObject,
   type PdfEngine,
   PdfErrorCode,
-  type PdfPageObject,
   type PdfTask,
   Task,
 } from '@embedpdf/models';
@@ -21,20 +20,29 @@ import type {
   PageRotationDirection,
 } from '../reader/native-pdf-editing';
 import { embedPdfAnnotationToolIds } from './embedpdf-offline-configuration';
-import { mapRegeneratedTextMarkupAppearance } from './embedpdf-text-markup-appearance';
+import {
+  mapRegeneratedTextMarkupAppearance,
+  type PendingMarkupAppearance,
+} from './embedpdf-text-markup-appearance';
 
-const verifiedFields = [
-  'id',
-  'type',
-  'pageIndex',
+/** The fields a text markup's appearance is drawn from; any change regenerates it. */
+const textMarkupAppearanceFields = [
   'rect',
-  'contents',
-  'author',
+  'segmentRects',
   'strokeColor',
   'opacity',
   'strokeWidth',
   'blendMode',
-  'segmentRects',
+] as const;
+
+/** The supported editable fields a saved Annotation must keep. */
+const verifiedFields = [
+  'id',
+  'type',
+  'pageIndex',
+  'contents',
+  'author',
+  ...textMarkupAppearanceFields,
 ] as const;
 
 /** Compare the supported editable fields, tolerating PDF float serialization only. */
@@ -65,14 +73,10 @@ function nativeAnnotationMatches(
   });
 }
 
-const preservingEngines = new WeakSet<PdfEngine>();
 // Plugin commit may swallow individual mutation failures. Keep failed appearance
-// corrections until an export repairs them or fails before any bytes can be saved.
-interface PendingMarkupAppearance {
-  document: PdfDocumentObject;
-  page: PdfPageObject;
-  annotationId: string;
-}
+// corrections, by Document and Annotation, until an export repairs them or fails
+// before any bytes can be saved. One map per engine, whose appearance preservation
+// is installed once.
 const pendingMarkupAppearances = new WeakMap<PdfEngine, Map<string, PendingMarkupAppearance>>();
 
 /** The icon a note displays: an absent or unrecognized /Name means the default /Note. */
@@ -89,9 +93,11 @@ function noteIcon({ name, icon }: { name?: PdfAnnotationName; icon?: PdfAnnotati
  * with PDFium's 20pt icon on every contents edit. Writing an absent icon name (Preview
  * omits /Name) also deletes the stream, even with appearance regeneration disabled.
  */
-function preserveNativeAnnotationAppearances(engine: PdfEngine): void {
-  if (preservingEngines.has(engine)) return;
-  preservingEngines.add(engine);
+function preserveNativeAnnotationAppearances(
+  engine: PdfEngine,
+): Map<string, PendingMarkupAppearance> {
+  const installed = pendingMarkupAppearances.get(engine);
+  if (installed) return installed;
   const pending = new Map<string, PendingMarkupAppearance>();
   pendingMarkupAppearances.set(engine, pending);
   const update = engine.updatePageAnnotation.bind(engine);
@@ -110,22 +116,16 @@ function preserveNativeAnnotationAppearances(engine: PdfEngine): void {
             options?.regenerateAppearance !== false &&
             !(
               existing?.type === annotation.type &&
-              nativeAnnotationMatches(annotation, existing, [
-                'rect',
-                'segmentRects',
-                'strokeColor',
-                'opacity',
-                'strokeWidth',
-                'blendMode',
-              ])
+              nativeAnnotationMatches(annotation, existing, textMarkupAppearanceFields)
             );
           update(doc, page, annotation, { ...options, regenerateAppearance }).wait(
             (ok) => {
               try {
                 if (ok && regenerateAppearance) {
                   const key = `${doc.id}:${annotation.id}`;
-                  pending.set(key, { document: doc, page, annotationId: annotation.id });
-                  mapRegeneratedTextMarkupAppearance(engine, doc, page, annotation.id);
+                  const markup = { document: doc, page, annotationId: annotation.id };
+                  pending.set(key, markup);
+                  mapRegeneratedTextMarkupAppearance(engine, markup);
                   pending.delete(key);
                 }
                 task.resolve(ok);
@@ -162,6 +162,7 @@ function preserveNativeAnnotationAppearances(engine: PdfEngine): void {
     );
     return task;
   };
+  return pending;
 }
 
 type SetPageRotation = (document: PdfDocumentObject, pageIndex: number, rotation: Rotation) => void;
@@ -216,7 +217,7 @@ export function createEmbedPdfNativeAnnotationEditing({
   readOnlyReason: string | null;
   stateChanged: () => void;
 }) {
-  preserveNativeAnnotationAppearances(engine);
+  const pendingAppearances = preserveNativeAnnotationAppearances(engine);
   const setPageRotation = pdfiumPageRotationSetter(engine);
   // The viewer opens Documents with normalized rotation: Annotation geometry stays in
   // unrotated page space and each page's rotation is applied when laying it out. A Page
@@ -326,11 +327,11 @@ export function createEmbedPdfNativeAnnotationEditing({
           }
         }
       }
-      for (const [key, pending] of pendingMarkupAppearances.get(engine) ?? []) {
+      for (const [key, pending] of pendingAppearances) {
         if (pending.document.id !== document.id) continue;
         if (expected.some(({ id }) => id === pending.annotationId))
-          mapRegeneratedTextMarkupAppearance(engine, document, pending.page, pending.annotationId);
-        pendingMarkupAppearances.get(engine)?.delete(key);
+          mapRegeneratedTextMarkupAppearance(engine, { ...pending, document });
+        pendingAppearances.delete(key);
       }
       const buffer = await engine.saveAsCopy(document).toPromise();
       // The pinned plugin can resolve commit() despite a failed individual mutation.

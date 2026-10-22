@@ -19,6 +19,13 @@ interface DirectExecutor {
   memoryManager: { malloc(size: number): number; free(ptr: number): void };
 }
 
+/** A text markup whose regenerated appearance must be mapped to its /Rect. */
+export interface PendingMarkupAppearance {
+  readonly document: PdfDocumentObject;
+  readonly page: PdfPageObject;
+  readonly annotationId: string;
+}
+
 /**
  * The pinned generator uses QuadPoints for /BBox but retains a padded /Rect.
  * Re-install its simple Underline/StrikeOut stream with FPDFAnnot_SetAP, whose
@@ -27,9 +34,7 @@ interface DirectExecutor {
  */
 export function mapRegeneratedTextMarkupAppearance(
   engine: PdfEngine,
-  document: PdfDocumentObject,
-  page: PdfPageObject,
-  annotationId: string,
+  { document, page, annotationId }: PendingMarkupAppearance,
 ): void {
   const executor = Reflect.get(engine, 'executor') as DirectExecutor | undefined;
   if (!executor?.pdfiumModule?.FPDFAnnot_SetAP || !executor.getAnnotationByName)
