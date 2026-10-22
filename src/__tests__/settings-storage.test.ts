@@ -618,6 +618,42 @@ describe('Undo and Redo shortcuts', () => {
   });
 });
 
+describe('Delete shortcut', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    store.reset();
+  });
+
+  it('gives Delete and Backspace to Edit ▸ Delete as a Reader Command', async () => {
+    const settings = await new SettingsManager('main', { platform: 'mac' }).load();
+
+    expect(settings.keybinds.Delete).toEqual({
+      displayName: 'Delete',
+      binds: ['Delete', 'Backspace'],
+      action: 'readerCommand',
+      data: 'edit.delete',
+    });
+  });
+
+  it('adds Delete to an install stored before it, without taking a key the reader chose', async () => {
+    const stored = structuredClone(
+      (await new SettingsManager('main', { platform: 'mac' }).load()).keybinds,
+    );
+    delete stored.Delete;
+    stored.Print.binds = ['Backspace'];
+    store.reset({
+      storageSchemaVersion: SETTINGS_SCHEMA_VERSION,
+      keybinds: stored,
+      keybindDefaultsVersion: 5,
+    });
+
+    const settings = await new SettingsManager('main', { platform: 'mac' }).load();
+
+    expect(settings.keybinds.Delete.binds).toEqual(['Delete']);
+    expect(settings.keybinds.Print.binds).toEqual(['Backspace']);
+  });
+});
+
 describe('Rotate shortcuts behind the Page Rotation gate', () => {
   beforeEach(() => {
     vi.clearAllMocks();

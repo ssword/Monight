@@ -195,6 +195,7 @@ const readerMenuState = (): ReaderCommandStateInput => {
     canGoForward: readerActions?.canGoForward() ?? false,
     tabBarKeptShown,
     textFieldFocused: isEditableTarget(document.activeElement),
+    annotationSelected: (documentWorkspace?.selectedAnnotation() ?? null) !== null,
     keybinds: activeKeybinds,
   };
 };
@@ -587,8 +588,10 @@ function mountAnnotationMenu(): AnnotationMenu | null {
   return createAnnotationMenu({
     element,
     selectedAnnotation: () => documentWorkspace?.selectedAnnotation() ?? null,
-    editAnnotation: (annotationId, edit) =>
-      documentWorkspace?.editAnnotation(annotationId, edit) ?? false,
+    dispatchReaderAction: async (action) => {
+      const outcome = await readerActions?.dispatch(action);
+      if (outcome?.status === 'failure') showToast(String(outcome.error), 'error');
+    },
   });
 }
 
@@ -749,6 +752,9 @@ export async function initializeApplication(modules: ApplicationModules): Promis
 
     readerActions = modules.createReaderActions({
       initialSession: initialReadingSession,
+      // A note still being typed (⌘S, ⌃Tab, ⌘W or Quit with its field focused) is
+      // committed to its own Document first, so it is never dropped or misrouted.
+      commitPendingEdits: () => annotationMenu?.commitPendingNote(),
       defaultVisualState: defaultVisualState(),
       projection: {
         ...documentWorkspace.projection,
@@ -929,6 +935,7 @@ export async function initializeApplication(modules: ApplicationModules): Promis
       },
       selectedPages: () => readerSidebar?.selectedPages() ?? [],
       currentPage: () => readerMenuState().activeDocument?.currentPage || null,
+      selectedAnnotation: () => documentWorkspace?.selectedAnnotation() ?? null,
       editTextField: (kind) => {
         if (!isEditableTarget(document.activeElement)) return false;
         // The native Edit menu takes ⌘Z from the WebView; hand it back to the field.

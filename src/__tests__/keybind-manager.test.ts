@@ -84,6 +84,28 @@ describe('KeybindManager', () => {
     ).toBeNull();
   });
 
+  it('runs Delete and Backspace as Edit ▸ Delete, but leaves them to text fields', async () => {
+    const manager = new KeybindManager(true);
+    const readerCommand = vi.fn();
+    manager.registerAction('readerCommand', readerCommand);
+    manager.loadFromSettings(defaultSettings('mac'));
+
+    for (const key of ['Delete', 'Backspace']) {
+      const event = keyboardEvent(key, { metaKey: false });
+      expect(manager.matchEvent(event)).toBe('readerCommand');
+      await manager.handleEvent(event);
+      expect(readerCommand).toHaveBeenLastCalledWith(event, 'edit.delete');
+      expect(
+        manager.matchEvent(
+          keyboardEvent(key, {
+            metaKey: false,
+            target: { tagName: 'TEXTAREA' } as unknown as EventTarget,
+          }),
+        ),
+      ).toBeNull();
+    }
+  });
+
   it('matches Cmd+Shift+= as the configured Plus accelerator', () => {
     const manager = new KeybindManager(true);
     manager.loadFromSettings(DEFAULT_SETTINGS);

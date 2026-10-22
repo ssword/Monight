@@ -56,12 +56,6 @@ export interface SelectedAnnotation {
   readonly anchor: AnnotationAnchor | null;
 }
 
-/** An edit of one existing Annotation; each is an unsaved, undoable Document edit. */
-export type AnnotationEdit =
-  | { readonly type: 'contents'; readonly contents: string }
-  | { readonly type: 'color'; readonly strokeColor: string }
-  | { readonly type: 'delete' };
-
 export interface DocumentRendering {
   getState(): DocumentRenderingState;
   /** The transient annotation tool in use, or null for text selection. */
@@ -77,8 +71,6 @@ export interface DocumentRendering {
   revealAnnotation?(annotationId: string): void;
   /** The selected Annotation; null when none is selected or editing is unavailable. */
   selectedAnnotation?(): SelectedAnnotation | null;
-  /** Edits an existing Annotation; false when refused (editing unavailable, or no such Annotation). */
-  editAnnotation?(annotationId: string, edit: AnnotationEdit): boolean;
   getScrollPosition(): number;
   getReadingPosition(): ReadingPosition;
   goToPage(pageNumber: number, options?: ReaderActionOptions): Promise<void>;

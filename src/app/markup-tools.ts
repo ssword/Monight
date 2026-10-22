@@ -73,6 +73,16 @@ export function verifiedMarkupTools(
 }
 
 /**
+ * The text-markup Annotation kinds Monight edits: those its verified text-markup
+ * tools (the Highlight split button's) create, whose tool ids are the kinds.
+ * The save path's editable subtypes (EDITABLE_ANNOTATIONS in pdf_save.rs) admit
+ * the same markups.
+ */
+export const TEXT_MARKUP_KINDS: ReadonlySet<string> = new Set(
+  verifiedMarkupTools('highlight-menu').map(({ id }) => id),
+);
+
+/**
  * Whether the active Document takes edits (markup tools, Page Rotation). A
  * protected Document carries the explanation its controls show instead.
  */

@@ -3,6 +3,7 @@ import type { PdfLinkTarget } from '../lib/pdf-links';
 import { type FilterSettings, PRESETS } from '../scripts/filters';
 import { createDocumentQuery, type DocumentQuery, type DocumentRuntime } from './document-queries';
 import type {
+  AnnotationEdit,
   NativePdfSaveAdapter,
   PageRotationDirection,
   PdfSaveDestination,
@@ -166,6 +167,13 @@ export type ReaderAction =
       direction: PageRotationDirection;
       filePath?: string;
     }
+  | {
+      type: 'editAnnotation';
+      /** The Document the Annotation was selected in, captured then (never the active one). */
+      filePath: string;
+      annotationId: string;
+      edit: AnnotationEdit;
+    }
   | { type: 'undoEdit'; filePath?: string }
   | { type: 'redoEdit'; filePath?: string }
   | { type: 'discardAndReloadDocument'; filePath?: string }
@@ -197,6 +205,12 @@ export const readerAction = {
     direction: PageRotationDirection,
     filePath?: string,
   ): ReaderAction => withOptionalFilePath({ type: 'rotatePages', pages, direction }, filePath),
+  editAnnotation: (filePath: string, annotationId: string, edit: AnnotationEdit): ReaderAction => ({
+    type: 'editAnnotation',
+    filePath,
+    annotationId,
+    edit,
+  }),
 };
 
 export type DispatchReaderAction = (action: ReaderAction) => Promise<void>;
@@ -245,7 +259,24 @@ interface CreateReaderActionsOptions {
   persist: (snapshot: ReadingSessionSnapshot) => Promise<void>;
   persistenceDebounceMs?: number;
   onObserverError?: (error: unknown) => void;
+  /**
+   * Commits edits the reader has made but not yet dispatched, such as a note still
+   * being typed, as Reader Actions naming their own Document. Called before the
+   * reader leaves, saves, reverts or closes a Document, and before Quit decides
+   * about unsaved Documents; returns the commit to wait for, if there was one.
+   */
+  commitPendingEdits?: () => Promise<unknown> | undefined;
 }
+
+/** Actions that must see the reader's pending edits as Document edits first. */
+const COMMITS_PENDING_EDITS: ReadonlySet<ReaderAction['type']> = new Set([
+  'activateDocument',
+  'saveDocument',
+  'saveDocumentAs',
+  'discardAndReloadDocument',
+  'closeDocument',
+  'removeDocument',
+]);
 
 export interface ReaderActions {
   dispatch(action: ReaderAction, options?: ReaderActionOptions): Promise<ReaderActionOutcome>;
@@ -427,6 +458,7 @@ export function createReaderActions({
   persist,
   persistenceDebounceMs = 250,
   onObserverError,
+  commitPendingEdits,
 }: CreateReaderActionsOptions): ReaderActions {
   const normalizedInitialSession: PersistedReadingSession = {
     ...initialSession,
@@ -1006,6 +1038,26 @@ export function createReaderActions({
     }
   };
 
+  /**
+   * Dispatches the reader's pending edits; returns the commit to wait for, or null when
+   * nothing was pending (so the caller keeps its synchronous routing order). A failed
+   * commit is reported, not thrown.
+   */
+  const commitEditsInProgress = (): Promise<void> | null => {
+    let committing: Promise<unknown> | undefined;
+    try {
+      committing = commitPendingEdits?.();
+    } catch (error) {
+      onObserverError?.(error);
+    }
+    return committing
+      ? committing.then(
+          () => undefined,
+          (error) => onObserverError?.(error),
+        )
+      : null;
+  };
+
   // A discard decision authorizes only the live runtime and revision the reader saw.
   const discards = new Map<DocumentRuntime, number>();
   const mayDestroy = (filePath: string): boolean => {
@@ -1499,6 +1551,8 @@ export function createReaderActions({
     async dispatch(action, options) {
       if (shutdownRequested && action.type !== 'settleReadingPosition')
         return { status: 'no-op', revision: revision() };
+      const committing = COMMITS_PENDING_EDITS.has(action.type) ? commitEditsInProgress() : null;
+      if (committing) await committing;
       if (action.type === 'discardAndReloadDocument') {
         const filePath = action.filePath ?? session.snapshot().activeDocumentPath;
         if (!filePath) return { status: 'no-op', revision: revision() };
@@ -1883,6 +1937,15 @@ export function createReaderActions({
         });
       }
 
+      if (action.type === 'editAnnotation') {
+        // An Annotation edit belongs to the Document it was selected in, so it is
+        // routed there explicitly, even after the reader has moved to another.
+        return editDocument(action.filePath, options, (editing) => {
+          if (!editing?.editAnnotation) throw new Error('Annotation editing is unavailable');
+          editing.editAnnotation(action.annotationId, action.edit);
+        });
+      }
+
       if (action.type === 'undoEdit' || action.type === 'redoEdit') {
         return editDocument(action.filePath, options, (editing) => {
           const edit = action.type === 'undoEdit' ? editing?.undo : editing?.redo;
@@ -2111,9 +2174,12 @@ export function createReaderActions({
     },
     prepareShutdown() {
       if (shutdownPreparation) return shutdownPreparation;
+      // Committed before the shutdown refuses new Reader Actions.
+      const committing = commitEditsInProgress();
       shutdownRequested = true;
       shutdownPreparation = enqueueDecision(async () => {
         try {
+          await committing;
           await quiesce();
           // Runtime identity survives Save As; no Document is removed during preparation.
           for (const { runtime } of [...runtimes.values()]) {

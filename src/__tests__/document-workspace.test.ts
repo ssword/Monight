@@ -208,9 +208,8 @@ describe('Document workspace adapter', () => {
     expect(workspace.markupSelection('highlight', {})).toBe(false);
   });
 
-  it("offers the active Document's selected Annotation and routes its edits there", async () => {
+  it("offers the active Document's selected Annotation with the Document it belongs to", async () => {
     let activePath = '/second.pdf';
-    const edits: Array<{ filePath: string; annotationId: string }> = [];
     const workspace = createDocumentWorkspace({
       dispatchReaderAction: vi.fn(async () => ({ status: 'committed' as const, revision: 1 })),
       snapshot: () => snapshot([], activePath),
@@ -229,10 +228,6 @@ describe('Document workspace adapter', () => {
           color: null,
           anchor: null,
         });
-        surface.rendering.editAnnotation = (annotationId) => {
-          edits.push({ filePath, annotationId });
-          return true;
-        };
         return surface;
       },
     });
@@ -244,13 +239,13 @@ describe('Document workspace adapter', () => {
       });
     }
 
-    expect(workspace.selectedAnnotation()?.id).toBe('/second.pdf#note');
-    expect(workspace.editAnnotation('note-7', { type: 'delete' })).toBe(true);
-    expect(edits).toEqual([{ filePath: '/second.pdf', annotationId: 'note-7' }]);
+    expect(workspace.selectedAnnotation()).toMatchObject({
+      id: '/second.pdf#note',
+      filePath: '/second.pdf',
+    });
 
     activePath = '/missing.pdf';
     expect(workspace.selectedAnnotation()).toBeNull();
-    expect(workspace.editAnnotation('note-7', { type: 'delete' })).toBe(false);
   });
 
   it('reveals an Annotation on the rendering surface of the Document that owns it', async () => {

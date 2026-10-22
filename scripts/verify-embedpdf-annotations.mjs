@@ -39,9 +39,23 @@ export async function verifyAnnotations(page, origin) {
   await verifyAnnotationChrome(page.context().browser(), origin);
 }
 
-const YELLOW = '#FFCD45';
-const GREEN = '#7ED957';
-const BLUE = '#6CB4F5';
+/** Whether PDF source holds a text string, as a literal or a UTF-16BE hex string. */
+const holdsPdfText = (source, text) => {
+  const utf16 = `FEFF${[...text].map((char) => char.charCodeAt(0).toString(16).padStart(4, '0')).join('')}`;
+  return (
+    source.includes(`(${text})`) ||
+    source.includes(`<${utf16.toUpperCase()}>`) ||
+    source.includes(`<${utf16.toLowerCase()}>`)
+  );
+};
+
+/** The Highlight split button's colours by id: HIGHLIGHT_COLORS, served by Vite. */
+const highlightColors = async (page) =>
+  Object.fromEntries(
+    (
+      await page.evaluate(async () => (await import('/src/app/markup-tools.ts')).HIGHLIGHT_COLORS)
+    ).map((color) => [color.id, color]),
+  );
 
 /**
  * The markup toolbar, Highlight split button, Tools and Edit menus, and the
@@ -59,6 +73,7 @@ export async function verifyAnnotationChrome(browser, origin) {
       return predicate(entries) ? entries : false;
     }, message);
   try {
+    const { yellow, green: greenColor, blue } = await highlightColors(page);
     await openDocuments(page, ['/smoke/moon.pdf']);
     await runMenuCommand(page, 'view.sidebar.annotations');
     await page.locator('#reader-sidebar').getByText('No Highlights or Notes').waitFor();
@@ -78,11 +93,12 @@ export async function verifyAnnotationChrome(browser, origin) {
     );
     await page.keyboard.type('Ask about the moon');
     await page.keyboard.press('Tab');
-    await listed(
+    const noted = await listed(
       (entries) =>
         entries.some(({ kind, text }) => kind === 'note' && text === 'Ask about the moon'),
       'The note text did not reach the Annotation',
     );
+    const noteId = noted.find(({ kind }) => kind === 'note').id;
     // Tools ▸ Text Selection leaves the tool.
     await runMenuCommand(page, 'tools.text-selection');
     await until(async () => (await viewerState(page)).activeTool === null, 'Tool still active');
@@ -96,18 +112,20 @@ export async function verifyAnnotationChrome(browser, origin) {
     await assertNoReadyMadeInterface(page, 'with page text selected');
     await page.click('#highlight-button');
     await listed(
-      (entries) => entries.some(({ kind, color }) => kind === 'highlight' && color === YELLOW),
+      (entries) =>
+        entries.some(({ kind, color }) => kind === 'highlight' && color === yellow.strokeColor),
       'Highlight did not mark the selection',
     );
     await page.click('#highlight-menu-toggle');
-    await page.getByRole('menuitemradio', { name: 'Green' }).click();
+    await page.getByRole('menuitemradio', { name: greenColor.label }).click();
     await selectText(page, { x: 73, y: 365 }, { x: 260, y: 365 });
     await page.click('#highlight-button');
     const marked = await listed(
-      (entries) => entries.some(({ kind, color }) => kind === 'highlight' && color === GREEN),
+      (entries) =>
+        entries.some(({ kind, color }) => kind === 'highlight' && color === greenColor.strokeColor),
       'Highlight did not use the chosen colour',
     );
-    const green = marked.find(({ color }) => color === GREEN);
+    const green = marked.find(({ color }) => color === greenColor.strokeColor);
 
     // Tools ▸ Annotate offers the Highlight dropdown's tools too (here Underline).
     await runMenuCommand(page, 'tools.annotate.underline');
@@ -126,9 +144,9 @@ export async function verifyAnnotationChrome(browser, origin) {
     await page.locator(`.sidebar-annotation[data-annotation-id="${green.id}"]`).click();
     await annotationMenu.waitFor({ state: 'visible' });
     await assertNoReadyMadeInterface(page, 'with a highlight selected');
-    await annotationMenu.getByRole('radio', { name: 'Blue' }).click();
+    await annotationMenu.getByRole('radio', { name: blue.label }).click();
     await listed(
-      (entries) => entries.some(({ id, color }) => id === green.id && color === BLUE),
+      (entries) => entries.some(({ id, color }) => id === green.id && color === blue.strokeColor),
       'The colour did not reach the highlight',
     );
     await note.fill('Lower match');
@@ -174,7 +192,17 @@ export async function verifyAnnotationChrome(browser, origin) {
       'Tools ▸ Rotate Right did not turn the current page',
     );
 
-    // ⌘S saves every edit into the PDF through the native Save path.
+    // ⌘S saves every edit into the PDF through the native Save path, including a
+    // note still being typed in the annotation menu.
+    await page.locator(`.sidebar-annotation[data-annotation-id="${noteId}"]`).click();
+    await annotationMenu.waitFor({ state: 'visible' });
+    await note.click();
+    await note.press('End');
+    await page.keyboard.type(' before saving');
+    assert.equal(
+      await page.evaluate(() => document.activeElement?.classList.contains('annotation-menu-note')),
+      true,
+    );
     await page.keyboard.press('Control+S');
     await until(
       () => page.evaluate(() => window.chromeSmoke.savedBytes('/smoke/moon.pdf')),
@@ -187,6 +215,10 @@ export async function verifyAnnotationChrome(browser, origin) {
       assert.ok(saved.includes(subtype), `The saved PDF lacks its ${subtype} Annotation`);
     }
     assert.match(saved, /\/Rotate 90/, 'The saved PDF lacks its Page Rotation');
+    assert.ok(
+      holdsPdfText(saved, 'Ask about the moon before saving'),
+      'The note typed when ⌘S was pressed was not saved',
+    );
 
     await assertCleanRun(reader);
     console.log(
