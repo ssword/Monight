@@ -165,7 +165,7 @@ describe('KeybindManager', () => {
     manager.registerAction('readerCommand', readerCommand);
     manager.loadFromSettings(defaultSettings('mac'));
 
-    expect(manager.matchEvent(keyboardEvent('∞', { code: 'Digit5', altKey: true }))).toBeNull();
+    expect(manager.matchEvent(keyboardEvent('¶', { code: 'Digit6', altKey: true }))).toBeNull();
     await manager.handleEvent(keyboardEvent('2'));
     await manager.handleEvent(keyboardEvent('£', { code: 'Digit3', altKey: true }));
     await manager.handleEvent(keyboardEvent('a', { code: 'KeyA', shiftKey: true }));

@@ -8,7 +8,7 @@
 import { HIGHLIGHT_COLORS, type HighlightColorId } from './markup-tools';
 
 /** Persisted sidebar modes; Hide is `sidebarVisible: false`, not a mode. */
-export const SIDEBAR_MODES = ['thumbnails', 'tableOfContents', 'annotations'] as const;
+export const SIDEBAR_MODES = ['thumbnails', 'tableOfContents', 'annotations', 'bookmarks'] as const;
 export type SidebarMode = (typeof SIDEBAR_MODES)[number];
 
 export const SIDEBAR_WIDTH_BOUNDS = { min: 140, max: 480 } as const;

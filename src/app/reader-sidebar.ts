@@ -17,6 +17,7 @@
 import type { DocumentQuery } from '../reader/document-queries';
 import type { DispatchReaderAction } from '../reader/reader-actions';
 import { buildFilterCSS, type FilterSettings } from '../scripts/filters';
+import type { BookmarkAuthority } from './bookmarks';
 import {
   type ChromePreferencesAuthority,
   SIDEBAR_MODES,
@@ -24,6 +25,7 @@ import {
   type SidebarMode,
 } from './chrome-preferences';
 import { createAnnotationsView } from './sidebar-annotations-view';
+import { createBookmarksView } from './sidebar-bookmarks-view';
 import {
   type ItemStepping,
   itemStepping,
@@ -63,6 +65,8 @@ export interface SidebarModeContext {
   readonly revealAnnotation: RevealAnnotation;
   /** Tells the sidebar the view's steppable items or selection changed. */
   readonly itemsChanged: () => void;
+  /** The reader's Bookmarks; null until the store has loaded. */
+  readonly bookmarks: () => BookmarkAuthority | null;
 }
 
 export type { ItemStepping, SidebarItem, StepDirection } from './sidebar-item-stepping';
@@ -104,6 +108,8 @@ export interface ReaderSidebarOptions {
   readonly revealAnnotation?: RevealAnnotation;
   /** Called when whether Previous/Next Item are available may have changed. */
   readonly onItemsChange?: () => void;
+  /** The Bookmark store, read on every refresh; the Bookmarks mode lists and removes from it. */
+  readonly bookmarks?: () => BookmarkAuthority | null;
 }
 
 export interface ReaderSidebar {
@@ -140,6 +146,7 @@ const MODE_VIEWS: Readonly<Record<SidebarMode, (context: SidebarModeContext) => 
     thumbnails: createThumbnailsView,
     tableOfContents: createTableOfContentsView,
     annotations: createAnnotationsView,
+    bookmarks: createBookmarksView,
   };
 
 function observeVisibility(root: Element | null): WhenVisible {
@@ -171,6 +178,7 @@ export function createReaderSidebar({
   searchDebounceMs = SEARCH_DEBOUNCE_MS,
   revealAnnotation = () => undefined,
   onItemsChange = () => undefined,
+  bookmarks = () => null,
 }: ReaderSidebarOptions): ReaderSidebar {
   const content = root.querySelector<HTMLElement>('.reader-sidebar-content') ?? root;
   const resizer = root.querySelector<HTMLElement>('.reader-sidebar-resizer');
@@ -180,6 +188,7 @@ export function createReaderSidebar({
     width: () => preferences.snapshot().sidebarWidth,
     revealAnnotation,
     itemsChanged: () => onItemsChange(),
+    bookmarks,
   };
   let view: { mode: SidebarMode; view: SidebarModeView } | null = null;
   // Transient search takeover: never written to preferences.
