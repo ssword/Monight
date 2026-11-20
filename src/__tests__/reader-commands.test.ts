@@ -55,6 +55,9 @@ function fakeContext(overrides: Partial<ReaderCommandContext> = {}) {
     toggleTabBar: () => {
       calls.push('tab-bar');
     },
+    switchTab: async (direction) => {
+      calls.push(`tab:${direction}`);
+    },
     editTextField: () => false,
     selectedAnnotation: () => null,
     magnifier: { toggle: () => calls.push('magnifier') },
@@ -98,6 +101,33 @@ describe('Reader Commands', () => {
     expect(await runReaderCommand('tools.magnifier', context)).toBe(true);
     expect(calls).toEqual(['magnifier']);
     expect(dispatched).toEqual([]);
+  });
+
+  it('Window ▸ Show Previous and Next Tab switch the active Document in tab order', async () => {
+    const { context, calls } = fakeContext();
+    expect(await runReaderCommand('window.previous-tab', context)).toBe(true);
+    expect(await runReaderCommand('window.next-tab', context)).toBe(true);
+    expect(calls).toEqual(['tab:previous', 'tab:next']);
+  });
+
+  it('Show Previous and Next Tab are disabled with fewer than two Documents', () => {
+    const enabled = (documentCount: number) =>
+      ['window.previous-tab', 'window.next-tab'].map(
+        (id) => stateOf(readerCommandStates(input({ documentCount })), id)?.enabled,
+      );
+    expect(enabled(0)).toEqual([false, false]);
+    expect(enabled(1)).toEqual([false, false]);
+    expect(enabled(2)).toEqual([true, true]);
+  });
+
+  it('Show Previous and Next Tab accelerators follow the PreviousTab and NextTab bindings', () => {
+    const keybinds = defaultSettings('mac').keybinds;
+    let states = readerCommandStates(input({ keybinds }));
+    expect(stateOf(states, 'window.previous-tab')?.accelerator).toBe('Ctrl+Shift+Tab');
+    expect(stateOf(states, 'window.next-tab')?.accelerator).toBe('Ctrl+Tab');
+    keybinds.NextTab.binds = ['Alt+J'];
+    states = readerCommandStates(input({ keybinds }));
+    expect(stateOf(states, 'window.next-tab')?.accelerator).toBe('Alt+J');
   });
 
   it('Go to Page… asks for a page and jumps there, recorded in Navigation History', async () => {
@@ -484,9 +514,9 @@ describe('native menu ids', () => {
     const { readerMenuSubmenus } = await import('../app/reader-commands');
     const menuSource = readFileSync('src-tauri/src/menu.rs', 'utf8');
     const definitions = menuSource.slice(0, menuSource.indexOf('#[cfg(test)]'));
-    const rustIds = [...definitions.matchAll(/"((?:edit|view|go|tools)\.[A-Za-z.-]+)"/g)].map(
-      ([, id]) => id,
-    );
+    const rustIds = [
+      ...definitions.matchAll(/"((?:edit|view|go|tools|window)\.[A-Za-z.-]+)"/g),
+    ].map(([, id]) => id);
 
     const listed = readerMenuSubmenus();
     const listedItemIds = new Set(listed.flatMap(({ items }) => items.map(({ id }) => id)));

@@ -97,6 +97,7 @@ async function run() {
     selectedPages: () => [],
     currentPage: () => null,
     toggleTabBar: () => {},
+    switchTab: async () => {},
     editTextField: () => false,
     selectedAnnotation: () => null,
     magnifier: null,
