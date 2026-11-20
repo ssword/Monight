@@ -1,5 +1,5 @@
 // Shared driver for the EmbedPDF checks that exercise Monight's real reader
-// chrome (embedpdf-chrome-smoke.html runs index.html and src/main.ts against an
+// chrome (smoke/embedpdf-chrome-smoke.html runs index.html and src/main.ts against an
 // in-memory substitute for Tauri's native side).
 import assert from 'node:assert/strict';
 
@@ -22,7 +22,7 @@ export async function openReaderChrome(browser, origin, contextOptions = {}) {
       await route.continue();
     }
   });
-  await page.goto(`${origin}/embedpdf-chrome-smoke.html`);
+  await page.goto(`${origin}/smoke/embedpdf-chrome-smoke.html`);
   // Startup ends by draining external open requests; the splash is interactive then.
   await page.waitForFunction(
     () =>

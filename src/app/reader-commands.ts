@@ -1,4 +1,4 @@
-// Reader Commands (CONTEXT.md): the one table behind the native Edit ▸ Undo/Redo/Delete,
+// Reader Commands (GLOSSARY.md): the one table behind the native Edit ▸ Undo/Redo/Delete,
 // View, Go and Tools menus, the toolbar controls and the shortcuts. Each command
 // names the typed Reader Action or chrome-preference change its toolbar control
 // makes (or calls that control's own entry point), and how its menu item's

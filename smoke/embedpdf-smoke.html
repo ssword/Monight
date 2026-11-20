@@ -3,10 +3,11 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Native Annotations Smoke</title>
+    <title>EmbedPDF Offline Smoke</title>
     <style>
       html,
       body,
+      #surface-host,
       #pdf-container,
       .embedpdf-document-surface,
       embedpdf-container {
@@ -22,10 +23,14 @@
       body {
         overflow: hidden;
       }
+
+      #surface-host {
+        visibility: hidden;
+      }
     </style>
   </head>
   <body data-status="loading">
-    <div id="pdf-container"></div>
-    <script type="module" src="/src/embedpdf-annotations-smoke.ts"></script>
+    <div id="surface-host"><div id="pdf-container"></div></div>
+    <script type="module" src="/src/smoke/embedpdf-smoke.ts"></script>
   </body>
 </html>

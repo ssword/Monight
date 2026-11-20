@@ -242,7 +242,7 @@ const TOOLS_MENU: &[ReaderMenuEntry] = &[
 
 const READER_MENUS: [&[ReaderMenuEntry]; 4] = [EDIT_MENU, VIEW_MENU, GO_MENU, TOOLS_MENU];
 
-/// Reader Commands (CONTEXT.md) are forwarded to the WebView, which owns reader state.
+/// Reader Commands (GLOSSARY.md) are forwarded to the WebView, which owns reader state.
 const READER_COMMAND_PREFIXES: [&str; 5] = ["edit.", "view.", "go.", "tools.", "window."];
 
 fn reader_command(event_id: &str) -> Option<&str> {

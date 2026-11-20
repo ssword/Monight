@@ -191,8 +191,9 @@ for #81 now distinguishes observed, failed, and dated unexecuted work. Release a
 under #68 still requires the missing packaged observations and disposition of the open
 Preview and conflict/recovery failures; closed #66 is not a declaration of those passes.
 
-The [2026-09-11 migration completion review](embedpdf-migration-review-2026-09-11.md) preserves
-the original #56–#66 findings; its dated status note points to the current disposition.
+The 2026-09-11 migration completion review preserved the original #56–#66 findings; it was
+removed from the tree and remains in git history as `docs/embedpdf-migration-review-2026-09-11.md`
+(last present in commit 96f7248).
 
 The [desktop adapter verification record](desktop-adapter-verification.md#intentional-platform-differences)
 documents why the main window is intentionally shown and focused before Reading Session
