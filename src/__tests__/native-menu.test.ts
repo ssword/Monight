@@ -203,6 +203,7 @@ describe('Window menu Document list', () => {
   const stateWith = (names: string[], active: number, page: number) =>
     ({
       documentCount: names.length,
+      currentPageBookmarked: false,
       openDocuments: names.map((name, index) => ({
         name,
         currentPage: index === active ? page : 1,
