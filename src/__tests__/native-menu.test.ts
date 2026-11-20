@@ -139,6 +139,7 @@ describe('native menu state sync', () => {
         tabBarKeptShown: false,
         textFieldFocused: false,
         annotationSelected: false,
+        magnifierVisible: false,
       }),
       context: () =>
         ({

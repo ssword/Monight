@@ -60,6 +60,7 @@ function fakeContext(overrides: Partial<ReaderCommandContext> = {}) {
     },
     editTextField: () => false,
     selectedAnnotation: () => null,
+    magnifier: { toggle: () => calls.push('magnifier') },
     ...overrides,
   };
   return {
@@ -93,6 +94,13 @@ describe('Reader Commands', () => {
     const { context, dispatched } = fakeContext();
     expect(await runReaderCommand(id, context)).toBe(true);
     expect(dispatched).toEqual([action]);
+  });
+
+  it('Tools ▸ Show Magnifier toggles the loupe', async () => {
+    const { context, calls, dispatched } = fakeContext();
+    expect(await runReaderCommand('tools.magnifier', context)).toBe(true);
+    expect(calls).toEqual(['magnifier']);
+    expect(dispatched).toEqual([]);
   });
 
   it('Window ▸ Show Previous and Next Tab switch the active Document in tab order', async () => {
@@ -242,6 +250,7 @@ const input = (overrides: Partial<ReaderCommandStateInput> = {}): ReaderCommandS
   tabBarKeptShown: false,
   textFieldFocused: false,
   annotationSelected: false,
+  magnifierVisible: false,
   ...overrides,
 });
 
@@ -467,6 +476,29 @@ describe('native menu state', () => {
     expect(stateOf(states, 'view.full-screen')?.accelerator).toBe('F11');
   });
 
+  it('names the magnifier item by what it will do and disables it without a Document', () => {
+    const hidden = stateOf(readerCommandStates(input()), 'tools.magnifier');
+    expect(hidden).toMatchObject({ enabled: true, text: 'Show Magnifier' });
+    const shown = stateOf(
+      readerCommandStates(input({ magnifierVisible: true })),
+      'tools.magnifier',
+    );
+    expect(shown).toMatchObject({ enabled: true, text: 'Hide Magnifier' });
+    const closed = readerCommandStates(
+      input({ documentCount: 0, activeDocument: null, markup: null, magnifierVisible: true }),
+    );
+    expect(stateOf(closed, 'tools.magnifier')?.enabled).toBe(false);
+  });
+
+  it('shows no accelerator for the magnifier key, on any platform', () => {
+    for (const platform of ['mac', 'other'] as const) {
+      const keybinds = defaultSettings(platform).keybinds;
+      expect(keybinds.Magnifier.binds).toEqual(['`']);
+      const states = readerCommandStates(input({ keybinds }));
+      expect(stateOf(states, 'tools.magnifier')?.accelerator).toBeNull();
+    }
+  });
+
   it('cannot hide the tab bar while several Documents are open', () => {
     const states = readerCommandStates(input({ documentCount: 2 }));
     expect(stateOf(states, 'view.tab-bar')).toMatchObject({
@@ -482,9 +514,9 @@ describe('native menu ids', () => {
     const { readerMenuSubmenus } = await import('../app/reader-commands');
     const menuSource = readFileSync('src-tauri/src/menu.rs', 'utf8');
     const definitions = menuSource.slice(0, menuSource.indexOf('#[cfg(test)]'));
-    const rustIds = [...definitions.matchAll(/"((?:edit|view|go|tools|window)\.[A-Za-z.-]+)"/g)].map(
-      ([, id]) => id,
-    );
+    const rustIds = [
+      ...definitions.matchAll(/"((?:edit|view|go|tools|window)\.[A-Za-z.-]+)"/g),
+    ].map(([, id]) => id);
 
     const listed = readerMenuSubmenus();
     const listedItemIds = new Set(listed.flatMap(({ items }) => items.map(({ id }) => id)));

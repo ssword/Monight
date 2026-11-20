@@ -130,6 +130,7 @@ export const KEYBIND_ACTIONS: Readonly<Record<string, KeybindAction>> = {
   PresentationMode: { displayName: 'Slideshow', action: 'presentationMode' },
   RotateLeft: readerCommand('Rotate Left', 'tools.rotate.left'),
   RotateRight: readerCommand('Rotate Right', 'tools.rotate.right'),
+  Magnifier: readerCommand('Show or Hide Magnifier', 'tools.magnifier'),
 };
 
 /** Actions that exist only while their gate is open. */
@@ -240,11 +241,13 @@ export const KEYBIND_DEFAULTS_REVISIONS: readonly KeybindDefaultsRevision[] = [
   },
   {
     // Preview menu parity (#131, ADR 0004). Page steps list ↑ / ↓ first, so the
-    // Go menu shows Preview's keys; ← / → still turn pages.
+    // Go menu shows Preview's keys; ← / → still turn pages. Show Magnifier's key
+    // is left to text fields, like Delete's.
     version: 7,
     binds: {
       PreviousPage: ['ArrowUp', 'ArrowLeft'],
       NextPage: ['ArrowDown', 'ArrowRight'],
+      Magnifier: ['`'],
     },
   },
 ];

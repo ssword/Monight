@@ -85,6 +85,8 @@ export interface ReaderCommandContext {
   readonly editTextField: (kind: 'undo' | 'redo') => boolean;
   /** The active Document's selected Annotation (transient), with the Document it belongs to. */
   readonly selectedAnnotation: () => DocumentSelectedAnnotation | null;
+  /** The magnifier loupe (transient chrome state); null before the reader mounts. */
+  readonly magnifier: { toggle(): void } | null;
 }
 
 export interface ReaderCommandStateInput {
@@ -107,6 +109,8 @@ export interface ReaderCommandStateInput {
   readonly textFieldFocused: boolean;
   /** Whether an Annotation is selected on the active Document. */
   readonly annotationSelected: boolean;
+  /** Whether the magnifier loupe is shown (transient, never persisted). */
+  readonly magnifierVisible: boolean;
   /**
    * The effective keybinds; each command's menu item shows its shortcut as
    * its accelerator. Absent: accelerators are left as they are.
@@ -312,6 +316,15 @@ const staticCommands = [
     id: 'go.forward',
     run: (context) => context.dispatchReaderAction(READER_ACTION_COMMANDS.forward()),
     state: (input) => ({ enabled: hasDocument(input) && input.canGoForward }),
+  },
+  {
+    // The key is left to text fields by the keybinds and the menu shows no accelerator for it.
+    id: 'tools.magnifier',
+    run: (context) => context.magnifier?.toggle(),
+    state: (input) => ({
+      enabled: hasDocument(input),
+      text: input.magnifierVisible ? 'Hide Magnifier' : 'Show Magnifier',
+    }),
   },
   {
     id: 'tools.text-selection',
