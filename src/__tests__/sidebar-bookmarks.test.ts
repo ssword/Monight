@@ -165,4 +165,63 @@ describe('Bookmarks sidebar mode', () => {
     expect(sidebar.itemStepping()).toEqual({ previous: true, next: false });
     expect(changes).toBeGreaterThan(0);
   });
+  describe('Previous Item and Next Item', () => {
+    it('steps backwards and forwards through the Bookmarks in page order, selecting each', async () => {
+      for (const page of [8, 2, 5]) bookmarks.toggle(FILE, page);
+      currentPage = 8;
+      const { sidebar } = await mount();
+
+      await sidebar.stepItem('previous');
+      await sidebar.stepItem('previous');
+      expect(dispatched.map((a) => (a as { page: number }).page)).toEqual([5, 2]);
+      expect(sidebar.itemStepping()).toEqual({ previous: false, next: true });
+      expect(
+        document.querySelector('.sidebar-bookmark[aria-current="true"]')?.getAttribute('data-page'),
+      ).toBe('2');
+
+      await sidebar.stepItem('next');
+      expect(dispatched[2]).toMatchObject({ page: 5, filePath: FILE, recordHistory: true });
+    });
+
+    it('does nothing past the first or last Bookmark', async () => {
+      bookmarks.toggle(FILE, 3);
+      bookmarks.toggle(FILE, 6);
+      currentPage = 6;
+      const { sidebar } = await mount();
+      expect(sidebar.itemStepping()).toEqual({ previous: true, next: false });
+      await sidebar.stepItem('next');
+      expect(dispatched).toEqual([]);
+      await sidebar.stepItem('previous');
+      await sidebar.stepItem('previous');
+      expect(dispatched).toHaveLength(1);
+      expect(sidebar.itemStepping()).toEqual({ previous: false, next: true });
+    });
+
+    it('is unavailable when the Document has no Bookmarks', async () => {
+      const { sidebar } = await mount();
+      expect(sidebar.itemStepping()).toEqual({ previous: false, next: false });
+      await sidebar.stepItem('next');
+      expect(dispatched).toEqual([]);
+    });
+
+    it('follows Bookmarks added or removed after mounting', async () => {
+      bookmarks.toggle(FILE, 4);
+      currentPage = 4;
+      const { sidebar } = await mount();
+      expect(sidebar.itemStepping()).toEqual({ previous: false, next: false });
+      bookmarks.toggle(FILE, 7);
+      sidebar.refresh();
+      expect(sidebar.itemStepping()).toEqual({ previous: false, next: true });
+      bookmarks.toggle(FILE, 7);
+      sidebar.refresh();
+      expect(sidebar.itemStepping()).toEqual({ previous: false, next: false });
+    });
+
+    it('is unavailable while the sidebar is hidden', async () => {
+      bookmarks.toggle(FILE, 4);
+      bookmarks.toggle(FILE, 6);
+      const { sidebar } = await mount(false);
+      expect(sidebar.itemStepping()).toEqual({ previous: false, next: false });
+    });
+  });
 });

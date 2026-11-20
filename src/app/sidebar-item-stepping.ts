@@ -1,5 +1,5 @@
 // Go ▸ Previous Item / Next Item: each sidebar mode lists its own ordered items
-// (pages, outline entries, Annotations; Bookmarks later) and this picks the one
+// (pages, outline entries, Annotations, Bookmarks) and this picks the one
 // a step reaches. Stepping starts from the selected item, or from the item
 // nearest the Reading Position when nothing is selected.
 

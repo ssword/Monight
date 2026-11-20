@@ -81,7 +81,7 @@ export interface SidebarModeView {
   selectedPages?(): readonly number[];
   /**
    * The mode's ordered items for Go ▸ Previous/Next Item; absent when the mode
-   * has none to step through. A new mode (Bookmarks) supplies its own list.
+   * has none to step through.
    */
   items?(): readonly SidebarItem[];
   /** The selected item's key; null when nothing is selected. */
