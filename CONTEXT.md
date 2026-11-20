@@ -28,6 +28,10 @@ _Avoid_: Scroll position, current page
 The jumps a reader has made within one Document during the current app run, through links, outline entries, search results, or Go to Page, which Back and Forward retrace. Ordinary scrolling does not add to it, and it is not part of the Reading Session.
 _Avoid_: Back stack, scroll history
 
+**Bookmark**:
+A page of a Document the reader has marked to return to; a page has at most one. Bookmarks belong to the reader, not the PDF: they persist across app launches, are never written into the file, and do not travel with it to other readers.
+_Avoid_: Outline entry, favorite, saved position
+
 **Visual State**:
 A Document's settled view mode, Zoom Intent, and visual filters. It excludes Page Rotation and transient presentation, search, sidebar, selection, and hover state.
 _Avoid_: Viewer state, UI state

@@ -2,6 +2,8 @@
 status: accepted
 ---
 
+The deferral of Bookmarks below is lifted by [ADR 0004](0004-admit-preview-menu-parity-features.md), which also admits further Preview menu features. Contact Sheet remains deferred.
+
 # Build Preview-style chrome over headless EmbedPDF plugins
 
 Monight will replace EmbedPDF's ready-made viewer interface with its own reader chrome modelled on macOS Preview: a unified toolbar, a mode-switching sidebar, and a separate markup toolbar. EmbedPDF remains the rendering, annotation, and save engine; Monight's chrome drives its plugins headlessly.
