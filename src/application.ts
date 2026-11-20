@@ -942,6 +942,19 @@ export async function initializeApplication(modules: ApplicationModules): Promis
         document.execCommand(kind);
         return true;
       },
+      switchTab: async (direction) => {
+        const snapshot = readerActions?.snapshot();
+        const documents = snapshot?.documents ?? [];
+        if (!snapshot || documents.length < 2) return;
+        const current = documents.findIndex(
+          ({ filePath }) => filePath === snapshot.activeDocumentPath,
+        );
+        const step = direction === 'next' ? 1 : -1;
+        const target = documents[(current + step + documents.length) % documents.length];
+        if (target) {
+          await dispatchReaderAction({ type: 'activateDocument', filePath: target.filePath });
+        }
+      },
       toggleTabBar: () => {
         tabBarKeptShown = !tabBarKeptShown;
         showTabBar(readerActions?.snapshot().documents.length ?? 0);

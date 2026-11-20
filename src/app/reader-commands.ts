@@ -5,7 +5,7 @@
 // enabled, checked and title state follows the reader.
 //
 // Command ids are the native menu item ids (src-tauri/src/menu.rs). Rust
-// forwards every `edit.*`, `view.*`, `go.*` and `tools.*` click as a
+// forwards every `edit.*`, `view.*`, `go.*`, `tools.*` and `window.*` click as a
 // `reader-command` event; `readerCommandStates` feeds `set_menu_item_states` and
 // `readerMenuSubmenus` fills the menus built from TypeScript lists.
 //
@@ -76,6 +76,8 @@ export interface ReaderCommandContext {
   readonly currentPage: () => number | null;
   /** View ▸ Show/Hide Tab Bar: keeps the tab bar shown for one Document, for this app run. */
   readonly toggleTabBar: () => void;
+  /** Window ▸ Show Previous/Next Tab: activates the neighbouring Document, wrapping around. */
+  readonly switchTab: (direction: 'previous' | 'next') => void | Promise<void>;
   /**
    * Undoes or redoes typing in the focused text field (Search, dialogs, a note);
    * false when focus is not in an editable element.
@@ -203,6 +205,16 @@ const historyCommand = <Id extends 'edit.undo' | 'edit.redo'>(
   }),
 });
 
+/** Window ▸ Show Previous/Next Tab: needs a second Document to switch to. */
+const tabCommand = <Id extends 'window.previous-tab' | 'window.next-tab'>(
+  id: Id,
+  direction: 'previous' | 'next',
+): ReaderCommand<Id> => ({
+  id,
+  run: (context) => context.switchTab(direction),
+  state: (input) => ({ enabled: input.documentCount >= 2 }),
+});
+
 const staticCommands = [
   historyCommand('edit.undo', 'undo'),
   historyCommand('edit.redo', 'redo'),
@@ -233,6 +245,8 @@ const staticCommands = [
       };
     },
   },
+  tabCommand('window.previous-tab', 'previous'),
+  tabCommand('window.next-tab', 'next'),
   sidebarCommand('hidden'),
   sidebarCommand('thumbnails'),
   sidebarCommand('tableOfContents'),
@@ -404,6 +418,8 @@ export const LEGACY_KEYBIND_COMMANDS: Readonly<Record<string, ReaderCommandId>> 
   toggleFullscreen: 'view.full-screen',
   previousPage: 'go.previous-page',
   nextPage: 'go.next-page',
+  previousTab: 'window.previous-tab',
+  nextTab: 'window.next-tab',
 };
 
 /** The page steps, whose menu items show Preview's bare ↑ / ↓ keys. */
