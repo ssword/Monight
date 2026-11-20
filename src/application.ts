@@ -32,6 +32,7 @@ import {
 } from './app/file-actions';
 import { createHighlightButton, type HighlightButton } from './app/highlight-button';
 import { registerKeybindActions, toggleWindowFullScreen } from './app/keybinds';
+import { createMagnifier, type Magnifier } from './app/magnifier';
 import {
   createMarkupToolbar,
   leaveMarkupToolOnEscape,
@@ -47,6 +48,7 @@ import {
 } from './app/reader-commands';
 import { createReaderSidebar, type ReaderSidebar } from './app/reader-sidebar';
 import { createRotateButton, type RotateButton } from './app/rotate-button';
+import { NO_ITEM_STEPPING } from './app/sidebar-item-stepping';
 import { restoreReadingSessionAtStartup } from './app/startup-restoration';
 import { type ExternalOpenPayload, setupTauriListeners } from './app/tauri-events';
 import {
@@ -145,6 +147,7 @@ let chromePreferences: ChromePreferencesAuthority | null = null;
 let bookmarks: BookmarkAuthority | null = null;
 let readerSidebar: ReaderSidebar | null = null;
 let markupToolbar: MarkupToolbar | null = null;
+let magnifier: Magnifier | null = null;
 let highlightButton: HighlightButton | null = null;
 let rotateButton: RotateButton | null = null;
 let annotationMenu: AnnotationMenu | null = null;
@@ -198,11 +201,13 @@ const readerMenuState = (): ReaderCommandStateInput => {
     canGoForward: readerActions?.canGoForward() ?? false,
     tabBarKeptShown,
     textFieldFocused: isEditableTarget(document.activeElement),
+    itemStepping: readerSidebar?.itemStepping() ?? NO_ITEM_STEPPING,
     annotationSelected: (documentWorkspace?.selectedAnnotation() ?? null) !== null,
     currentPageBookmarked:
       activeDocument !== undefined &&
       (live?.currentPage ?? 0) > 0 &&
       (bookmarks?.has(activeDocument.filePath, live?.currentPage ?? 0) ?? false),
+    magnifierVisible: magnifier?.visible() ?? false,
     keybinds: activeKeybinds,
   };
 };
@@ -551,6 +556,7 @@ function mountReaderSidebar(
     },
     preferences,
     dispatchReaderAction,
+    onItemsChange: () => syncReaderMenu(),
     revealAnnotation: (filePath, annotationId) =>
       documentWorkspace?.revealAnnotation(filePath, annotationId),
     activeDocument: () => {
@@ -870,6 +876,15 @@ export async function initializeApplication(modules: ApplicationModules): Promis
       },
     });
 
+    const pageArea = document.getElementById('pdf-container');
+    if (pageArea) {
+      magnifier = createMagnifier({
+        host: pageArea,
+        isSlideshow: () => presentationController?.isActive() ?? false,
+      });
+      magnifier.observe(syncReaderMenu);
+    }
+
     // Initialize slider manager
     sliderManager = new SliderManager((filterSettings) => {
       void dispatchReaderAction(readerAction.setFilterSettings(filterSettings));
@@ -968,11 +983,25 @@ export async function initializeApplication(modules: ApplicationModules): Promis
           if (filePath && page > 0) bookmarks?.toggle(filePath, page);
         },
       },
+      magnifier,
       editTextField: (kind) => {
         if (!isEditableTarget(document.activeElement)) return false;
         // The native Edit menu takes ⌘Z from the WebView; hand it back to the field.
         document.execCommand(kind);
         return true;
+      },
+      switchTab: async (direction) => {
+        const snapshot = readerActions?.snapshot();
+        const documents = snapshot?.documents ?? [];
+        if (!snapshot || documents.length < 2) return;
+        const current = documents.findIndex(
+          ({ filePath }) => filePath === snapshot.activeDocumentPath,
+        );
+        const step = direction === 'next' ? 1 : -1;
+        const target = documents[(current + step + documents.length) % documents.length];
+        if (target) {
+          await dispatchReaderAction({ type: 'activateDocument', filePath: target.filePath });
+        }
       },
       toggleTabBar: () => {
         tabBarKeptShown = !tabBarKeptShown;

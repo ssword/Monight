@@ -202,25 +202,28 @@ const GO_MENU: &[ReaderMenuEntry] = &[
     Separator,
     command("go.page", "Go to Page\u{2026}"),
     Separator,
+    command("go.previous-item", "Previous Item"),
+    command("go.next-item", "Next Item"),
+    Separator,
     command("go.back", "Back"),
     command("go.forward", "Forward"),
 ];
 
 const TOOLS_MENU: &[ReaderMenuEntry] = &[
     check("tools.text-selection", "Text Selection"),
+    command("tools.magnifier", "Show Magnifier"),
+    command("tools.bookmark", "Add Bookmark"),
     Listed {
         id: "tools.annotate",
         text: "Annotate",
     },
     Section { id: "tools.rotate" },
-    Separator,
-    command("tools.bookmark", "Add Bookmark"),
 ];
 
 const READER_MENUS: [&[ReaderMenuEntry]; 4] = [EDIT_MENU, VIEW_MENU, GO_MENU, TOOLS_MENU];
 
 /// Reader Commands (CONTEXT.md) are forwarded to the WebView, which owns reader state.
-const READER_COMMAND_PREFIXES: [&str; 4] = ["edit.", "view.", "go.", "tools."];
+const READER_COMMAND_PREFIXES: [&str; 5] = ["edit.", "view.", "go.", "tools.", "window."];
 
 fn reader_command(event_id: &str) -> Option<&str> {
     READER_COMMAND_PREFIXES
@@ -490,6 +493,9 @@ pub fn set_menu_submenu_items(
     Ok(())
 }
 
+const WINDOW_PREVIOUS_TAB: &str = "window.previous-tab";
+const WINDOW_NEXT_TAB: &str = "window.next-tab";
+
 fn build_window_menu(app: &AppHandle) -> Result<Submenu<Wry>, tauri::Error> {
     Submenu::with_items(
         app,
@@ -500,6 +506,16 @@ fn build_window_menu(app: &AppHandle) -> Result<Submenu<Wry>, tauri::Error> {
             &PredefinedMenuItem::separator(app)?,
             &PredefinedMenuItem::minimize(app, None)?,
             &PredefinedMenuItem::maximize(app, None)?,
+            &PredefinedMenuItem::separator(app)?,
+            // Reader Commands: state and accelerators come from the effective keybinds.
+            &MenuItem::with_id(
+                app,
+                WINDOW_PREVIOUS_TAB,
+                "Show Previous Tab",
+                false,
+                None::<&str>,
+            )?,
+            &MenuItem::with_id(app, WINDOW_NEXT_TAB, "Show Next Tab", false, None::<&str>)?,
         ],
     )
 }
@@ -551,6 +567,8 @@ pub fn create_menu(app: &AppHandle) -> Result<Menu<Wry>, tauri::Error> {
         let go_menu = build_go_menu(app)?;
         let tools_menu = build_tools_menu(app)?;
         let window_menu = build_window_menu(app)?;
+        // The OS adds Fill, Center, Move & Resize, Full Screen Tile and Bring All to Front.
+        window_menu.set_as_windows_menu_for_nsapp()?;
         let help_menu = build_help_menu(app)?;
 
         Menu::with_items(
@@ -736,13 +754,22 @@ mod tests {
                 "-",
                 "Go to Page\u{2026}",
                 "-",
+                "Previous Item",
+                "Next Item",
+                "-",
                 "Back",
                 "Forward"
             ]
         );
         assert_eq!(
             titles(TOOLS_MENU),
-            ["Text Selection", "Annotate", "[section]"]
+            [
+                "Text Selection",
+                "Show Magnifier",
+                "Add Bookmark",
+                "Annotate",
+                "[section]"
+            ]
         );
     }
 
@@ -813,6 +840,21 @@ mod tests {
         );
         assert_eq!(reader_command("print"), None);
         assert_eq!(reader_command("close_tab"), None);
+    }
+
+    #[test]
+    fn window_tab_items_are_forwarded_as_reader_commands() {
+        assert_eq!(
+            reader_command(WINDOW_PREVIOUS_TAB),
+            Some("window.previous-tab")
+        );
+        assert_eq!(reader_command(WINDOW_NEXT_TAB), Some("window.next-tab"));
+        assert_eq!(
+            reader_command("window.document.1"),
+            Some("window.document.1")
+        );
+        // Reader state enables them; they start disabled like the other reader items.
+        assert!(!initially_enabled(WINDOW_PREVIOUS_TAB));
     }
 
     #[test]
@@ -894,7 +936,7 @@ mod tests {
         // Rust cannot see PAGE_ROTATION_VERIFIED: TypeScript fills the section
         // only once Page Rotation is verified, so the menu has no Rotate item
         // until then.
-        assert_eq!(section_start("tools.rotate"), Some(2));
+        assert_eq!(section_start("tools.rotate"), Some(4));
         assert_eq!(section_start("tools.annotate"), None);
         assert_eq!(section_start("tools.text-selection"), None);
         let items: Vec<ListedMenuItem> = serde_json::from_value(serde_json::json!([

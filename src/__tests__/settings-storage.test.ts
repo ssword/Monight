@@ -652,6 +652,42 @@ describe('Delete shortcut', () => {
     expect(settings.keybinds.Delete.binds).toEqual(['Delete']);
     expect(settings.keybinds.Print.binds).toEqual(['Backspace']);
   });
+
+  it('gives a fresh install the backtick for Show Magnifier', async () => {
+    const settings = await new SettingsManager('main', { platform: 'other' }).load();
+
+    expect(settings.keybinds.Magnifier).toEqual({
+      displayName: 'Show or Hide Magnifier',
+      binds: ['`'],
+      action: 'readerCommand',
+      data: 'tools.magnifier',
+    });
+  });
+
+  it('adds Show Magnifier to an install stored before it, without taking a key the reader chose', async () => {
+    const stored = structuredClone(
+      (await new SettingsManager('main', { platform: 'mac' }).load()).keybinds,
+    );
+    delete stored.Magnifier;
+    store.reset({
+      storageSchemaVersion: SETTINGS_SCHEMA_VERSION,
+      keybinds: stored,
+      keybindDefaultsVersion: 6,
+    });
+    expect(
+      (await new SettingsManager('main', { platform: 'mac' }).load()).keybinds.Magnifier.binds,
+    ).toEqual(['`']);
+
+    stored.Print.binds = ['`'];
+    store.reset({
+      storageSchemaVersion: SETTINGS_SCHEMA_VERSION,
+      keybinds: stored,
+      keybindDefaultsVersion: 6,
+    });
+    const settings = await new SettingsManager('main', { platform: 'mac' }).load();
+    expect(settings.keybinds.Magnifier.binds).toEqual([]);
+    expect(settings.keybinds.Print.binds).toEqual(['`']);
+  });
 });
 
 describe('Rotate shortcuts behind the Page Rotation gate', () => {
@@ -822,5 +858,44 @@ describe('Page step shortcuts (Preview ↑ / ↓)', () => {
     expect(settings.keybinds.PreviousPage.binds).toEqual(['PageUp']);
     expect(settings.keybinds.FirstPage.binds).toEqual(['ArrowUp']);
     expect(settings.keybinds.NextPage.binds).toEqual(['ArrowDown', 'ArrowRight']);
+  });
+});
+
+describe('Previous Item and Next Item shortcuts', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    store.reset();
+  });
+
+  it('gives a fresh install ⌥↑ and ⌥↓ as Reader Commands', async () => {
+    const settings = await new SettingsManager('main', { platform: 'mac' }).load();
+
+    expect(settings.keybinds.GoPreviousItem).toEqual({
+      displayName: 'Previous Item',
+      binds: ['Alt+ArrowUp'],
+      action: 'readerCommand',
+      data: 'go.previous-item',
+    });
+    expect(settings.keybinds.GoNextItem.binds).toEqual(['Alt+ArrowDown']);
+  });
+
+  it('adds them to an install stored before them, without taking a key the reader chose', async () => {
+    const stored = structuredClone(
+      (await new SettingsManager('main', { platform: 'mac' }).load()).keybinds,
+    );
+    delete stored.GoPreviousItem;
+    delete stored.GoNextItem;
+    stored.Print.binds = ['Alt+ArrowUp'];
+    store.reset({
+      storageSchemaVersion: SETTINGS_SCHEMA_VERSION,
+      keybinds: stored,
+      keybindDefaultsVersion: 6,
+    });
+
+    const settings = await new SettingsManager('main', { platform: 'mac' }).load();
+
+    expect(settings.keybinds.GoPreviousItem.binds).toEqual([]);
+    expect(settings.keybinds.GoNextItem.binds).toEqual(['Alt+ArrowDown']);
+    expect(settings.keybinds.Print.binds).toEqual(['Alt+ArrowUp']);
   });
 });

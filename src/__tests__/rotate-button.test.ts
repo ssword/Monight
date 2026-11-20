@@ -90,6 +90,8 @@ describe('the shipped Page Rotation gate', () => {
       textFieldFocused: false,
       annotationSelected: false,
       currentPageBookmarked: false,
+      magnifierVisible: false,
+      itemStepping: { previous: false, next: false },
       keybinds,
     });
 

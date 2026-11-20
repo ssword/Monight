@@ -75,31 +75,6 @@ export function registerKeybindActions({
     updateTabBarVisibility();
   });
 
-  keybindManager.registerAction('nextTab', async () => {
-    const snapshot = getReadingSessionSnapshot();
-    const currentIndex = snapshot.documents.findIndex(
-      ({ filePath }) => filePath === snapshot.activeDocumentPath,
-    );
-    if (snapshot.documents.length > 1) {
-      const document = snapshot.documents[(currentIndex + 1) % snapshot.documents.length];
-      if (document)
-        await dispatchReaderAction({ type: 'activateDocument', filePath: document.filePath });
-    }
-  });
-
-  keybindManager.registerAction('previousTab', async () => {
-    const snapshot = getReadingSessionSnapshot();
-    const currentIndex = snapshot.documents.findIndex(
-      ({ filePath }) => filePath === snapshot.activeDocumentPath,
-    );
-    if (snapshot.documents.length > 1) {
-      const index = (currentIndex - 1 + snapshot.documents.length) % snapshot.documents.length;
-      const document = snapshot.documents[index];
-      if (document)
-        await dispatchReaderAction({ type: 'activateDocument', filePath: document.filePath });
-    }
-  });
-
   keybindManager.registerAction('switchToTab', async (_e, data) => {
     const position = data ? parseInt(data, 10) : 1;
     const documents = getReadingSessionSnapshot().documents;

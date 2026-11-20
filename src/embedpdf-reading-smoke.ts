@@ -97,9 +97,11 @@ async function run() {
     selectedPages: () => [],
     currentPage: () => null,
     toggleTabBar: () => {},
+    switchTab: async () => {},
     editTextField: () => false,
     selectedAnnotation: () => null,
     bookmarks: null,
+    magnifier: null,
   };
   registerKeybindActions({
     keybindManager: manager,
