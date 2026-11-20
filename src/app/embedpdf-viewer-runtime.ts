@@ -89,7 +89,7 @@ export interface EmbedPdfViewerRuntime {
   setActiveAnnotationTool(toolId: string | null, defaults?: AnnotationToolDefaults): void;
   /** Whether the page has selected text. */
   hasTextSelection(): boolean;
-  /** The selected text, joined by newlines; empty when nothing is selected. */
+  /** The selected text, lines joined by spaces; empty when nothing is selected. */
   selectedText(): Promise<string>;
   /** Marks the text selection with a text-markup tool; false when nothing is selected. */
   markupSelection(toolId: string, defaults: AnnotationToolDefaults): boolean;

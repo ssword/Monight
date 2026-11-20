@@ -22,27 +22,39 @@ export interface ItemStepping {
 
 export const NO_ITEM_STEPPING: ItemStepping = Object.freeze({ previous: false, next: false });
 
-/** The item a step from the selected item (or the one nearest `currentPage`) reaches. */
+/** The item a step reaches, from the selected item or else from the Reading Position. */
 export function stepTarget(
   items: readonly SidebarItem[],
   selectedKey: string | null,
   currentPage: number,
   direction: StepDirection,
 ): SidebarItem | null {
-  if (items.length === 0) return null;
-  let from = selectedKey === null ? -1 : items.findIndex((item) => item.key === selectedKey);
-  if (from < 0) {
-    // Earlier items win ties, so the start is the first item at the nearest page.
-    let nearest = Number.POSITIVE_INFINITY;
-    items.forEach((item, index) => {
-      const distance = Math.abs(item.page - currentPage);
-      if (distance < nearest) {
-        nearest = distance;
-        from = index;
-      }
-    });
+  const forward = direction === 'next';
+  const selected = selectedKey === null ? -1 : items.findIndex((item) => item.key === selectedKey);
+  // A stale selection (the reader has since moved to another page) yields to the
+  // Reading Position: the selection is the start only while it is on the current page.
+  if (selected >= 0 && items[selected]?.page === currentPage) {
+    return items[forward ? selected + 1 : selected - 1] ?? null;
   }
-  return items[direction === 'next' ? from + 1 : from - 1] ?? null;
+  // An item exactly on the current page: step to the neighbours of that item.
+  const onPage = items.flatMap((item, index) => (item.page === currentPage ? [index] : []));
+  if (onPage.length > 0) {
+    // With several items on the page the first is the start, so Next walks through the rest.
+    const edge = onPage[0]!;
+    return items[forward ? edge + 1 : edge - 1] ?? null;
+  }
+  // Otherwise the nearest item in the requested direction.
+  let best: SidebarItem | null = null;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  for (const item of items) {
+    const distance = forward ? item.page - currentPage : currentPage - item.page;
+    // Later items win ties when stepping back, earlier ones when stepping forward.
+    if (distance > 0 && (distance < bestDistance || (!forward && distance === bestDistance))) {
+      best = item;
+      bestDistance = distance;
+    }
+  }
+  return best;
 }
 
 export function itemStepping(

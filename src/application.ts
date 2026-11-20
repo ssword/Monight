@@ -855,6 +855,7 @@ export async function initializeApplication(modules: ApplicationModules): Promis
     });
     readerActions.observe((snapshot) => {
       documentWorkspace?.project(snapshot);
+      if (snapshot.documents.length === 0) magnifier?.hide();
       updateUI(snapshot, documentWorkspace?.activeRenderingState() ?? null);
       refreshReaderControls();
       showActiveAppearance(snapshot);
@@ -887,6 +888,7 @@ export async function initializeApplication(modules: ApplicationModules): Promis
     presentationController = new PresentationController({
       getActivePresentation,
       onStateChanged: () => {
+        magnifier?.refresh();
         if (readerActions && documentWorkspace) {
           updateUI(readerActions.snapshot(), documentWorkspace.activeRenderingState());
         }

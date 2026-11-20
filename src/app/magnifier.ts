@@ -16,6 +16,8 @@ export interface Magnifier {
   /** Shows or hides the loupe, as Tools ▸ Show Magnifier does. */
   toggle(): void;
   hide(): void;
+  /** Hides the loupe at once if Slideshow has started, without waiting for the pointer. */
+  refresh(): void;
   /** Calls back whenever visibility changes; returns the unsubscribe. */
   observe(listener: (visible: boolean) => void): () => void;
   destroy(): void;
@@ -102,8 +104,31 @@ export function createMagnifier({ host, isSlideshow }: MagnifierOptions): Magnif
     }
   };
 
+  /** Whether the pointer is over a page: its bitmap, or an overlay on top of one. */
+  const overPage = (event: PointerEvent | MouseEvent): boolean => {
+    if (event.target instanceof HTMLCanvasElement || event.target instanceof HTMLImageElement) {
+      return true;
+    }
+    const bitmaps = host.querySelectorAll<PageBitmap>(
+      '.embedpdf-document-surface[data-visible="true"] canvas, .embedpdf-document-surface[data-visible="true"] img',
+    );
+    return [...bitmaps].some((bitmap) => {
+      const rect = bitmap.getBoundingClientRect();
+      return (
+        event.clientX >= rect.left &&
+        event.clientX <= rect.right &&
+        event.clientY >= rect.top &&
+        event.clientY <= rect.bottom
+      );
+    });
+  };
+
   const onPointerMove = (event: PointerEvent | MouseEvent) => {
     if (!visible || isSlideshow()) {
+      hideLoupe();
+      return;
+    }
+    if (!overPage(event)) {
       hideLoupe();
       return;
     }
@@ -130,6 +155,9 @@ export function createMagnifier({ host, isSlideshow }: MagnifierOptions): Magnif
     visible: () => visible,
     toggle: () => setVisible(!visible),
     hide: () => setVisible(false),
+    refresh() {
+      if (isSlideshow()) hideLoupe();
+    },
     observe(listener) {
       listeners.add(listener);
       return () => listeners.delete(listener);

@@ -69,7 +69,7 @@ export interface DocumentRendering {
   markupSelection?(toolId: string, defaults: AnnotationToolDefaults): boolean;
   /** Whether the Document has selected text. */
   hasTextSelection?(): boolean;
-  /** The selected text, joined by newlines; empty when nothing is selected. */
+  /** The selected text, lines joined by spaces; empty when nothing is selected. */
   selectedText?(): Promise<string>;
   /** Selects an Annotation already scrolled into view; transient rendering state. */
   revealAnnotation?(annotationId: string): void;

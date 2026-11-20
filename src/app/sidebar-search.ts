@@ -5,7 +5,7 @@
 
 import type { PdfSearchMatch } from '../lib/document-features';
 import type { DispatchReaderAction } from '../reader/reader-actions';
-import type { SidebarDocument } from './reader-sidebar';
+import type { SidebarDocument, StepDirection } from './reader-sidebar';
 
 export interface SearchResultsView {
   readonly element: HTMLElement;
@@ -15,7 +15,7 @@ export interface SearchResultsView {
    * Goes to the next or previous result, wrapping around, as a recorded jump.
    * False when there are no results to step through.
    */
-  step(direction: 'next' | 'previous'): boolean;
+  step(direction: StepDirection): boolean;
   destroy(): void;
 }
 
@@ -161,12 +161,13 @@ export function createSearchResultsView(
     step(direction) {
       if (!shown || matches.length === 0) return false;
       const count = matches.length;
-      const next =
-        current === null
-          ? direction === 'next'
-            ? 0
-            : count - 1
-          : (current + (direction === 'next' ? 1 : -1) + count) % count;
+      const forward = direction === 'next';
+      let next: number;
+      if (current === null) {
+        next = forward ? 0 : count - 1;
+      } else {
+        next = (current + (forward ? 1 : -1) + count) % count;
+      }
       activate(next);
       return true;
     },
