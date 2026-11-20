@@ -31,6 +31,7 @@ import {
 } from './app/file-actions';
 import { createHighlightButton, type HighlightButton } from './app/highlight-button';
 import { registerKeybindActions, toggleWindowFullScreen } from './app/keybinds';
+import { createMagnifier, type Magnifier } from './app/magnifier';
 import {
   createMarkupToolbar,
   leaveMarkupToolOnEscape,
@@ -46,9 +47,11 @@ import {
 } from './app/reader-commands';
 import { createReaderSidebar, type ReaderSidebar } from './app/reader-sidebar';
 import { createRotateButton, type RotateButton } from './app/rotate-button';
+import { NO_ITEM_STEPPING } from './app/sidebar-item-stepping';
 import { restoreReadingSessionAtStartup } from './app/startup-restoration';
 import { type ExternalOpenPayload, setupTauriListeners } from './app/tauri-events';
 import {
+  applyToolbarVisibility,
   applyWindowChrome,
   renderRecentFiles,
   showSplash,
@@ -142,6 +145,7 @@ let recentDocumentAuthority: RecentDocumentAuthority | null = null;
 let chromePreferences: ChromePreferencesAuthority | null = null;
 let readerSidebar: ReaderSidebar | null = null;
 let markupToolbar: MarkupToolbar | null = null;
+let magnifier: Magnifier | null = null;
 let highlightButton: HighlightButton | null = null;
 let rotateButton: RotateButton | null = null;
 let annotationMenu: AnnotationMenu | null = null;
@@ -205,7 +209,9 @@ const readerMenuState = (): ReaderCommandStateInput => {
     canGoForward: readerActions?.canGoForward() ?? false,
     tabBarKeptShown,
     textFieldFocused: isEditableTarget(document.activeElement),
+    itemStepping: readerSidebar?.itemStepping() ?? NO_ITEM_STEPPING,
     annotationSelected: (documentWorkspace?.selectedAnnotation() ?? null) !== null,
+    magnifierVisible: magnifier?.visible() ?? false,
     keybinds: activeKeybinds,
   };
 };
@@ -544,6 +550,7 @@ function mountReaderSidebar(
     },
     preferences,
     dispatchReaderAction,
+    onItemsChange: () => syncReaderMenu(),
     revealAnnotation: (filePath, annotationId) =>
       documentWorkspace?.revealAnnotation(filePath, annotationId),
     activeDocument: () => {
@@ -692,7 +699,9 @@ export async function initializeApplication(modules: ApplicationModules): Promis
           console.error('Chrome preferences persistence failed:', error),
       },
     );
-    chromePreferences.observe(() => {
+    applyToolbarVisibility(document, chromePreferences.snapshot().toolbarVisible);
+    chromePreferences.observe((preferences) => {
+      applyToolbarVisibility(document, preferences.toolbarVisible);
       showTabBar(readerActions?.snapshot().documents.length ?? 0);
       syncReaderMenu();
     });
@@ -855,6 +864,15 @@ export async function initializeApplication(modules: ApplicationModules): Promis
       },
     });
 
+    const pageArea = document.getElementById('pdf-container');
+    if (pageArea) {
+      magnifier = createMagnifier({
+        host: pageArea,
+        isSlideshow: () => presentationController?.isActive() ?? false,
+      });
+      magnifier.observe(syncReaderMenu);
+    }
+
     // Initialize slider manager
     sliderManager = new SliderManager((filterSettings) => {
       void dispatchReaderAction(readerAction.setFilterSettings(filterSettings));
@@ -882,7 +900,6 @@ export async function initializeApplication(modules: ApplicationModules): Promis
       openSettings,
       updateTabBarVisibility: updateTabBar,
       updateUI: updateReaderUI,
-      openSearch: () => readerSidebar?.focusSearch(),
       goToPage,
       runReaderCommand: runCommand,
       dispatchReaderAction,
@@ -946,6 +963,11 @@ export async function initializeApplication(modules: ApplicationModules): Promis
       selectedPages: () => readerSidebar?.selectedPages() ?? [],
       currentPage: () => readerMenuState().activeDocument?.currentPage || null,
       selectedAnnotation: () => documentWorkspace?.selectedAnnotation() ?? null,
+      magnifier,
+      find: {
+        open: () => readerSidebar?.focusSearch(),
+        step: (direction) => readerSidebar?.stepSearch(direction),
+      },
       editTextField: (kind) => {
         if (!isEditableTarget(document.activeElement)) return false;
         // The native Edit menu takes ⌘Z from the WebView; hand it back to the field.

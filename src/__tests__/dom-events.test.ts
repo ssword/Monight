@@ -146,7 +146,6 @@ describe('toolbar input adapters', () => {
       openSettings: vi.fn(async () => undefined),
       updateTabBarVisibility: vi.fn(),
       updateUI: vi.fn(),
-      openSearch: vi.fn(),
       goToPage: vi.fn(async () => undefined),
       // Zoom shortcuts run their Reader Commands, which dispatch the action.
       runReaderCommand: (id) =>

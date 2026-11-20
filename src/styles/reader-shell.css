@@ -39,6 +39,22 @@
   padding-left: calc(var(--traffic-light-inset) + 8px);
 }
 
+/* View ▸ Hide Toolbar. Windows and Linux drop the toolbar (the native title bar
+   stays). macOS keeps an empty strip as the traffic lights' home and the
+   window's drag handle: its controls are hidden, not removed. */
+:root[data-toolbar="hidden"] #toolbar > * {
+  display: none;
+}
+
+:root[data-toolbar="hidden"][data-window-chrome="native"] #toolbar {
+  display: none;
+}
+
+:root[data-toolbar="hidden"][data-window-chrome="overlay"] #toolbar {
+  height: 38px;
+  border-bottom: 0;
+}
+
 .toolbar-title {
   display: flex;
   flex-direction: column;

@@ -34,7 +34,7 @@ import type { KeybindConfig } from '../scripts/keybind-defaults';
 import type { ChromePreferences, ChromePreferencesAuthority } from './chrome-preferences';
 import type { ActiveMarkupState, DocumentSelectedAnnotation } from './document-workspace';
 import { isEditableMarkup, VERIFIED_MARKUP_TOOLS, type VerifiedMarkupTool } from './markup-tools';
-import type { SidebarChoice } from './reader-sidebar';
+import type { ItemStepping, SidebarChoice, StepDirection } from './reader-sidebar';
 import { tabBarShown } from './tab-bar';
 
 /**
@@ -57,7 +57,11 @@ export interface ReaderCommandContext {
   readonly dispatchReaderAction: DispatchReaderAction;
   readonly preferences: ChromePreferencesAuthority;
   /** The toolbar sidebar menu's own choice handler. */
-  readonly sidebar: { choose(choice: SidebarChoice): void } | null;
+  readonly sidebar: {
+    choose(choice: SidebarChoice): void;
+    /** Go ▸ Previous/Next Item: selects and goes to the neighbouring item of the shown mode. */
+    stepItem(direction: StepDirection): Promise<void>;
+  } | null;
   /** The markup toolbar's own Markup toggle and tool buttons. */
   readonly markupToolbar: { toggle(): void; chooseTool(toolId: string): void } | null;
   /** The Highlight split button's own click, for its text-markup tools. */
@@ -90,6 +94,17 @@ export interface ReaderCommandContext {
   readonly activateDocumentAt: (index: number) => boolean | Promise<boolean>;
   /** The active Document's selected Annotation (transient), with the Document it belongs to. */
   readonly selectedAnnotation: () => DocumentSelectedAnnotation | null;
+  /** The magnifier loupe (transient chrome state); null before the reader mounts. */
+  readonly magnifier: { toggle(): void } | null;
+  /**
+   * Edit ▸ Find: opens the find bar, or steps through the search results
+   * (wrapping around, each jump recorded in Navigation History); with no
+   * active search a step opens the find bar.
+   */
+  readonly find: {
+    open(): void;
+    step(direction: 'next' | 'previous'): void;
+  } | null;
 }
 
 /** One open Document as the Window menu lists it, in Reading Session order. */
@@ -117,12 +132,16 @@ export interface ReaderCommandStateInput {
   /** Whether the active Document's Navigation History has somewhere to go. */
   readonly canGoBack: boolean;
   readonly canGoForward: boolean;
+  /** Whether the shown sidebar mode has a previous and a next item to step to. */
+  readonly itemStepping: ItemStepping;
   /** Whether View ▸ Show Tab Bar keeps the tab bar shown (transient, never persisted). */
   readonly tabBarKeptShown: boolean;
   /** Whether focus is in an editable element, whose own typing Undo and Redo then edit. */
   readonly textFieldFocused: boolean;
   /** Whether an Annotation is selected on the active Document. */
   readonly annotationSelected: boolean;
+  /** Whether the magnifier loupe is shown (transient, never persisted). */
+  readonly magnifierVisible: boolean;
   /**
    * The effective keybinds; each command's menu item shows its shortcut as
    * its accelerator. Absent: accelerators are left as they are.
@@ -234,9 +253,34 @@ const tabCommand = <Id extends 'window.previous-tab' | 'window.next-tab'>(
   state: (input) => ({ enabled: input.documentCount >= 2 }),
 });
 
+/** Go ▸ Previous Item and Next Item: step through the shown sidebar mode's items. */
+const stepItemCommand = <Id extends 'go.previous-item' | 'go.next-item'>(
+  id: Id,
+  direction: StepDirection,
+): ReaderCommand<Id> => ({
+  id,
+  run: (context) => context.sidebar?.stepItem(direction),
+  state: (input) => ({ enabled: hasDocument(input) && input.itemStepping[direction] }),
+});
+
 const staticCommands = [
   historyCommand('edit.undo', 'undo'),
   historyCommand('edit.redo', 'redo'),
+  {
+    id: 'edit.find',
+    run: (context) => context.find?.open(),
+    state: whenDocument,
+  },
+  {
+    id: 'edit.find-next',
+    run: (context) => context.find?.step('next'),
+    state: whenDocument,
+  },
+  {
+    id: 'edit.find-previous',
+    run: (context) => context.find?.step('previous'),
+    state: whenDocument,
+  },
   {
     // Edit ▸ Delete (Delete and Backspace by default; the keybinds leave those keys
     // to text fields) deletes the selected Annotation from its own Document.
@@ -287,6 +331,18 @@ const staticCommands = [
     }),
   },
   {
+    // View ▸ Hide Toolbar: the chrome preference; the markup toolbar is separate and stays.
+    id: 'view.toolbar',
+    run: (context) =>
+      context.preferences.update({
+        toolbarVisible: !context.preferences.snapshot().toolbarVisible,
+      }),
+    state: (input) => ({
+      enabled: hasDocument(input),
+      text: input.preferences.toolbarVisible ? 'Hide Toolbar' : 'Show Toolbar',
+    }),
+  },
+  {
     id: 'view.slideshow',
     run: (context) => context.toggleSlideshow(),
     state: whenDocument,
@@ -322,6 +378,8 @@ const staticCommands = [
     },
     state: whenDocument,
   },
+  stepItemCommand('go.previous-item', 'previous'),
+  stepItemCommand('go.next-item', 'next'),
   {
     id: 'go.back',
     run: (context) => context.dispatchReaderAction(READER_ACTION_COMMANDS.back()),
@@ -331,6 +389,15 @@ const staticCommands = [
     id: 'go.forward',
     run: (context) => context.dispatchReaderAction(READER_ACTION_COMMANDS.forward()),
     state: (input) => ({ enabled: hasDocument(input) && input.canGoForward }),
+  },
+  {
+    // The key is left to text fields by the keybinds and the menu shows no accelerator for it.
+    id: 'tools.magnifier',
+    run: (context) => context.magnifier?.toggle(),
+    state: (input) => ({
+      enabled: hasDocument(input),
+      text: input.magnifierVisible ? 'Hide Magnifier' : 'Show Magnifier',
+    }),
   },
   {
     id: 'tools.text-selection',
@@ -448,6 +515,7 @@ export async function runReaderCommand(
  * both read this one map.
  */
 export const LEGACY_KEYBIND_COMMANDS: Readonly<Record<string, ReaderCommandId>> = {
+  find: 'edit.find',
   resetZoom: 'view.zoom.actual-size',
   fitToPage: 'view.zoom.fit',
   fitToWidth: 'view.zoom.width',

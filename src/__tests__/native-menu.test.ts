@@ -140,6 +140,8 @@ describe('native menu state sync', () => {
         tabBarKeptShown: false,
         textFieldFocused: false,
         annotationSelected: false,
+        magnifierVisible: false,
+        itemStepping: { previous: false, next: false },
       }),
       context: () =>
         ({
@@ -215,6 +217,8 @@ describe('Window menu Document list', () => {
       tabBarKeptShown: false,
       textFieldFocused: false,
       annotationSelected: false,
+      magnifierVisible: false,
+      itemStepping: { previous: false, next: false },
     }) as ReaderCommandStateInput;
 
   it('relists on opening and closing, and retitles on page changes without relisting', async () => {

@@ -5,6 +5,7 @@ import { resolve } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { hydrateChromeIcons } from '../app/chrome-icons';
 import {
+  applyToolbarVisibility,
   applyWindowChrome,
   renderRecentFiles,
   updateKeyboardHints,
@@ -254,5 +255,28 @@ describe('shortcut hints', () => {
     expect(titleOf('new-tab-btn')).toBe('Open New PDF');
     expect(titleOf('print-file')).toBe('Print (Cmd + P)');
     expect(hint()).toBe('Open a PDF file to start reading');
+  });
+});
+
+describe('toolbar visibility', () => {
+  beforeEach(loadAppShell);
+
+  it('hides the toolbar and shows it again, leaving the markup toolbar to its own preference', () => {
+    const toolbar = document.getElementById('toolbar');
+    const markup = document.getElementById('markup-toolbar') as HTMLElement;
+    markup.hidden = false;
+
+    applyToolbarVisibility(document, false);
+    expect(document.documentElement.dataset.toolbar).toBe('hidden');
+    expect(markup.hidden).toBe(false);
+
+    applyToolbarVisibility(document, true);
+    expect(document.documentElement.dataset.toolbar).toBe('shown');
+    expect(toolbar).not.toBeNull();
+  });
+
+  it('styles the hidden toolbar so macOS keeps a title strip for the traffic lights', () => {
+    const css = projectFile('src/styles/reader-shell.css');
+    expect(css).toMatch(/\[data-toolbar="hidden"\]/);
   });
 });

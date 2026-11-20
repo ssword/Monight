@@ -101,6 +101,8 @@ async function run() {
     activateDocumentAt: async () => false,
     editTextField: () => false,
     selectedAnnotation: () => null,
+    magnifier: null,
+    find: null,
   };
   registerKeybindActions({
     keybindManager: manager,
@@ -110,7 +112,6 @@ async function run() {
     openSettings: async () => {},
     updateTabBarVisibility: () => {},
     updateUI: () => {},
-    openSearch: () => {},
     goToPage,
     runReaderCommand: (id) => runReaderCommand(id, commandContext),
     dispatchReaderAction: async (action) => {

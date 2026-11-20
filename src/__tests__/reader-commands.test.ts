@@ -33,7 +33,12 @@ function fakeContext(overrides: Partial<ReaderCommandContext> = {}) {
       dispatched.push(action);
     },
     preferences: preferenceAuthority,
-    sidebar: { choose: (choice) => calls.push(`sidebar:${choice}`) },
+    sidebar: {
+      choose: (choice) => calls.push(`sidebar:${choice}`),
+      stepItem: async (direction) => {
+        calls.push(`step:${direction}`);
+      },
+    },
     markupToolbar: {
       toggle: () => calls.push('markup-toolbar'),
       chooseTool: (toolId) => calls.push(`markup-toolbar:${toolId}`),
@@ -64,6 +69,11 @@ function fakeContext(overrides: Partial<ReaderCommandContext> = {}) {
     activateDocumentAt: async (index) => {
       calls.push(`document:${index}`);
       return true;
+    },
+    magnifier: { toggle: () => calls.push('magnifier') },
+    find: {
+      open: () => calls.push('find:open'),
+      step: (direction) => calls.push(`find:${direction}`),
     },
     ...overrides,
   };
@@ -100,6 +110,13 @@ describe('Reader Commands', () => {
     expect(dispatched).toEqual([action]);
   });
 
+  it('Tools ▸ Show Magnifier toggles the loupe', async () => {
+    const { context, calls, dispatched } = fakeContext();
+    expect(await runReaderCommand('tools.magnifier', context)).toBe(true);
+    expect(calls).toEqual(['magnifier']);
+    expect(dispatched).toEqual([]);
+  });
+
   it('Window ▸ Show Previous and Next Tab switch the active Document in tab order', async () => {
     const { context, calls } = fakeContext();
     expect(await runReaderCommand('window.previous-tab', context)).toBe(true);
@@ -125,6 +142,36 @@ describe('Reader Commands', () => {
     keybinds.NextTab.binds = ['Alt+J'];
     states = readerCommandStates(input({ keybinds }));
     expect(stateOf(states, 'window.next-tab')?.accelerator).toBe('Alt+J');
+  });
+
+  it('Find…, Find Next and Find Previous go through the find controls', async () => {
+    const { context, calls } = fakeContext();
+    expect(await runReaderCommand('edit.find', context)).toBe(true);
+    expect(await runReaderCommand('edit.find-next', context)).toBe(true);
+    expect(await runReaderCommand('edit.find-previous', context)).toBe(true);
+    expect(calls).toEqual(['find:open', 'find:next', 'find:previous']);
+  });
+
+  it('Find commands are enabled with a Document and show their default shortcuts', async () => {
+    const { defaultKeybinds } = await import('../scripts/keybind-defaults');
+    const ids = ['edit.find', 'edit.find-next', 'edit.find-previous'];
+    const mac = readerCommandStates(input({ keybinds: defaultKeybinds('mac') }));
+    expect(ids.map((id) => stateOf(mac, id)?.accelerator)).toEqual([
+      'CmdOrCtrl+F',
+      'Cmd+G',
+      'Cmd+Shift+G',
+    ]);
+    const other = readerCommandStates(input({ keybinds: defaultKeybinds('other') }));
+    expect(ids.map((id) => stateOf(other, id)?.accelerator)).toEqual([
+      'CmdOrCtrl+F',
+      'F3',
+      'Shift+F3',
+    ]);
+    expect(ids.every((id) => stateOf(mac, id)?.enabled)).toBe(true);
+    const none = readerCommandStates(
+      input({ documentCount: 0, activeDocument: null, markup: null }),
+    );
+    expect(ids.some((id) => stateOf(none, id)?.enabled)).toBe(false);
   });
 
   it('Go to Page… asks for a page and jumps there, recorded in Navigation History', async () => {
@@ -171,6 +218,15 @@ describe('Reader Commands', () => {
     const nothingSelected = fakeContext();
     await runReaderCommand('edit.delete', nothingSelected.context);
     expect(nothingSelected.dispatched).toEqual([]);
+  });
+
+  it.each([
+    ['go.previous-item', 'step:previous'],
+    ['go.next-item', 'step:next'],
+  ])('%s steps through the shown sidebar mode', async (id, call) => {
+    const { context, calls } = fakeContext();
+    expect(await runReaderCommand(id, context)).toBe(true);
+    expect(calls).toEqual([call]);
   });
 
   it('Go to Page… does nothing when the request is cancelled', async () => {
@@ -248,6 +304,8 @@ const input = (overrides: Partial<ReaderCommandStateInput> = {}): ReaderCommandS
   tabBarKeptShown: false,
   textFieldFocused: false,
   annotationSelected: false,
+  magnifierVisible: false,
+  itemStepping: { previous: true, next: true },
   ...overrides,
 });
 
@@ -386,6 +444,31 @@ describe('native menu state', () => {
     expect(stateOf(last, 'go.next-page')?.enabled).toBe(false);
   });
 
+  it('enables Previous Item and Next Item only when the shown mode has an item to step to', () => {
+    const both = readerCommandStates(input({ itemStepping: { previous: true, next: true } }));
+    expect(stateOf(both, 'go.previous-item')?.enabled).toBe(true);
+    expect(stateOf(both, 'go.next-item')?.enabled).toBe(true);
+
+    const atLast = readerCommandStates(input({ itemStepping: { previous: true, next: false } }));
+    expect(stateOf(atLast, 'go.previous-item')?.enabled).toBe(true);
+    expect(stateOf(atLast, 'go.next-item')?.enabled).toBe(false);
+
+    const none = readerCommandStates(
+      input({
+        activeDocument: null,
+        documentCount: 0,
+        itemStepping: { previous: true, next: true },
+      }),
+    );
+    expect(stateOf(none, 'go.previous-item')?.enabled).toBe(false);
+  });
+
+  it('shows ⌥↑ and ⌥↓ beside Previous Item and Next Item', () => {
+    const states = readerCommandStates(input({ keybinds: defaultSettings('mac').keybinds }));
+    expect(stateOf(states, 'go.previous-item')?.accelerator).toBe('Alt+ArrowUp');
+    expect(stateOf(states, 'go.next-item')?.accelerator).toBe('Alt+ArrowDown');
+  });
+
   it('enables Back and Forward only when Navigation History has somewhere to go', () => {
     const none = readerCommandStates(input());
     expect(stateOf(none, 'go.back')?.enabled).toBe(false);
@@ -423,6 +506,41 @@ describe('native menu state', () => {
     expect(stateOf(hidden, 'view.tab-bar')?.text).toBe('Show Tab Bar');
     expect(stateOf(hidden, 'view.markup-toolbar')?.text).toBe('Show Markup Toolbar');
     expect(stateOf(hidden, 'view.full-screen')?.text).toBe('Enter Full Screen');
+  });
+
+  it('View ▸ Hide Toolbar toggles the toolbar preference and names what it will do', async () => {
+    const { context, preferences } = fakeContext();
+    const documentOpen = input({ documentCount: 1 });
+
+    expect(stateOf(readerCommandStates(documentOpen), 'view.toolbar')).toMatchObject({
+      enabled: true,
+      text: 'Hide Toolbar',
+    });
+
+    await runReaderCommand('view.toolbar', context);
+    expect(preferences().toolbarVisible).toBe(false);
+    expect(
+      stateOf(
+        readerCommandStates({
+          ...documentOpen,
+          preferences: { ...DEFAULT_CHROME_PREFERENCES, toolbarVisible: false },
+        }),
+        'view.toolbar',
+      )?.text,
+    ).toBe('Show Toolbar');
+
+    await runReaderCommand('view.toolbar', context);
+    expect(preferences().toolbarVisible).toBe(true);
+  });
+
+  it('keeps the toolbar item disabled without a Document and shows its shortcut', () => {
+    expect(
+      stateOf(readerCommandStates(input({ activeDocument: null })), 'view.toolbar')?.enabled,
+    ).toBe(false);
+    const keybinds = defaultSettings('mac').keybinds;
+    expect(stateOf(readerCommandStates(input({ keybinds })), 'view.toolbar')?.accelerator).toBe(
+      'CmdOrCtrl+Alt+T',
+    );
   });
 
   it('shows each command’s effective shortcut as its menu accelerator', () => {
@@ -471,6 +589,29 @@ describe('native menu state', () => {
     expect(stateOf(states, 'go.next-page')?.accelerator).toBe('Alt+ArrowDown');
     expect(stateOf(states, 'view.slideshow')?.accelerator).toBe('Shift+F5');
     expect(stateOf(states, 'view.full-screen')?.accelerator).toBe('F11');
+  });
+
+  it('names the magnifier item by what it will do and disables it without a Document', () => {
+    const hidden = stateOf(readerCommandStates(input()), 'tools.magnifier');
+    expect(hidden).toMatchObject({ enabled: true, text: 'Show Magnifier' });
+    const shown = stateOf(
+      readerCommandStates(input({ magnifierVisible: true })),
+      'tools.magnifier',
+    );
+    expect(shown).toMatchObject({ enabled: true, text: 'Hide Magnifier' });
+    const closed = readerCommandStates(
+      input({ documentCount: 0, activeDocument: null, markup: null, magnifierVisible: true }),
+    );
+    expect(stateOf(closed, 'tools.magnifier')?.enabled).toBe(false);
+  });
+
+  it('shows no accelerator for the magnifier key, on any platform', () => {
+    for (const platform of ['mac', 'other'] as const) {
+      const keybinds = defaultSettings(platform).keybinds;
+      expect(keybinds.Magnifier.binds).toEqual(['`']);
+      const states = readerCommandStates(input({ keybinds }));
+      expect(stateOf(states, 'tools.magnifier')?.accelerator).toBeNull();
+    }
   });
 
   it('cannot hide the tab bar while several Documents are open', () => {

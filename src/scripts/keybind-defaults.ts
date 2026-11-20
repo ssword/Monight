@@ -92,6 +92,8 @@ export const KEYBIND_ACTIONS: Readonly<Record<string, KeybindAction>> = {
   PreviousTab: { displayName: 'Previous Tab', action: 'previousTab' },
   Print: { displayName: 'Print', action: 'print' },
   Find: { displayName: 'Find in Document', action: 'find' },
+  FindNext: readerCommand('Find Next', 'edit.find-next'),
+  FindPrevious: readerCommand('Find Previous', 'edit.find-previous'),
   Undo: readerCommand('Undo', 'edit.undo'),
   Redo: readerCommand('Redo', 'edit.redo'),
   Delete: readerCommand('Delete', 'edit.delete'),
@@ -107,6 +109,8 @@ export const KEYBIND_ACTIONS: Readonly<Record<string, KeybindAction>> = {
   GoToPage: readerCommand('Go to Page…', 'go.page'),
   GoBack: readerCommand('Back', 'go.back'),
   GoForward: readerCommand('Forward', 'go.forward'),
+  GoPreviousItem: readerCommand('Previous Item', 'go.previous-item'),
+  GoNextItem: readerCommand('Next Item', 'go.next-item'),
   FitToWidth: { displayName: 'Zoom to Width', action: 'fitToWidth' },
   FitToPage: { displayName: 'Zoom to Fit', action: 'fitToPage' },
   ViewContinuous: readerCommand('Continuous Scroll', 'view.mode.continuous'),
@@ -117,6 +121,7 @@ export const KEYBIND_ACTIONS: Readonly<Record<string, KeybindAction>> = {
   SidebarTableOfContents: readerCommand('Table of Contents', 'view.sidebar.tableOfContents'),
   SidebarAnnotations: readerCommand('Highlights and Notes', 'view.sidebar.annotations'),
   MarkupToolbar: readerCommand('Show or Hide Markup Toolbar', 'view.markup-toolbar'),
+  ToggleToolbar: readerCommand('Show or Hide Toolbar', 'view.toolbar'),
   SwitchToTab1: switchToTab(1),
   SwitchToTab2: switchToTab(2),
   SwitchToTab3: switchToTab(3),
@@ -130,6 +135,7 @@ export const KEYBIND_ACTIONS: Readonly<Record<string, KeybindAction>> = {
   PresentationMode: { displayName: 'Slideshow', action: 'presentationMode' },
   RotateLeft: readerCommand('Rotate Left', 'tools.rotate.left'),
   RotateRight: readerCommand('Rotate Right', 'tools.rotate.right'),
+  Magnifier: readerCommand('Show or Hide Magnifier', 'tools.magnifier'),
 };
 
 /** Actions that exist only while their gate is open. */
@@ -240,11 +246,21 @@ export const KEYBIND_DEFAULTS_REVISIONS: readonly KeybindDefaultsRevision[] = [
   },
   {
     // Preview menu parity (#131, ADR 0004). Page steps list ↑ / ↓ first, so the
-    // Go menu shows Preview's keys; ← / → still turn pages.
+    // Go menu shows Preview's keys; ← / → still turn pages. Show Magnifier's key
+    // is left to text fields, like Delete's. Go ▸ Previous Item and Next Item
+    // (#140) take ⌥↑ / ⌥↓.
+    // Edit ▸ Find ▸ Find Next and Find Previous (#135).
     version: 7,
     binds: {
       PreviousPage: ['ArrowUp', 'ArrowLeft'],
       NextPage: ['ArrowDown', 'ArrowRight'],
+      Magnifier: ['`'],
+      GoPreviousItem: ['Alt+ArrowUp'],
+      GoNextItem: ['Alt+ArrowDown'],
+      FindNext: { mac: ['Cmd+G'], other: ['F3', 'Ctrl+G'] },
+      FindPrevious: { mac: ['Cmd+Shift+G'], other: ['Shift+F3', 'Ctrl+Shift+G'] },
+      // View ▸ Hide Toolbar (#137).
+      ToggleToolbar: ['CmdOrCtrl+Alt+T'],
     },
   },
 ];

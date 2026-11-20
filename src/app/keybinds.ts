@@ -12,7 +12,6 @@ interface KeybindContext {
   openSettings: () => Promise<void>;
   updateTabBarVisibility: () => void;
   updateUI: () => void;
-  openSearch: () => void;
   goToPage: (page: number) => Promise<void>;
   /** Runs a native View, Go or Tools command (reader-commands.ts) by id. */
   runReaderCommand: (id: string) => Promise<boolean>;
@@ -34,7 +33,6 @@ export function registerKeybindActions({
   openSettings,
   updateTabBarVisibility,
   updateUI,
-  openSearch,
   goToPage,
   runReaderCommand,
   dispatchReaderAction,
@@ -55,10 +53,6 @@ export function registerKeybindActions({
 
   keybindManager.registerAction('openSettings', async () => {
     await openSettings();
-  });
-
-  keybindManager.registerAction('find', () => {
-    openSearch();
   });
 
   // Tab management
