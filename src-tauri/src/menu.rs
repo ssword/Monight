@@ -737,6 +737,9 @@ mod tests {
                 "-",
                 "Go to Page\u{2026}",
                 "-",
+                "Previous Item",
+                "Next Item",
+                "-",
                 "Back",
                 "Forward"
             ]
