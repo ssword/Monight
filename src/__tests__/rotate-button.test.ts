@@ -80,6 +80,7 @@ describe('the shipped Page Rotation gate', () => {
     const keybinds = defaultSettings('mac').keybinds;
     const states = readerCommandStates({
       documentCount: 0,
+      openDocuments: [],
       activeDocument: null,
       preferences: DEFAULT_CHROME_PREFERENCES,
       markup: null,
