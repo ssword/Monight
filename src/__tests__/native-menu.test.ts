@@ -139,6 +139,7 @@ describe('native menu state sync', () => {
         tabBarKeptShown: false,
         textFieldFocused: false,
         annotationSelected: false,
+        currentPageBookmarked: false,
         magnifierVisible: false,
         itemStepping: { previous: false, next: false },
       }),

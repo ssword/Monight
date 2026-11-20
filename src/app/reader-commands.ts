@@ -89,6 +89,11 @@ export interface ReaderCommandContext {
   readonly editTextField: (kind: 'undo' | 'redo') => boolean;
   /** The active Document's selected Annotation (transient), with the Document it belongs to. */
   readonly selectedAnnotation: () => DocumentSelectedAnnotation | null;
+  /**
+   * The reader's Bookmarks for the active Document. Toggling one is not a Document
+   * edit: no Reader Action, unsaved indicator or Recovery Draft.
+   */
+  readonly bookmarks: { toggleCurrentPage(): void } | null;
   /** The magnifier loupe (transient chrome state); null before the reader mounts. */
   readonly magnifier: { toggle(): void } | null;
   /**
@@ -124,6 +129,8 @@ export interface ReaderCommandStateInput {
   readonly textFieldFocused: boolean;
   /** Whether an Annotation is selected on the active Document. */
   readonly annotationSelected: boolean;
+  /** Whether the active Document's current page has a Bookmark. */
+  readonly currentPageBookmarked: boolean;
   /** Whether the magnifier loupe is shown (transient, never persisted). */
   readonly magnifierVisible: boolean;
   /**
@@ -370,6 +377,15 @@ const staticCommands = [
     id: 'go.forward',
     run: (context) => context.dispatchReaderAction(READER_ACTION_COMMANDS.forward()),
     state: (input) => ({ enabled: hasDocument(input) && input.canGoForward }),
+  },
+  {
+    // Allowed on protected Documents: a Bookmark is the reader's, never written to the PDF.
+    id: 'tools.bookmark',
+    run: (context) => context.bookmarks?.toggleCurrentPage(),
+    state: (input) => ({
+      enabled: hasDocument(input),
+      text: input.currentPageBookmarked ? 'Remove Bookmark' : 'Add Bookmark',
+    }),
   },
   {
     // The key is left to text fields by the keybinds and the menu shows no accelerator for it.

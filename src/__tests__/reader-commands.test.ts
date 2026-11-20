@@ -65,6 +65,7 @@ function fakeContext(overrides: Partial<ReaderCommandContext> = {}) {
     },
     editTextField: () => false,
     selectedAnnotation: () => null,
+    bookmarks: { toggleCurrentPage: () => calls.push('bookmark') },
     magnifier: { toggle: () => calls.push('magnifier') },
     find: {
       open: () => calls.push('find:open'),
@@ -298,6 +299,7 @@ const input = (overrides: Partial<ReaderCommandStateInput> = {}): ReaderCommandS
   tabBarKeptShown: false,
   textFieldFocused: false,
   annotationSelected: false,
+  currentPageBookmarked: false,
   magnifierVisible: false,
   itemStepping: { previous: true, next: true },
   ...overrides,
@@ -763,5 +765,46 @@ describe('Rotate commands behind the Page Rotation gate', () => {
     const states = readerCommandStates(input({ keybinds }), undefined, verified);
     expect(stateOf(states, 'tools.rotate.left')?.accelerator).toBe('CmdOrCtrl+L');
     expect(stateOf(states, 'tools.rotate.right')?.accelerator).toBe('CmdOrCtrl+R');
+  });
+});
+
+describe('Add Bookmark command', () => {
+  it('toggles a Bookmark without dispatching any Document edit', async () => {
+    const { context, dispatched, calls } = fakeContext();
+
+    expect(await runReaderCommand('tools.bookmark', context)).toBe(true);
+
+    expect(calls).toEqual(['bookmark']);
+    expect(dispatched).toEqual([]);
+  });
+
+  it('is titled by whether the current page is bookmarked', () => {
+    const add = stateOf(readerCommandStates(input()), 'tools.bookmark');
+    const remove = stateOf(
+      readerCommandStates(input({ currentPageBookmarked: true })),
+      'tools.bookmark',
+    );
+
+    expect(add).toMatchObject({ enabled: true, text: 'Add Bookmark' });
+    expect(remove).toMatchObject({ enabled: true, text: 'Remove Bookmark' });
+  });
+
+  it('works on a protected Document', () => {
+    const states = readerCommandStates(
+      input({ markup: { activeToolId: null, readOnlyReason: 'read-only' } }),
+    );
+    expect(stateOf(states, 'tools.bookmark')?.enabled).toBe(true);
+  });
+
+  it('is disabled when no Document is open', () => {
+    const states = readerCommandStates(
+      input({ documentCount: 0, activeDocument: null, markup: null }),
+    );
+    expect(stateOf(states, 'tools.bookmark')?.enabled).toBe(false);
+  });
+
+  it('shows its effective shortcut as the menu accelerator', () => {
+    const mac = readerCommandStates(input({ keybinds: defaultSettings('mac').keybinds }));
+    expect(stateOf(mac, 'tools.bookmark')?.accelerator).toBe('CmdOrCtrl+D');
   });
 });

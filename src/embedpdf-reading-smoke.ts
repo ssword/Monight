@@ -100,6 +100,7 @@ async function run() {
     switchTab: async () => {},
     editTextField: () => false,
     selectedAnnotation: () => null,
+    bookmarks: null,
     magnifier: null,
     find: null,
   };
