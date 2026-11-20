@@ -406,6 +406,12 @@ export const LEGACY_KEYBIND_COMMANDS: Readonly<Record<string, ReaderCommandId>> 
   nextPage: 'go.next-page',
 };
 
+/** The page steps, whose menu items show Preview's bare ↑ / ↓ keys. */
+const PAGE_STEP_COMMANDS: ReadonlySet<string> = new Set(['go.previous-page', 'go.next-page']);
+
+const pageStepAccelerator = (bind: string): string | null =>
+  menuAccelerator(bind) ?? (/^Arrow(Up|Down)$/.test(bind) ? bind : null);
+
 /** Each command's menu accelerator: its first binding the native menu can show. */
 function commandAccelerators(
   keybinds: NonNullable<ReaderCommandStateInput['keybinds']>,
@@ -414,7 +420,8 @@ function commandAccelerators(
   for (const { action, data, binds } of Object.values(keybinds)) {
     const commandId = action === 'readerCommand' ? data : LEGACY_KEYBIND_COMMANDS[action];
     if (!commandId || accelerators.has(commandId)) continue;
-    const accelerator = binds.map(menuAccelerator).find((candidate) => candidate !== null);
+    const show = PAGE_STEP_COMMANDS.has(commandId) ? pageStepAccelerator : menuAccelerator;
+    const accelerator = binds.map(show).find((candidate) => candidate !== null);
     if (accelerator) accelerators.set(commandId, accelerator);
   }
   return accelerators;
