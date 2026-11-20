@@ -302,6 +302,7 @@ const staticCommands = [
   sidebarCommand('thumbnails'),
   sidebarCommand('tableOfContents'),
   sidebarCommand('annotations'),
+  sidebarCommand('bookmarks'),
   viewModeCommand('continuous'),
   viewModeCommand('single'),
   viewModeCommand('spread'),
