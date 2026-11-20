@@ -741,7 +741,7 @@ mod tests {
         );
         assert_eq!(
             titles(TOOLS_MENU),
-            ["Text Selection", "Annotate", "[section]"]
+            ["Text Selection", "Show Magnifier", "Annotate", "[section]"]
         );
     }
 
