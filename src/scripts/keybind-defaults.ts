@@ -92,6 +92,8 @@ export const KEYBIND_ACTIONS: Readonly<Record<string, KeybindAction>> = {
   PreviousTab: { displayName: 'Previous Tab', action: 'previousTab' },
   Print: { displayName: 'Print', action: 'print' },
   Find: { displayName: 'Find in Document', action: 'find' },
+  FindNext: readerCommand('Find Next', 'edit.find-next'),
+  FindPrevious: readerCommand('Find Previous', 'edit.find-previous'),
   Undo: readerCommand('Undo', 'edit.undo'),
   Redo: readerCommand('Redo', 'edit.redo'),
   Delete: readerCommand('Delete', 'edit.delete'),
@@ -246,6 +248,7 @@ export const KEYBIND_DEFAULTS_REVISIONS: readonly KeybindDefaultsRevision[] = [
     // Go menu shows Preview's keys; ← / → still turn pages. Show Magnifier's key
     // is left to text fields, like Delete's. Go ▸ Previous Item and Next Item
     // (#140) take ⌥↑ / ⌥↓.
+    // Edit ▸ Find ▸ Find Next and Find Previous (#135).
     version: 7,
     binds: {
       PreviousPage: ['ArrowUp', 'ArrowLeft'],
@@ -253,6 +256,8 @@ export const KEYBIND_DEFAULTS_REVISIONS: readonly KeybindDefaultsRevision[] = [
       Magnifier: ['`'],
       GoPreviousItem: ['Alt+ArrowUp'],
       GoNextItem: ['Alt+ArrowDown'],
+      FindNext: { mac: ['Cmd+G'], other: ['F3', 'Ctrl+G'] },
+      FindPrevious: { mac: ['Cmd+Shift+G'], other: ['Shift+F3', 'Ctrl+Shift+G'] },
     },
   },
 ];

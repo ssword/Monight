@@ -11,6 +11,11 @@ export interface SearchResultsView {
   readonly element: HTMLElement;
   /** Searches the Document for `text`, replacing any earlier results. */
   show(document: SidebarDocument | null, text: string): void;
+  /**
+   * Goes to the next or previous result, wrapping around, as a recorded jump.
+   * False when there are no results to step through.
+   */
+  step(direction: 'next' | 'previous'): boolean;
   destroy(): void;
 }
 
@@ -43,6 +48,25 @@ export function createSearchResultsView(
   let shown: { filePath: string; generation: number | undefined; text: string } | null = null;
   let token = 0;
   let matches: readonly PdfSearchMatch[] = [];
+  /** The result last visited by a click or step; the next step starts from it. */
+  let current: number | null = null;
+
+  const activate = (index: number) => {
+    const match = matches[index];
+    if (!shown || !match) return;
+    current = index;
+    for (const button of list.querySelectorAll<HTMLElement>('.search-result')) {
+      if (Number(button.dataset.match) === index) button.setAttribute('aria-current', 'true');
+      else button.removeAttribute('aria-current');
+    }
+    void dispatchReaderAction({
+      type: 'activateDocumentTarget',
+      filePath: shown.filePath,
+      target: {
+        readingPosition: { page: match.pageNumber, location: match.location ?? 0 },
+      },
+    });
+  };
 
   const render = (text: string, found: readonly PdfSearchMatch[], done: boolean) => {
     matches = found;
@@ -84,21 +108,14 @@ export function createSearchResultsView(
   list.addEventListener('click', (event) => {
     const button =
       event.target instanceof Element ? event.target.closest<HTMLElement>('.search-result') : null;
-    const match = matches[Number(button?.dataset.match)];
-    if (!shown || !match) return;
-    void dispatchReaderAction({
-      type: 'activateDocumentTarget',
-      filePath: shown.filePath,
-      target: {
-        readingPosition: { page: match.pageNumber, location: match.location ?? 0 },
-      },
-    });
+    if (button) activate(Number(button.dataset.match));
   });
 
   const clear = () => {
     token += 1;
     shown = null;
     matches = [];
+    current = null;
     list.replaceChildren();
     status.textContent = '';
   };
@@ -140,6 +157,18 @@ export function createSearchResultsView(
           console.error('Search failed:', error);
           render(text, [], true);
         });
+    },
+    step(direction) {
+      if (!shown || matches.length === 0) return false;
+      const count = matches.length;
+      const next =
+        current === null
+          ? direction === 'next'
+            ? 0
+            : count - 1
+          : (current + (direction === 'next' ? 1 : -1) + count) % count;
+      activate(next);
+      return true;
     },
     destroy: clear,
   };

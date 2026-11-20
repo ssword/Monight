@@ -515,6 +515,48 @@ describe('Preview shortcut defaults', () => {
   });
 });
 
+describe('Find Next and Find Previous shortcut defaults', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    store.reset();
+  });
+
+  it('gives a fresh install the platform defaults', async () => {
+    const mac = await new SettingsManager('main', { platform: 'mac' }).load();
+    expect(bindsOf(mac.keybinds)).toMatchObject({
+      Find: ['CmdOrCtrl+F'],
+      FindNext: ['Cmd+G'],
+      FindPrevious: ['Cmd+Shift+G'],
+    });
+    store.reset();
+    const other = await new SettingsManager('main', { platform: 'other' }).load();
+    expect(bindsOf(other.keybinds)).toMatchObject({
+      FindNext: ['F3', 'Ctrl+G'],
+      FindPrevious: ['Shift+F3', 'Ctrl+Shift+G'],
+    });
+  });
+
+  it('adds them on upgrade, dropping a default the reader already uses elsewhere', async () => {
+    const stored = structuredClone(DEFAULT_SETTINGS.keybinds);
+    delete (stored as Record<string, unknown>).FindNext;
+    delete (stored as Record<string, unknown>).FindPrevious;
+    stored.Print.binds = ['Ctrl+G'];
+    store.reset({
+      storageSchemaVersion: SETTINGS_SCHEMA_VERSION,
+      keybindDefaultsVersion: 6,
+      keybinds: stored,
+    });
+
+    const settings = await new SettingsManager('main', { platform: 'other' }).load();
+
+    expect(bindsOf(settings.keybinds)).toMatchObject({
+      Print: ['Ctrl+G'],
+      FindNext: ['F3'],
+      FindPrevious: ['Shift+F3', 'Ctrl+Shift+G'],
+    });
+  });
+});
+
 describe('Back and Forward shortcut defaults', () => {
   beforeEach(() => {
     vi.clearAllMocks();

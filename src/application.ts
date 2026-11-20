@@ -887,7 +887,6 @@ export async function initializeApplication(modules: ApplicationModules): Promis
       openSettings,
       updateTabBarVisibility: updateTabBar,
       updateUI: updateReaderUI,
-      openSearch: () => readerSidebar?.focusSearch(),
       goToPage,
       runReaderCommand: runCommand,
       dispatchReaderAction,
@@ -952,6 +951,10 @@ export async function initializeApplication(modules: ApplicationModules): Promis
       currentPage: () => readerMenuState().activeDocument?.currentPage || null,
       selectedAnnotation: () => documentWorkspace?.selectedAnnotation() ?? null,
       magnifier,
+      find: {
+        open: () => readerSidebar?.focusSearch(),
+        step: (direction) => readerSidebar?.stepSearch(direction),
+      },
       editTextField: (kind) => {
         if (!isEditableTarget(document.activeElement)) return false;
         // The native Edit menu takes ⌘Z from the WebView; hand it back to the field.

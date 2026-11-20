@@ -121,6 +121,11 @@ enum ReaderMenuEntry {
     Section {
         id: &'static str,
     },
+    /// A submenu of reader entries built inline (Edit ▸ Find).
+    Group {
+        text: &'static str,
+        entries: &'static [ReaderMenuEntry],
+    },
     /// One of the platform's own Edit items, which act on the focused text.
     Platform(PlatformEditItem),
     Separator,
@@ -145,7 +150,7 @@ impl PlatformEditItem {
     }
 }
 
-use ReaderMenuEntry::{Check, Command, Listed, Platform, Section, Separator};
+use ReaderMenuEntry::{Check, Command, Group, Listed, Platform, Section, Separator};
 
 const fn command(id: &'static str, text: &'static str) -> ReaderMenuEntry {
     Command { id, text }
@@ -166,6 +171,18 @@ const EDIT_MENU: &[ReaderMenuEntry] = &[
     // as the item's accelerator, so text fields keep both keys).
     command("edit.delete", "Delete"),
     Platform(PlatformEditItem::SelectAll),
+    Separator,
+    Group {
+        text: "Find",
+        entries: FIND_MENU,
+    },
+];
+
+/// Edit ▸ Find. Use Selection for Find joins these items (ADR 0004).
+const FIND_MENU: &[ReaderMenuEntry] = &[
+    command("edit.find", "Find\u{2026}"),
+    command("edit.find-next", "Find Next"),
+    command("edit.find-previous", "Find Previous"),
 ];
 
 const VIEW_MENU: &[ReaderMenuEntry] = &[
@@ -262,6 +279,7 @@ fn build_reader_menu(
             )?)?,
             Listed { id, text } => submenu.append(&Submenu::with_id(app, id, text, true)?)?,
             Section { .. } => {}
+            Group { text, entries } => submenu.append(&build_reader_menu(app, text, entries)?)?,
             Platform(item) => submenu.append(&item.build(app)?)?,
             Separator => submenu.append(&PredefinedMenuItem::separator(app)?)?,
         }
@@ -405,7 +423,7 @@ fn section_menu(app: &AppHandle, id: &str) -> Option<Submenu<Wry>> {
     })?;
     let first = entries.iter().find_map(|entry| match *entry {
         Command { id, .. } | Check { id, .. } | Listed { id, .. } => Some(id),
-        Section { .. } | Platform(_) | Separator => None,
+        Section { .. } | Group { .. } | Platform(_) | Separator => None,
     })?;
     app.menu()?.items().ok()?.into_iter().find_map(|item| {
         let submenu = item.as_submenu()?.clone();
@@ -690,7 +708,10 @@ mod tests {
         entries
             .iter()
             .map(|entry| match *entry {
-                Command { text, .. } | Check { text, .. } | Listed { text, .. } => text,
+                Command { text, .. }
+                | Check { text, .. }
+                | Listed { text, .. }
+                | Group { text, .. } => text,
                 Section { .. } => "[section]",
                 Platform(item) => match item {
                     PlatformEditItem::Cut => "Cut",
@@ -703,17 +724,24 @@ mod tests {
             .collect()
     }
 
-    fn ids() -> Vec<&'static str> {
-        READER_MENUS
-            .iter()
-            .flat_map(|entries| entries.iter())
-            .filter_map(|entry| match *entry {
+    fn entry_ids(entries: &'static [ReaderMenuEntry], out: &mut Vec<&'static str>) {
+        for entry in entries {
+            match *entry {
                 Command { id, .. } | Check { id, .. } | Listed { id, .. } | Section { id } => {
-                    Some(id)
+                    out.push(id)
                 }
-                Platform(_) | Separator => None,
-            })
-            .collect()
+                Group { entries, .. } => entry_ids(entries, out),
+                Platform(_) | Separator => {}
+            }
+        }
+    }
+
+    fn ids() -> Vec<&'static str> {
+        let mut out = Vec::new();
+        for entries in READER_MENUS {
+            entry_ids(entries, &mut out);
+        }
+        out
     }
 
     #[test]
@@ -778,8 +806,20 @@ mod tests {
                 "Copy",
                 "Paste",
                 "Delete",
-                "Select All"
+                "Select All",
+                "-",
+                "Find"
             ]
+        );
+        assert_eq!(
+            titles(FIND_MENU),
+            ["Find\u{2026}", "Find Next", "Find Previous"]
+        );
+        assert_eq!(reader_command("edit.find"), Some("edit.find"));
+        assert_eq!(reader_command("edit.find-next"), Some("edit.find-next"));
+        assert_eq!(
+            reader_command("edit.find-previous"),
+            Some("edit.find-previous")
         );
         assert_eq!(reader_command("edit.undo"), Some("edit.undo"));
         assert_eq!(reader_command("edit.redo"), Some("edit.redo"));
