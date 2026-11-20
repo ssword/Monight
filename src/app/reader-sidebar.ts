@@ -93,6 +93,12 @@ export interface ReaderSidebar {
   /** Focuses the toolbar Search field (Find). */
   focusSearch(): void;
   /**
+   * Find Next / Find Previous: steps through the search results (wrapping
+   * around, recorded in Navigation History); with no results, as with no
+   * active search, focuses the Search field.
+   */
+  stepSearch(direction: 'next' | 'previous'): void;
+  /**
    * The pages selected in Thumbnails, ascending; empty when none are selected
    * or Thumbnails is not shown (Rotate then acts on the current page).
    */
@@ -335,6 +341,11 @@ export function createReaderSidebar({
     refresh: render,
     choose,
     focusSearch() {
+      search?.focus();
+      search?.select();
+    },
+    stepSearch(direction) {
+      if (searchText.trim() && searchView?.step(direction)) return;
       search?.focus();
       search?.select();
     },

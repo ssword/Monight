@@ -277,6 +277,53 @@ describe('sidebar search', () => {
     expect(search).toHaveBeenCalledTimes(1);
   });
 
+  it('steps through results with Find Next and Find Previous, wrapping around, as recorded jumps', async () => {
+    await mount();
+    await type('moon');
+    const targets = () =>
+      dispatched.map((action) =>
+        action.type === 'activateDocumentTarget' ? action.target.readingPosition?.page : null,
+      );
+
+    sidebar.stepSearch('next');
+    sidebar.stepSearch('next');
+    sidebar.stepSearch('next');
+    sidebar.stepSearch('next');
+    expect(targets()).toEqual([1, 1, 3, 1]);
+
+    sidebar.stepSearch('previous');
+    sidebar.stepSearch('previous');
+    expect(targets()).toEqual([1, 1, 3, 1, 3, 1]);
+  });
+
+  it('starts Find Previous from the last result and continues after a clicked result', async () => {
+    await mount();
+    await type('moon');
+    sidebar.stepSearch('previous');
+    expect(dispatched[dispatched.length - 1]).toMatchObject({
+      target: { readingPosition: { page: 3 } },
+    });
+
+    results()[0]?.click();
+    sidebar.stepSearch('next');
+    expect(dispatched[dispatched.length - 1]).toMatchObject({
+      target: { readingPosition: { page: 1, location: 0.75 } },
+    });
+  });
+
+  it('opens the find bar instead when there is no active search or no result', async () => {
+    await mount();
+    sidebar.stepSearch('next');
+    expect(dispatched).toEqual([]);
+    expect(document.activeElement).toBe(field());
+
+    field().blur();
+    await type('sun');
+    sidebar.stepSearch('previous');
+    expect(dispatched).toEqual([]);
+    expect(document.activeElement).toBe(field());
+  });
+
   it('reports when nothing matches', async () => {
     await mount();
     await type('sun');

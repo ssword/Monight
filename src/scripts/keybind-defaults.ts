@@ -92,6 +92,8 @@ export const KEYBIND_ACTIONS: Readonly<Record<string, KeybindAction>> = {
   PreviousTab: { displayName: 'Previous Tab', action: 'previousTab' },
   Print: { displayName: 'Print', action: 'print' },
   Find: { displayName: 'Find in Document', action: 'find' },
+  FindNext: readerCommand('Find Next', 'edit.find-next'),
+  FindPrevious: readerCommand('Find Previous', 'edit.find-previous'),
   Undo: readerCommand('Undo', 'edit.undo'),
   Redo: readerCommand('Redo', 'edit.redo'),
   Delete: readerCommand('Delete', 'edit.delete'),
@@ -236,6 +238,14 @@ export const KEYBIND_DEFAULTS_REVISIONS: readonly KeybindDefaultsRevision[] = [
     version: 6,
     binds: {
       Delete: ['Delete', 'Backspace'],
+    },
+  },
+  {
+    // Preview parity (ADR 0004): Edit ▸ Find ▸ Find Next and Find Previous (#135).
+    version: 7,
+    binds: {
+      FindNext: { mac: ['Cmd+G'], other: ['F3', 'Ctrl+G'] },
+      FindPrevious: { mac: ['Cmd+Shift+G'], other: ['Shift+F3', 'Ctrl+Shift+G'] },
     },
   },
 ];

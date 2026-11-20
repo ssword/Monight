@@ -57,6 +57,10 @@ function fakeContext(overrides: Partial<ReaderCommandContext> = {}) {
     },
     editTextField: () => false,
     selectedAnnotation: () => null,
+    find: {
+      open: () => calls.push('find:open'),
+      step: (direction) => calls.push(`find:${direction}`),
+    },
     ...overrides,
   };
   return {
@@ -90,6 +94,36 @@ describe('Reader Commands', () => {
     const { context, dispatched } = fakeContext();
     expect(await runReaderCommand(id, context)).toBe(true);
     expect(dispatched).toEqual([action]);
+  });
+
+  it('Find…, Find Next and Find Previous go through the find controls', async () => {
+    const { context, calls } = fakeContext();
+    expect(await runReaderCommand('edit.find', context)).toBe(true);
+    expect(await runReaderCommand('edit.find-next', context)).toBe(true);
+    expect(await runReaderCommand('edit.find-previous', context)).toBe(true);
+    expect(calls).toEqual(['find:open', 'find:next', 'find:previous']);
+  });
+
+  it('Find commands are enabled with a Document and show their default shortcuts', async () => {
+    const { defaultKeybinds } = await import('../scripts/keybind-defaults');
+    const ids = ['edit.find', 'edit.find-next', 'edit.find-previous'];
+    const mac = readerCommandStates(input({ keybinds: defaultKeybinds('mac') }));
+    expect(ids.map((id) => stateOf(mac, id)?.accelerator)).toEqual([
+      'CmdOrCtrl+F',
+      'Cmd+G',
+      'Cmd+Shift+G',
+    ]);
+    const other = readerCommandStates(input({ keybinds: defaultKeybinds('other') }));
+    expect(ids.map((id) => stateOf(other, id)?.accelerator)).toEqual([
+      'CmdOrCtrl+F',
+      'F3',
+      'Shift+F3',
+    ]);
+    expect(ids.every((id) => stateOf(mac, id)?.enabled)).toBe(true);
+    const none = readerCommandStates(
+      input({ documentCount: 0, activeDocument: null, markup: null }),
+    );
+    expect(ids.some((id) => stateOf(none, id)?.enabled)).toBe(false);
   });
 
   it('Go to Page… asks for a page and jumps there, recorded in Navigation History', async () => {

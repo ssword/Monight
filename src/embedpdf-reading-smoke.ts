@@ -99,6 +99,7 @@ async function run() {
     toggleTabBar: () => {},
     editTextField: () => false,
     selectedAnnotation: () => null,
+    find: null,
   };
   registerKeybindActions({
     keybindManager: manager,
@@ -108,7 +109,6 @@ async function run() {
     openSettings: async () => {},
     updateTabBarVisibility: () => {},
     updateUI: () => {},
-    openSearch: () => {},
     goToPage,
     runReaderCommand: (id) => runReaderCommand(id, commandContext),
     dispatchReaderAction: async (action) => {

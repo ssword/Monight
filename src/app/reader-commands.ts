@@ -83,6 +83,15 @@ export interface ReaderCommandContext {
   readonly editTextField: (kind: 'undo' | 'redo') => boolean;
   /** The active Document's selected Annotation (transient), with the Document it belongs to. */
   readonly selectedAnnotation: () => DocumentSelectedAnnotation | null;
+  /**
+   * Edit ▸ Find: opens the find bar, or steps through the search results
+   * (wrapping around, each jump recorded in Navigation History); with no
+   * active search a step opens the find bar.
+   */
+  readonly find: {
+    open(): void;
+    step(direction: 'next' | 'previous'): void;
+  } | null;
 }
 
 export interface ReaderCommandStateInput {
@@ -206,6 +215,21 @@ const historyCommand = <Id extends 'edit.undo' | 'edit.redo'>(
 const staticCommands = [
   historyCommand('edit.undo', 'undo'),
   historyCommand('edit.redo', 'redo'),
+  {
+    id: 'edit.find',
+    run: (context) => context.find?.open(),
+    state: whenDocument,
+  },
+  {
+    id: 'edit.find-next',
+    run: (context) => context.find?.step('next'),
+    state: whenDocument,
+  },
+  {
+    id: 'edit.find-previous',
+    run: (context) => context.find?.step('previous'),
+    state: whenDocument,
+  },
   {
     // Edit ▸ Delete (Delete and Backspace by default; the keybinds leave those keys
     // to text fields) deletes the selected Annotation from its own Document.
@@ -395,6 +419,7 @@ export async function runReaderCommand(
  * both read this one map.
  */
 export const LEGACY_KEYBIND_COMMANDS: Readonly<Record<string, ReaderCommandId>> = {
+  find: 'edit.find',
   resetZoom: 'view.zoom.actual-size',
   fitToPage: 'view.zoom.fit',
   fitToWidth: 'view.zoom.width',
