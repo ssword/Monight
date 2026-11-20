@@ -221,6 +221,7 @@ describe('Window menu Document list', () => {
       textFieldFocused: false,
       annotationSelected: false,
       magnifierVisible: false,
+      textSelected: false,
       itemStepping: { previous: false, next: false },
     }) as ReaderCommandStateInput;
 
