@@ -121,6 +121,7 @@ export const KEYBIND_ACTIONS: Readonly<Record<string, KeybindAction>> = {
   SidebarTableOfContents: readerCommand('Table of Contents', 'view.sidebar.tableOfContents'),
   SidebarAnnotations: readerCommand('Highlights and Notes', 'view.sidebar.annotations'),
   MarkupToolbar: readerCommand('Show or Hide Markup Toolbar', 'view.markup-toolbar'),
+  ToggleToolbar: readerCommand('Show or Hide Toolbar', 'view.toolbar'),
   SwitchToTab1: switchToTab(1),
   SwitchToTab2: switchToTab(2),
   SwitchToTab3: switchToTab(3),
@@ -258,6 +259,8 @@ export const KEYBIND_DEFAULTS_REVISIONS: readonly KeybindDefaultsRevision[] = [
       GoNextItem: ['Alt+ArrowDown'],
       FindNext: { mac: ['Cmd+G'], other: ['F3', 'Ctrl+G'] },
       FindPrevious: { mac: ['Cmd+Shift+G'], other: ['Shift+F3', 'Ctrl+Shift+G'] },
+      // View ▸ Hide Toolbar (#137).
+      ToggleToolbar: ['CmdOrCtrl+Alt+T'],
     },
   },
 ];

@@ -19,6 +19,8 @@ export interface ChromePreferences {
   readonly sidebarWidth: number;
   /** Whether the markup toolbar shows beneath the toolbar. */
   readonly markupToolbarVisible: boolean;
+  /** Whether the reader toolbar shows (View ▸ Hide Toolbar); older files load as shown. */
+  readonly toolbarVisible: boolean;
   /** The Highlight split button's last-used colour. */
   readonly highlightColor: HighlightColorId;
 }
@@ -49,6 +51,7 @@ export const DEFAULT_CHROME_PREFERENCES: ChromePreferences = Object.freeze({
   sidebarMode: 'thumbnails',
   sidebarWidth: 220,
   markupToolbarVisible: false,
+  toolbarVisible: true,
   highlightColor: 'yellow',
 });
 
@@ -65,6 +68,7 @@ const PREFERENCE_PARSERS: PreferenceParsers = {
   sidebarWidth: (value) =>
     typeof value === 'number' && Number.isFinite(value) ? clampSidebarWidth(value) : undefined,
   markupToolbarVisible: (value) => (typeof value === 'boolean' ? value : undefined),
+  toolbarVisible: (value) => (typeof value === 'boolean' ? value : undefined),
   highlightColor: (value) => HIGHLIGHT_COLORS.find(({ id }) => id === value)?.id,
 };
 

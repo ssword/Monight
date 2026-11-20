@@ -51,6 +51,7 @@ import { NO_ITEM_STEPPING } from './app/sidebar-item-stepping';
 import { restoreReadingSessionAtStartup } from './app/startup-restoration';
 import { type ExternalOpenPayload, setupTauriListeners } from './app/tauri-events';
 import {
+  applyToolbarVisibility,
   applyWindowChrome,
   renderRecentFiles,
   showSplash,
@@ -688,7 +689,9 @@ export async function initializeApplication(modules: ApplicationModules): Promis
           console.error('Chrome preferences persistence failed:', error),
       },
     );
-    chromePreferences.observe(() => {
+    applyToolbarVisibility(document, chromePreferences.snapshot().toolbarVisible);
+    chromePreferences.observe((preferences) => {
+      applyToolbarVisibility(document, preferences.toolbarVisible);
       showTabBar(readerActions?.snapshot().documents.length ?? 0);
       syncReaderMenu();
     });

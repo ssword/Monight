@@ -312,6 +312,18 @@ const staticCommands = [
     }),
   },
   {
+    // View ▸ Hide Toolbar: the chrome preference; the markup toolbar is separate and stays.
+    id: 'view.toolbar',
+    run: (context) =>
+      context.preferences.update({
+        toolbarVisible: !context.preferences.snapshot().toolbarVisible,
+      }),
+    state: (input) => ({
+      enabled: hasDocument(input),
+      text: input.preferences.toolbarVisible ? 'Hide Toolbar' : 'Show Toolbar',
+    }),
+  },
+  {
     id: 'view.slideshow',
     run: (context) => context.toggleSlideshow(),
     state: whenDocument,

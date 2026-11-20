@@ -502,6 +502,41 @@ describe('native menu state', () => {
     expect(stateOf(hidden, 'view.full-screen')?.text).toBe('Enter Full Screen');
   });
 
+  it('View ▸ Hide Toolbar toggles the toolbar preference and names what it will do', async () => {
+    const { context, preferences } = fakeContext();
+    const documentOpen = input({ documentCount: 1 });
+
+    expect(stateOf(readerCommandStates(documentOpen), 'view.toolbar')).toMatchObject({
+      enabled: true,
+      text: 'Hide Toolbar',
+    });
+
+    await runReaderCommand('view.toolbar', context);
+    expect(preferences().toolbarVisible).toBe(false);
+    expect(
+      stateOf(
+        readerCommandStates({
+          ...documentOpen,
+          preferences: { ...DEFAULT_CHROME_PREFERENCES, toolbarVisible: false },
+        }),
+        'view.toolbar',
+      )?.text,
+    ).toBe('Show Toolbar');
+
+    await runReaderCommand('view.toolbar', context);
+    expect(preferences().toolbarVisible).toBe(true);
+  });
+
+  it('keeps the toolbar item disabled without a Document and shows its shortcut', () => {
+    expect(
+      stateOf(readerCommandStates(input({ activeDocument: null })), 'view.toolbar')?.enabled,
+    ).toBe(false);
+    const keybinds = defaultSettings('mac').keybinds;
+    expect(stateOf(readerCommandStates(input({ keybinds })), 'view.toolbar')?.accelerator).toBe(
+      'CmdOrCtrl+Alt+T',
+    );
+  });
+
   it('shows each command’s effective shortcut as its menu accelerator', () => {
     const keybinds = defaultSettings('mac').keybinds;
     keybinds.Fullscreen.binds = ['Ctrl+Alt+Enter'];
