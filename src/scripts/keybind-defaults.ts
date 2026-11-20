@@ -107,6 +107,8 @@ export const KEYBIND_ACTIONS: Readonly<Record<string, KeybindAction>> = {
   GoToPage: readerCommand('Go to Page…', 'go.page'),
   GoBack: readerCommand('Back', 'go.back'),
   GoForward: readerCommand('Forward', 'go.forward'),
+  GoPreviousItem: readerCommand('Previous Item', 'go.previous-item'),
+  GoNextItem: readerCommand('Next Item', 'go.next-item'),
   FitToWidth: { displayName: 'Zoom to Width', action: 'fitToWidth' },
   FitToPage: { displayName: 'Zoom to Fit', action: 'fitToPage' },
   ViewContinuous: readerCommand('Continuous Scroll', 'view.mode.continuous'),
@@ -236,6 +238,14 @@ export const KEYBIND_DEFAULTS_REVISIONS: readonly KeybindDefaultsRevision[] = [
     version: 6,
     binds: {
       Delete: ['Delete', 'Backspace'],
+    },
+  },
+  {
+    // Preview menu parity (ADR 0004): Go ▸ Previous Item and Next Item (#140).
+    version: 7,
+    binds: {
+      GoPreviousItem: ['Alt+ArrowUp'],
+      GoNextItem: ['Alt+ArrowDown'],
     },
   },
 ];

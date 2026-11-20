@@ -32,7 +32,12 @@ function fakeContext(overrides: Partial<ReaderCommandContext> = {}) {
       dispatched.push(action);
     },
     preferences: preferenceAuthority,
-    sidebar: { choose: (choice) => calls.push(`sidebar:${choice}`) },
+    sidebar: {
+      choose: (choice) => calls.push(`sidebar:${choice}`),
+      stepItem: async (direction) => {
+        calls.push(`step:${direction}`);
+      },
+    },
     markupToolbar: {
       toggle: () => calls.push('markup-toolbar'),
       chooseTool: (toolId) => calls.push(`markup-toolbar:${toolId}`),
@@ -138,6 +143,15 @@ describe('Reader Commands', () => {
     expect(nothingSelected.dispatched).toEqual([]);
   });
 
+  it.each([
+    ['go.previous-item', 'step:previous'],
+    ['go.next-item', 'step:next'],
+  ])('%s steps through the shown sidebar mode', async (id, call) => {
+    const { context, calls } = fakeContext();
+    expect(await runReaderCommand(id, context)).toBe(true);
+    expect(calls).toEqual([call]);
+  });
+
   it('Go to Page… does nothing when the request is cancelled', async () => {
     const { context, dispatched } = fakeContext({ requestPage: async () => null });
     await runReaderCommand('go.page', context);
@@ -212,6 +226,7 @@ const input = (overrides: Partial<ReaderCommandStateInput> = {}): ReaderCommandS
   tabBarKeptShown: false,
   textFieldFocused: false,
   annotationSelected: false,
+  itemStepping: { previous: true, next: true },
   ...overrides,
 });
 
@@ -348,6 +363,31 @@ describe('native menu state', () => {
     );
     expect(stateOf(last, 'go.previous-page')?.enabled).toBe(true);
     expect(stateOf(last, 'go.next-page')?.enabled).toBe(false);
+  });
+
+  it('enables Previous Item and Next Item only when the shown mode has an item to step to', () => {
+    const both = readerCommandStates(input({ itemStepping: { previous: true, next: true } }));
+    expect(stateOf(both, 'go.previous-item')?.enabled).toBe(true);
+    expect(stateOf(both, 'go.next-item')?.enabled).toBe(true);
+
+    const atLast = readerCommandStates(input({ itemStepping: { previous: true, next: false } }));
+    expect(stateOf(atLast, 'go.previous-item')?.enabled).toBe(true);
+    expect(stateOf(atLast, 'go.next-item')?.enabled).toBe(false);
+
+    const none = readerCommandStates(
+      input({
+        activeDocument: null,
+        documentCount: 0,
+        itemStepping: { previous: true, next: true },
+      }),
+    );
+    expect(stateOf(none, 'go.previous-item')?.enabled).toBe(false);
+  });
+
+  it('shows ⌥↑ and ⌥↓ beside Previous Item and Next Item', () => {
+    const states = readerCommandStates(input({ keybinds: defaultSettings('mac').keybinds }));
+    expect(stateOf(states, 'go.previous-item')?.accelerator).toBe('Alt+ArrowUp');
+    expect(stateOf(states, 'go.next-item')?.accelerator).toBe('Alt+ArrowDown');
   });
 
   it('enables Back and Forward only when Navigation History has somewhere to go', () => {

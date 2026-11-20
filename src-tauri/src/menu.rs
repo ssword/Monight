@@ -202,6 +202,9 @@ const GO_MENU: &[ReaderMenuEntry] = &[
     Separator,
     command("go.page", "Go to Page\u{2026}"),
     Separator,
+    command("go.previous-item", "Previous Item"),
+    command("go.next-item", "Next Item"),
+    Separator,
     command("go.back", "Back"),
     command("go.forward", "Forward"),
 ];
