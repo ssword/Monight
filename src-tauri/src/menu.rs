@@ -191,6 +191,7 @@ const VIEW_MENU: &[ReaderMenuEntry] = &[
         id: "view.appearance",
         text: "Appearance",
     },
+    command("view.toolbar", "Hide Toolbar"),
     Separator,
     command("view.slideshow", "Slideshow"),
     command("view.full-screen", "Enter Full Screen"),

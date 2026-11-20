@@ -194,6 +194,7 @@ describe('Chrome preferences storage', () => {
       sidebarMode: 'thumbnails',
       sidebarWidth: 280,
       markupToolbarVisible: true,
+      toolbarVisible: true,
       highlightColor: 'blue',
     });
     expect(tauriStores.values.get('chrome-preferences.json')?.get('chromePreferences')).toEqual({
@@ -202,6 +203,7 @@ describe('Chrome preferences storage', () => {
       sidebarMode: 'thumbnails',
       sidebarWidth: 280,
       markupToolbarVisible: true,
+      toolbarVisible: true,
       highlightColor: 'blue',
     } satisfies PersistedChromePreferences);
     expect(tauriStores.values.has('settings.json')).toBe(false);

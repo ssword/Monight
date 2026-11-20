@@ -654,6 +654,58 @@ describe('Delete shortcut', () => {
   });
 });
 
+describe('Toggle Toolbar shortcut', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    store.reset();
+  });
+
+  it('gives View ▸ Hide Toolbar CmdOrCtrl+Alt+T as a Reader Command', async () => {
+    const settings = await new SettingsManager('main', { platform: 'mac' }).load();
+
+    expect(settings.keybinds.ToggleToolbar).toEqual({
+      displayName: 'Show or Hide Toolbar',
+      binds: ['CmdOrCtrl+Alt+T'],
+      action: 'readerCommand',
+      data: 'view.toolbar',
+    });
+  });
+
+  it('adds it to an install stored before it, without taking a key the reader chose', async () => {
+    const stored = structuredClone(
+      (await new SettingsManager('main', { platform: 'mac' }).load()).keybinds,
+    );
+    delete stored.ToggleToolbar;
+    stored.Print.binds = ['CmdOrCtrl+Alt+T'];
+    store.reset({
+      storageSchemaVersion: SETTINGS_SCHEMA_VERSION,
+      keybinds: stored,
+      keybindDefaultsVersion: 6,
+    });
+
+    const settings = await new SettingsManager('main', { platform: 'mac' }).load();
+
+    expect(settings.keybinds.Print.binds).toEqual(['CmdOrCtrl+Alt+T']);
+    expect(settings.keybinds.ToggleToolbar.binds).toEqual([]);
+  });
+
+  it('adds it to an install stored under version 6', async () => {
+    const stored = structuredClone(
+      (await new SettingsManager('main', { platform: 'mac' }).load()).keybinds,
+    );
+    delete stored.ToggleToolbar;
+    store.reset({
+      storageSchemaVersion: SETTINGS_SCHEMA_VERSION,
+      keybinds: stored,
+      keybindDefaultsVersion: 6,
+    });
+
+    const settings = await new SettingsManager('main', { platform: 'mac' }).load();
+
+    expect(settings.keybinds.ToggleToolbar.binds).toEqual(['CmdOrCtrl+Alt+T']);
+  });
+});
+
 describe('Rotate shortcuts behind the Page Rotation gate', () => {
   beforeEach(() => {
     vi.clearAllMocks();

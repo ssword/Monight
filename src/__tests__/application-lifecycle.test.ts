@@ -249,6 +249,7 @@ vi.mock('../app/startup-restoration', async (importOriginal) => {
 });
 vi.mock('../app/ui', () => ({
   applyWindowChrome: vi.fn(),
+  applyToolbarVisibility: vi.fn(),
   renderRecentFiles: vi.fn(),
   showSplash: vi.fn(),
   showViewer: vi.fn(),
