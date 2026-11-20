@@ -1,4 +1,4 @@
-// Bookmarks (CONTEXT.md): pages the reader has marked, kept per canonical
+// Bookmarks (GLOSSARY.md): pages the reader has marked, kept per canonical
 // Document path in their own durable store. They are reader-owned state:
 // separate from the Reading Session and from Document edits, and never written
 // into the PDF, so toggling one is not a Document edit.

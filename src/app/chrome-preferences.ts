@@ -1,5 +1,5 @@
 // App-wide reader chrome preferences: shared by every Document and kept
-// outside the Reading Session and Visual State (see CONTEXT.md).
+// outside the Reading Session and Visual State (see GLOSSARY.md).
 //
 // Adding a preference: extend ChromePreferences, DEFAULT_CHROME_PREFERENCES and
 // PREFERENCE_PARSERS. Stored values are parsed field by field, so older files

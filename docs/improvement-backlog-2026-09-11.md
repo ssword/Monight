@@ -3,7 +3,7 @@
 Candidate work identified after the [2026-09-11 migration completion
 review](embedpdf-migration-review-2026-09-11.md). Nothing here is scheduled or specified. Items
 that become real work should be turned into GitHub issues following `docs/agents/issue-tracker.md`,
-and any new domain term must first be defined in `CONTEXT.md`.
+and any new domain term must first be defined in `GLOSSARY.md`.
 
 ## Priority: finish #66 before new features
 
@@ -32,7 +32,7 @@ implementation. Everything below builds on a verified reading and annotation bas
 - **Archive `docs/code-review.md`.** It reviews version 1.0.6 from 2026-07-30 and its title
   reads as current. Move it under `docs/archive/` or delete it.
 - **Update the README project structure.** It still describes "PDF viewer logic" and omits
-  `src/reader/` (domain layer), `CONTEXT.md`, and `docs/adr/`, which are the architecture entry
+  `src/reader/` (domain layer), `GLOSSARY.md`, and `docs/adr/`, which are the architecture entry
   points a new contributor needs.
 
 ## Annotation tool expansion
