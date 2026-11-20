@@ -97,8 +97,13 @@ async function run() {
     selectedPages: () => [],
     currentPage: () => null,
     toggleTabBar: () => {},
+    switchTab: async () => {},
+    activateDocumentAt: async () => false,
     editTextField: () => false,
     selectedAnnotation: () => null,
+    bookmarks: null,
+    magnifier: null,
+    find: null,
   };
   registerKeybindActions({
     keybindManager: manager,
@@ -108,7 +113,6 @@ async function run() {
     openSettings: async () => {},
     updateTabBarVisibility: () => {},
     updateUI: () => {},
-    openSearch: () => {},
     goToPage,
     runReaderCommand: (id) => runReaderCommand(id, commandContext),
     dispatchReaderAction: async (action) => {

@@ -279,6 +279,12 @@
   cursor: pointer;
 }
 
+.sidebar-outline-link[data-selected="true"],
+.sidebar-annotation[data-selected="true"] {
+  color: var(--text-on-accent);
+  background-color: var(--accent-color);
+}
+
 .sidebar-outline-link:disabled {
   color: var(--text-secondary);
   cursor: default;
@@ -455,4 +461,76 @@ body.presentation-mode .reader-sidebar {
 .sidebar-annotation-meta {
   color: var(--text-secondary);
   font-size: 11px;
+}
+
+/* Bookmarks mode: a thumbnail and page label per Bookmark, with a remove button. */
+.sidebar-bookmark-list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin: 0;
+  padding: 16px 20px;
+  list-style: none;
+}
+
+.sidebar-bookmark-item {
+  position: relative;
+}
+
+.sidebar-bookmark {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 0;
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: 12px;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.sidebar-bookmark[aria-current="true"] .sidebar-thumbnail-image {
+  border-color: var(--accent-color);
+}
+
+.sidebar-bookmark-label {
+  padding: 1px 8px;
+  border-radius: 8px;
+}
+
+.sidebar-bookmark[aria-current="true"] .sidebar-bookmark-label {
+  color: var(--text-on-accent);
+  background-color: var(--accent-color);
+}
+
+.sidebar-bookmark-remove {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  color: var(--text-secondary);
+  line-height: 1;
+  background: var(--capsule-bg);
+  border: 0;
+  border-radius: 10px;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.sidebar-bookmark-item:hover .sidebar-bookmark-remove,
+.sidebar-bookmark-remove:focus-visible {
+  opacity: 1;
+}
+
+.sidebar-bookmarks-empty {
+  margin: 0;
+  padding: 16px 20px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.4;
 }

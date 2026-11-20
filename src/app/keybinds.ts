@@ -12,7 +12,6 @@ interface KeybindContext {
   openSettings: () => Promise<void>;
   updateTabBarVisibility: () => void;
   updateUI: () => void;
-  openSearch: () => void;
   goToPage: (page: number) => Promise<void>;
   /** Runs a native View, Go or Tools command (reader-commands.ts) by id. */
   runReaderCommand: (id: string) => Promise<boolean>;
@@ -34,7 +33,6 @@ export function registerKeybindActions({
   openSettings,
   updateTabBarVisibility,
   updateUI,
-  openSearch,
   goToPage,
   runReaderCommand,
   dispatchReaderAction,
@@ -57,10 +55,6 @@ export function registerKeybindActions({
     await openSettings();
   });
 
-  keybindManager.registerAction('find', () => {
-    openSearch();
-  });
-
   // Tab management
   keybindManager.registerAction('closeTab', async () => {
     const activeDocumentPath = getReadingSessionSnapshot().activeDocumentPath;
@@ -73,31 +67,6 @@ export function registerKeybindActions({
   keybindManager.registerAction('reopenTab', async () => {
     await dispatchReaderAction({ type: 'reopenLastClosedDocument' });
     updateTabBarVisibility();
-  });
-
-  keybindManager.registerAction('nextTab', async () => {
-    const snapshot = getReadingSessionSnapshot();
-    const currentIndex = snapshot.documents.findIndex(
-      ({ filePath }) => filePath === snapshot.activeDocumentPath,
-    );
-    if (snapshot.documents.length > 1) {
-      const document = snapshot.documents[(currentIndex + 1) % snapshot.documents.length];
-      if (document)
-        await dispatchReaderAction({ type: 'activateDocument', filePath: document.filePath });
-    }
-  });
-
-  keybindManager.registerAction('previousTab', async () => {
-    const snapshot = getReadingSessionSnapshot();
-    const currentIndex = snapshot.documents.findIndex(
-      ({ filePath }) => filePath === snapshot.activeDocumentPath,
-    );
-    if (snapshot.documents.length > 1) {
-      const index = (currentIndex - 1 + snapshot.documents.length) % snapshot.documents.length;
-      const document = snapshot.documents[index];
-      if (document)
-        await dispatchReaderAction({ type: 'activateDocument', filePath: document.filePath });
-    }
   });
 
   keybindManager.registerAction('switchToTab', async (_e, data) => {

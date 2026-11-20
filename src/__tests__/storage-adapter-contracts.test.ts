@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const tauriStores = vi.hoisted(() => {
   const values = new Map<string, Map<string, unknown>>();
@@ -21,6 +21,8 @@ const tauriStores = vi.hoisted(() => {
 
 vi.mock('@tauri-apps/plugin-store', () => ({ Store: { load: tauriStores.load } }));
 
+import { createBookmarkStorage } from '../app/bookmark-storage';
+import { type BookmarkStorage, loadBookmarks, type PersistedBookmarks } from '../app/bookmarks';
 import { loadChromePreferences, type PersistedChromePreferences } from '../app/chrome-preferences';
 import { createChromePreferencesStorage } from '../app/chrome-preferences-storage';
 import { createReadingSessionStorage } from '../app/reading-session-storage';
@@ -194,6 +196,7 @@ describe('Chrome preferences storage', () => {
       sidebarMode: 'thumbnails',
       sidebarWidth: 280,
       markupToolbarVisible: true,
+      toolbarVisible: true,
       highlightColor: 'blue',
     });
     expect(tauriStores.values.get('chrome-preferences.json')?.get('chromePreferences')).toEqual({
@@ -202,8 +205,66 @@ describe('Chrome preferences storage', () => {
       sidebarMode: 'thumbnails',
       sidebarWidth: 280,
       markupToolbarVisible: true,
+      toolbarVisible: true,
       highlightColor: 'blue',
     } satisfies PersistedChromePreferences);
     expect(tauriStores.values.has('settings.json')).toBe(false);
+  });
+});
+
+describe('Bookmark storage contract', () => {
+  const replacement: PersistedBookmarks = {
+    schemaVersion: 1,
+    documents: { '/docs/report.pdf': [2, 7] },
+  };
+
+  function expectBookmarkStorage(name: string, create: () => BookmarkStorage): void {
+    describe(name, () => {
+      it('reads nothing before the first write, then what was written', async () => {
+        const storage = create();
+
+        await expect(storage.read()).resolves.toBeUndefined();
+        await storage.write(replacement);
+
+        await expect(storage.read()).resolves.toEqual(replacement);
+      });
+
+      it('keeps Bookmarks by Document path across relaunches', async () => {
+        const first = await loadBookmarks(create(), { debounceMs: 0 });
+        first.toggle('/docs/report.pdf', 4);
+        await first.flush();
+
+        const nextLaunch = await loadBookmarks(create());
+
+        expect(nextLaunch.pages('/docs/report.pdf')).toEqual([4]);
+        expect(nextLaunch.pages('/docs/other.pdf')).toEqual([]);
+      });
+    });
+  }
+
+  describe('in-memory adapter', () => {
+    let stored: unknown;
+    beforeEach(() => {
+      stored = undefined;
+    });
+    expectBookmarkStorage('shared across launches', () => ({
+      read: async () => structuredClone(stored),
+      write: async (value) => {
+        stored = structuredClone(value);
+      },
+    }));
+  });
+
+  describe('production adapter', () => {
+    beforeEach(() => tauriStores.values.delete('bookmarks.json'));
+    expectBookmarkStorage('in its own bookmarks store', createBookmarkStorage);
+
+    it('never touches settings.json', async () => {
+      const bookmarks = await loadBookmarks(createBookmarkStorage(), { debounceMs: 0 });
+      bookmarks.toggle('/docs/report.pdf', 1);
+      await bookmarks.flush();
+
+      expect(tauriStores.values.has('settings.json')).toBe(false);
+    });
   });
 });

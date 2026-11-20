@@ -108,12 +108,18 @@ export interface DocumentWorkspace {
   access(query: DocumentQuery | null): DocumentAccess | null;
   activePresentation(): PresentationSurface | null;
   activeRenderingState(): ReturnType<DocumentRendering['getState']> | null;
+  /** A presented Document's current page and page count; null when not presented. */
+  documentPageState(filePath: string): { currentPage: number; pageCount: number } | null;
   activeReadingPosition(): { filePath: string; readingPosition: ReadingPosition } | null;
   viewTransform(filePath: string): DocumentViewTransform | null;
   /** The active Document's markup tool and why editing is unavailable, if it is. */
   activeMarkup(): ActiveMarkupState | null;
   /** Chooses a markup tool on the active Document, or null for text selection. */
   setActiveAnnotationTool(toolId: string | null, defaults?: AnnotationToolDefaults): void;
+  /** Whether the active Document has selected text. */
+  hasTextSelection(): boolean;
+  /** The active Document's selected text; empty when nothing is selected. */
+  selectedText(): Promise<string>;
   /** Marks the active Document's text selection; false when nothing was marked. */
   markupSelection(toolId: string, defaults: AnnotationToolDefaults): boolean;
   /** Selects an Annotation on its Document's rendering surface. */
@@ -848,6 +854,10 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
     activeRenderingState() {
       return activeRendering()?.getState() ?? null;
     },
+    documentPageState(filePath) {
+      const state = presented.get(filePath)?.rendering.getState();
+      return state ? { currentPage: state.currentPage, pageCount: state.totalPages } : null;
+    },
     activeReadingPosition() {
       const active = activeDocument();
       return active
@@ -881,6 +891,12 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
     },
     setActiveAnnotationTool(toolId, defaults) {
       activeRendering()?.setActiveAnnotationTool?.(toolId, defaults);
+    },
+    hasTextSelection() {
+      return activeRendering()?.hasTextSelection?.() ?? false;
+    },
+    async selectedText() {
+      return (await activeRendering()?.selectedText?.()) ?? '';
     },
     markupSelection(toolId, defaults) {
       return activeRendering()?.markupSelection?.(toolId, defaults) ?? false;

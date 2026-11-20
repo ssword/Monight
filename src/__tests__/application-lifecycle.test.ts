@@ -249,6 +249,7 @@ vi.mock('../app/startup-restoration', async (importOriginal) => {
 });
 vi.mock('../app/ui', () => ({
   applyWindowChrome: vi.fn(),
+  applyToolbarVisibility: vi.fn(),
   renderRecentFiles: vi.fn(),
   showSplash: vi.fn(),
   showViewer: vi.fn(),
@@ -418,8 +419,10 @@ function createModules(
           access: vi.fn(() => null),
           activePresentation: vi.fn(() => null),
           activeRenderingState: vi.fn(() => null),
+          documentPageState: vi.fn(() => null),
           activeMarkup: vi.fn(() => null),
           selectedAnnotation: vi.fn(() => null),
+          hasTextSelection: vi.fn(() => false),
           activeReadingPosition: vi.fn(() => ({
             filePath: '/docs/report.pdf',
             readingPosition: { page: 4, location: 0.5 },

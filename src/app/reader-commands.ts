@@ -5,7 +5,7 @@
 // enabled, checked and title state follows the reader.
 //
 // Command ids are the native menu item ids (src-tauri/src/menu.rs). Rust
-// forwards every `edit.*`, `view.*`, `go.*` and `tools.*` click as a
+// forwards every `edit.*`, `view.*`, `go.*`, `tools.*` and `window.*` click as a
 // `reader-command` event; `readerCommandStates` feeds `set_menu_item_states` and
 // `readerMenuSubmenus` fills the menus built from TypeScript lists.
 //
@@ -34,7 +34,7 @@ import type { KeybindConfig } from '../scripts/keybind-defaults';
 import type { ChromePreferences, ChromePreferencesAuthority } from './chrome-preferences';
 import type { ActiveMarkupState, DocumentSelectedAnnotation } from './document-workspace';
 import { isEditableMarkup, VERIFIED_MARKUP_TOOLS, type VerifiedMarkupTool } from './markup-tools';
-import type { SidebarChoice } from './reader-sidebar';
+import type { ItemStepping, SidebarChoice, StepDirection } from './reader-sidebar';
 import { tabBarShown } from './tab-bar';
 
 /**
@@ -57,7 +57,11 @@ export interface ReaderCommandContext {
   readonly dispatchReaderAction: DispatchReaderAction;
   readonly preferences: ChromePreferencesAuthority;
   /** The toolbar sidebar menu's own choice handler. */
-  readonly sidebar: { choose(choice: SidebarChoice): void } | null;
+  readonly sidebar: {
+    choose(choice: SidebarChoice): void;
+    /** Go ▸ Previous/Next Item: selects and goes to the neighbouring item of the shown mode. */
+    stepItem(direction: StepDirection): Promise<void>;
+  } | null;
   /** The markup toolbar's own Markup toggle and tool buttons. */
   readonly markupToolbar: { toggle(): void; chooseTool(toolId: string): void } | null;
   /** The Highlight split button's own click, for its text-markup tools. */
@@ -76,17 +80,53 @@ export interface ReaderCommandContext {
   readonly currentPage: () => number | null;
   /** View ▸ Show/Hide Tab Bar: keeps the tab bar shown for one Document, for this app run. */
   readonly toggleTabBar: () => void;
+  /** Window ▸ Show Previous/Next Tab: activates the neighbouring Document, wrapping around. */
+  readonly switchTab: (direction: StepDirection) => void | Promise<void>;
   /**
    * Undoes or redoes typing in the focused text field (Search, dialogs, a note);
    * false when focus is not in an editable element.
    */
   readonly editTextField: (kind: 'undo' | 'redo') => boolean;
+  /**
+   * Window ▸ <Document>: activates the open Document at this Reading Session
+   * index; false when there is none.
+   */
+  readonly activateDocumentAt: (index: number) => boolean | Promise<boolean>;
   /** The active Document's selected Annotation (transient), with the Document it belongs to. */
   readonly selectedAnnotation: () => DocumentSelectedAnnotation | null;
+  /**
+   * The reader's Bookmarks for the active Document. Toggling one is not a Document
+   * edit: no Reader Action, unsaved indicator or Recovery Draft.
+   */
+  readonly bookmarks: { toggleCurrentPage(): void } | null;
+  /** The magnifier loupe (transient chrome state); null before the reader mounts. */
+  readonly magnifier: { toggle(): void } | null;
+  /**
+   * Edit ▸ Find: opens the find bar, or steps through the search results
+   * (wrapping around, each jump recorded in Navigation History); with no
+   * active search a step opens the find bar.
+   */
+  readonly find: {
+    open(): void;
+    step(direction: 'next' | 'previous'): void;
+    /** Puts the selected text into the search and runs it. */
+    useSelection(): Promise<void>;
+  } | null;
+}
+
+/** One open Document as the Window menu lists it, in Reading Session order. */
+export interface OpenDocumentEntry {
+  readonly name: string;
+  readonly currentPage: number;
+  /** 0 when the page count is not known yet. */
+  readonly pageCount: number;
+  readonly active: boolean;
 }
 
 export interface ReaderCommandStateInput {
   readonly documentCount: number;
+  /** The open Documents in Reading Session order, for the Window menu list. */
+  readonly openDocuments: readonly OpenDocumentEntry[];
   readonly activeDocument: {
     readonly viewMode: ViewMode;
     readonly filterSettings: FilterSettings;
@@ -99,12 +139,20 @@ export interface ReaderCommandStateInput {
   /** Whether the active Document's Navigation History has somewhere to go. */
   readonly canGoBack: boolean;
   readonly canGoForward: boolean;
+  /** Whether the shown sidebar mode has a previous and a next item to step to. */
+  readonly itemStepping: ItemStepping;
   /** Whether View ▸ Show Tab Bar keeps the tab bar shown (transient, never persisted). */
   readonly tabBarKeptShown: boolean;
   /** Whether focus is in an editable element, whose own typing Undo and Redo then edit. */
   readonly textFieldFocused: boolean;
   /** Whether an Annotation is selected on the active Document. */
   readonly annotationSelected: boolean;
+  /** Whether the active Document's current page has a Bookmark. */
+  readonly currentPageBookmarked: boolean;
+  /** Whether the magnifier loupe is shown (transient, never persisted). */
+  readonly magnifierVisible: boolean;
+  /** Whether the active Document has selected text. */
+  readonly textSelected: boolean;
   /**
    * The effective keybinds; each command's menu item shows its shortcut as
    * its accelerator. Absent: accelerators are left as they are.
@@ -138,6 +186,9 @@ const APPEARANCE_SUBMENU = 'view.appearance';
 const ANNOTATE_SUBMENU = 'tools.annotate';
 /** The Tools menu's Rotate items, listed inline from TypeScript behind the gate. */
 const ROTATE_SECTION = 'tools.rotate';
+/** The Window menu's list of open Documents; items are `window.document.<n>`, 1-based. */
+const DOCUMENT_LIST = 'window.document';
+const DOCUMENT_ENTRY = /^window\.document\.([1-9]\d*)$/;
 
 const ROTATE_ITEMS = [
   { id: `${ROTATE_SECTION}.left`, text: 'Rotate Left', direction: 'counterclockwise' },
@@ -203,9 +254,49 @@ const historyCommand = <Id extends 'edit.undo' | 'edit.redo'>(
   }),
 });
 
+/** Window ▸ Show Previous/Next Tab: needs a second Document to switch to. */
+const tabCommand = <Id extends 'window.previous-tab' | 'window.next-tab'>(
+  id: Id,
+  direction: StepDirection,
+): ReaderCommand<Id> => ({
+  id,
+  run: (context) => context.switchTab(direction),
+  state: (input) => ({ enabled: input.documentCount >= 2 }),
+});
+
+/** Go ▸ Previous Item and Next Item: step through the shown sidebar mode's items. */
+const stepItemCommand = <Id extends 'go.previous-item' | 'go.next-item'>(
+  id: Id,
+  direction: StepDirection,
+): ReaderCommand<Id> => ({
+  id,
+  run: (context) => context.sidebar?.stepItem(direction),
+  state: (input) => ({ enabled: hasDocument(input) && input.itemStepping[direction] }),
+});
+
 const staticCommands = [
   historyCommand('edit.undo', 'undo'),
   historyCommand('edit.redo', 'redo'),
+  {
+    id: 'edit.find',
+    run: (context) => context.find?.open(),
+    state: whenDocument,
+  },
+  {
+    id: 'edit.find-next',
+    run: (context) => context.find?.step('next'),
+    state: whenDocument,
+  },
+  {
+    id: 'edit.find-previous',
+    run: (context) => context.find?.step('previous'),
+    state: whenDocument,
+  },
+  {
+    id: 'edit.find.use-selection',
+    run: (context) => context.find?.useSelection(),
+    state: (input) => ({ enabled: hasDocument(input) && input.textSelected }),
+  },
   {
     // Edit ▸ Delete (Delete and Backspace by default; the keybinds leave those keys
     // to text fields) deletes the selected Annotation from its own Document.
@@ -233,10 +324,13 @@ const staticCommands = [
       };
     },
   },
+  tabCommand('window.previous-tab', 'previous'),
+  tabCommand('window.next-tab', 'next'),
   sidebarCommand('hidden'),
   sidebarCommand('thumbnails'),
   sidebarCommand('tableOfContents'),
   sidebarCommand('annotations'),
+  sidebarCommand('bookmarks'),
   viewModeCommand('continuous'),
   viewModeCommand('single'),
   viewModeCommand('spread'),
@@ -251,6 +345,19 @@ const staticCommands = [
     state: (input) => ({
       enabled: hasDocument(input),
       text: input.preferences.markupToolbarVisible ? 'Hide Markup Toolbar' : 'Show Markup Toolbar',
+    }),
+  },
+  {
+    // View ▸ Hide Toolbar: the chrome preference; the markup toolbar is separate and stays.
+    id: 'view.toolbar',
+    run: (context) =>
+      context.preferences.update({
+        toolbarVisible: !context.preferences.snapshot().toolbarVisible,
+      }),
+    state: (input) => ({
+      // Enabled with no Document too, so a hidden toolbar can always be shown again.
+      enabled: true,
+      text: input.preferences.toolbarVisible ? 'Hide Toolbar' : 'Show Toolbar',
     }),
   },
   {
@@ -289,6 +396,8 @@ const staticCommands = [
     },
     state: whenDocument,
   },
+  stepItemCommand('go.previous-item', 'previous'),
+  stepItemCommand('go.next-item', 'next'),
   {
     id: 'go.back',
     run: (context) => context.dispatchReaderAction(READER_ACTION_COMMANDS.back()),
@@ -298,6 +407,24 @@ const staticCommands = [
     id: 'go.forward',
     run: (context) => context.dispatchReaderAction(READER_ACTION_COMMANDS.forward()),
     state: (input) => ({ enabled: hasDocument(input) && input.canGoForward }),
+  },
+  {
+    // Allowed on protected Documents: a Bookmark is the reader's, never written to the PDF.
+    id: 'tools.bookmark',
+    run: (context) => context.bookmarks?.toggleCurrentPage(),
+    state: (input) => ({
+      enabled: hasDocument(input),
+      text: input.currentPageBookmarked ? 'Remove Bookmark' : 'Add Bookmark',
+    }),
+  },
+  {
+    // The key is left to text fields by the keybinds and the menu shows no accelerator for it.
+    id: 'tools.magnifier',
+    run: (context) => context.magnifier?.toggle(),
+    state: (input) => ({
+      enabled: hasDocument(input),
+      text: input.magnifierVisible ? 'Hide Magnifier' : 'Show Magnifier',
+    }),
   },
   {
     id: 'tools.text-selection',
@@ -316,6 +443,7 @@ export type ReaderCommandId =
   | (typeof staticCommands)[number]['id']
   | `${typeof APPEARANCE_SUBMENU}.${AppearancePresetId}`
   | `${typeof ANNOTATE_SUBMENU}.${string}`
+  | `${typeof DOCUMENT_LIST}.${number}`
   | (typeof ROTATE_ITEMS)[number]['id'];
 
 const appearanceCommands = (): ReaderCommand[] =>
@@ -328,6 +456,18 @@ const appearanceCommands = (): ReaderCommand[] =>
         input.activeDocument !== null &&
           presetForFilterSettings(input.activeDocument.filterSettings) === id,
       ),
+  }));
+
+const documentTitle = ({ name, currentPage, pageCount }: OpenDocumentEntry): string =>
+  pageCount > 0 ? `${name} (Page ${Math.max(1, currentPage)} of ${pageCount})` : name;
+
+const documentCommands = (documents: readonly OpenDocumentEntry[]): ReaderCommand[] =>
+  documents.map((document, index) => ({
+    id: `${DOCUMENT_LIST}.${index + 1}`,
+    run: (context) => {
+      void context.activateDocumentAt(index);
+    },
+    state: () => ({ enabled: true, checked: document.active, text: documentTitle(document) }),
   }));
 
 const annotateCommands = (tools: readonly VerifiedMarkupTool[]): ReaderCommand[] =>
@@ -366,8 +506,13 @@ const rotateCommands = (): ReaderCommand[] =>
 function readerCommands(
   tools: readonly VerifiedMarkupTool[],
   pageRotation: boolean,
+  documents: readonly OpenDocumentEntry[] = [],
 ): readonly ReaderCommand[] {
-  const commands = [...staticCommands, ...(pageRotation ? rotateCommands() : [])];
+  const commands = [
+    ...staticCommands,
+    ...(pageRotation ? rotateCommands() : []),
+    ...documentCommands(documents),
+  ];
   const textSelection = commands.findIndex(({ id }) => id === 'tools.text-selection');
   const zoomOut = commands.findIndex(({ id }) => id === 'view.zoom.out');
   // Menu order: presets after the markup toolbar item, tools after Text Selection.
@@ -383,6 +528,8 @@ export async function runReaderCommand(
   tools: readonly VerifiedMarkupTool[] = VERIFIED_MARKUP_TOOLS,
   pageRotation: boolean = PAGE_ROTATION_VERIFIED,
 ): Promise<boolean> {
+  const entry = DOCUMENT_ENTRY.exec(id);
+  if (entry) return context.activateDocumentAt(Number(entry[1]) - 1);
   const command = readerCommands(tools, pageRotation).find((candidate) => candidate.id === id);
   if (!command) return false;
   await command.run(context);
@@ -395,6 +542,7 @@ export async function runReaderCommand(
  * both read this one map.
  */
 export const LEGACY_KEYBIND_COMMANDS: Readonly<Record<string, ReaderCommandId>> = {
+  find: 'edit.find',
   resetZoom: 'view.zoom.actual-size',
   fitToPage: 'view.zoom.fit',
   fitToWidth: 'view.zoom.width',
@@ -404,7 +552,15 @@ export const LEGACY_KEYBIND_COMMANDS: Readonly<Record<string, ReaderCommandId>> 
   toggleFullscreen: 'view.full-screen',
   previousPage: 'go.previous-page',
   nextPage: 'go.next-page',
+  previousTab: 'window.previous-tab',
+  nextTab: 'window.next-tab',
 };
+
+/** The page steps, whose menu items show Preview's bare ↑ / ↓ keys. */
+const PAGE_STEP_COMMANDS: ReadonlySet<string> = new Set(['go.previous-page', 'go.next-page']);
+
+const pageStepAccelerator = (bind: string): string | null =>
+  menuAccelerator(bind) ?? (/^Arrow(Up|Down)$/.test(bind) ? bind : null);
 
 /** Each command's menu accelerator: its first binding the native menu can show. */
 function commandAccelerators(
@@ -414,7 +570,8 @@ function commandAccelerators(
   for (const { action, data, binds } of Object.values(keybinds)) {
     const commandId = action === 'readerCommand' ? data : LEGACY_KEYBIND_COMMANDS[action];
     if (!commandId || accelerators.has(commandId)) continue;
-    const accelerator = binds.map(menuAccelerator).find((candidate) => candidate !== null);
+    const show = PAGE_STEP_COMMANDS.has(commandId) ? pageStepAccelerator : menuAccelerator;
+    const accelerator = binds.map(show).find((candidate) => candidate !== null);
     if (accelerator) accelerators.set(commandId, accelerator);
   }
   return accelerators;
@@ -427,7 +584,7 @@ export function readerCommandStates(
   pageRotation: boolean = PAGE_ROTATION_VERIFIED,
 ): ReaderCommandState[] {
   const accelerators = input.keybinds ? commandAccelerators(input.keybinds) : null;
-  return readerCommands(tools, pageRotation).map((command) => ({
+  return readerCommands(tools, pageRotation, input.openDocuments).map((command) => ({
     id: command.id,
     ...command.state(input),
     ...(accelerators ? { accelerator: accelerators.get(command.id) ?? null } : {}),
@@ -441,6 +598,7 @@ export function readerCommandStates(
 export function readerMenuSubmenus(
   tools: readonly VerifiedMarkupTool[] = VERIFIED_MARKUP_TOOLS,
   pageRotation: boolean = PAGE_ROTATION_VERIFIED,
+  openDocuments: readonly OpenDocumentEntry[] = [],
 ): ReaderMenuSubmenu[] {
   return [
     {
@@ -457,6 +615,13 @@ export function readerMenuSubmenus(
     {
       id: ROTATE_SECTION,
       items: pageRotation ? ROTATE_ITEMS.map(({ id, text }) => ({ id, text })) : [],
+    },
+    {
+      id: DOCUMENT_LIST,
+      items: openDocuments.map((document, index) => ({
+        id: `${DOCUMENT_LIST}.${index + 1}`,
+        text: documentTitle(document),
+      })),
     },
   ];
 }

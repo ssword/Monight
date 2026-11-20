@@ -87,6 +87,10 @@ export interface EmbedPdfViewerRuntime {
   open(request: EmbedPdfOpenRequest): Promise<void>;
   activeAnnotationTool(): string | null;
   setActiveAnnotationTool(toolId: string | null, defaults?: AnnotationToolDefaults): void;
+  /** Whether the page has selected text. */
+  hasTextSelection(): boolean;
+  /** The selected text, lines joined by spaces; empty when nothing is selected. */
+  selectedText(): Promise<string>;
   /** Marks the text selection with a text-markup tool; false when nothing is selected. */
   markupSelection(toolId: string, defaults: AnnotationToolDefaults): boolean;
   pageCount(): number;
@@ -449,6 +453,10 @@ export async function createEmbedPdfViewerRuntime({
       callbacks.stateChanged();
     }),
     annotationScope.onActiveToolChange(() => callbacks.stateChanged()),
+    // Edit ▸ Find ▸ Use Selection for Find is enabled while text is selected.
+    selectionScope.onSelectionChange(() => {
+      if (!destroyed) callbacks.stateChanged();
+    }),
     scroll.onPageChange((event) => {
       if (event.documentId !== documentId) return;
       callbacks.stateChanged();
@@ -647,6 +655,16 @@ export async function createEmbedPdfViewerRuntime({
       if (toolId !== null && defaults) annotations.setToolDefaults(toolId, { ...defaults });
       annotationScope.setActiveTool(toolId);
     },
+    hasTextSelection: () => !destroyed && selectionScope.getState().selection !== null,
+    selectedText: () =>
+      destroyed || !selectionScope.getState().selection
+        ? Promise.resolve('')
+        : new Promise<string>((resolve) =>
+            selectionScope.getSelectedText().wait(
+              (lines) => resolve(lines.join(' ')),
+              () => resolve(''),
+            ),
+          ),
     markupSelection(toolId, defaults) {
       if (destroyed || readOnlyReason !== null) return false;
       const tool = annotations.getTool(toolId);

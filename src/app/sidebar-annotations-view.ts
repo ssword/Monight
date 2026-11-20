@@ -8,7 +8,12 @@ import type {
   DocumentAnnotationKind,
   DocumentAnnotationSnapshot,
 } from '../reader/document-queries';
-import type { SidebarDocument, SidebarModeContext, SidebarModeView } from './reader-sidebar';
+import type {
+  SidebarDocument,
+  SidebarItem,
+  SidebarModeContext,
+  SidebarModeView,
+} from './reader-sidebar';
 
 const KIND_LABELS: Readonly<Record<DocumentAnnotationKind, string>> = {
   highlight: 'Highlight',
@@ -60,6 +65,7 @@ function renderEntry(annotation: DocumentAnnotationSnapshot): HTMLLIElement {
 export function createAnnotationsView({
   dispatchReaderAction,
   revealAnnotation,
+  itemsChanged,
 }: SidebarModeContext): SidebarModeView {
   const element = document.createElement('div');
   element.className = 'sidebar-annotations';
@@ -68,6 +74,33 @@ export function createAnnotationsView({
   let shown: { filePath: string; signature: string } | null = null;
   let latest: SidebarDocument | null = null;
   let entries = new Map<string, DocumentAnnotationSnapshot>();
+  // Annotations in the order the list shows them (by page); what Previous/Next Item step through.
+  let ordered: DocumentAnnotationSnapshot[] = [];
+  let selectedKey: string | null = null;
+
+  const markSelected = () => {
+    for (const button of element.querySelectorAll<HTMLElement>('.sidebar-annotation')) {
+      if (button.dataset.annotationId === selectedKey) {
+        button.dataset.selected = 'true';
+        button.scrollIntoView?.({ block: 'nearest' });
+      } else {
+        delete button.dataset.selected;
+      }
+    }
+  };
+  const activate = async (annotation: DocumentAnnotationSnapshot) => {
+    if (!shown) return;
+    const { filePath } = shown;
+    selectedKey = annotation.id;
+    markSelected();
+    itemsChanged();
+    await dispatchReaderAction({
+      type: 'activateDocumentTarget',
+      filePath,
+      target: { readingPosition: { ...annotation.readingPosition } },
+    });
+    revealAnnotation(filePath, annotation.id);
+  };
   let loading = false;
   let reloadRequested = false;
   let destroyed = false;
@@ -77,6 +110,9 @@ export function createAnnotationsView({
     if (shown?.filePath === filePath && shown.signature === signature) return;
     shown = { filePath, signature };
     entries = new Map(annotations.map((annotation) => [annotation.id, annotation]));
+    ordered = [...annotations].sort((left, right) => left.pageNumber - right.pageNumber);
+    if (!entries.has(selectedKey ?? '')) selectedKey = null;
+    itemsChanged();
     if (annotations.length === 0) {
       const empty = document.createElement('p');
       empty.className = 'sidebar-annotations-empty';
@@ -105,12 +141,16 @@ export function createAnnotationsView({
         return group;
       });
     element.replaceChildren(...groups);
+    markSelected();
   };
 
   const clear = () => {
     shown = null;
     entries = new Map();
+    ordered = [];
+    selectedKey = null;
     element.replaceChildren();
+    itemsChanged();
   };
 
   const load = async (): Promise<void> => {
@@ -149,12 +189,7 @@ export function createAnnotationsView({
         : null;
     const annotation = entries.get(button?.dataset.annotationId ?? '');
     if (!shown || !annotation) return;
-    const { filePath } = shown;
-    void dispatchReaderAction({
-      type: 'activateDocumentTarget',
-      filePath,
-      target: { readingPosition: { ...annotation.readingPosition } },
-    }).then(() => revealAnnotation(filePath, annotation.id));
+    void activate(annotation);
   });
 
   return {
@@ -167,6 +202,13 @@ export function createAnnotationsView({
       }
       void load();
     },
+    items: (): SidebarItem[] =>
+      ordered.map((annotation) => ({
+        key: annotation.id,
+        page: annotation.pageNumber,
+        activate: () => activate(annotation),
+      })),
+    selectedItemKey: () => selectedKey,
     destroy() {
       destroyed = true;
       clear();

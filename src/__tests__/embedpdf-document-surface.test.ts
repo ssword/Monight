@@ -53,6 +53,8 @@ const createViewerRuntime = (
   renderThumbnail: vi.fn(async () => document.createElement('canvas')),
   activeAnnotationTool: () => null,
   setActiveAnnotationTool: vi.fn(),
+  hasTextSelection: vi.fn(() => false),
+  selectedText: vi.fn(async () => ''),
   markupSelection: vi.fn(() => false),
   annotations: () => [],
   revealAnnotation: vi.fn(),
