@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { DEFAULT_CHROME_PREFERENCES } from '../app/chrome-preferences';
 import { createNativeMenuSync, createReaderMenu } from '../app/native-menu';
-import type { ReaderCommandContext } from '../app/reader-commands';
+import type { ReaderCommandContext, ReaderCommandStateInput } from '../app/reader-commands';
 import { type FilterSettings, PRESETS } from '../scripts/filters';
 
 const recordInvoke = () => {
@@ -125,6 +125,7 @@ describe('native menu state sync', () => {
       nativeMenu: createNativeMenuSync(invoke),
       stateInput: () => ({
         documentCount: 1,
+        openDocuments: [],
         activeDocument: {
           viewMode,
           filterSettings: { ...PRESETS.default } as FilterSettings,
@@ -151,7 +152,8 @@ describe('native menu state sync', () => {
     await readerMenu.install();
     const installed = calls.map(([command]) => command);
     expect(installed).toEqual([
-      // Appearance, Annotate, and the Rotate section (empty until verified).
+      // Appearance, Annotate, the Rotate section (empty until verified) and the Window list.
+      'set_menu_submenu_items',
       'set_menu_submenu_items',
       'set_menu_submenu_items',
       'set_menu_submenu_items',
@@ -191,5 +193,55 @@ describe('native menu state sync', () => {
         },
       ],
     ]);
+  });
+});
+
+describe('Window menu Document list', () => {
+  const stateWith = (names: string[], active: number, page: number) =>
+    ({
+      documentCount: names.length,
+      openDocuments: names.map((name, index) => ({
+        name,
+        currentPage: index === active ? page : 1,
+        pageCount: 5,
+        active: index === active,
+      })),
+      activeDocument: null,
+      preferences: DEFAULT_CHROME_PREFERENCES,
+      markup: null,
+      fullScreen: false,
+      canGoBack: false,
+      canGoForward: false,
+      tabBarKeptShown: false,
+      textFieldFocused: false,
+      annotationSelected: false,
+    }) as ReaderCommandStateInput;
+
+  it('relists on opening and closing, and retitles on page changes without relisting', async () => {
+    const { invoke, calls } = recordInvoke();
+    let input = stateWith(['a.pdf'], 0, 1);
+    const readerMenu = createReaderMenu({
+      nativeMenu: createNativeMenuSync(invoke),
+      stateInput: () => input,
+      context: () => null,
+    });
+    const listings = () =>
+      calls.filter(
+        ([command, args]) =>
+          command === 'set_menu_submenu_items' &&
+          (args as { submenuId: string }).submenuId === 'window.document',
+      );
+    await readerMenu.install();
+    expect(listings()).toHaveLength(1);
+
+    input = stateWith(['a.pdf'], 0, 4);
+    await readerMenu.sync();
+    expect(listings()).toHaveLength(1);
+    expect(JSON.stringify(calls[calls.length - 1])).toContain('a.pdf (Page 4 of 5)');
+
+    input = stateWith(['a.pdf', 'b.pdf'], 1, 2);
+    await readerMenu.sync();
+    expect(listings()).toHaveLength(2);
+    expect((listings()[1]?.[1] as { items: unknown[] }).items).toHaveLength(2);
   });
 });

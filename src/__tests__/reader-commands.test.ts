@@ -9,6 +9,7 @@ import {
   type ReaderCommandContext,
   type ReaderCommandStateInput,
   readerCommandStates,
+  readerMenuSubmenus,
   runReaderCommand,
 } from '../app/reader-commands';
 import type { ReaderAction } from '../reader/reader-actions';
@@ -60,6 +61,10 @@ function fakeContext(overrides: Partial<ReaderCommandContext> = {}) {
     },
     editTextField: () => false,
     selectedAnnotation: () => null,
+    activateDocumentAt: async (index) => {
+      calls.push(`document:${index}`);
+      return true;
+    },
     ...overrides,
   };
   return {
@@ -221,6 +226,7 @@ describe('Reader Commands', () => {
 
 const input = (overrides: Partial<ReaderCommandStateInput> = {}): ReaderCommandStateInput => ({
   documentCount: 1,
+  openDocuments: [],
   activeDocument: {
     viewMode: 'continuous',
     filterSettings: {
@@ -476,15 +482,58 @@ describe('native menu state', () => {
   });
 });
 
+describe('Window menu Document list', () => {
+  const openDocuments = [
+    { name: 'a.pdf', currentPage: 3, pageCount: 10, active: false },
+    { name: 'b.pdf', currentPage: 1, pageCount: 2, active: true },
+    { name: 'c.pdf', currentPage: 0, pageCount: 0, active: false },
+  ];
+
+  it('has one check item per open Document, titled with its page, active one checked', () => {
+    const states = readerCommandStates(input({ documentCount: 3, openDocuments }));
+    const listed = states.filter(({ id }) => id.startsWith('window.document.'));
+    expect(listed).toEqual([
+      { id: 'window.document.1', enabled: true, checked: false, text: 'a.pdf (Page 3 of 10)' },
+      { id: 'window.document.2', enabled: true, checked: true, text: 'b.pdf (Page 1 of 2)' },
+      { id: 'window.document.3', enabled: true, checked: false, text: 'c.pdf' },
+    ]);
+  });
+
+  it('lists the Documents as the window.document submenu, in Reading Session order', () => {
+    const submenu = readerMenuSubmenus(undefined, undefined, openDocuments).find(
+      ({ id }) => id === 'window.document',
+    );
+    expect(submenu?.items).toEqual([
+      { id: 'window.document.1', text: 'a.pdf (Page 3 of 10)' },
+      { id: 'window.document.2', text: 'b.pdf (Page 1 of 2)' },
+      { id: 'window.document.3', text: 'c.pdf' },
+    ]);
+    expect(readerMenuSubmenus().find(({ id }) => id === 'window.document')?.items).toEqual([]);
+  });
+
+  it('activates the chosen Document', async () => {
+    const { context, calls } = fakeContext();
+    expect(await runReaderCommand('window.document.2', context)).toBe(true);
+    expect(calls).toEqual(['document:1']);
+  });
+
+  it('refuses an entry that no longer exists', async () => {
+    const { context, calls } = fakeContext({ activateDocumentAt: async () => false });
+    expect(await runReaderCommand('window.document.9', context)).toBe(false);
+    expect(await runReaderCommand('window.document.0', context)).toBe(false);
+    expect(calls).toEqual([]);
+  });
+});
+
 describe('native menu ids', () => {
   it('match the items built by src-tauri/src/menu.rs', async () => {
     const { readFileSync } = await import('node:fs');
     const { readerMenuSubmenus } = await import('../app/reader-commands');
     const menuSource = readFileSync('src-tauri/src/menu.rs', 'utf8');
     const definitions = menuSource.slice(0, menuSource.indexOf('#[cfg(test)]'));
-    const rustIds = [...definitions.matchAll(/"((?:edit|view|go|tools|window)\.[A-Za-z.-]+)"/g)].map(
-      ([, id]) => id,
-    );
+    const rustIds = [
+      ...definitions.matchAll(/"((?:edit|view|go|tools|window)\.[A-Za-z.-]+)"/g),
+    ].map(([, id]) => id);
 
     const listed = readerMenuSubmenus();
     const listedItemIds = new Set(listed.flatMap(({ items }) => items.map(({ id }) => id)));
@@ -521,6 +570,8 @@ describe('native menu listing', () => {
       },
       // Rotate Left and Right stay unlisted until Page Rotation is verified.
       { id: 'tools.rotate', items: [] },
+      // The Window menu lists Documents only once some are open.
+      { id: 'window.document', items: [] },
     ]);
   });
 

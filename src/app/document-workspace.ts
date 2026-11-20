@@ -108,6 +108,8 @@ export interface DocumentWorkspace {
   access(query: DocumentQuery | null): DocumentAccess | null;
   activePresentation(): PresentationSurface | null;
   activeRenderingState(): ReturnType<DocumentRendering['getState']> | null;
+  /** A presented Document's current page and page count; null when not presented. */
+  documentPageState(filePath: string): { currentPage: number; pageCount: number } | null;
   activeReadingPosition(): { filePath: string; readingPosition: ReadingPosition } | null;
   viewTransform(filePath: string): DocumentViewTransform | null;
   /** The active Document's markup tool and why editing is unavailable, if it is. */
@@ -847,6 +849,10 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
     },
     activeRenderingState() {
       return activeRendering()?.getState() ?? null;
+    },
+    documentPageState(filePath) {
+      const state = presented.get(filePath)?.rendering.getState();
+      return state ? { currentPage: state.currentPage, pageCount: state.totalPages } : null;
     },
     activeReadingPosition() {
       const active = activeDocument();

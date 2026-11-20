@@ -180,6 +180,16 @@ const readerMenuState = (): ReaderCommandStateInput => {
   const live = rendering && rendering.filePath === activeDocument?.filePath ? rendering : null;
   return {
     documentCount: snapshot?.documents.length ?? 0,
+    openDocuments: (snapshot?.documents ?? []).map((document) => {
+      const active = document.filePath === snapshot?.activeDocumentPath;
+      const state = documentWorkspace?.documentPageState(document.filePath) ?? null;
+      return {
+        name: document.filePath.split(/[\\/]/).pop() || document.title,
+        currentPage: state?.currentPage ?? document.readingPosition.page,
+        pageCount: state?.pageCount ?? 0,
+        active,
+      };
+    }),
     activeDocument: activeDocument
       ? {
           viewMode: activeDocument.visualState?.viewMode ?? live?.viewMode ?? getInitialViewMode(),
@@ -940,6 +950,12 @@ export async function initializeApplication(modules: ApplicationModules): Promis
         if (!isEditableTarget(document.activeElement)) return false;
         // The native Edit menu takes ⌘Z from the WebView; hand it back to the field.
         document.execCommand(kind);
+        return true;
+      },
+      activateDocumentAt: async (index) => {
+        const target = readerActions?.snapshot().documents[index];
+        if (!target) return false;
+        await dispatchReaderAction({ type: 'activateDocument', filePath: target.filePath });
         return true;
       },
       switchTab: async (direction) => {

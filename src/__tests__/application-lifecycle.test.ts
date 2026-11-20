@@ -418,6 +418,7 @@ function createModules(
           access: vi.fn(() => null),
           activePresentation: vi.fn(() => null),
           activeRenderingState: vi.fn(() => null),
+          documentPageState: vi.fn(() => null),
           activeMarkup: vi.fn(() => null),
           selectedAnnotation: vi.fn(() => null),
           activeReadingPosition: vi.fn(() => ({
