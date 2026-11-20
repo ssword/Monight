@@ -106,10 +106,30 @@ export function createReaderMenu({
   stateInput,
   context,
 }: ReaderMenuOptions): ReaderMenu {
-  const sync = () => nativeMenu.setItemStates(readerCommandStates(stateInput()));
+  // The Window menu lists the open Documents; its items are rebuilt only when
+  // the list changes, while titles and marks follow the item states.
+  let listedDocuments = '';
+  const documentListSignature = (input: ReaderCommandStateInput) =>
+    JSON.stringify(input.openDocuments.map(({ name }) => name));
+  const sync = async () => {
+    const input = stateInput();
+    const signature = documentListSignature(input);
+    if (signature !== listedDocuments) {
+      listedDocuments = signature;
+      const list = readerMenuSubmenus(undefined, undefined, input.openDocuments).filter(
+        ({ id }) => id === 'window.document',
+      );
+      await nativeMenu.setSubmenuItems(list);
+    }
+    await nativeMenu.setItemStates(readerCommandStates(input));
+  };
   return {
     async install() {
-      await nativeMenu.setSubmenuItems(readerMenuSubmenus());
+      const input = stateInput();
+      listedDocuments = documentListSignature(input);
+      await nativeMenu.setSubmenuItems(
+        readerMenuSubmenus(undefined, undefined, input.openDocuments),
+      );
       await sync();
     },
     sync,
