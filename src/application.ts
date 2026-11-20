@@ -31,6 +31,7 @@ import {
 } from './app/file-actions';
 import { createHighlightButton, type HighlightButton } from './app/highlight-button';
 import { registerKeybindActions, toggleWindowFullScreen } from './app/keybinds';
+import { createMagnifier, type Magnifier } from './app/magnifier';
 import {
   createMarkupToolbar,
   leaveMarkupToolOnEscape,
@@ -142,6 +143,7 @@ let recentDocumentAuthority: RecentDocumentAuthority | null = null;
 let chromePreferences: ChromePreferencesAuthority | null = null;
 let readerSidebar: ReaderSidebar | null = null;
 let markupToolbar: MarkupToolbar | null = null;
+let magnifier: Magnifier | null = null;
 let highlightButton: HighlightButton | null = null;
 let rotateButton: RotateButton | null = null;
 let annotationMenu: AnnotationMenu | null = null;
@@ -196,6 +198,7 @@ const readerMenuState = (): ReaderCommandStateInput => {
     tabBarKeptShown,
     textFieldFocused: isEditableTarget(document.activeElement),
     annotationSelected: (documentWorkspace?.selectedAnnotation() ?? null) !== null,
+    magnifierVisible: magnifier?.visible() ?? false,
     keybinds: activeKeybinds,
   };
 };
@@ -845,6 +848,15 @@ export async function initializeApplication(modules: ApplicationModules): Promis
       },
     });
 
+    const pageArea = document.getElementById('pdf-container');
+    if (pageArea) {
+      magnifier = createMagnifier({
+        host: pageArea,
+        isSlideshow: () => presentationController?.isActive() ?? false,
+      });
+      magnifier.observe(syncReaderMenu);
+    }
+
     // Initialize slider manager
     sliderManager = new SliderManager((filterSettings) => {
       void dispatchReaderAction(readerAction.setFilterSettings(filterSettings));
@@ -936,6 +948,7 @@ export async function initializeApplication(modules: ApplicationModules): Promis
       selectedPages: () => readerSidebar?.selectedPages() ?? [],
       currentPage: () => readerMenuState().activeDocument?.currentPage || null,
       selectedAnnotation: () => documentWorkspace?.selectedAnnotation() ?? null,
+      magnifier,
       editTextField: (kind) => {
         if (!isEditableTarget(document.activeElement)) return false;
         // The native Edit menu takes ⌘Z from the WebView; hand it back to the field.

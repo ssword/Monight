@@ -130,6 +130,7 @@ export const KEYBIND_ACTIONS: Readonly<Record<string, KeybindAction>> = {
   PresentationMode: { displayName: 'Slideshow', action: 'presentationMode' },
   RotateLeft: readerCommand('Rotate Left', 'tools.rotate.left'),
   RotateRight: readerCommand('Rotate Right', 'tools.rotate.right'),
+  Magnifier: readerCommand('Show or Hide Magnifier', 'tools.magnifier'),
 };
 
 /** Actions that exist only while their gate is open. */
@@ -236,6 +237,14 @@ export const KEYBIND_DEFAULTS_REVISIONS: readonly KeybindDefaultsRevision[] = [
     version: 6,
     binds: {
       Delete: ['Delete', 'Backspace'],
+    },
+  },
+  {
+    // Preview menu parity (ADR 0004, #131): shared by every parity ticket. Show
+    // Magnifier's key is left to text fields, like Delete's.
+    version: 7,
+    binds: {
+      Magnifier: ['`'],
     },
   },
 ];

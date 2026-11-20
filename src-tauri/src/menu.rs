@@ -208,6 +208,7 @@ const GO_MENU: &[ReaderMenuEntry] = &[
 
 const TOOLS_MENU: &[ReaderMenuEntry] = &[
     check("tools.text-selection", "Text Selection"),
+    command("tools.magnifier", "Show Magnifier"),
     Listed {
         id: "tools.annotate",
         text: "Annotate",
@@ -892,7 +893,7 @@ mod tests {
         // Rust cannot see PAGE_ROTATION_VERIFIED: TypeScript fills the section
         // only once Page Rotation is verified, so the menu has no Rotate item
         // until then.
-        assert_eq!(section_start("tools.rotate"), Some(2));
+        assert_eq!(section_start("tools.rotate"), Some(3));
         assert_eq!(section_start("tools.annotate"), None);
         assert_eq!(section_start("tools.text-selection"), None);
         let items: Vec<ListedMenuItem> = serde_json::from_value(serde_json::json!([
