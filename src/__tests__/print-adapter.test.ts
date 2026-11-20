@@ -75,13 +75,22 @@ describe('Print adapter contract', () => {
     Object.defineProperty(browser.document.body, 'appendChild', {
       configurable: true,
       value: (node: Parameters<typeof appendChild>[0]) => {
-        const appended = appendChild(node);
         const iframe = node as unknown as HTMLIFrameElement;
-        Object.defineProperty(iframe.contentWindow, 'print', {
+        // happy-dom does not load iframe pages: it reports an `error` event while appending
+        // and leaves `contentWindow` null. This harness stands in for the platform's PDF
+        // frame instead, simulating its window and load below.
+        const onerror = iframe.onerror;
+        iframe.onerror = null;
+        const appended = appendChild(node);
+        iframe.onerror = onerror;
+        Object.defineProperty(iframe, 'contentWindow', {
           configurable: true,
-          value: () => {
-            if (failure) throw failure;
-            printCount += 1;
+          value: {
+            focus: () => undefined,
+            print: () => {
+              if (failure) throw failure;
+              printCount += 1;
+            },
           },
         });
         queueMicrotask(() => iframe.onload?.(new browser.Event('load') as never));
