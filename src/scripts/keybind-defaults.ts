@@ -240,10 +240,13 @@ export const KEYBIND_DEFAULTS_REVISIONS: readonly KeybindDefaultsRevision[] = [
     },
   },
   {
-    // Preview menu parity (ADR 0004, #131); unreleased, so tickets append here.
-    // View ▸ Hide Toolbar (#137).
+    // Preview menu parity (#131, ADR 0004). Page steps list ↑ / ↓ first, so the
+    // Go menu shows Preview's keys; ← / → still turn pages.
     version: 7,
     binds: {
+      PreviousPage: ['ArrowUp', 'ArrowLeft'],
+      NextPage: ['ArrowDown', 'ArrowRight'],
+      // View ▸ Hide Toolbar (#137).
       ToggleToolbar: ['CmdOrCtrl+Alt+T'],
     },
   },
