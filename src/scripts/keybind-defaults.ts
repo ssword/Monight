@@ -241,9 +241,13 @@ export const KEYBIND_DEFAULTS_REVISIONS: readonly KeybindDefaultsRevision[] = [
     },
   },
   {
-    // Preview parity (ADR 0004): Edit ▸ Find ▸ Find Next and Find Previous (#135).
+    // Preview menu parity (#131, ADR 0004). Page steps list ↑ / ↓ first, so the
+    // Go menu shows Preview's keys; ← / → still turn pages.
+    // Edit ▸ Find ▸ Find Next and Find Previous (#135).
     version: 7,
     binds: {
+      PreviousPage: ['ArrowUp', 'ArrowLeft'],
+      NextPage: ['ArrowDown', 'ArrowRight'],
       FindNext: { mac: ['Cmd+G'], other: ['F3', 'Ctrl+G'] },
       FindPrevious: { mac: ['Cmd+Shift+G'], other: ['Shift+F3', 'Ctrl+Shift+G'] },
     },
