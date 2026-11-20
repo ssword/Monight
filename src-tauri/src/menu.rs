@@ -231,6 +231,7 @@ const GO_MENU: &[ReaderMenuEntry] = &[
 const TOOLS_MENU: &[ReaderMenuEntry] = &[
     check("tools.text-selection", "Text Selection"),
     command("tools.magnifier", "Show Magnifier"),
+    command("tools.bookmark", "Add Bookmark"),
     Listed {
         id: "tools.annotate",
         text: "Annotate",
@@ -475,7 +476,10 @@ fn listed_items<'a>(
     submenu_id: &str,
     items: &'a [ListedMenuItem],
 ) -> Result<Vec<&'a ListedMenuItem>, String> {
-    if !is_listed_submenu(submenu_id) && section_start(submenu_id).is_none() {
+    if !is_listed_submenu(submenu_id)
+        && section_start(submenu_id).is_none()
+        && submenu_id != WINDOW_DOCUMENTS
+    {
         return Err(format!("{submenu_id} is not a listed submenu"));
     }
     let prefix = format!("{submenu_id}.");
@@ -483,6 +487,33 @@ fn listed_items<'a>(
         .iter()
         .filter(|item| item.id.len() > prefix.len() && item.id.starts_with(&prefix))
         .collect())
+}
+
+/// Replaces the Window menu's Document list: a separator and one check item
+/// per open Document after the fixed items, or nothing.
+fn set_window_documents(app: &AppHandle, items: &[&ListedMenuItem]) -> Result<(), String> {
+    let Some(MenuItemKind::Submenu(menu)) = app_menu_item(app, WINDOW_MENU_ID) else {
+        return Err(format!("{WINDOW_MENU_ID} is not in the menu"));
+    };
+    for item in menu
+        .items()
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .skip(WINDOW_FIXED_ITEMS)
+    {
+        menu.remove(&item).map_err(|e| e.to_string())?;
+    }
+    if items.is_empty() {
+        return Ok(());
+    }
+    menu.append(&PredefinedMenuItem::separator(app).map_err(|e| e.to_string())?)
+        .map_err(|e| e.to_string())?;
+    for item in items {
+        let check = CheckMenuItem::with_id(app, &item.id, &item.text, false, false, None::<&str>)
+            .map_err(|e| e.to_string())?;
+        menu.append(&check).map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
 
 /// Replaces a listed submenu's items with check items, so the menu always
@@ -495,6 +526,9 @@ pub fn set_menu_submenu_items(
     items: Vec<ListedMenuItem>,
 ) -> Result<(), String> {
     let items = listed_items(&submenu_id, &items)?;
+    if submenu_id == WINDOW_DOCUMENTS {
+        return set_window_documents(&app, &items);
+    }
     if let Some(start) = section_start(&submenu_id) {
         return set_section_items(&app, &submenu_id, start, &items);
     }
@@ -514,10 +548,18 @@ pub fn set_menu_submenu_items(
 
 const WINDOW_PREVIOUS_TAB: &str = "window.previous-tab";
 const WINDOW_NEXT_TAB: &str = "window.next-tab";
+/// The Window menu's open Documents: check items `window.document.<n>` that
+/// TypeScript lists after the fixed items, like Tools ▸ Annotate's items.
+const WINDOW_DOCUMENTS: &str = "window.document";
+const WINDOW_MENU_ID: &str = "window";
+/// Items before the Document list: Close Tab, separator, Minimize, Zoom,
+/// separator, Show Previous Tab, Show Next Tab.
+const WINDOW_FIXED_ITEMS: usize = 7;
 
 fn build_window_menu(app: &AppHandle) -> Result<Submenu<Wry>, tauri::Error> {
-    Submenu::with_items(
+    Submenu::with_id_and_items(
         app,
+        WINDOW_MENU_ID,
         "Window",
         true,
         &[
@@ -793,7 +835,13 @@ mod tests {
         );
         assert_eq!(
             titles(TOOLS_MENU),
-            ["Text Selection", "Show Magnifier", "Annotate", "[section]"]
+            [
+                "Text Selection",
+                "Show Magnifier",
+                "Add Bookmark",
+                "Annotate",
+                "[section]"
+            ]
         );
     }
 
@@ -981,7 +1029,7 @@ mod tests {
         // Rust cannot see PAGE_ROTATION_VERIFIED: TypeScript fills the section
         // only once Page Rotation is verified, so the menu has no Rotate item
         // until then.
-        assert_eq!(section_start("tools.rotate"), Some(3));
+        assert_eq!(section_start("tools.rotate"), Some(4));
         assert_eq!(section_start("tools.annotate"), None);
         assert_eq!(section_start("tools.text-selection"), None);
         let items: Vec<ListedMenuItem> = serde_json::from_value(serde_json::json!([
@@ -996,6 +1044,23 @@ mod tests {
             .map(|item| item.id.as_str())
             .collect();
         assert_eq!(accepted, ["tools.rotate.left", "tools.rotate.right"]);
+    }
+
+    #[test]
+    fn window_documents_are_listed_after_the_fixed_window_items() {
+        let items: Vec<ListedMenuItem> = serde_json::from_value(serde_json::json!([
+            { "id": "window.document.1", "text": "a.pdf (Page 1 of 2)" },
+            { "id": "window.previous-tab", "text": "Not a document" },
+            { "id": "window.document.2", "text": "b.pdf (Page 2 of 2)" }
+        ]))
+        .unwrap();
+        let accepted: Vec<_> = listed_items(WINDOW_DOCUMENTS, &items)
+            .unwrap()
+            .into_iter()
+            .map(|item| item.id.as_str())
+            .collect();
+        assert_eq!(accepted, ["window.document.1", "window.document.2"]);
+        assert!(!initially_enabled("window.document.1"));
     }
 
     #[test]

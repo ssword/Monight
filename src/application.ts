@@ -3,6 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 import { type AnnotationMenu, createAnnotationMenu } from './app/annotation-menu';
+import { type BookmarkAuthority, type BookmarkStorage, loadBookmarks } from './app/bookmarks';
 import { hydrateChromeIcons } from './app/chrome-icons';
 import {
   type ChromePreferencesAuthority,
@@ -109,6 +110,7 @@ export interface ApplicationModules {
   createReadingSessionStorage: typeof import('./app/reading-session-storage').createReadingSessionStorage;
   createRecentDocumentStorage: typeof import('./app/recent-document-storage').createRecentDocumentStorage;
   createChromePreferencesStorage?: () => ChromePreferencesStorage;
+  createBookmarkStorage?: () => BookmarkStorage;
   createReaderActions: typeof import('./reader/reader-actions').createReaderActions;
 }
 
@@ -143,6 +145,7 @@ let readingSessionStorage: ReadingSessionStorage | null = null;
 let restoredReadingSession: PersistedReadingSession | null = null;
 let recentDocumentAuthority: RecentDocumentAuthority | null = null;
 let chromePreferences: ChromePreferencesAuthority | null = null;
+let bookmarks: BookmarkAuthority | null = null;
 let readerSidebar: ReaderSidebar | null = null;
 let markupToolbar: MarkupToolbar | null = null;
 let magnifier: Magnifier | null = null;
@@ -184,6 +187,16 @@ const readerMenuState = (): ReaderCommandStateInput => {
   const live = rendering && rendering.filePath === activeDocument?.filePath ? rendering : null;
   return {
     documentCount: snapshot?.documents.length ?? 0,
+    openDocuments: (snapshot?.documents ?? []).map((document) => {
+      const active = document.filePath === snapshot?.activeDocumentPath;
+      const state = documentWorkspace?.documentPageState(document.filePath) ?? null;
+      return {
+        name: document.filePath.split(/[\\/]/).pop() || document.title,
+        currentPage: state?.currentPage ?? document.readingPosition.page,
+        pageCount: state?.pageCount ?? 0,
+        active,
+      };
+    }),
     activeDocument: activeDocument
       ? {
           viewMode: activeDocument.visualState?.viewMode ?? live?.viewMode ?? getInitialViewMode(),
@@ -201,6 +214,10 @@ const readerMenuState = (): ReaderCommandStateInput => {
     textFieldFocused: isEditableTarget(document.activeElement),
     itemStepping: readerSidebar?.itemStepping() ?? NO_ITEM_STEPPING,
     annotationSelected: (documentWorkspace?.selectedAnnotation() ?? null) !== null,
+    currentPageBookmarked:
+      activeDocument !== undefined &&
+      (live?.currentPage ?? 0) > 0 &&
+      (bookmarks?.has(activeDocument.filePath, live?.currentPage ?? 0) ?? false),
     magnifierVisible: magnifier?.visible() ?? false,
     textSelected: documentWorkspace?.hasTextSelection() ?? false,
     keybinds: activeKeybinds,
@@ -504,6 +521,16 @@ const restoreStartupReadingSession = async (
   return readerActions?.snapshot().documents.length ?? 0;
 };
 
+function createTransientBookmarkStorage(): BookmarkStorage {
+  let stored: unknown;
+  return {
+    read: async () => stored,
+    write: async (value) => {
+      stored = value;
+    },
+  };
+}
+
 function createTransientChromePreferencesStorage(): ChromePreferencesStorage {
   let stored: unknown;
   return {
@@ -632,6 +659,7 @@ export async function initializeApplication(modules: ApplicationModules): Promis
       await documentIntake?.quiesce();
       // Chrome preferences are best-effort and never hold up quitting.
       await chromePreferences?.flush().catch(() => undefined);
+      await bookmarks?.flush().catch(() => undefined);
       await persistence.flush();
     },
     chooseAfterFailure: chooseAfterFinalSaveFailure,
@@ -696,6 +724,13 @@ export async function initializeApplication(modules: ApplicationModules): Promis
       showTabBar(readerActions?.snapshot().documents.length ?? 0);
       syncReaderMenu();
     });
+    bookmarks = await loadBookmarks(
+      modules.createBookmarkStorage?.() ?? createTransientBookmarkStorage(),
+      {
+        onPersistenceError: (error) => console.error('Bookmarks persistence failed:', error),
+      },
+    );
+    bookmarks.observe(syncReaderMenu);
     readingSessionStorage = modules.createReadingSessionStorage(settingsManager);
     try {
       restoredReadingSession = await loadReadingSession(readingSessionStorage);
@@ -954,6 +989,13 @@ export async function initializeApplication(modules: ApplicationModules): Promis
       selectedPages: () => readerSidebar?.selectedPages() ?? [],
       currentPage: () => readerMenuState().activeDocument?.currentPage || null,
       selectedAnnotation: () => documentWorkspace?.selectedAnnotation() ?? null,
+      bookmarks: {
+        toggleCurrentPage: () => {
+          const filePath = readerActions?.snapshot().activeDocumentPath;
+          const page = readerMenuState().activeDocument?.currentPage ?? 0;
+          if (filePath && page > 0) bookmarks?.toggle(filePath, page);
+        },
+      },
       magnifier,
       find: {
         open: () => readerSidebar?.focusSearch(),
@@ -967,6 +1009,12 @@ export async function initializeApplication(modules: ApplicationModules): Promis
         if (!isEditableTarget(document.activeElement)) return false;
         // The native Edit menu takes ⌘Z from the WebView; hand it back to the field.
         document.execCommand(kind);
+        return true;
+      },
+      activateDocumentAt: async (index) => {
+        const target = readerActions?.snapshot().documents[index];
+        if (!target) return false;
+        await dispatchReaderAction({ type: 'activateDocument', filePath: target.filePath });
         return true;
       },
       switchTab: async (direction) => {

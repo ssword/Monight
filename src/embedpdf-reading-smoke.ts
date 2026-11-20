@@ -98,8 +98,10 @@ async function run() {
     currentPage: () => null,
     toggleTabBar: () => {},
     switchTab: async () => {},
+    activateDocumentAt: async () => false,
     editTextField: () => false,
     selectedAnnotation: () => null,
+    bookmarks: null,
     magnifier: null,
     find: null,
   };

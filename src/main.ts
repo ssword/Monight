@@ -1,5 +1,6 @@
 import { inspectNativePdfEditing, nativePdfSaveAdapter } from './app/native-pdf-save-adapter';
 import 'nouislider/dist/nouislider.css';
+import { createBookmarkStorage } from './app/bookmark-storage';
 import { createChromePreferencesStorage } from './app/chrome-preferences-storage';
 import { createDocumentIntakeRuntime } from './app/document-intake-runtime';
 import { createDocumentWorkspace, type DocumentSurfaceProvider } from './app/document-workspace';
@@ -33,6 +34,7 @@ const startApplication = () =>
     createReadingSessionStorage,
     createRecentDocumentStorage,
     createChromePreferencesStorage,
+    createBookmarkStorage,
     externalLinkAdapter: createTauriExternalLinkAdapter(),
     createReaderActions,
   });
