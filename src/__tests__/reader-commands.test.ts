@@ -417,9 +417,9 @@ describe('native menu state', () => {
       'go.page': 'CmdOrCtrl+Alt+G',
       'go.back': 'CmdOrCtrl+[',
       'go.forward': 'CmdOrCtrl+]',
-      // Unmodified keys stay with the page so the menu never takes them from text fields.
-      'go.next-page': null,
-      'go.previous-page': null,
+      // Unmodified keys stay with the page, except the page steps Preview shows as ↑ / ↓.
+      'go.next-page': 'ArrowDown',
+      'go.previous-page': 'ArrowUp',
       'view.tab-bar': null,
     });
   });
