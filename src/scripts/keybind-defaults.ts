@@ -128,6 +128,7 @@ export const KEYBIND_ACTIONS: Readonly<Record<string, KeybindAction>> = {
   SwitchToTab9: switchToTab(9),
   Fullscreen: { displayName: 'Enter Full Screen', action: 'toggleFullscreen' },
   PresentationMode: { displayName: 'Slideshow', action: 'presentationMode' },
+  AddBookmark: readerCommand('Add Bookmark', 'tools.bookmark'),
   RotateLeft: readerCommand('Rotate Left', 'tools.rotate.left'),
   RotateRight: readerCommand('Rotate Right', 'tools.rotate.right'),
 };
@@ -236,6 +237,14 @@ export const KEYBIND_DEFAULTS_REVISIONS: readonly KeybindDefaultsRevision[] = [
     version: 6,
     binds: {
       Delete: ['Delete', 'Backspace'],
+    },
+  },
+  {
+    // Preview menu parity (ADR 0004). Revision 7 is unreleased and shared by every
+    // parity feature: add its defaults here rather than starting a new revision.
+    version: 7,
+    binds: {
+      AddBookmark: ['CmdOrCtrl+D'],
     },
   },
 ];

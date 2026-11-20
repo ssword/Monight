@@ -3,6 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 import { type AnnotationMenu, createAnnotationMenu } from './app/annotation-menu';
+import { type BookmarkAuthority, type BookmarkStorage, loadBookmarks } from './app/bookmarks';
 import { hydrateChromeIcons } from './app/chrome-icons';
 import {
   type ChromePreferencesAuthority,
@@ -106,6 +107,7 @@ export interface ApplicationModules {
   createReadingSessionStorage: typeof import('./app/reading-session-storage').createReadingSessionStorage;
   createRecentDocumentStorage: typeof import('./app/recent-document-storage').createRecentDocumentStorage;
   createChromePreferencesStorage?: () => ChromePreferencesStorage;
+  createBookmarkStorage?: () => BookmarkStorage;
   createReaderActions: typeof import('./reader/reader-actions').createReaderActions;
 }
 
@@ -140,6 +142,7 @@ let readingSessionStorage: ReadingSessionStorage | null = null;
 let restoredReadingSession: PersistedReadingSession | null = null;
 let recentDocumentAuthority: RecentDocumentAuthority | null = null;
 let chromePreferences: ChromePreferencesAuthority | null = null;
+let bookmarks: BookmarkAuthority | null = null;
 let readerSidebar: ReaderSidebar | null = null;
 let markupToolbar: MarkupToolbar | null = null;
 let highlightButton: HighlightButton | null = null;
@@ -196,6 +199,10 @@ const readerMenuState = (): ReaderCommandStateInput => {
     tabBarKeptShown,
     textFieldFocused: isEditableTarget(document.activeElement),
     annotationSelected: (documentWorkspace?.selectedAnnotation() ?? null) !== null,
+    currentPageBookmarked:
+      activeDocument !== undefined &&
+      (live?.currentPage ?? 0) > 0 &&
+      (bookmarks?.has(activeDocument.filePath, live?.currentPage ?? 0) ?? false),
     keybinds: activeKeybinds,
   };
 };
@@ -497,6 +504,16 @@ const restoreStartupReadingSession = async (
   return readerActions?.snapshot().documents.length ?? 0;
 };
 
+function createTransientBookmarkStorage(): BookmarkStorage {
+  let stored: unknown;
+  return {
+    read: async () => stored,
+    write: async (value) => {
+      stored = value;
+    },
+  };
+}
+
 function createTransientChromePreferencesStorage(): ChromePreferencesStorage {
   let stored: unknown;
   return {
@@ -624,6 +641,7 @@ export async function initializeApplication(modules: ApplicationModules): Promis
       await documentIntake?.quiesce();
       // Chrome preferences are best-effort and never hold up quitting.
       await chromePreferences?.flush().catch(() => undefined);
+      await bookmarks?.flush().catch(() => undefined);
       await persistence.flush();
     },
     chooseAfterFailure: chooseAfterFinalSaveFailure,
@@ -686,6 +704,13 @@ export async function initializeApplication(modules: ApplicationModules): Promis
       showTabBar(readerActions?.snapshot().documents.length ?? 0);
       syncReaderMenu();
     });
+    bookmarks = await loadBookmarks(
+      modules.createBookmarkStorage?.() ?? createTransientBookmarkStorage(),
+      {
+        onPersistenceError: (error) => console.error('Bookmarks persistence failed:', error),
+      },
+    );
+    bookmarks.observe(syncReaderMenu);
     readingSessionStorage = modules.createReadingSessionStorage(settingsManager);
     try {
       restoredReadingSession = await loadReadingSession(readingSessionStorage);
@@ -936,6 +961,13 @@ export async function initializeApplication(modules: ApplicationModules): Promis
       selectedPages: () => readerSidebar?.selectedPages() ?? [],
       currentPage: () => readerMenuState().activeDocument?.currentPage || null,
       selectedAnnotation: () => documentWorkspace?.selectedAnnotation() ?? null,
+      bookmarks: {
+        toggleCurrentPage: () => {
+          const filePath = readerActions?.snapshot().activeDocumentPath;
+          const page = readerMenuState().activeDocument?.currentPage ?? 0;
+          if (filePath && page > 0) bookmarks?.toggle(filePath, page);
+        },
+      },
       editTextField: (kind) => {
         if (!isEditableTarget(document.activeElement)) return false;
         // The native Edit menu takes ⌘Z from the WebView; hand it back to the field.

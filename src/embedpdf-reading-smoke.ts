@@ -99,6 +99,7 @@ async function run() {
     toggleTabBar: () => {},
     editTextField: () => false,
     selectedAnnotation: () => null,
+    bookmarks: null,
   };
   registerKeybindActions({
     keybindManager: manager,

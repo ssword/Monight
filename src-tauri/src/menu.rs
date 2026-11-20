@@ -213,6 +213,8 @@ const TOOLS_MENU: &[ReaderMenuEntry] = &[
         text: "Annotate",
     },
     Section { id: "tools.rotate" },
+    Separator,
+    command("tools.bookmark", "Add Bookmark"),
 ];
 
 const READER_MENUS: [&[ReaderMenuEntry]; 4] = [EDIT_MENU, VIEW_MENU, GO_MENU, TOOLS_MENU];
