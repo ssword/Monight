@@ -81,7 +81,7 @@ export interface ReaderCommandContext {
   /** View ▸ Show/Hide Tab Bar: keeps the tab bar shown for one Document, for this app run. */
   readonly toggleTabBar: () => void;
   /** Window ▸ Show Previous/Next Tab: activates the neighbouring Document, wrapping around. */
-  readonly switchTab: (direction: 'previous' | 'next') => void | Promise<void>;
+  readonly switchTab: (direction: StepDirection) => void | Promise<void>;
   /**
    * Undoes or redoes typing in the focused text field (Search, dialogs, a note);
    * false when focus is not in an editable element.
@@ -257,7 +257,7 @@ const historyCommand = <Id extends 'edit.undo' | 'edit.redo'>(
 /** Window ▸ Show Previous/Next Tab: needs a second Document to switch to. */
 const tabCommand = <Id extends 'window.previous-tab' | 'window.next-tab'>(
   id: Id,
-  direction: 'previous' | 'next',
+  direction: StepDirection,
 ): ReaderCommand<Id> => ({
   id,
   run: (context) => context.switchTab(direction),
@@ -355,7 +355,8 @@ const staticCommands = [
         toolbarVisible: !context.preferences.snapshot().toolbarVisible,
       }),
     state: (input) => ({
-      enabled: hasDocument(input),
+      // Enabled with no Document too, so a hidden toolbar can always be shown again.
+      enabled: true,
       text: input.preferences.toolbarVisible ? 'Hide Toolbar' : 'Show Toolbar',
     }),
   },

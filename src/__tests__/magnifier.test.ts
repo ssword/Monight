@@ -71,6 +71,24 @@ describe('magnifier', () => {
     expect(loupe()?.hidden ?? true).toBe(true);
   });
 
+  it('hides over the scroll area outside any page, such as gutters', () => {
+    magnifier.toggle();
+    move(page, 200, 120);
+    expect(loupe()?.hidden).toBe(false);
+    move(host, 200, 120);
+    expect(loupe()?.hidden).toBe(true);
+    move(page, 200, 120);
+    expect(loupe()?.hidden).toBe(false);
+  });
+
+  it('hides at once when Slideshow starts, without waiting for the pointer', () => {
+    magnifier.toggle();
+    move(page, 200, 120);
+    slideshow = true;
+    magnifier.refresh();
+    expect(loupe()?.hidden).toBe(true);
+  });
+
   it('can be hidden explicitly, as when the last Document closes', () => {
     magnifier.toggle();
     move(page, 200, 120);

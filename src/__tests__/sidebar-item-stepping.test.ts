@@ -134,12 +134,21 @@ describe('Previous Item and Next Item in the sidebar', () => {
       expect(sidebar.itemStepping()).toEqual({ previous: false, next: true });
     });
 
-    it('steps from the selected page rather than the Reading Position', async () => {
+    it('steps from the selected page while the reader is still on it', async () => {
+      currentPage = 1;
       const sidebar = await mount('thumbnails');
       await sidebar.stepItem('next');
-      currentPage = 1; // the reader scrolled back, but the selection stays
+      currentPage = 2; // the reader arrived at the selected page
       await sidebar.stepItem('next');
       expect(dispatched[1]).toMatchObject({ page: 3 });
+    });
+
+    it('lets the Reading Position override a stale selection', async () => {
+      const sidebar = await mount('thumbnails');
+      await sidebar.stepItem('next');
+      currentPage = 1; // the reader scrolled back; the selection is stale
+      await sidebar.stepItem('next');
+      expect(dispatched[1]).toMatchObject({ page: 2 });
     });
 
     it('does nothing at the last page', async () => {

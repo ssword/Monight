@@ -108,13 +108,15 @@ export function createReaderMenu({
 }: ReaderMenuOptions): ReaderMenu {
   // The Window menu lists the open Documents; its items are rebuilt only when
   // the list changes, while titles and marks follow the item states.
-  let listedDocuments = '';
+  let listedDocuments: readonly string[] = [];
   const documentListSignature = (input: ReaderCommandStateInput) =>
-    JSON.stringify(input.openDocuments.map(({ name }) => name));
+    input.openDocuments.map(({ name }) => name);
+  const sameDocumentList = (a: readonly string[], b: readonly string[]) =>
+    a.length === b.length && a.every((name, index) => name === b[index]);
   const sync = async () => {
     const input = stateInput();
     const signature = documentListSignature(input);
-    if (signature !== listedDocuments) {
+    if (!sameDocumentList(signature, listedDocuments)) {
       listedDocuments = signature;
       const list = readerMenuSubmenus(undefined, undefined, input.openDocuments).filter(
         ({ id }) => id === 'window.document',

@@ -390,7 +390,8 @@ describe('native menu state', () => {
       input({ documentCount: 0, activeDocument: null, markup: null }),
     );
     const enabled = states.filter((state) => state.enabled).map((state) => state.id);
-    expect(enabled).toEqual(['view.full-screen']);
+    // The toolbar can always be shown again (story 32).
+    expect(enabled).toEqual(['view.toolbar', 'view.full-screen']);
     expect(checkedIds(states)).toEqual([]);
   });
 
@@ -559,10 +560,10 @@ describe('native menu state', () => {
     expect(preferences().toolbarVisible).toBe(true);
   });
 
-  it('keeps the toolbar item disabled without a Document and shows its shortcut', () => {
+  it('keeps the toolbar item enabled without a Document and shows its shortcut', () => {
     expect(
       stateOf(readerCommandStates(input({ activeDocument: null })), 'view.toolbar')?.enabled,
-    ).toBe(false);
+    ).toBe(true);
     const keybinds = defaultSettings('mac').keybinds;
     expect(stateOf(readerCommandStates(input({ keybinds })), 'view.toolbar')?.accelerator).toBe(
       'CmdOrCtrl+Alt+T',
