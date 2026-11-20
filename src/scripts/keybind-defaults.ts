@@ -241,9 +241,13 @@ export const KEYBIND_DEFAULTS_REVISIONS: readonly KeybindDefaultsRevision[] = [
     },
   },
   {
-    // Preview menu parity (ADR 0004): Go ▸ Previous Item and Next Item (#140).
+    // Preview menu parity (#131, ADR 0004). Page steps list ↑ / ↓ first, so the
+    // Go menu shows Preview's keys; ← / → still turn pages. Go ▸ Previous Item and
+    // Next Item (#140) take ⌥↑ / ⌥↓.
     version: 7,
     binds: {
+      PreviousPage: ['ArrowUp', 'ArrowLeft'],
+      NextPage: ['ArrowDown', 'ArrowRight'],
       GoPreviousItem: ['Alt+ArrowUp'],
       GoNextItem: ['Alt+ArrowDown'],
     },
