@@ -178,11 +178,12 @@ const EDIT_MENU: &[ReaderMenuEntry] = &[
     },
 ];
 
-/// Edit ▸ Find. Use Selection for Find joins these items (ADR 0004).
+/// Edit ▸ Find (ADR 0004).
 const FIND_MENU: &[ReaderMenuEntry] = &[
     command("edit.find", "Find\u{2026}"),
     command("edit.find-next", "Find Next"),
     command("edit.find-previous", "Find Previous"),
+    command("edit.find.use-selection", "Use Selection for Find"),
 ];
 
 const VIEW_MENU: &[ReaderMenuEntry] = &[
@@ -865,7 +866,16 @@ mod tests {
         );
         assert_eq!(
             titles(FIND_MENU),
-            ["Find\u{2026}", "Find Next", "Find Previous"]
+            [
+                "Find\u{2026}",
+                "Find Next",
+                "Find Previous",
+                "Use Selection for Find"
+            ]
+        );
+        assert_eq!(
+            reader_command("edit.find.use-selection"),
+            Some("edit.find.use-selection")
         );
         assert_eq!(reader_command("edit.find"), Some("edit.find"));
         assert_eq!(reader_command("edit.find-next"), Some("edit.find-next"));

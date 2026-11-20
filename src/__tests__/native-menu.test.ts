@@ -142,6 +142,7 @@ describe('native menu state sync', () => {
         annotationSelected: false,
         currentPageBookmarked: false,
         magnifierVisible: false,
+        textSelected: false,
         itemStepping: { previous: false, next: false },
       }),
       context: () =>
@@ -220,6 +221,7 @@ describe('Window menu Document list', () => {
       textFieldFocused: false,
       annotationSelected: false,
       magnifierVisible: false,
+      textSelected: false,
       itemStepping: { previous: false, next: false },
     }) as ReaderCommandStateInput;
 

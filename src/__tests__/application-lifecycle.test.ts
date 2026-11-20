@@ -422,6 +422,7 @@ function createModules(
           documentPageState: vi.fn(() => null),
           activeMarkup: vi.fn(() => null),
           selectedAnnotation: vi.fn(() => null),
+          hasTextSelection: vi.fn(() => false),
           activeReadingPosition: vi.fn(() => ({
             filePath: '/docs/report.pdf',
             readingPosition: { page: 4, location: 0.5 },

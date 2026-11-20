@@ -557,6 +557,34 @@ describe('Find Next and Find Previous shortcut defaults', () => {
   });
 });
 
+describe('Use Selection for Find shortcut default', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    store.reset();
+  });
+
+  it('gives a fresh install Ctrl/Cmd+E', async () => {
+    const settings = await new SettingsManager('main', { platform: 'other' }).load();
+    expect(bindsOf(settings.keybinds).UseSelectionForFind).toEqual(['CmdOrCtrl+E']);
+  });
+
+  it('is dropped on upgrade when the reader already uses the key', async () => {
+    const stored = structuredClone(DEFAULT_SETTINGS.keybinds);
+    delete (stored as Record<string, unknown>).UseSelectionForFind;
+    stored.Print.binds = ['CmdOrCtrl+E'];
+    store.reset({
+      storageSchemaVersion: SETTINGS_SCHEMA_VERSION,
+      keybindDefaultsVersion: 6,
+      keybinds: stored,
+    });
+    const settings = await new SettingsManager('main', { platform: 'other' }).load();
+    expect(bindsOf(settings.keybinds)).toMatchObject({
+      Print: ['CmdOrCtrl+E'],
+      UseSelectionForFind: [],
+    });
+  });
+});
+
 describe('Back and Forward shortcut defaults', () => {
   beforeEach(() => {
     vi.clearAllMocks();
