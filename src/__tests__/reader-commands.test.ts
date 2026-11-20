@@ -517,9 +517,9 @@ describe('native menu ids', () => {
     const { readerMenuSubmenus } = await import('../app/reader-commands');
     const menuSource = readFileSync('src-tauri/src/menu.rs', 'utf8');
     const definitions = menuSource.slice(0, menuSource.indexOf('#[cfg(test)]'));
-    const rustIds = [...definitions.matchAll(/"((?:edit|view|go|tools|window)\.[A-Za-z.-]+)"/g)].map(
-      ([, id]) => id,
-    );
+    const rustIds = [
+      ...definitions.matchAll(/"((?:edit|view|go|tools|window)\.[A-Za-z.-]+)"/g),
+    ].map(([, id]) => id);
 
     const listed = readerMenuSubmenus();
     const listedItemIds = new Set(listed.flatMap(({ items }) => items.map(({ id }) => id)));
