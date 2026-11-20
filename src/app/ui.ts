@@ -59,6 +59,14 @@ export function applyWindowChrome(doc: Document, isMac: boolean): void {
 }
 
 /**
+ * View ▸ Hide Toolbar: the stylesheet collapses the toolbar by this attribute.
+ * The markup toolbar is its own preference and stays as it was.
+ */
+export function applyToolbarVisibility(doc: Document, visible: boolean): void {
+  doc.documentElement.dataset.toolbar = visible ? 'shown' : 'hidden';
+}
+
+/**
  * Shows or hides the tab bar by `tabBarShown`. Only visibility changes; the
  * rendered tabs keep Reading Session order.
  */

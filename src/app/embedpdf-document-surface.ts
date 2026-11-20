@@ -114,6 +114,8 @@ export function createEmbedPdfDocumentSurfaceFactory({
         if (toolId !== null && !editable()) return;
         openedViewer.setActiveAnnotationTool(toolId, defaults);
       },
+      hasTextSelection: () => !destroyPromise && openedViewer.hasTextSelection(),
+      selectedText: async () => (destroyPromise ? '' : openedViewer.selectedText()),
       markupSelection: (toolId, defaults) =>
         !destroyPromise && editable() && openedViewer.markupSelection(toolId, defaults),
       revealAnnotation: (annotationId) => {

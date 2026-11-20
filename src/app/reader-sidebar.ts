@@ -17,6 +17,7 @@
 import type { DocumentQuery } from '../reader/document-queries';
 import type { DispatchReaderAction } from '../reader/reader-actions';
 import { buildFilterCSS, type FilterSettings } from '../scripts/filters';
+import type { BookmarkAuthority } from './bookmarks';
 import {
   type ChromePreferencesAuthority,
   SIDEBAR_MODES,
@@ -24,6 +25,15 @@ import {
   type SidebarMode,
 } from './chrome-preferences';
 import { createAnnotationsView } from './sidebar-annotations-view';
+import { createBookmarksView } from './sidebar-bookmarks-view';
+import {
+  type ItemStepping,
+  itemStepping,
+  NO_ITEM_STEPPING,
+  type SidebarItem,
+  type StepDirection,
+  stepTarget,
+} from './sidebar-item-stepping';
 import { createSearchResultsView, type SearchResultsView } from './sidebar-search';
 import { createTableOfContentsView } from './sidebar-table-of-contents';
 
@@ -53,7 +63,13 @@ export interface SidebarModeContext {
   readonly width: () => number;
   /** Selects an Annotation on the rendering surface; transient, never Reading Session state. */
   readonly revealAnnotation: RevealAnnotation;
+  /** Tells the sidebar the view's steppable items or selection changed. */
+  readonly itemsChanged: () => void;
+  /** The reader's Bookmarks; null until the store has loaded. */
+  readonly bookmarks: () => BookmarkAuthority | null;
 }
+
+export type { ItemStepping, SidebarItem, StepDirection } from './sidebar-item-stepping';
 
 export type RevealAnnotation = (filePath: string, annotationId: string) => void;
 
@@ -63,6 +79,13 @@ export interface SidebarModeView {
   update(document: SidebarDocument | null): void;
   /** Pages the reader selected in this view (1-based, ascending); empty when none. */
   selectedPages?(): readonly number[];
+  /**
+   * The mode's ordered items for Go ▸ Previous/Next Item; absent when the mode
+   * has none to step through.
+   */
+  items?(): readonly SidebarItem[];
+  /** The selected item's key; null when nothing is selected. */
+  selectedItemKey?(): string | null;
   destroy(): void;
 }
 
@@ -83,6 +106,10 @@ export interface ReaderSidebarOptions {
   readonly whenVisible?: WhenVisible;
   readonly searchDebounceMs?: number;
   readonly revealAnnotation?: RevealAnnotation;
+  /** Called when whether Previous/Next Item are available may have changed. */
+  readonly onItemsChange?: () => void;
+  /** The Bookmark store, read on every refresh; the Bookmarks mode lists and removes from it. */
+  readonly bookmarks?: () => BookmarkAuthority | null;
 }
 
 export interface ReaderSidebar {
@@ -93,10 +120,22 @@ export interface ReaderSidebar {
   /** Focuses the toolbar Search field (Find). */
   focusSearch(): void;
   /**
+   * Find Next / Find Previous: steps through the search results (wrapping
+   * around, recorded in Navigation History); with no results, as with no
+   * active search, focuses the Search field.
+   */
+  stepSearch(direction: 'next' | 'previous'): void;
+  /** Use Selection for Find: puts text into the Search field and runs the search at once. */
+  searchFor(text: string): void;
+  /**
    * The pages selected in Thumbnails, ascending; empty when none are selected
    * or Thumbnails is not shown (Rotate then acts on the current page).
    */
   selectedPages(): readonly number[];
+  /** Whether Go ▸ Previous Item and Next Item have an item to reach in the shown mode. */
+  itemStepping(): ItemStepping;
+  /** Selects and goes to the previous or next item, as clicking it does. */
+  stepItem(direction: StepDirection): Promise<void>;
   destroy(): void;
 }
 
@@ -109,6 +148,7 @@ const MODE_VIEWS: Readonly<Record<SidebarMode, (context: SidebarModeContext) => 
     thumbnails: createThumbnailsView,
     tableOfContents: createTableOfContentsView,
     annotations: createAnnotationsView,
+    bookmarks: createBookmarksView,
   };
 
 function observeVisibility(root: Element | null): WhenVisible {
@@ -139,6 +179,8 @@ export function createReaderSidebar({
   whenVisible,
   searchDebounceMs = SEARCH_DEBOUNCE_MS,
   revealAnnotation = () => undefined,
+  onItemsChange = () => undefined,
+  bookmarks = () => null,
 }: ReaderSidebarOptions): ReaderSidebar {
   const content = root.querySelector<HTMLElement>('.reader-sidebar-content') ?? root;
   const resizer = root.querySelector<HTMLElement>('.reader-sidebar-resizer');
@@ -147,6 +189,8 @@ export function createReaderSidebar({
     whenVisible: whenVisible ?? observeVisibility(content),
     width: () => preferences.snapshot().sidebarWidth,
     revealAnnotation,
+    itemsChanged: () => onItemsChange(),
+    bookmarks,
   };
   let view: { mode: SidebarMode; view: SidebarModeView } | null = null;
   // Transient search takeover: never written to preferences.
@@ -331,6 +375,13 @@ export function createReaderSidebar({
 
   cleanups.push(preferences.observe(render));
 
+  function stepping(): ItemStepping {
+    const shown = view?.view;
+    const document = activeDocument();
+    if (!shown?.items || !document || !presentation().visible) return NO_ITEM_STEPPING;
+    return itemStepping(shown.items(), shown.selectedItemKey?.() ?? null, document.currentPage);
+  }
+
   return {
     refresh: render,
     choose,
@@ -338,7 +389,32 @@ export function createReaderSidebar({
       search?.focus();
       search?.select();
     },
+    stepSearch(direction) {
+      if (searchText.trim() && searchView?.step(direction)) return;
+      search?.focus();
+      search?.select();
+    },
+    searchFor(text) {
+      if (!search || !text.trim()) return;
+      cancelSearchTimer();
+      search.value = text;
+      searchText = text;
+      render();
+    },
     selectedPages: () => view?.view.selectedPages?.() ?? [],
+    itemStepping: stepping,
+    async stepItem(direction) {
+      const shown = view?.view;
+      const document = activeDocument();
+      if (!shown?.items || !document || !presentation().visible) return;
+      const target = stepTarget(
+        shown.items(),
+        shown.selectedItemKey?.() ?? null,
+        document.currentPage,
+        direction,
+      );
+      await target?.activate();
+    },
     destroy() {
       cancelSearchTimer();
       for (const cleanup of cleanups.splice(0)) cleanup();
@@ -354,6 +430,7 @@ function createThumbnailsView({
   dispatchReaderAction,
   whenVisible,
   width,
+  itemsChanged,
 }: SidebarModeContext): SidebarModeView {
   const list = document.createElement('ol');
   list.className = 'sidebar-thumbnails';
@@ -383,6 +460,30 @@ function createThumbnailsView({
   const resetSelection = () => {
     selection = new Set();
     anchor = null;
+  };
+  const pageItems = (): SidebarItem[] => {
+    const document = shown;
+    if (!document) return [];
+    return Array.from({ length: document.pageCount }, (_, index) => {
+      const page = index + 1;
+      return {
+        key: String(page),
+        page,
+        activate: async () => {
+          // Stepping selects the page, and is a recorded jump.
+          selection = new Set([page]);
+          anchor = page;
+          markSelection();
+          itemsChanged();
+          await dispatchReaderAction({
+            type: 'goToPage',
+            page,
+            filePath: document.filePath,
+            recordHistory: true,
+          });
+        },
+      };
+    });
   };
 
   const clear = () => {
@@ -487,6 +588,7 @@ function createThumbnailsView({
     } else {
       resetSelection();
       markSelection();
+      itemsChanged();
       void dispatchReaderAction({ type: 'goToPage', page, filePath: shown.filePath });
       return;
     }
@@ -502,6 +604,7 @@ function createThumbnailsView({
         currentPage = 0;
         resetSelection();
         clear();
+        itemsChanged();
         return;
       }
       const { filePath, pageCount, query } = sidebarDocument;
@@ -519,6 +622,7 @@ function createThumbnailsView({
         shown = { filePath, pageCount, generation: query?.generation };
         build(sidebarDocument);
         markSelection();
+        itemsChanged();
       } else {
         rerenderRotated(sidebarDocument);
       }
@@ -532,6 +636,8 @@ function createThumbnailsView({
       }
     },
     selectedPages: () => [...selection].sort((a, b) => a - b),
+    items: pageItems,
+    selectedItemKey: () => (selection.size === 1 ? String([...selection][0]) : null),
     destroy: () => {
       resetSelection();
       clear();

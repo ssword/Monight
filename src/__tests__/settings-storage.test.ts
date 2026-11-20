@@ -515,6 +515,76 @@ describe('Preview shortcut defaults', () => {
   });
 });
 
+describe('Find Next and Find Previous shortcut defaults', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    store.reset();
+  });
+
+  it('gives a fresh install the platform defaults', async () => {
+    const mac = await new SettingsManager('main', { platform: 'mac' }).load();
+    expect(bindsOf(mac.keybinds)).toMatchObject({
+      Find: ['CmdOrCtrl+F'],
+      FindNext: ['Cmd+G'],
+      FindPrevious: ['Cmd+Shift+G'],
+    });
+    store.reset();
+    const other = await new SettingsManager('main', { platform: 'other' }).load();
+    expect(bindsOf(other.keybinds)).toMatchObject({
+      FindNext: ['F3', 'Ctrl+G'],
+      FindPrevious: ['Shift+F3', 'Ctrl+Shift+G'],
+    });
+  });
+
+  it('adds them on upgrade, dropping a default the reader already uses elsewhere', async () => {
+    const stored = structuredClone(DEFAULT_SETTINGS.keybinds);
+    delete (stored as Record<string, unknown>).FindNext;
+    delete (stored as Record<string, unknown>).FindPrevious;
+    stored.Print.binds = ['Ctrl+G'];
+    store.reset({
+      storageSchemaVersion: SETTINGS_SCHEMA_VERSION,
+      keybindDefaultsVersion: 6,
+      keybinds: stored,
+    });
+
+    const settings = await new SettingsManager('main', { platform: 'other' }).load();
+
+    expect(bindsOf(settings.keybinds)).toMatchObject({
+      Print: ['Ctrl+G'],
+      FindNext: ['F3'],
+      FindPrevious: ['Shift+F3', 'Ctrl+Shift+G'],
+    });
+  });
+});
+
+describe('Use Selection for Find shortcut default', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    store.reset();
+  });
+
+  it('gives a fresh install Ctrl/Cmd+E', async () => {
+    const settings = await new SettingsManager('main', { platform: 'other' }).load();
+    expect(bindsOf(settings.keybinds).UseSelectionForFind).toEqual(['CmdOrCtrl+E']);
+  });
+
+  it('is dropped on upgrade when the reader already uses the key', async () => {
+    const stored = structuredClone(DEFAULT_SETTINGS.keybinds);
+    delete (stored as Record<string, unknown>).UseSelectionForFind;
+    stored.Print.binds = ['CmdOrCtrl+E'];
+    store.reset({
+      storageSchemaVersion: SETTINGS_SCHEMA_VERSION,
+      keybindDefaultsVersion: 6,
+      keybinds: stored,
+    });
+    const settings = await new SettingsManager('main', { platform: 'other' }).load();
+    expect(bindsOf(settings.keybinds)).toMatchObject({
+      Print: ['CmdOrCtrl+E'],
+      UseSelectionForFind: [],
+    });
+  });
+});
+
 describe('Back and Forward shortcut defaults', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -652,6 +722,138 @@ describe('Delete shortcut', () => {
     expect(settings.keybinds.Delete.binds).toEqual(['Delete']);
     expect(settings.keybinds.Print.binds).toEqual(['Backspace']);
   });
+
+  it('gives a fresh install the backtick for Show Magnifier', async () => {
+    const settings = await new SettingsManager('main', { platform: 'other' }).load();
+
+    expect(settings.keybinds.Magnifier).toEqual({
+      displayName: 'Show or Hide Magnifier',
+      binds: ['`'],
+      action: 'readerCommand',
+      data: 'tools.magnifier',
+    });
+  });
+
+  it('adds Show Magnifier to an install stored before it, without taking a key the reader chose', async () => {
+    const stored = structuredClone(
+      (await new SettingsManager('main', { platform: 'mac' }).load()).keybinds,
+    );
+    delete stored.Magnifier;
+    store.reset({
+      storageSchemaVersion: SETTINGS_SCHEMA_VERSION,
+      keybinds: stored,
+      keybindDefaultsVersion: 6,
+    });
+    expect(
+      (await new SettingsManager('main', { platform: 'mac' }).load()).keybinds.Magnifier.binds,
+    ).toEqual(['`']);
+
+    stored.Print.binds = ['`'];
+    store.reset({
+      storageSchemaVersion: SETTINGS_SCHEMA_VERSION,
+      keybinds: stored,
+      keybindDefaultsVersion: 6,
+    });
+    const settings = await new SettingsManager('main', { platform: 'mac' }).load();
+    expect(settings.keybinds.Magnifier.binds).toEqual([]);
+    expect(settings.keybinds.Print.binds).toEqual(['`']);
+  });
+});
+
+describe('Toggle Toolbar shortcut', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    store.reset();
+  });
+
+  it('gives View ▸ Hide Toolbar CmdOrCtrl+Alt+T as a Reader Command', async () => {
+    const settings = await new SettingsManager('main', { platform: 'mac' }).load();
+
+    expect(settings.keybinds.ToggleToolbar).toEqual({
+      displayName: 'Show or Hide Toolbar',
+      binds: ['CmdOrCtrl+Alt+T'],
+      action: 'readerCommand',
+      data: 'view.toolbar',
+    });
+  });
+
+  it('adds it to an install stored before it, without taking a key the reader chose', async () => {
+    const stored = structuredClone(
+      (await new SettingsManager('main', { platform: 'mac' }).load()).keybinds,
+    );
+    delete stored.ToggleToolbar;
+    stored.Print.binds = ['CmdOrCtrl+Alt+T'];
+    store.reset({
+      storageSchemaVersion: SETTINGS_SCHEMA_VERSION,
+      keybinds: stored,
+      keybindDefaultsVersion: 6,
+    });
+
+    const settings = await new SettingsManager('main', { platform: 'mac' }).load();
+
+    expect(settings.keybinds.Print.binds).toEqual(['CmdOrCtrl+Alt+T']);
+    expect(settings.keybinds.ToggleToolbar.binds).toEqual([]);
+  });
+
+  it('adds it to an install stored under version 6', async () => {
+    const stored = structuredClone(
+      (await new SettingsManager('main', { platform: 'mac' }).load()).keybinds,
+    );
+    delete stored.ToggleToolbar;
+    store.reset({
+      storageSchemaVersion: SETTINGS_SCHEMA_VERSION,
+      keybinds: stored,
+      keybindDefaultsVersion: 6,
+    });
+
+    const settings = await new SettingsManager('main', { platform: 'mac' }).load();
+
+    expect(settings.keybinds.ToggleToolbar.binds).toEqual(['CmdOrCtrl+Alt+T']);
+  });
+});
+
+describe('Bookmarks sidebar shortcut', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    store.reset();
+  });
+
+  it('gives View ▸ Bookmarks CmdOrCtrl+Alt+5 as a Reader Command', async () => {
+    const settings = await new SettingsManager('main', { platform: 'mac' }).load();
+
+    expect(settings.keybinds.SidebarBookmarks).toEqual({
+      displayName: 'Bookmarks',
+      binds: ['CmdOrCtrl+Alt+5'],
+      action: 'readerCommand',
+      data: 'view.sidebar.bookmarks',
+    });
+  });
+
+  it('adds it to an install stored under version 6, unless the reader took the key', async () => {
+    const stored = structuredClone(
+      (await new SettingsManager('main', { platform: 'mac' }).load()).keybinds,
+    );
+    delete stored.SidebarBookmarks;
+    store.reset({
+      storageSchemaVersion: SETTINGS_SCHEMA_VERSION,
+      keybinds: stored,
+      keybindDefaultsVersion: 6,
+    });
+    expect(
+      (await new SettingsManager('main', { platform: 'mac' }).load()).keybinds.SidebarBookmarks
+        .binds,
+    ).toEqual(['CmdOrCtrl+Alt+5']);
+
+    stored.Print.binds = ['CmdOrCtrl+Alt+5'];
+    store.reset({
+      storageSchemaVersion: SETTINGS_SCHEMA_VERSION,
+      keybinds: stored,
+      keybindDefaultsVersion: 6,
+    });
+    const settings = await new SettingsManager('main', { platform: 'mac' }).load();
+    expect(settings.keybinds.Print.binds).toEqual(['CmdOrCtrl+Alt+5']);
+    expect(settings.keybinds.SidebarBookmarks.binds).toEqual([]);
+  });
 });
 
 describe('Rotate shortcuts behind the Page Rotation gate', () => {
@@ -767,5 +969,99 @@ describe('Rotate shortcuts behind the Page Rotation gate', () => {
     expect(settings.keybinds.RotateLeft.binds).toEqual(['CmdOrCtrl+L']);
     expect(settings.keybinds.RotateRight.binds).toEqual(['CmdOrCtrl+R']);
     expect(settings.keybinds).not.toHaveProperty('RotateClockwise');
+  });
+});
+
+describe('Page step shortcuts (Preview ↑ / ↓)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    store.reset();
+  });
+
+  it.each([
+    'mac',
+    'other',
+  ] as const)('gives a fresh %s install ↑ then ← for Previous Page and ↓ then → for Next Page', async (platform) => {
+    const settings = await new SettingsManager('main', { platform }).load();
+
+    expect(settings.keybinds.PreviousPage.binds).toEqual(['ArrowUp', 'ArrowLeft']);
+    expect(settings.keybinds.NextPage.binds).toEqual(['ArrowDown', 'ArrowRight']);
+  });
+
+  it('reorders the page step defaults of an install upgraded from version 6', async () => {
+    const stored = structuredClone(
+      (await new SettingsManager('main', { platform: 'mac' }).load()).keybinds,
+    );
+    stored.PreviousPage.binds = ['ArrowLeft', 'ArrowUp'];
+    stored.NextPage.binds = ['ArrowRight', 'ArrowDown'];
+    store.reset({
+      storageSchemaVersion: SETTINGS_SCHEMA_VERSION,
+      keybinds: stored,
+      keybindDefaultsVersion: 6,
+    });
+
+    const settings = await new SettingsManager('main', { platform: 'mac' }).load();
+
+    expect(settings.keybinds.PreviousPage.binds).toEqual(['ArrowUp', 'ArrowLeft']);
+    expect(settings.keybinds.NextPage.binds).toEqual(['ArrowDown', 'ArrowRight']);
+  });
+
+  it('keeps a page step binding the reader changed, and drops a colliding default', async () => {
+    const stored = structuredClone(
+      (await new SettingsManager('main', { platform: 'mac' }).load()).keybinds,
+    );
+    stored.PreviousPage.binds = ['PageUp'];
+    stored.NextPage.binds = ['ArrowRight', 'ArrowDown'];
+    stored.FirstPage.binds = ['ArrowUp'];
+    store.reset({
+      storageSchemaVersion: SETTINGS_SCHEMA_VERSION,
+      keybinds: stored,
+      keybindDefaultsVersion: 6,
+    });
+
+    const settings = await new SettingsManager('main', { platform: 'mac' }).load();
+
+    expect(settings.keybinds.PreviousPage.binds).toEqual(['PageUp']);
+    expect(settings.keybinds.FirstPage.binds).toEqual(['ArrowUp']);
+    expect(settings.keybinds.NextPage.binds).toEqual(['ArrowDown', 'ArrowRight']);
+  });
+});
+
+describe('Previous Item and Next Item shortcuts', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    store.reset();
+  });
+
+  it('gives a fresh install ⌥↑ and ⌥↓ as Reader Commands', async () => {
+    const settings = await new SettingsManager('main', { platform: 'mac' }).load();
+
+    expect(settings.keybinds.GoPreviousItem).toEqual({
+      displayName: 'Previous Item',
+      binds: ['Alt+ArrowUp'],
+      action: 'readerCommand',
+      data: 'go.previous-item',
+    });
+    expect(settings.keybinds.GoNextItem.binds).toEqual(['Alt+ArrowDown']);
+  });
+
+  it('adds them to an install stored before them, without taking a key the reader chose', async () => {
+    const stored = structuredClone(
+      (await new SettingsManager('main', { platform: 'mac' }).load()).keybinds,
+    );
+    delete stored.GoPreviousItem;
+    delete stored.GoNextItem;
+    stored.Print.binds = ['Alt+ArrowUp'];
+    store.reset({
+      storageSchemaVersion: SETTINGS_SCHEMA_VERSION,
+      keybinds: stored,
+      keybindDefaultsVersion: 6,
+    });
+
+    const settings = await new SettingsManager('main', { platform: 'mac' }).load();
+
+    expect(settings.keybinds.GoPreviousItem.binds).toEqual([]);
+    expect(settings.keybinds.GoNextItem.binds).toEqual(['Alt+ArrowDown']);
+    expect(settings.keybinds.Print.binds).toEqual(['Alt+ArrowUp']);
   });
 });

@@ -1,6 +1,6 @@
 # Preview-style reader chrome
 
-Decisions: [ADR 0003](../adr/0003-preview-style-chrome-over-headless-embedpdf.md). Vocabulary: [CONTEXT.md](../../CONTEXT.md).
+Decisions: [ADR 0003](../adr/0003-preview-style-chrome-over-headless-embedpdf.md). Vocabulary: [GLOSSARY.md](../../GLOSSARY.md).
 
 ## Problem Statement
 

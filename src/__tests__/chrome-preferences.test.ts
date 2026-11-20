@@ -26,9 +26,20 @@ describe('Chrome preferences', () => {
       sidebarMode: 'thumbnails',
       sidebarWidth: 220,
       markupToolbarVisible: false,
+      toolbarVisible: true,
       highlightColor: 'yellow',
     });
     expect(DEFAULT_CHROME_PREFERENCES.sidebarVisible).toBe(false);
+  });
+
+  it('remembers the Bookmarks sidebar mode across launches', async () => {
+    const backing = createStorage();
+    const firstLaunch = await loadChromePreferences(backing.storage, { debounceMs: 0 });
+    firstLaunch.update({ sidebarVisible: true, sidebarMode: 'bookmarks' });
+    await firstLaunch.flush();
+
+    const nextLaunch = await loadChromePreferences(backing.storage);
+    expect(nextLaunch.snapshot().sidebarMode).toBe('bookmarks');
   });
 
   it('restores sidebar visibility, mode and width on the next launch', async () => {
@@ -44,6 +55,7 @@ describe('Chrome preferences', () => {
       sidebarMode: 'thumbnails',
       sidebarWidth: 300,
       markupToolbarVisible: false,
+      toolbarVisible: true,
       highlightColor: 'yellow',
     });
     expect(backing.getStored()).toEqual({
@@ -52,6 +64,7 @@ describe('Chrome preferences', () => {
       sidebarMode: 'thumbnails',
       sidebarWidth: 300,
       markupToolbarVisible: false,
+      toolbarVisible: true,
       highlightColor: 'yellow',
     });
   });
@@ -72,6 +85,7 @@ describe('Chrome preferences', () => {
       sidebarMode: 'thumbnails',
       sidebarWidth: 220,
       markupToolbarVisible: false,
+      toolbarVisible: true,
       highlightColor: 'yellow',
     });
   });
@@ -187,5 +201,18 @@ describe('Chrome preferences', () => {
 
     await preferences.flush();
     expect(backing.getStored()).toMatchObject({ sidebarVisible: true });
+  });
+
+  it('shows the toolbar by default, and keeps a hidden toolbar across launches', async () => {
+    const backing = createStorage({ schemaVersion: 1, sidebarVisible: true });
+    const firstLaunch = await loadChromePreferences(backing.storage, { debounceMs: 0 });
+    expect(firstLaunch.snapshot().toolbarVisible).toBe(true);
+
+    firstLaunch.update({ toolbarVisible: false });
+    await firstLaunch.flush();
+
+    const nextLaunch = await loadChromePreferences(backing.storage);
+    expect(nextLaunch.snapshot().toolbarVisible).toBe(false);
+    expect(nextLaunch.snapshot().sidebarVisible).toBe(true);
   });
 });

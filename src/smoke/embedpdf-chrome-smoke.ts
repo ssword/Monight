@@ -6,7 +6,7 @@
 
 import { emit } from '@tauri-apps/api/event';
 import { mockIPC, mockWindows } from '@tauri-apps/api/mocks';
-import { navigationPdf } from './__fixtures__/navigation-pdf';
+import { navigationPdf } from '../__fixtures__/navigation-pdf';
 
 interface Invocation {
   readonly cmd: string;
@@ -196,7 +196,7 @@ async function mountReader(): Promise<void> {
     savedBytes: (path) => saved.get(path) ?? null,
     menuItem: (id) => menuItems.get(id) ?? null,
   };
-  await import('./main');
+  await import('../main');
 }
 
 void mountReader();

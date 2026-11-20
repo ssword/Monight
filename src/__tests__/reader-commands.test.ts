@@ -9,6 +9,7 @@ import {
   type ReaderCommandContext,
   type ReaderCommandStateInput,
   readerCommandStates,
+  readerMenuSubmenus,
   runReaderCommand,
 } from '../app/reader-commands';
 import type { ReaderAction } from '../reader/reader-actions';
@@ -32,7 +33,12 @@ function fakeContext(overrides: Partial<ReaderCommandContext> = {}) {
       dispatched.push(action);
     },
     preferences: preferenceAuthority,
-    sidebar: { choose: (choice) => calls.push(`sidebar:${choice}`) },
+    sidebar: {
+      choose: (choice) => calls.push(`sidebar:${choice}`),
+      stepItem: async (direction) => {
+        calls.push(`step:${direction}`);
+      },
+    },
     markupToolbar: {
       toggle: () => calls.push('markup-toolbar'),
       chooseTool: (toolId) => calls.push(`markup-toolbar:${toolId}`),
@@ -55,8 +61,24 @@ function fakeContext(overrides: Partial<ReaderCommandContext> = {}) {
     toggleTabBar: () => {
       calls.push('tab-bar');
     },
+    switchTab: async (direction) => {
+      calls.push(`tab:${direction}`);
+    },
     editTextField: () => false,
     selectedAnnotation: () => null,
+    bookmarks: { toggleCurrentPage: () => calls.push('bookmark') },
+    activateDocumentAt: async (index) => {
+      calls.push(`document:${index}`);
+      return true;
+    },
+    magnifier: { toggle: () => calls.push('magnifier') },
+    find: {
+      open: () => calls.push('find:open'),
+      step: (direction) => calls.push(`find:${direction}`),
+      useSelection: async () => {
+        calls.push('find:use-selection');
+      },
+    },
     ...overrides,
   };
   return {
@@ -90,6 +112,89 @@ describe('Reader Commands', () => {
     const { context, dispatched } = fakeContext();
     expect(await runReaderCommand(id, context)).toBe(true);
     expect(dispatched).toEqual([action]);
+  });
+
+  it('Tools ▸ Show Magnifier toggles the loupe', async () => {
+    const { context, calls, dispatched } = fakeContext();
+    expect(await runReaderCommand('tools.magnifier', context)).toBe(true);
+    expect(calls).toEqual(['magnifier']);
+    expect(dispatched).toEqual([]);
+  });
+
+  it('Window ▸ Show Previous and Next Tab switch the active Document in tab order', async () => {
+    const { context, calls } = fakeContext();
+    expect(await runReaderCommand('window.previous-tab', context)).toBe(true);
+    expect(await runReaderCommand('window.next-tab', context)).toBe(true);
+    expect(calls).toEqual(['tab:previous', 'tab:next']);
+  });
+
+  it('Show Previous and Next Tab are disabled with fewer than two Documents', () => {
+    const enabled = (documentCount: number) =>
+      ['window.previous-tab', 'window.next-tab'].map(
+        (id) => stateOf(readerCommandStates(input({ documentCount })), id)?.enabled,
+      );
+    expect(enabled(0)).toEqual([false, false]);
+    expect(enabled(1)).toEqual([false, false]);
+    expect(enabled(2)).toEqual([true, true]);
+  });
+
+  it('Show Previous and Next Tab accelerators follow the PreviousTab and NextTab bindings', () => {
+    const keybinds = defaultSettings('mac').keybinds;
+    let states = readerCommandStates(input({ keybinds }));
+    expect(stateOf(states, 'window.previous-tab')?.accelerator).toBe('Ctrl+Shift+Tab');
+    expect(stateOf(states, 'window.next-tab')?.accelerator).toBe('Ctrl+Tab');
+    keybinds.NextTab.binds = ['Alt+J'];
+    states = readerCommandStates(input({ keybinds }));
+    expect(stateOf(states, 'window.next-tab')?.accelerator).toBe('Alt+J');
+  });
+
+  it('Find…, Find Next and Find Previous go through the find controls', async () => {
+    const { context, calls } = fakeContext();
+    expect(await runReaderCommand('edit.find', context)).toBe(true);
+    expect(await runReaderCommand('edit.find-next', context)).toBe(true);
+    expect(await runReaderCommand('edit.find-previous', context)).toBe(true);
+    expect(calls).toEqual(['find:open', 'find:next', 'find:previous']);
+  });
+
+  it('Find commands are enabled with a Document and show their default shortcuts', async () => {
+    const { defaultKeybinds } = await import('../scripts/keybind-defaults');
+    const ids = ['edit.find', 'edit.find-next', 'edit.find-previous'];
+    const mac = readerCommandStates(input({ keybinds: defaultKeybinds('mac') }));
+    expect(ids.map((id) => stateOf(mac, id)?.accelerator)).toEqual([
+      'CmdOrCtrl+F',
+      'Cmd+G',
+      'Cmd+Shift+G',
+    ]);
+    const other = readerCommandStates(input({ keybinds: defaultKeybinds('other') }));
+    expect(ids.map((id) => stateOf(other, id)?.accelerator)).toEqual([
+      'CmdOrCtrl+F',
+      'F3',
+      'Shift+F3',
+    ]);
+    expect(ids.every((id) => stateOf(mac, id)?.enabled)).toBe(true);
+    const none = readerCommandStates(
+      input({ documentCount: 0, activeDocument: null, markup: null }),
+    );
+    expect(ids.some((id) => stateOf(none, id)?.enabled)).toBe(false);
+  });
+
+  it('Use Selection for Find searches for the selected text', async () => {
+    const { context, calls } = fakeContext();
+    expect(await runReaderCommand('edit.find.use-selection', context)).toBe(true);
+    expect(calls).toEqual(['find:use-selection']);
+  });
+
+  it('Use Selection for Find needs a Document and selected text, and shows its shortcut', async () => {
+    const { defaultKeybinds } = await import('../scripts/keybind-defaults');
+    const id = 'edit.find.use-selection';
+    const keybinds = defaultKeybinds('mac');
+    const selected = readerCommandStates(input({ keybinds, textSelected: true }));
+    expect(stateOf(selected, id)).toMatchObject({ enabled: true, accelerator: 'CmdOrCtrl+E' });
+    expect(stateOf(readerCommandStates(input({ keybinds })), id)?.enabled).toBe(false);
+    const none = readerCommandStates(
+      input({ documentCount: 0, activeDocument: null, markup: null, textSelected: true }),
+    );
+    expect(stateOf(none, id)?.enabled).toBe(false);
   });
 
   it('Go to Page… asks for a page and jumps there, recorded in Navigation History', async () => {
@@ -138,6 +243,15 @@ describe('Reader Commands', () => {
     expect(nothingSelected.dispatched).toEqual([]);
   });
 
+  it.each([
+    ['go.previous-item', 'step:previous'],
+    ['go.next-item', 'step:next'],
+  ])('%s steps through the shown sidebar mode', async (id, call) => {
+    const { context, calls } = fakeContext();
+    expect(await runReaderCommand(id, context)).toBe(true);
+    expect(calls).toEqual([call]);
+  });
+
   it('Go to Page… does nothing when the request is cancelled', async () => {
     const { context, dispatched } = fakeContext({ requestPage: async () => null });
     await runReaderCommand('go.page', context);
@@ -149,6 +263,7 @@ describe('Reader Commands', () => {
     ['view.sidebar.thumbnails', 'sidebar:thumbnails'],
     ['view.sidebar.tableOfContents', 'sidebar:tableOfContents'],
     ['view.sidebar.annotations', 'sidebar:annotations'],
+    ['view.sidebar.bookmarks', 'sidebar:bookmarks'],
     ['view.markup-toolbar', 'markup-toolbar'],
     ['view.slideshow', 'slideshow'],
     ['view.full-screen', 'full-screen'],
@@ -191,6 +306,7 @@ describe('Reader Commands', () => {
 
 const input = (overrides: Partial<ReaderCommandStateInput> = {}): ReaderCommandStateInput => ({
   documentCount: 1,
+  openDocuments: [],
   activeDocument: {
     viewMode: 'continuous',
     filterSettings: {
@@ -212,6 +328,10 @@ const input = (overrides: Partial<ReaderCommandStateInput> = {}): ReaderCommandS
   tabBarKeptShown: false,
   textFieldFocused: false,
   annotationSelected: false,
+  currentPageBookmarked: false,
+  magnifierVisible: false,
+  textSelected: false,
+  itemStepping: { previous: true, next: true },
   ...overrides,
 });
 
@@ -270,7 +390,8 @@ describe('native menu state', () => {
       input({ documentCount: 0, activeDocument: null, markup: null }),
     );
     const enabled = states.filter((state) => state.enabled).map((state) => state.id);
-    expect(enabled).toEqual(['view.full-screen']);
+    // The toolbar can always be shown again (story 32).
+    expect(enabled).toEqual(['view.toolbar', 'view.full-screen']);
     expect(checkedIds(states)).toEqual([]);
   });
 
@@ -350,6 +471,31 @@ describe('native menu state', () => {
     expect(stateOf(last, 'go.next-page')?.enabled).toBe(false);
   });
 
+  it('enables Previous Item and Next Item only when the shown mode has an item to step to', () => {
+    const both = readerCommandStates(input({ itemStepping: { previous: true, next: true } }));
+    expect(stateOf(both, 'go.previous-item')?.enabled).toBe(true);
+    expect(stateOf(both, 'go.next-item')?.enabled).toBe(true);
+
+    const atLast = readerCommandStates(input({ itemStepping: { previous: true, next: false } }));
+    expect(stateOf(atLast, 'go.previous-item')?.enabled).toBe(true);
+    expect(stateOf(atLast, 'go.next-item')?.enabled).toBe(false);
+
+    const none = readerCommandStates(
+      input({
+        activeDocument: null,
+        documentCount: 0,
+        itemStepping: { previous: true, next: true },
+      }),
+    );
+    expect(stateOf(none, 'go.previous-item')?.enabled).toBe(false);
+  });
+
+  it('shows ⌥↑ and ⌥↓ beside Previous Item and Next Item', () => {
+    const states = readerCommandStates(input({ keybinds: defaultSettings('mac').keybinds }));
+    expect(stateOf(states, 'go.previous-item')?.accelerator).toBe('Alt+ArrowUp');
+    expect(stateOf(states, 'go.next-item')?.accelerator).toBe('Alt+ArrowDown');
+  });
+
   it('enables Back and Forward only when Navigation History has somewhere to go', () => {
     const none = readerCommandStates(input());
     expect(stateOf(none, 'go.back')?.enabled).toBe(false);
@@ -389,6 +535,41 @@ describe('native menu state', () => {
     expect(stateOf(hidden, 'view.full-screen')?.text).toBe('Enter Full Screen');
   });
 
+  it('View ▸ Hide Toolbar toggles the toolbar preference and names what it will do', async () => {
+    const { context, preferences } = fakeContext();
+    const documentOpen = input({ documentCount: 1 });
+
+    expect(stateOf(readerCommandStates(documentOpen), 'view.toolbar')).toMatchObject({
+      enabled: true,
+      text: 'Hide Toolbar',
+    });
+
+    await runReaderCommand('view.toolbar', context);
+    expect(preferences().toolbarVisible).toBe(false);
+    expect(
+      stateOf(
+        readerCommandStates({
+          ...documentOpen,
+          preferences: { ...DEFAULT_CHROME_PREFERENCES, toolbarVisible: false },
+        }),
+        'view.toolbar',
+      )?.text,
+    ).toBe('Show Toolbar');
+
+    await runReaderCommand('view.toolbar', context);
+    expect(preferences().toolbarVisible).toBe(true);
+  });
+
+  it('keeps the toolbar item enabled without a Document and shows its shortcut', () => {
+    expect(
+      stateOf(readerCommandStates(input({ activeDocument: null })), 'view.toolbar')?.enabled,
+    ).toBe(true);
+    const keybinds = defaultSettings('mac').keybinds;
+    expect(stateOf(readerCommandStates(input({ keybinds })), 'view.toolbar')?.accelerator).toBe(
+      'CmdOrCtrl+Alt+T',
+    );
+  });
+
   it('shows each command’s effective shortcut as its menu accelerator', () => {
     const keybinds = defaultSettings('mac').keybinds;
     keybinds.Fullscreen.binds = ['Ctrl+Alt+Enter'];
@@ -406,6 +587,7 @@ describe('native menu state', () => {
       'view.mode.spread': 'CmdOrCtrl+3',
       'view.sidebar.hidden': 'CmdOrCtrl+Alt+1',
       'view.sidebar.annotations': 'CmdOrCtrl+Alt+4',
+      'view.sidebar.bookmarks': 'CmdOrCtrl+Alt+5',
       'view.zoom.actual-size': 'CmdOrCtrl+0',
       'view.zoom.fit': 'CmdOrCtrl+9',
       'view.zoom.width': 'CmdOrCtrl+Shift+W',
@@ -417,9 +599,9 @@ describe('native menu state', () => {
       'go.page': 'CmdOrCtrl+Alt+G',
       'go.back': 'CmdOrCtrl+[',
       'go.forward': 'CmdOrCtrl+]',
-      // Unmodified keys stay with the page so the menu never takes them from text fields.
-      'go.next-page': null,
-      'go.previous-page': null,
+      // Unmodified keys stay with the page, except the page steps Preview shows as ↑ / ↓.
+      'go.next-page': 'ArrowDown',
+      'go.previous-page': 'ArrowUp',
       'view.tab-bar': null,
     });
   });
@@ -437,6 +619,29 @@ describe('native menu state', () => {
     expect(stateOf(states, 'view.full-screen')?.accelerator).toBe('F11');
   });
 
+  it('names the magnifier item by what it will do and disables it without a Document', () => {
+    const hidden = stateOf(readerCommandStates(input()), 'tools.magnifier');
+    expect(hidden).toMatchObject({ enabled: true, text: 'Show Magnifier' });
+    const shown = stateOf(
+      readerCommandStates(input({ magnifierVisible: true })),
+      'tools.magnifier',
+    );
+    expect(shown).toMatchObject({ enabled: true, text: 'Hide Magnifier' });
+    const closed = readerCommandStates(
+      input({ documentCount: 0, activeDocument: null, markup: null, magnifierVisible: true }),
+    );
+    expect(stateOf(closed, 'tools.magnifier')?.enabled).toBe(false);
+  });
+
+  it('shows no accelerator for the magnifier key, on any platform', () => {
+    for (const platform of ['mac', 'other'] as const) {
+      const keybinds = defaultSettings(platform).keybinds;
+      expect(keybinds.Magnifier.binds).toEqual(['`']);
+      const states = readerCommandStates(input({ keybinds }));
+      expect(stateOf(states, 'tools.magnifier')?.accelerator).toBeNull();
+    }
+  });
+
   it('cannot hide the tab bar while several Documents are open', () => {
     const states = readerCommandStates(input({ documentCount: 2 }));
     expect(stateOf(states, 'view.tab-bar')).toMatchObject({
@@ -446,15 +651,58 @@ describe('native menu state', () => {
   });
 });
 
+describe('Window menu Document list', () => {
+  const openDocuments = [
+    { name: 'a.pdf', currentPage: 3, pageCount: 10, active: false },
+    { name: 'b.pdf', currentPage: 1, pageCount: 2, active: true },
+    { name: 'c.pdf', currentPage: 0, pageCount: 0, active: false },
+  ];
+
+  it('has one check item per open Document, titled with its page, active one checked', () => {
+    const states = readerCommandStates(input({ documentCount: 3, openDocuments }));
+    const listed = states.filter(({ id }) => id.startsWith('window.document.'));
+    expect(listed).toEqual([
+      { id: 'window.document.1', enabled: true, checked: false, text: 'a.pdf (Page 3 of 10)' },
+      { id: 'window.document.2', enabled: true, checked: true, text: 'b.pdf (Page 1 of 2)' },
+      { id: 'window.document.3', enabled: true, checked: false, text: 'c.pdf' },
+    ]);
+  });
+
+  it('lists the Documents as the window.document submenu, in Reading Session order', () => {
+    const submenu = readerMenuSubmenus(undefined, undefined, openDocuments).find(
+      ({ id }) => id === 'window.document',
+    );
+    expect(submenu?.items).toEqual([
+      { id: 'window.document.1', text: 'a.pdf (Page 3 of 10)' },
+      { id: 'window.document.2', text: 'b.pdf (Page 1 of 2)' },
+      { id: 'window.document.3', text: 'c.pdf' },
+    ]);
+    expect(readerMenuSubmenus().find(({ id }) => id === 'window.document')?.items).toEqual([]);
+  });
+
+  it('activates the chosen Document', async () => {
+    const { context, calls } = fakeContext();
+    expect(await runReaderCommand('window.document.2', context)).toBe(true);
+    expect(calls).toEqual(['document:1']);
+  });
+
+  it('refuses an entry that no longer exists', async () => {
+    const { context, calls } = fakeContext({ activateDocumentAt: async () => false });
+    expect(await runReaderCommand('window.document.9', context)).toBe(false);
+    expect(await runReaderCommand('window.document.0', context)).toBe(false);
+    expect(calls).toEqual([]);
+  });
+});
+
 describe('native menu ids', () => {
   it('match the items built by src-tauri/src/menu.rs', async () => {
     const { readFileSync } = await import('node:fs');
     const { readerMenuSubmenus } = await import('../app/reader-commands');
     const menuSource = readFileSync('src-tauri/src/menu.rs', 'utf8');
     const definitions = menuSource.slice(0, menuSource.indexOf('#[cfg(test)]'));
-    const rustIds = [...definitions.matchAll(/"((?:edit|view|go|tools)\.[A-Za-z.-]+)"/g)].map(
-      ([, id]) => id,
-    );
+    const rustIds = [
+      ...definitions.matchAll(/"((?:edit|view|go|tools|window)\.[A-Za-z.-]+)"/g),
+    ].map(([, id]) => id);
 
     const listed = readerMenuSubmenus();
     const listedItemIds = new Set(listed.flatMap(({ items }) => items.map(({ id }) => id)));
@@ -491,6 +739,8 @@ describe('native menu listing', () => {
       },
       // Rotate Left and Right stay unlisted until Page Rotation is verified.
       { id: 'tools.rotate', items: [] },
+      // The Window menu lists Documents only once some are open.
+      { id: 'window.document', items: [] },
     ]);
   });
 
@@ -592,5 +842,46 @@ describe('Rotate commands behind the Page Rotation gate', () => {
     const states = readerCommandStates(input({ keybinds }), undefined, verified);
     expect(stateOf(states, 'tools.rotate.left')?.accelerator).toBe('CmdOrCtrl+L');
     expect(stateOf(states, 'tools.rotate.right')?.accelerator).toBe('CmdOrCtrl+R');
+  });
+});
+
+describe('Add Bookmark command', () => {
+  it('toggles a Bookmark without dispatching any Document edit', async () => {
+    const { context, dispatched, calls } = fakeContext();
+
+    expect(await runReaderCommand('tools.bookmark', context)).toBe(true);
+
+    expect(calls).toEqual(['bookmark']);
+    expect(dispatched).toEqual([]);
+  });
+
+  it('is titled by whether the current page is bookmarked', () => {
+    const add = stateOf(readerCommandStates(input()), 'tools.bookmark');
+    const remove = stateOf(
+      readerCommandStates(input({ currentPageBookmarked: true })),
+      'tools.bookmark',
+    );
+
+    expect(add).toMatchObject({ enabled: true, text: 'Add Bookmark' });
+    expect(remove).toMatchObject({ enabled: true, text: 'Remove Bookmark' });
+  });
+
+  it('works on a protected Document', () => {
+    const states = readerCommandStates(
+      input({ markup: { activeToolId: null, readOnlyReason: 'read-only' } }),
+    );
+    expect(stateOf(states, 'tools.bookmark')?.enabled).toBe(true);
+  });
+
+  it('is disabled when no Document is open', () => {
+    const states = readerCommandStates(
+      input({ documentCount: 0, activeDocument: null, markup: null }),
+    );
+    expect(stateOf(states, 'tools.bookmark')?.enabled).toBe(false);
+  });
+
+  it('shows its effective shortcut as the menu accelerator', () => {
+    const mac = readerCommandStates(input({ keybinds: defaultSettings('mac').keybinds }));
+    expect(stateOf(mac, 'tools.bookmark')?.accelerator).toBe('CmdOrCtrl+D');
   });
 });

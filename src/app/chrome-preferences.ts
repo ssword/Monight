@@ -1,5 +1,5 @@
 // App-wide reader chrome preferences: shared by every Document and kept
-// outside the Reading Session and Visual State (see CONTEXT.md).
+// outside the Reading Session and Visual State (see GLOSSARY.md).
 //
 // Adding a preference: extend ChromePreferences, DEFAULT_CHROME_PREFERENCES and
 // PREFERENCE_PARSERS. Stored values are parsed field by field, so older files
@@ -8,7 +8,7 @@
 import { HIGHLIGHT_COLORS, type HighlightColorId } from './markup-tools';
 
 /** Persisted sidebar modes; Hide is `sidebarVisible: false`, not a mode. */
-export const SIDEBAR_MODES = ['thumbnails', 'tableOfContents', 'annotations'] as const;
+export const SIDEBAR_MODES = ['thumbnails', 'tableOfContents', 'annotations', 'bookmarks'] as const;
 export type SidebarMode = (typeof SIDEBAR_MODES)[number];
 
 export const SIDEBAR_WIDTH_BOUNDS = { min: 140, max: 480 } as const;
@@ -19,6 +19,8 @@ export interface ChromePreferences {
   readonly sidebarWidth: number;
   /** Whether the markup toolbar shows beneath the toolbar. */
   readonly markupToolbarVisible: boolean;
+  /** Whether the reader toolbar shows (View ▸ Hide Toolbar); older files load as shown. */
+  readonly toolbarVisible: boolean;
   /** The Highlight split button's last-used colour. */
   readonly highlightColor: HighlightColorId;
 }
@@ -49,6 +51,7 @@ export const DEFAULT_CHROME_PREFERENCES: ChromePreferences = Object.freeze({
   sidebarMode: 'thumbnails',
   sidebarWidth: 220,
   markupToolbarVisible: false,
+  toolbarVisible: true,
   highlightColor: 'yellow',
 });
 
@@ -65,6 +68,7 @@ const PREFERENCE_PARSERS: PreferenceParsers = {
   sidebarWidth: (value) =>
     typeof value === 'number' && Number.isFinite(value) ? clampSidebarWidth(value) : undefined,
   markupToolbarVisible: (value) => (typeof value === 'boolean' ? value : undefined),
+  toolbarVisible: (value) => (typeof value === 'boolean' ? value : undefined),
   highlightColor: (value) => HIGHLIGHT_COLORS.find(({ id }) => id === value)?.id,
 };
 

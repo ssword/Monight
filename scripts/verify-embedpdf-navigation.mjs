@@ -22,7 +22,7 @@ export async function verifyNavigation(browser, origin) {
       await route.continue();
     }
   });
-  await page.goto(`${origin}/embedpdf-navigation-smoke.html`);
+  await page.goto(`${origin}/smoke/embedpdf-navigation-smoke.html`);
   await page.waitForFunction(() => document.body.dataset.status !== 'loading');
   assert.equal(await page.getAttribute('body', 'data-status'), 'ready');
   const viewer = page.locator('.embedpdf-document-surface[data-visible="true"]');

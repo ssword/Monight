@@ -25,7 +25,7 @@ const server = spawn(
 const waitForServer = async () => {
   for (let attempt = 0; attempt < 80; attempt += 1) {
     try {
-      const response = await fetch(`${origin}/embedpdf-smoke.html`);
+      const response = await fetch(`${origin}/smoke/embedpdf-smoke.html`);
       if (response.ok) return;
     } catch {
       // Vite is still starting.
@@ -64,7 +64,7 @@ try {
     }
     await route.continue();
   });
-  await page.goto(`${origin}/embedpdf-smoke.html`);
+  await page.goto(`${origin}/smoke/embedpdf-smoke.html`);
   try {
     await page.waitForFunction(() => document.body.dataset.status !== 'loading');
   } catch (error) {

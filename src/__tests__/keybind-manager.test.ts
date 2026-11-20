@@ -106,6 +106,29 @@ describe('KeybindManager', () => {
     }
   });
 
+  it('runs the backtick as Tools ▸ Show Magnifier, but leaves it to text fields', async () => {
+    const manager = new KeybindManager(true);
+    const readerCommand = vi.fn();
+    manager.registerAction('readerCommand', readerCommand);
+    manager.loadFromSettings(defaultSettings('mac'));
+
+    const event = keyboardEvent('`', { code: 'Backquote', metaKey: false });
+    expect(manager.matchEvent(event)).toBe('readerCommand');
+    await manager.handleEvent(event);
+    expect(readerCommand).toHaveBeenLastCalledWith(event, 'tools.magnifier');
+    for (const target of [{ tagName: 'INPUT' }, { isContentEditable: true }]) {
+      expect(
+        manager.matchEvent(
+          keyboardEvent('`', {
+            code: 'Backquote',
+            metaKey: false,
+            target: target as unknown as EventTarget,
+          }),
+        ),
+      ).toBeNull();
+    }
+  });
+
   it('matches Cmd+Shift+= as the configured Plus accelerator', () => {
     const manager = new KeybindManager(true);
     manager.loadFromSettings(DEFAULT_SETTINGS);
@@ -142,7 +165,7 @@ describe('KeybindManager', () => {
     manager.registerAction('readerCommand', readerCommand);
     manager.loadFromSettings(defaultSettings('mac'));
 
-    expect(manager.matchEvent(keyboardEvent('∞', { code: 'Digit5', altKey: true }))).toBeNull();
+    expect(manager.matchEvent(keyboardEvent('¶', { code: 'Digit6', altKey: true }))).toBeNull();
     await manager.handleEvent(keyboardEvent('2'));
     await manager.handleEvent(keyboardEvent('£', { code: 'Digit3', altKey: true }));
     await manager.handleEvent(keyboardEvent('a', { code: 'KeyA', shiftKey: true }));

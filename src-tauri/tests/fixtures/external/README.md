@@ -35,7 +35,7 @@ since been implemented; see [Automated contracts](#automated-contracts-79).
 Two contracts iterate over `readers` in `manifest.json`, so every registered reader is
 checked on each CI run:
 
-- **Offline Chromium** (`src/embedpdf-external-readers-smoke.ts`, run by
+- **Offline Chromium** (`src/smoke/embedpdf-external-readers-smoke.ts`, run by
   `npm run test:embedpdf-offline` on Linux): opens the supported fixture with the pinned
   EmbedPDF runtime; finds each `annotationSelectors` entry as exactly one native object
   with the selector's subtype, contents, and author; checks its Rect (and QuadPoints for

@@ -6,10 +6,10 @@ import type {
   HistoryCapability,
 } from '@embedpdf/snippet';
 import { PdfAnnotationSubtype } from '@embedpdf/snippet';
-import { navigationPdf } from './__fixtures__/navigation-pdf';
-import type { DocumentSurface } from './app/document-workspace';
-import { createEmbedPdfDocumentSurfaceFactory } from './app/embedpdf-document-surface';
-import { normalizeAnnotationDisplayName } from './reader/native-pdf-editing';
+import { navigationPdf } from '../__fixtures__/navigation-pdf';
+import type { DocumentSurface } from '../app/document-workspace';
+import { createEmbedPdfDocumentSurfaceFactory } from '../app/embedpdf-document-surface';
+import { normalizeAnnotationDisplayName } from '../reader/native-pdf-editing';
 
 declare global {
   interface Window {
@@ -30,7 +30,7 @@ const protectedFixtures = [
   {
     name: 'permission-restricted.pdf',
     url: new URL(
-      '../src-tauri/tests/fixtures/protected-documents/permission-restricted.pdf',
+      '../../src-tauri/tests/fixtures/protected-documents/permission-restricted.pdf',
       import.meta.url,
     ),
     reason: 'PDF permissions prohibit annotation editing; this Document is read-only',
@@ -38,7 +38,7 @@ const protectedFixtures = [
   {
     name: 'digitally-signed.pdf',
     url: new URL(
-      '../src-tauri/tests/fixtures/protected-documents/digitally-signed.pdf',
+      '../../src-tauri/tests/fixtures/protected-documents/digitally-signed.pdf',
       import.meta.url,
     ),
     reason: 'Digitally signed PDFs are read-only to preserve their signatures',
@@ -46,7 +46,7 @@ const protectedFixtures = [
   {
     name: 'password-encrypted.pdf',
     url: new URL(
-      '../src-tauri/tests/fixtures/protected-documents/password-encrypted.pdf',
+      '../../src-tauri/tests/fixtures/protected-documents/password-encrypted.pdf',
       import.meta.url,
     ),
     reason:

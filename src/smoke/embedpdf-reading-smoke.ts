@@ -1,24 +1,24 @@
-import { navigationPdf } from './__fixtures__/navigation-pdf';
-import { loadChromePreferences } from './app/chrome-preferences';
-import { createDocumentIntakeRuntime } from './app/document-intake-runtime';
-import { createDocumentWorkspace } from './app/document-workspace';
-import { setupEventListeners } from './app/dom-events';
-import { createEmbedPdfDocumentSurfaceFactory } from './app/embedpdf-document-surface';
-import { registerKeybindActions } from './app/keybinds';
-import { type ReaderCommandContext, runReaderCommand } from './app/reader-commands';
-import { restoreReadingSessionAtStartup } from './app/startup-restoration';
-import type { DocumentContent } from './reader/document-content';
+import { navigationPdf } from '../__fixtures__/navigation-pdf';
+import { loadChromePreferences } from '../app/chrome-preferences';
+import { createDocumentIntakeRuntime } from '../app/document-intake-runtime';
+import { createDocumentWorkspace } from '../app/document-workspace';
+import { setupEventListeners } from '../app/dom-events';
+import { createEmbedPdfDocumentSurfaceFactory } from '../app/embedpdf-document-surface';
+import { registerKeybindActions } from '../app/keybinds';
+import { type ReaderCommandContext, runReaderCommand } from '../app/reader-commands';
+import { restoreReadingSessionAtStartup } from '../app/startup-restoration';
+import type { DocumentContent } from '../reader/document-content';
 import {
   createReaderActions,
   type ReaderAction,
   type ReaderActions,
-} from './reader/reader-actions';
-import { loadReadingSession } from './reader/reading-session-store';
-import { PRESETS } from './scripts/filters';
-import { KeybindManager } from './scripts/keybind-manager';
-import { defaultSettings } from './scripts/settings';
-import './styles/document-workspace.css';
-import './styles/reader-shell.css';
+} from '../reader/reader-actions';
+import { loadReadingSession } from '../reader/reading-session-store';
+import { PRESETS } from '../scripts/filters';
+import { KeybindManager } from '../scripts/keybind-manager';
+import { defaultSettings } from '../scripts/settings';
+import '../styles/document-workspace.css';
+import '../styles/reader-shell.css';
 
 async function run() {
   const saved = await loadReadingSession({
@@ -97,8 +97,13 @@ async function run() {
     selectedPages: () => [],
     currentPage: () => null,
     toggleTabBar: () => {},
+    switchTab: async () => {},
+    activateDocumentAt: async () => false,
     editTextField: () => false,
     selectedAnnotation: () => null,
+    bookmarks: null,
+    magnifier: null,
+    find: null,
   };
   registerKeybindActions({
     keybindManager: manager,
@@ -108,7 +113,6 @@ async function run() {
     openSettings: async () => {},
     updateTabBarVisibility: () => {},
     updateUI: () => {},
-    openSearch: () => {},
     goToPage,
     runReaderCommand: (id) => runReaderCommand(id, commandContext),
     dispatchReaderAction: async (action) => {

@@ -4,16 +4,60 @@
 
 import type { PdfOutlineItem } from '../lib/document-features';
 import type { PdfLinkTarget } from '../lib/pdf-links';
-import type { SidebarDocument, SidebarModeContext, SidebarModeView } from './reader-sidebar';
+import type {
+  SidebarDocument,
+  SidebarItem,
+  SidebarModeContext,
+  SidebarModeView,
+} from './reader-sidebar';
+
+interface OutlineStop {
+  readonly key: string;
+  readonly page: number;
+  readonly target: PdfLinkTarget;
+  readonly button: HTMLElement;
+}
 
 export function createTableOfContentsView({
   dispatchReaderAction,
+  itemsChanged,
 }: SidebarModeContext): SidebarModeView {
   const element = document.createElement('div');
   element.className = 'sidebar-outline';
   let shown: { filePath: string; generation: number | undefined } | null = null;
   let request = 0;
   const targets = new WeakMap<Element, PdfLinkTarget>();
+  // Entries with a page destination in outline order: what Previous/Next Item step through.
+  let stops: OutlineStop[] = [];
+  let selectedKey: string | null = null;
+
+  const select = (stop: OutlineStop) => {
+    selectedKey = stop.key;
+    for (const marked of element.querySelectorAll('[data-selected]')) {
+      marked.removeAttribute('data-selected');
+    }
+    stop.button.dataset.selected = 'true';
+    // Reveal the entry inside any collapsed parents.
+    for (
+      let node = stop.button
+        .closest<HTMLElement>('[role="treeitem"]')
+        ?.parentElement?.closest<HTMLElement>('[role="treeitem"]');
+      node;
+      node = node.parentElement?.closest<HTMLElement>('[role="treeitem"]')
+    ) {
+      setExpanded(node, true);
+    }
+    stop.button.scrollIntoView?.({ block: 'nearest' });
+    itemsChanged();
+  };
+  const activate = (target: PdfLinkTarget) =>
+    shown
+      ? dispatchReaderAction({
+          type: 'activateDocumentTarget',
+          filePath: shown.filePath,
+          target,
+        })
+      : Promise.resolve();
 
   const setExpanded = (node: HTMLElement, expanded: boolean) => {
     const group = node.querySelector<HTMLElement>(':scope > [role="group"]');
@@ -22,8 +66,13 @@ export function createTableOfContentsView({
     group.hidden = !expanded;
   };
 
-  const renderEntries = (items: readonly PdfOutlineItem[], level: number): HTMLElement[] =>
-    items.map((item) => {
+  const renderEntries = (
+    items: readonly PdfOutlineItem[],
+    level: number,
+    parentKey = '',
+  ): HTMLElement[] =>
+    items.map((item, index) => {
+      const key = `${parentKey}/${index}`;
       const node = document.createElement('li');
       node.setAttribute('role', 'treeitem');
       node.setAttribute('aria-level', String(level));
@@ -40,6 +89,10 @@ export function createTableOfContentsView({
       button.append(title);
       if (item.target) targets.set(button, item.target);
       else button.disabled = true;
+      const page = item.pageNumber ?? item.target?.readingPosition?.page ?? null;
+      if (item.target && !item.target.url && page !== null) {
+        stops.push({ key, page, target: item.target, button });
+      }
       if (item.items.length > 0) {
         const toggle = document.createElement('button');
         toggle.type = 'button';
@@ -57,7 +110,7 @@ export function createTableOfContentsView({
       if (item.items.length > 0) {
         const group = document.createElement('ul');
         group.setAttribute('role', 'group');
-        group.append(...renderEntries(item.items, level + 1));
+        group.append(...renderEntries(item.items, level + 1, key));
         node.append(group);
         setExpanded(node, false);
       }
@@ -75,11 +128,9 @@ export function createTableOfContentsView({
     const link = target?.closest('.sidebar-outline-link');
     const linkTarget = link ? targets.get(link) : undefined;
     if (!shown || !linkTarget) return;
-    void dispatchReaderAction({
-      type: 'activateDocumentTarget',
-      filePath: shown.filePath,
-      target: linkTarget,
-    });
+    const stop = stops.find((candidate) => candidate.button === link);
+    if (stop) select(stop);
+    void activate(linkTarget);
   });
 
   element.addEventListener('keydown', (event) => {
@@ -99,7 +150,10 @@ export function createTableOfContentsView({
   };
 
   const show = (items: readonly PdfOutlineItem[]) => {
+    stops = [];
+    selectedKey = null;
     if (items.length === 0) {
+      itemsChanged();
       showEmpty('No Table of Contents');
       return;
     }
@@ -109,11 +163,15 @@ export function createTableOfContentsView({
     tree.setAttribute('aria-label', 'Table of Contents');
     tree.append(...renderEntries(items, 1));
     element.replaceChildren(tree);
+    itemsChanged();
   };
 
   const load = (sidebarDocument: SidebarDocument) => {
     const current = ++request;
+    stops = [];
+    selectedKey = null;
     element.replaceChildren();
+    itemsChanged();
     const { query } = sidebarDocument;
     if (!query) return;
     void query
@@ -134,7 +192,10 @@ export function createTableOfContentsView({
       if (!sidebarDocument) {
         shown = null;
         request += 1;
+        stops = [];
+        selectedKey = null;
         showEmpty('No Document');
+        itemsChanged();
         return;
       }
       const { filePath, query } = sidebarDocument;
@@ -142,8 +203,19 @@ export function createTableOfContentsView({
       shown = { filePath, generation: query?.generation };
       load(sidebarDocument);
     },
+    items: (): SidebarItem[] =>
+      stops.map((stop) => ({
+        key: stop.key,
+        page: stop.page,
+        activate: () => {
+          select(stop);
+          return activate(stop.target);
+        },
+      })),
+    selectedItemKey: () => selectedKey,
     destroy() {
       request += 1;
+      stops = [];
       element.replaceChildren();
     },
   };
