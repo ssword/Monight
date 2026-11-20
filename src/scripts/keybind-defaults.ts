@@ -240,10 +240,13 @@ export const KEYBIND_DEFAULTS_REVISIONS: readonly KeybindDefaultsRevision[] = [
     },
   },
   {
-    // Preview menu parity (ADR 0004). Revision 7 is unreleased and shared by every
-    // parity feature: add its defaults here rather than starting a new revision.
+    // Preview menu parity (#131, ADR 0004). Page steps list ↑ / ↓ first, so the
+    // Go menu shows Preview's keys; ← / → still turn pages. Revision 7 is unreleased
+    // and shared by every parity feature: append defaults here, not a new revision.
     version: 7,
     binds: {
+      PreviousPage: ['ArrowUp', 'ArrowLeft'],
+      NextPage: ['ArrowDown', 'ArrowRight'],
       AddBookmark: ['CmdOrCtrl+D'],
     },
   },
