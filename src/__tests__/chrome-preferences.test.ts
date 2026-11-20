@@ -32,6 +32,16 @@ describe('Chrome preferences', () => {
     expect(DEFAULT_CHROME_PREFERENCES.sidebarVisible).toBe(false);
   });
 
+  it('remembers the Bookmarks sidebar mode across launches', async () => {
+    const backing = createStorage();
+    const firstLaunch = await loadChromePreferences(backing.storage, { debounceMs: 0 });
+    firstLaunch.update({ sidebarVisible: true, sidebarMode: 'bookmarks' });
+    await firstLaunch.flush();
+
+    const nextLaunch = await loadChromePreferences(backing.storage);
+    expect(nextLaunch.snapshot().sidebarMode).toBe('bookmarks');
+  });
+
   it('restores sidebar visibility, mode and width on the next launch', async () => {
     const backing = createStorage();
     const firstLaunch = await loadChromePreferences(backing.storage, { debounceMs: 0 });

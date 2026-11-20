@@ -812,6 +812,50 @@ describe('Toggle Toolbar shortcut', () => {
   });
 });
 
+describe('Bookmarks sidebar shortcut', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    store.reset();
+  });
+
+  it('gives View ▸ Bookmarks CmdOrCtrl+Alt+5 as a Reader Command', async () => {
+    const settings = await new SettingsManager('main', { platform: 'mac' }).load();
+
+    expect(settings.keybinds.SidebarBookmarks).toEqual({
+      displayName: 'Bookmarks',
+      binds: ['CmdOrCtrl+Alt+5'],
+      action: 'readerCommand',
+      data: 'view.sidebar.bookmarks',
+    });
+  });
+
+  it('adds it to an install stored under version 6, unless the reader took the key', async () => {
+    const stored = structuredClone(
+      (await new SettingsManager('main', { platform: 'mac' }).load()).keybinds,
+    );
+    delete stored.SidebarBookmarks;
+    store.reset({
+      storageSchemaVersion: SETTINGS_SCHEMA_VERSION,
+      keybinds: stored,
+      keybindDefaultsVersion: 6,
+    });
+    expect(
+      (await new SettingsManager('main', { platform: 'mac' }).load()).keybinds.SidebarBookmarks
+        .binds,
+    ).toEqual(['CmdOrCtrl+Alt+5']);
+
+    stored.Print.binds = ['CmdOrCtrl+Alt+5'];
+    store.reset({
+      storageSchemaVersion: SETTINGS_SCHEMA_VERSION,
+      keybinds: stored,
+      keybindDefaultsVersion: 6,
+    });
+    const settings = await new SettingsManager('main', { platform: 'mac' }).load();
+    expect(settings.keybinds.Print.binds).toEqual(['CmdOrCtrl+Alt+5']);
+    expect(settings.keybinds.SidebarBookmarks.binds).toEqual([]);
+  });
+});
+
 describe('Rotate shortcuts behind the Page Rotation gate', () => {
   beforeEach(() => {
     vi.clearAllMocks();

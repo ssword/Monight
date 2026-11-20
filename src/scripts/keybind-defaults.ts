@@ -121,6 +121,7 @@ export const KEYBIND_ACTIONS: Readonly<Record<string, KeybindAction>> = {
   SidebarThumbnails: readerCommand('Thumbnails', 'view.sidebar.thumbnails'),
   SidebarTableOfContents: readerCommand('Table of Contents', 'view.sidebar.tableOfContents'),
   SidebarAnnotations: readerCommand('Highlights and Notes', 'view.sidebar.annotations'),
+  SidebarBookmarks: readerCommand('Bookmarks', 'view.sidebar.bookmarks'),
   MarkupToolbar: readerCommand('Show or Hide Markup Toolbar', 'view.markup-toolbar'),
   ToggleToolbar: readerCommand('Show or Hide Toolbar', 'view.toolbar'),
   SwitchToTab1: switchToTab(1),
@@ -267,6 +268,8 @@ export const KEYBIND_DEFAULTS_REVISIONS: readonly KeybindDefaultsRevision[] = [
       UseSelectionForFind: ['CmdOrCtrl+E'],
       // View ▸ Hide Toolbar (#137).
       ToggleToolbar: ['CmdOrCtrl+Alt+T'],
+      // View ▸ Bookmarks (#139).
+      SidebarBookmarks: ['CmdOrCtrl+Alt+5'],
     },
   },
 ];

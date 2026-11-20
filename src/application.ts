@@ -569,6 +569,7 @@ function mountReaderSidebar(
     preferences,
     dispatchReaderAction,
     onItemsChange: () => syncReaderMenu(),
+    bookmarks: () => bookmarks,
     revealAnnotation: (filePath, annotationId) =>
       documentWorkspace?.revealAnnotation(filePath, annotationId),
     activeDocument: () => {
@@ -730,7 +731,10 @@ export async function initializeApplication(modules: ApplicationModules): Promis
         onPersistenceError: (error) => console.error('Bookmarks persistence failed:', error),
       },
     );
-    bookmarks.observe(syncReaderMenu);
+    bookmarks.observe(() => {
+      syncReaderMenu();
+      readerSidebar?.refresh();
+    });
     readingSessionStorage = modules.createReadingSessionStorage(settingsManager);
     try {
       restoredReadingSession = await loadReadingSession(readingSessionStorage);
