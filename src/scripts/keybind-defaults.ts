@@ -240,10 +240,13 @@ export const KEYBIND_DEFAULTS_REVISIONS: readonly KeybindDefaultsRevision[] = [
     },
   },
   {
-    // Preview menu parity (ADR 0004, #131): shared by every parity ticket. Show
-    // Magnifier's key is left to text fields, like Delete's.
+    // Preview menu parity (#131, ADR 0004). Page steps list ↑ / ↓ first, so the
+    // Go menu shows Preview's keys; ← / → still turn pages. Show Magnifier's key
+    // is left to text fields, like Delete's.
     version: 7,
     binds: {
+      PreviousPage: ['ArrowUp', 'ArrowLeft'],
+      NextPage: ['ArrowDown', 'ArrowRight'],
       Magnifier: ['`'],
     },
   },

@@ -805,3 +805,58 @@ describe('Rotate shortcuts behind the Page Rotation gate', () => {
     expect(settings.keybinds).not.toHaveProperty('RotateClockwise');
   });
 });
+
+describe('Page step shortcuts (Preview ↑ / ↓)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    store.reset();
+  });
+
+  it.each([
+    'mac',
+    'other',
+  ] as const)('gives a fresh %s install ↑ then ← for Previous Page and ↓ then → for Next Page', async (platform) => {
+    const settings = await new SettingsManager('main', { platform }).load();
+
+    expect(settings.keybinds.PreviousPage.binds).toEqual(['ArrowUp', 'ArrowLeft']);
+    expect(settings.keybinds.NextPage.binds).toEqual(['ArrowDown', 'ArrowRight']);
+  });
+
+  it('reorders the page step defaults of an install upgraded from version 6', async () => {
+    const stored = structuredClone(
+      (await new SettingsManager('main', { platform: 'mac' }).load()).keybinds,
+    );
+    stored.PreviousPage.binds = ['ArrowLeft', 'ArrowUp'];
+    stored.NextPage.binds = ['ArrowRight', 'ArrowDown'];
+    store.reset({
+      storageSchemaVersion: SETTINGS_SCHEMA_VERSION,
+      keybinds: stored,
+      keybindDefaultsVersion: 6,
+    });
+
+    const settings = await new SettingsManager('main', { platform: 'mac' }).load();
+
+    expect(settings.keybinds.PreviousPage.binds).toEqual(['ArrowUp', 'ArrowLeft']);
+    expect(settings.keybinds.NextPage.binds).toEqual(['ArrowDown', 'ArrowRight']);
+  });
+
+  it('keeps a page step binding the reader changed, and drops a colliding default', async () => {
+    const stored = structuredClone(
+      (await new SettingsManager('main', { platform: 'mac' }).load()).keybinds,
+    );
+    stored.PreviousPage.binds = ['PageUp'];
+    stored.NextPage.binds = ['ArrowRight', 'ArrowDown'];
+    stored.FirstPage.binds = ['ArrowUp'];
+    store.reset({
+      storageSchemaVersion: SETTINGS_SCHEMA_VERSION,
+      keybinds: stored,
+      keybindDefaultsVersion: 6,
+    });
+
+    const settings = await new SettingsManager('main', { platform: 'mac' }).load();
+
+    expect(settings.keybinds.PreviousPage.binds).toEqual(['PageUp']);
+    expect(settings.keybinds.FirstPage.binds).toEqual(['ArrowUp']);
+    expect(settings.keybinds.NextPage.binds).toEqual(['ArrowDown', 'ArrowRight']);
+  });
+});
