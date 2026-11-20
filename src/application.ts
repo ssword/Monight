@@ -47,6 +47,7 @@ import {
 } from './app/reader-commands';
 import { createReaderSidebar, type ReaderSidebar } from './app/reader-sidebar';
 import { createRotateButton, type RotateButton } from './app/rotate-button';
+import { NO_ITEM_STEPPING } from './app/sidebar-item-stepping';
 import { restoreReadingSessionAtStartup } from './app/startup-restoration';
 import { type ExternalOpenPayload, setupTauriListeners } from './app/tauri-events';
 import {
@@ -197,6 +198,7 @@ const readerMenuState = (): ReaderCommandStateInput => {
     canGoForward: readerActions?.canGoForward() ?? false,
     tabBarKeptShown,
     textFieldFocused: isEditableTarget(document.activeElement),
+    itemStepping: readerSidebar?.itemStepping() ?? NO_ITEM_STEPPING,
     annotationSelected: (documentWorkspace?.selectedAnnotation() ?? null) !== null,
     magnifierVisible: magnifier?.visible() ?? false,
     keybinds: activeKeybinds,
@@ -537,6 +539,7 @@ function mountReaderSidebar(
     },
     preferences,
     dispatchReaderAction,
+    onItemsChange: () => syncReaderMenu(),
     revealAnnotation: (filePath, annotationId) =>
       documentWorkspace?.revealAnnotation(filePath, annotationId),
     activeDocument: () => {

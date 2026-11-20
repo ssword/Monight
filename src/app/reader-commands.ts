@@ -34,7 +34,7 @@ import type { KeybindConfig } from '../scripts/keybind-defaults';
 import type { ChromePreferences, ChromePreferencesAuthority } from './chrome-preferences';
 import type { ActiveMarkupState, DocumentSelectedAnnotation } from './document-workspace';
 import { isEditableMarkup, VERIFIED_MARKUP_TOOLS, type VerifiedMarkupTool } from './markup-tools';
-import type { SidebarChoice } from './reader-sidebar';
+import type { ItemStepping, SidebarChoice, StepDirection } from './reader-sidebar';
 import { tabBarShown } from './tab-bar';
 
 /**
@@ -57,7 +57,11 @@ export interface ReaderCommandContext {
   readonly dispatchReaderAction: DispatchReaderAction;
   readonly preferences: ChromePreferencesAuthority;
   /** The toolbar sidebar menu's own choice handler. */
-  readonly sidebar: { choose(choice: SidebarChoice): void } | null;
+  readonly sidebar: {
+    choose(choice: SidebarChoice): void;
+    /** Go ▸ Previous/Next Item: selects and goes to the neighbouring item of the shown mode. */
+    stepItem(direction: StepDirection): Promise<void>;
+  } | null;
   /** The markup toolbar's own Markup toggle and tool buttons. */
   readonly markupToolbar: { toggle(): void; chooseTool(toolId: string): void } | null;
   /** The Highlight split button's own click, for its text-markup tools. */
@@ -103,6 +107,8 @@ export interface ReaderCommandStateInput {
   /** Whether the active Document's Navigation History has somewhere to go. */
   readonly canGoBack: boolean;
   readonly canGoForward: boolean;
+  /** Whether the shown sidebar mode has a previous and a next item to step to. */
+  readonly itemStepping: ItemStepping;
   /** Whether View ▸ Show Tab Bar keeps the tab bar shown (transient, never persisted). */
   readonly tabBarKeptShown: boolean;
   /** Whether focus is in an editable element, whose own typing Undo and Redo then edit. */
@@ -219,6 +225,16 @@ const tabCommand = <Id extends 'window.previous-tab' | 'window.next-tab'>(
   state: (input) => ({ enabled: input.documentCount >= 2 }),
 });
 
+/** Go ▸ Previous Item and Next Item: step through the shown sidebar mode's items. */
+const stepItemCommand = <Id extends 'go.previous-item' | 'go.next-item'>(
+  id: Id,
+  direction: StepDirection,
+): ReaderCommand<Id> => ({
+  id,
+  run: (context) => context.sidebar?.stepItem(direction),
+  state: (input) => ({ enabled: hasDocument(input) && input.itemStepping[direction] }),
+});
+
 const staticCommands = [
   historyCommand('edit.undo', 'undo'),
   historyCommand('edit.redo', 'redo'),
@@ -307,6 +323,8 @@ const staticCommands = [
     },
     state: whenDocument,
   },
+  stepItemCommand('go.previous-item', 'previous'),
+  stepItemCommand('go.next-item', 'next'),
   {
     id: 'go.back',
     run: (context) => context.dispatchReaderAction(READER_ACTION_COMMANDS.back()),

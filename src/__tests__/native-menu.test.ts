@@ -140,6 +140,7 @@ describe('native menu state sync', () => {
         textFieldFocused: false,
         annotationSelected: false,
         magnifierVisible: false,
+        itemStepping: { previous: false, next: false },
       }),
       context: () =>
         ({

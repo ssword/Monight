@@ -107,6 +107,8 @@ export const KEYBIND_ACTIONS: Readonly<Record<string, KeybindAction>> = {
   GoToPage: readerCommand('Go to Page…', 'go.page'),
   GoBack: readerCommand('Back', 'go.back'),
   GoForward: readerCommand('Forward', 'go.forward'),
+  GoPreviousItem: readerCommand('Previous Item', 'go.previous-item'),
+  GoNextItem: readerCommand('Next Item', 'go.next-item'),
   FitToWidth: { displayName: 'Zoom to Width', action: 'fitToWidth' },
   FitToPage: { displayName: 'Zoom to Fit', action: 'fitToPage' },
   ViewContinuous: readerCommand('Continuous Scroll', 'view.mode.continuous'),
@@ -242,12 +244,15 @@ export const KEYBIND_DEFAULTS_REVISIONS: readonly KeybindDefaultsRevision[] = [
   {
     // Preview menu parity (#131, ADR 0004). Page steps list ↑ / ↓ first, so the
     // Go menu shows Preview's keys; ← / → still turn pages. Show Magnifier's key
-    // is left to text fields, like Delete's.
+    // is left to text fields, like Delete's. Go ▸ Previous Item and Next Item
+    // (#140) take ⌥↑ / ⌥↓.
     version: 7,
     binds: {
       PreviousPage: ['ArrowUp', 'ArrowLeft'],
       NextPage: ['ArrowDown', 'ArrowRight'],
       Magnifier: ['`'],
+      GoPreviousItem: ['Alt+ArrowUp'],
+      GoNextItem: ['Alt+ArrowDown'],
     },
   },
 ];

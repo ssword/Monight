@@ -860,3 +860,42 @@ describe('Page step shortcuts (Preview ↑ / ↓)', () => {
     expect(settings.keybinds.NextPage.binds).toEqual(['ArrowDown', 'ArrowRight']);
   });
 });
+
+describe('Previous Item and Next Item shortcuts', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    store.reset();
+  });
+
+  it('gives a fresh install ⌥↑ and ⌥↓ as Reader Commands', async () => {
+    const settings = await new SettingsManager('main', { platform: 'mac' }).load();
+
+    expect(settings.keybinds.GoPreviousItem).toEqual({
+      displayName: 'Previous Item',
+      binds: ['Alt+ArrowUp'],
+      action: 'readerCommand',
+      data: 'go.previous-item',
+    });
+    expect(settings.keybinds.GoNextItem.binds).toEqual(['Alt+ArrowDown']);
+  });
+
+  it('adds them to an install stored before them, without taking a key the reader chose', async () => {
+    const stored = structuredClone(
+      (await new SettingsManager('main', { platform: 'mac' }).load()).keybinds,
+    );
+    delete stored.GoPreviousItem;
+    delete stored.GoNextItem;
+    stored.Print.binds = ['Alt+ArrowUp'];
+    store.reset({
+      storageSchemaVersion: SETTINGS_SCHEMA_VERSION,
+      keybinds: stored,
+      keybindDefaultsVersion: 6,
+    });
+
+    const settings = await new SettingsManager('main', { platform: 'mac' }).load();
+
+    expect(settings.keybinds.GoPreviousItem.binds).toEqual([]);
+    expect(settings.keybinds.GoNextItem.binds).toEqual(['Alt+ArrowDown']);
+    expect(settings.keybinds.Print.binds).toEqual(['Alt+ArrowUp']);
+  });
+});
