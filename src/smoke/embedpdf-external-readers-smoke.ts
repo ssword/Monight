@@ -5,14 +5,14 @@ import type {
   Rect,
 } from '@embedpdf/snippet';
 import { PdfAnnotationSubtype } from '@embedpdf/snippet';
-import manifest from '../src-tauri/tests/fixtures/external/manifest.json';
-import { loadChromePreferences } from './app/chrome-preferences';
-import type { DocumentSurface } from './app/document-workspace';
-import { createEmbedPdfDocumentSurfaceFactory } from './app/embedpdf-document-surface';
-import { createReaderSidebar } from './app/reader-sidebar';
-import { createDocumentQuery, type DocumentAnnotationKind } from './reader/document-queries';
-import type { ReaderAction } from './reader/reader-actions';
-import { PRESETS } from './scripts/filters';
+import manifest from '../../src-tauri/tests/fixtures/external/manifest.json';
+import { loadChromePreferences } from '../app/chrome-preferences';
+import type { DocumentSurface } from '../app/document-workspace';
+import { createEmbedPdfDocumentSurfaceFactory } from '../app/embedpdf-document-surface';
+import { createReaderSidebar } from '../app/reader-sidebar';
+import { createDocumentQuery, type DocumentAnnotationKind } from '../reader/document-queries';
+import type { ReaderAction } from '../reader/reader-actions';
+import { PRESETS } from '../scripts/filters';
 
 // External-reader-to-Monight contract (#79): every reader registered in the external
 // fixture manifest is opened with the pinned runtime, its externally authored Annotations are
@@ -465,7 +465,7 @@ async function verifyFixture(
   };
   const expected = expectedAnnotations(fixture, reader.annotationSelectors);
   const response = await fetch(
-    new URL(`../src-tauri/tests/fixtures/external/${fixture}`, import.meta.url),
+    new URL(`../../src-tauri/tests/fixtures/external/${fixture}`, import.meta.url),
   );
   check(response.ok, `External fixture could not be loaded: ${fixture}`);
   const input = new Uint8Array(await response.arrayBuffer());
@@ -579,7 +579,7 @@ async function verifyFixture(
 async function verifyUnsupportedListing(reader: Reader): Promise<void> {
   const fixture = reader.unsupportedFixture;
   const response = await fetch(
-    new URL(`../src-tauri/tests/fixtures/external/${fixture}`, import.meta.url),
+    new URL(`../../src-tauri/tests/fixtures/external/${fixture}`, import.meta.url),
   );
   check(response.ok, `External fixture could not be loaded: ${fixture}`);
   const { surface, annotations } = await open(

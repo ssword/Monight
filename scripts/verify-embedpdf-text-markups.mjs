@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdir, writeFile } from 'node:fs/promises';
 
 export async function verifyTextMarkups(page, origin) {
-  await page.goto(`${origin}/embedpdf-text-markup-smoke.html`);
+  await page.goto(`${origin}/smoke/embedpdf-text-markup-smoke.html`);
   await page.waitForFunction(() => document.body.dataset.status !== 'loading', { timeout: 60000 });
   const { status, error, result } = await page.evaluate(() => ({
     status: document.body.dataset.status,

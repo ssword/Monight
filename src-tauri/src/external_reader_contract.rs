@@ -382,7 +382,7 @@ fn contents_edits_keep_the_external_readers_note_appearance() {
             }
             let contents = selector["contents"].as_str().unwrap();
             let author = selector["author"].as_str().unwrap();
-            // The Chromium contract's edit, in src/embedpdf-external-readers-smoke.ts.
+            // The Chromium contract's edit, in src/smoke/embedpdf-external-readers-smoke.ts.
             let edited_contents = format!("Monight edited {contents}");
             assert_eq!(
                 note_appearance(&edited, &edited_contents, author),

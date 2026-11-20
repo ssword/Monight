@@ -5,7 +5,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 // src-tauri/tests/fixtures/external/manifest.json. With --write-annotation-fixtures it also
 // refreshes the exports that the Rust preservation contract checks.
 export async function verifyExternalReaders(page, origin) {
-  await page.goto(`${origin}/embedpdf-external-readers-smoke.html`);
+  await page.goto(`${origin}/smoke/embedpdf-external-readers-smoke.html`);
   await page.waitForFunction(() => document.body.dataset.status !== 'loading', { timeout: 60000 });
   const { status, error, exports } = await page.evaluate(() => ({
     status: document.body.dataset.status,

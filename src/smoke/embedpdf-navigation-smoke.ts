@@ -1,23 +1,23 @@
 import { PdfErrorCode, PdfTaskHelper } from '@embedpdf/models';
 import type { EmbedPdfContainer } from '@embedpdf/snippet';
-import { navigationPdf } from './__fixtures__/navigation-pdf';
-import { loadChromePreferences } from './app/chrome-preferences';
-import { createDocumentWorkspace } from './app/document-workspace';
-import { createEmbedPdfDocumentSurfaceFactory } from './app/embedpdf-document-surface';
-import { createReaderSidebar } from './app/reader-sidebar';
-import { createTauriExternalLinkAdapter } from './app/tauri-external-link-adapter';
+import { navigationPdf } from '../__fixtures__/navigation-pdf';
+import { loadChromePreferences } from '../app/chrome-preferences';
+import { createDocumentWorkspace } from '../app/document-workspace';
+import { createEmbedPdfDocumentSurfaceFactory } from '../app/embedpdf-document-surface';
+import { createReaderSidebar } from '../app/reader-sidebar';
+import { createTauriExternalLinkAdapter } from '../app/tauri-external-link-adapter';
 import {
   createReaderActions,
   READING_SESSION_SCHEMA_VERSION,
   type ReaderAction,
   type ReaderActions,
-} from './reader/reader-actions';
-import { PRESETS } from './scripts/filters';
-import { KeybindManager } from './scripts/keybind-manager';
-import { defaultSettings } from './scripts/settings';
-import './styles/document-workspace.css';
-import './styles/reader-shell.css';
-import './styles/reader-sidebar.css';
+} from '../reader/reader-actions';
+import { PRESETS } from '../scripts/filters';
+import { KeybindManager } from '../scripts/keybind-manager';
+import { defaultSettings } from '../scripts/settings';
+import '../styles/document-workspace.css';
+import '../styles/reader-shell.css';
+import '../styles/reader-sidebar.css';
 
 async function run() {
   const actions: ReaderAction[] = [];

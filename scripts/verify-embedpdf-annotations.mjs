@@ -15,7 +15,7 @@ import {
 } from './embedpdf-reader-chrome.mjs';
 
 export async function verifyAnnotations(page, origin) {
-  await page.goto(`${origin}/embedpdf-annotations-smoke.html`);
+  await page.goto(`${origin}/smoke/embedpdf-annotations-smoke.html`);
   await page.waitForFunction(() => document.body.dataset.status !== 'loading', { timeout: 30000 });
   const { status, error, result } = await page.evaluate(() => ({
     status: document.body.dataset.status,

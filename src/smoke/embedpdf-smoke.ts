@@ -1,4 +1,4 @@
-import { createEmbedPdfDocumentSurfaceFactory } from './app/embedpdf-document-surface';
+import { createEmbedPdfDocumentSurfaceFactory } from '../app/embedpdf-document-surface';
 
 declare global {
   interface Window {

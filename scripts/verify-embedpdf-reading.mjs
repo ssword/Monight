@@ -19,7 +19,7 @@ export async function verifyReading(browser, origin) {
     if (/^https?:$/.test(url.protocol) && url.origin !== origin) await route.abort();
     else await route.continue();
   });
-  await page.goto(`${origin}/embedpdf-reading-smoke.html`);
+  await page.goto(`${origin}/smoke/embedpdf-reading-smoke.html`);
   await page.waitForFunction(() => document.body.dataset.status !== 'loading');
   assert.equal(
     await page.getAttribute('body', 'data-status'),

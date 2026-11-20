@@ -7,8 +7,8 @@ import {
   PdfAnnotationSubtype,
   type SelectionPlugin,
 } from '@embedpdf/snippet';
-import { navigationPdf } from './__fixtures__/navigation-pdf';
-import { createEmbedPdfDocumentSurfaceFactory } from './app/embedpdf-document-surface';
+import { navigationPdf } from '../__fixtures__/navigation-pdf';
+import { createEmbedPdfDocumentSurfaceFactory } from '../app/embedpdf-document-surface';
 
 const check = (value: unknown, message: string) => {
   if (!value) throw new Error(message);
@@ -90,7 +90,7 @@ async function checkReopenedAppearance(view: Awaited<ReturnType<typeof open>>, b
 
 async function run() {
   const fixture = new URL(
-    '../src-tauri/tests/fixtures/text-markup-verification/acrobat-text-markups.pdf',
+    '../../src-tauri/tests/fixtures/text-markup-verification/acrobat-text-markups.pdf',
     import.meta.url,
   );
   const input = new Uint8Array(await (await fetch(fixture)).arrayBuffer());
@@ -207,7 +207,7 @@ async function run() {
     await (
       await fetch(
         new URL(
-          '../src-tauri/tests/fixtures/text-markup-verification/selection-fonts.pdf',
+          '../../src-tauri/tests/fixtures/text-markup-verification/selection-fonts.pdf',
           import.meta.url,
         ),
       )
