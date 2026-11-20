@@ -119,6 +119,8 @@ export interface ReaderSidebar {
    * active search, focuses the Search field.
    */
   stepSearch(direction: 'next' | 'previous'): void;
+  /** Use Selection for Find: puts text into the Search field and runs the search at once. */
+  searchFor(text: string): void;
   /**
    * The pages selected in Thumbnails, ascending; empty when none are selected
    * or Thumbnails is not shown (Rotate then acts on the current page).
@@ -382,6 +384,13 @@ export function createReaderSidebar({
       if (searchText.trim() && searchView?.step(direction)) return;
       search?.focus();
       search?.select();
+    },
+    searchFor(text) {
+      if (!search || !text.trim()) return;
+      cancelSearchTimer();
+      search.value = text;
+      searchText = text;
+      render();
     },
     selectedPages: () => view?.view.selectedPages?.() ?? [],
     itemStepping: stepping,

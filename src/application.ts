@@ -202,6 +202,7 @@ const readerMenuState = (): ReaderCommandStateInput => {
     itemStepping: readerSidebar?.itemStepping() ?? NO_ITEM_STEPPING,
     annotationSelected: (documentWorkspace?.selectedAnnotation() ?? null) !== null,
     magnifierVisible: magnifier?.visible() ?? false,
+    textSelected: documentWorkspace?.hasTextSelection() ?? false,
     keybinds: activeKeybinds,
   };
 };
@@ -957,6 +958,10 @@ export async function initializeApplication(modules: ApplicationModules): Promis
       find: {
         open: () => readerSidebar?.focusSearch(),
         step: (direction) => readerSidebar?.stepSearch(direction),
+        useSelection: async () => {
+          const text = (await documentWorkspace?.selectedText()) ?? '';
+          readerSidebar?.searchFor(text);
+        },
       },
       editTextField: (kind) => {
         if (!isEditableTarget(document.activeElement)) return false;

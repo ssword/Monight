@@ -69,6 +69,9 @@ function fakeContext(overrides: Partial<ReaderCommandContext> = {}) {
     find: {
       open: () => calls.push('find:open'),
       step: (direction) => calls.push(`find:${direction}`),
+      useSelection: async () => {
+        calls.push('find:use-selection');
+      },
     },
     ...overrides,
   };
@@ -167,6 +170,25 @@ describe('Reader Commands', () => {
       input({ documentCount: 0, activeDocument: null, markup: null }),
     );
     expect(ids.some((id) => stateOf(none, id)?.enabled)).toBe(false);
+  });
+
+  it('Use Selection for Find searches for the selected text', async () => {
+    const { context, calls } = fakeContext();
+    expect(await runReaderCommand('edit.find.use-selection', context)).toBe(true);
+    expect(calls).toEqual(['find:use-selection']);
+  });
+
+  it('Use Selection for Find needs a Document and selected text, and shows its shortcut', async () => {
+    const { defaultKeybinds } = await import('../scripts/keybind-defaults');
+    const id = 'edit.find.use-selection';
+    const keybinds = defaultKeybinds('mac');
+    const selected = readerCommandStates(input({ keybinds, textSelected: true }));
+    expect(stateOf(selected, id)).toMatchObject({ enabled: true, accelerator: 'CmdOrCtrl+E' });
+    expect(stateOf(readerCommandStates(input({ keybinds })), id)?.enabled).toBe(false);
+    const none = readerCommandStates(
+      input({ documentCount: 0, activeDocument: null, markup: null, textSelected: true }),
+    );
+    expect(stateOf(none, id)?.enabled).toBe(false);
   });
 
   it('Go to Page… asks for a page and jumps there, recorded in Navigation History', async () => {
@@ -299,6 +321,7 @@ const input = (overrides: Partial<ReaderCommandStateInput> = {}): ReaderCommandS
   textFieldFocused: false,
   annotationSelected: false,
   magnifierVisible: false,
+  textSelected: false,
   itemStepping: { previous: true, next: true },
   ...overrides,
 });

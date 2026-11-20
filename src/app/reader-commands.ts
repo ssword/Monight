@@ -99,6 +99,8 @@ export interface ReaderCommandContext {
   readonly find: {
     open(): void;
     step(direction: 'next' | 'previous'): void;
+    /** Puts the selected text into the search and runs it. */
+    useSelection(): Promise<void>;
   } | null;
 }
 
@@ -126,6 +128,8 @@ export interface ReaderCommandStateInput {
   readonly annotationSelected: boolean;
   /** Whether the magnifier loupe is shown (transient, never persisted). */
   readonly magnifierVisible: boolean;
+  /** Whether the active Document has selected text. */
+  readonly textSelected: boolean;
   /**
    * The effective keybinds; each command's menu item shows its shortcut as
    * its accelerator. Absent: accelerators are left as they are.
@@ -261,6 +265,11 @@ const staticCommands = [
     id: 'edit.find-previous',
     run: (context) => context.find?.step('previous'),
     state: whenDocument,
+  },
+  {
+    id: 'edit.find.use-selection',
+    run: (context) => context.find?.useSelection(),
+    state: (input) => ({ enabled: hasDocument(input) && input.textSelected }),
   },
   {
     // Edit ▸ Delete (Delete and Backspace by default; the keybinds leave those keys

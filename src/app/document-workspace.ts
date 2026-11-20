@@ -114,6 +114,10 @@ export interface DocumentWorkspace {
   activeMarkup(): ActiveMarkupState | null;
   /** Chooses a markup tool on the active Document, or null for text selection. */
   setActiveAnnotationTool(toolId: string | null, defaults?: AnnotationToolDefaults): void;
+  /** Whether the active Document has selected text. */
+  hasTextSelection(): boolean;
+  /** The active Document's selected text; empty when nothing is selected. */
+  selectedText(): Promise<string>;
   /** Marks the active Document's text selection; false when nothing was marked. */
   markupSelection(toolId: string, defaults: AnnotationToolDefaults): boolean;
   /** Selects an Annotation on its Document's rendering surface. */
@@ -881,6 +885,12 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
     },
     setActiveAnnotationTool(toolId, defaults) {
       activeRendering()?.setActiveAnnotationTool?.(toolId, defaults);
+    },
+    hasTextSelection() {
+      return activeRendering()?.hasTextSelection?.() ?? false;
+    },
+    async selectedText() {
+      return (await activeRendering()?.selectedText?.()) ?? '';
     },
     markupSelection(toolId, defaults) {
       return activeRendering()?.markupSelection?.(toolId, defaults) ?? false;

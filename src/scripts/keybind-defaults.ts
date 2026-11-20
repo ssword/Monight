@@ -94,6 +94,7 @@ export const KEYBIND_ACTIONS: Readonly<Record<string, KeybindAction>> = {
   Find: { displayName: 'Find in Document', action: 'find' },
   FindNext: readerCommand('Find Next', 'edit.find-next'),
   FindPrevious: readerCommand('Find Previous', 'edit.find-previous'),
+  UseSelectionForFind: readerCommand('Use Selection for Find', 'edit.find.use-selection'),
   Undo: readerCommand('Undo', 'edit.undo'),
   Redo: readerCommand('Redo', 'edit.redo'),
   Delete: readerCommand('Delete', 'edit.delete'),
@@ -259,6 +260,8 @@ export const KEYBIND_DEFAULTS_REVISIONS: readonly KeybindDefaultsRevision[] = [
       GoNextItem: ['Alt+ArrowDown'],
       FindNext: { mac: ['Cmd+G'], other: ['F3', 'Ctrl+G'] },
       FindPrevious: { mac: ['Cmd+Shift+G'], other: ['Shift+F3', 'Ctrl+Shift+G'] },
+      // Edit ▸ Find ▸ Use Selection for Find (#136).
+      UseSelectionForFind: ['CmdOrCtrl+E'],
       // View ▸ Hide Toolbar (#137).
       ToggleToolbar: ['CmdOrCtrl+Alt+T'],
     },
