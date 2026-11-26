@@ -1,3 +1,4 @@
+import { PdfErrorCode } from '@embedpdf/models';
 import { invoke } from '@tauri-apps/api/core';
 import { debugLog } from '../lib/debug-log';
 import type {
@@ -35,7 +36,21 @@ export async function intakeFiles(
 function formatDocumentIntakeFailure(
   outcome: Extract<DocumentIntakeOutcome, { status: 'failed' }>,
 ): string {
-  return `Failed to open ${outcome.requestedPath}: ${outcome.error instanceof Error ? outcome.error.message : 'Unknown error'}`;
+  const { requestedPath, error } = outcome;
+  if (
+    error instanceof Error &&
+    error.name === 'TaskRejectedError' &&
+    'reason' in error &&
+    typeof error.reason === 'object' &&
+    error.reason !== null &&
+    'code' in error.reason &&
+    error.reason.code === PdfErrorCode.WrongFormat
+  ) {
+    const separator = requestedPath.startsWith('/') ? '/' : /[\\/]/;
+    const fileName = requestedPath.split(separator).pop() || requestedPath;
+    return `Monight could not read “${fileName}” as a PDF.`;
+  }
+  return `Failed to open ${requestedPath}: ${error instanceof Error ? error.message : 'Unknown error'}`;
 }
 
 export function reportDocumentIntakeOutcomes(

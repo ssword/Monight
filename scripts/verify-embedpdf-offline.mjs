@@ -6,6 +6,7 @@ import { verifyNavigation } from './verify-embedpdf-navigation.mjs';
 import { verifyReading } from './verify-embedpdf-reading.mjs';
 import { verifyScrolling } from './verify-embedpdf-scrolling.mjs';
 import { verifyTextMarkups } from './verify-embedpdf-text-markups.mjs';
+import { verifyInvalidPdfIntake } from './verify-invalid-pdf-intake.mjs';
 import { verifyReaderChromeLayout } from './verify-reader-chrome-layout.mjs';
 
 const port = 4178;
@@ -234,6 +235,7 @@ try {
   console.log(
     `EmbedPDF offline smoke passed: ${result.state.pageCount} page(s), zoom ${result.state.zoom}`,
   );
+  await verifyInvalidPdfIntake(browser, origin);
   await verifyReading(browser, origin);
   await verifyAnnotations(page, origin);
   await verifyTextMarkups(page, origin);
