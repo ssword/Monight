@@ -9,21 +9,38 @@ use objc2_pdf_kit::{PDFDocument, PDFPrintScalingMode};
 /// Must run on the application main thread. No source or temporary file is written.
 pub fn print(bytes: &[u8], title: &str) -> Result<(), String> {
     let main_thread = MainThreadMarker::new().ok_or("PDF printing requires the main thread")?;
+    run_print(
+        bytes,
+        title,
+        &NSPrintInfo::sharedPrintInfo(),
+        true,
+        main_thread,
+    )
+}
+
+pub(super) fn run_print(
+    bytes: &[u8],
+    title: &str,
+    print_info: &NSPrintInfo,
+    show_panels: bool,
+    main_thread: MainThreadMarker,
+) -> Result<(), String> {
     // SAFETY: called on Tauri's main thread; NSData copies the supplied bytes and
     // all retained PDFKit/AppKit objects outlive the synchronous print operation.
     unsafe {
         let document = prepare_document(bytes)?;
         let operation = document
             .printOperationForPrintInfo_scalingMode_autoRotate(
-                Some(&NSPrintInfo::sharedPrintInfo()),
-                PDFPrintScalingMode::PageScaleNone,
+                Some(print_info),
+                // Fit each page to the paper without changing its saved rotation.
+                PDFPrintScalingMode::PageScaleDownToFit,
                 false,
                 main_thread,
             )
             .ok_or("Unable to create the native PDF print operation")?;
         operation.setJobTitle(Some(&NSString::from_str(title)));
-        operation.setShowsPrintPanel(true);
-        operation.setShowsProgressPanel(true);
+        operation.setShowsPrintPanel(show_panels);
+        operation.setShowsProgressPanel(show_panels);
         // A cancelled panel is a normal outcome. Neither completion nor cancellation
         // changes the source Document or acknowledges its unsaved edits.
         operation.runOperation();
