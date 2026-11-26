@@ -855,11 +855,14 @@ export async function initializeApplication(modules: ApplicationModules): Promis
     });
     readerActions.observe((snapshot) => {
       documentWorkspace?.project(snapshot);
-      if (snapshot.documents.length === 0) magnifier?.hide();
+      const hasDocument = snapshot.documents.length > 0;
+      if (!hasDocument) {
+        magnifier?.hide();
+        showSplash();
+      }
       updateUI(snapshot, documentWorkspace?.activeRenderingState() ?? null);
       refreshReaderControls();
       showActiveAppearance(snapshot);
-      const hasDocument = snapshot.documents.length > 0;
       showTabBar(snapshot.documents.length);
       void updatePrintMenuState(hasDocument);
       syncReaderMenu();

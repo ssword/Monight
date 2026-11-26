@@ -887,7 +887,7 @@ export async function createEmbedPdfViewerRuntime({
           await documentManager.closeDocument(documentId).toPromise();
         }
       } finally {
-        await registry.destroy();
+        // The EmbedPDF container destroys its registry when it unmounts.
         container.remove();
       }
     },

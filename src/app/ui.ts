@@ -84,18 +84,21 @@ export function updateUI(
   const activeDocument = readingSession.documents.find(
     ({ filePath }) => filePath === readingSession.activeDocumentPath,
   );
-  if (!activeDocument || !state) return;
+  if (activeDocument && !state) return;
 
   // Update file name
   const fileName = document.getElementById('file-name');
   if (fileName) {
-    fileName.textContent = activeDocument.title || 'No file loaded';
+    fileName.textContent = activeDocument?.title || 'No file loaded';
+    fileName.title = activeDocument?.title ?? '';
   }
 
   const pageStatus = document.getElementById('page-status');
   if (pageStatus) {
     pageStatus.textContent =
-      state.totalPages > 0 ? `Page ${state.currentPage} of ${state.totalPages}` : '';
+      activeDocument && state && state.totalPages > 0
+        ? `Page ${state.currentPage} of ${state.totalPages}`
+        : '';
   }
 }
 

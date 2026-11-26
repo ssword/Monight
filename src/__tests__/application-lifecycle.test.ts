@@ -247,16 +247,6 @@ vi.mock('../app/startup-restoration', async (importOriginal) => {
     }),
   };
 });
-vi.mock('../app/ui', () => ({
-  applyWindowChrome: vi.fn(),
-  applyToolbarVisibility: vi.fn(),
-  renderRecentFiles: vi.fn(),
-  showSplash: vi.fn(),
-  showViewer: vi.fn(),
-  updateKeyboardHints: vi.fn(),
-  updateTabBarVisibility: vi.fn(),
-  updateUI: vi.fn(),
-}));
 vi.mock('../lib/debug-log', () => ({ debugLog: vi.fn() }));
 vi.mock('../reader/reading-session-store', () => ({
   EMPTY_READING_SESSION: { schemaVersion: 3, activeDocumentPath: null, documents: [] },
@@ -489,6 +479,67 @@ describe('application lifecycle composition', () => {
     vi.clearAllMocks();
     mocks.reset();
     document.body.innerHTML = '<span id="version-info"></span>';
+  });
+
+  it('returns to the launch screen when the native Close Tab command closes the last Document', async () => {
+    document.body.innerHTML = `
+      <div id="splash-container"><span id="version-info"></span></div>
+      <div id="viewer-container" class="hidden">
+        <div id="toolbar" role="toolbar" aria-label="Reader">
+          <span id="file-name">No file loaded</span>
+          <span id="page-status"></span>
+        </div>
+      </div>
+    `;
+    mocks.setUseRealRestoration(true);
+    mocks.setSavedReadingSession({ schemaVersion: 3, activeDocumentPath: null, documents: [] });
+    const { surface, destroyRuntime } = createLifecycleSurface('/docs/report.pdf');
+    const modules = createModules({
+      realRestoration: {
+        source: {
+          describe: async (filePath) => ({ canonicalPath: filePath, title: 'report.pdf' }),
+          read: async () => new Uint8Array([1]),
+        },
+        createSurface: async () => surface,
+      },
+    });
+    const { openPDFFile } = await import('../app/file-actions');
+    vi.mocked(openPDFFile).mockImplementationOnce(
+      async (intake) => (await intake?.open(['/docs/report.pdf']))?.opened ?? 0,
+    );
+    const { initializeApplication } = await import('../application');
+    await initializeApplication(modules);
+    await mocks.listeners.get('menu-open')?.();
+
+    const splash = document.getElementById('splash-container');
+    const viewer = document.getElementById('viewer-container');
+    const fileName = document.getElementById('file-name');
+    const pageStatus = document.getElementById('page-status');
+    expect([splash?.classList.contains('hidden'), viewer?.classList.contains('hidden')]).toEqual([
+      true,
+      false,
+    ]);
+    expect([fileName?.textContent, pageStatus?.textContent]).toEqual([
+      'report.pdf',
+      'Page 1 of 12',
+    ]);
+
+    const closeTab = mocks.listeners.get('menu-close-tab');
+    expect(closeTab).toBeDefined();
+    await closeTab?.();
+
+    expect(destroyRuntime).toHaveBeenCalledOnce();
+    expect({
+      splashHidden: splash?.classList.contains('hidden'),
+      viewerHidden: viewer?.classList.contains('hidden'),
+      fileName: fileName?.textContent,
+      pageStatus: pageStatus?.textContent,
+    }).toEqual({
+      splashHidden: false,
+      viewerHidden: true,
+      fileName: 'No file loaded',
+      pageStatus: '',
+    });
   });
 
   it('propagates persisted annotation attribution through the application workspace', async () => {
