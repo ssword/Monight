@@ -1,6 +1,4 @@
 import { acceleratorFromEvent } from './accelerators';
-import type { KeybindManager, ParsedKeybind } from './keybind-manager';
-import type { MoonightSettings } from './settings';
 
 /**
  * KeybindEditor - UI component for capturing and editing keyboard shortcuts
@@ -13,14 +11,7 @@ export class KeybindEditor {
   private capturedKeys: string[] = [];
   private onKeybindCaptured: ((keybind: string) => void) | null = null;
   private onCancel: (() => void) | null = null;
-  private keybindManager: KeybindManager | null = null;
-  private currentSettings: MoonightSettings | null = null;
-  private isMac: boolean;
-
-  constructor(keybindManager: KeybindManager, settings: MoonightSettings, isMac: boolean) {
-    this.keybindManager = keybindManager;
-    this.currentSettings = settings;
-    this.isMac = isMac;
+  constructor() {
     this.initializeModal();
   }
 
@@ -191,118 +182,5 @@ export class KeybindEditor {
   private handleClear(): void {
     this.capturedKeys = [];
     this.updateDisplay('');
-  }
-
-  /**
-   * Validate keybind - check for conflicts
-   */
-  validateKeybind(keybind: string, excludeAction?: string): boolean {
-    if (!keybind || !this.keybindManager || !this.currentSettings) {
-      return true;
-    }
-
-    // Parse the keybind
-    const parsed = this.parseAccelerator(keybind);
-
-    // Check against all existing keybinds
-    for (const [actionId, config] of Object.entries(this.currentSettings.keybinds)) {
-      if (excludeAction && actionId === excludeAction) continue;
-
-      for (const bind of config.binds) {
-        const existingParsed = this.parseAccelerator(bind);
-        if (this.keybindsMatch(parsed, existingParsed)) {
-          return false; // Conflict found
-        }
-      }
-    }
-
-    return true; // No conflicts
-  }
-
-  /**
-   * Parse accelerator string into ParsedKeybind
-   */
-  private parseAccelerator(accel: string): ParsedKeybind {
-    const parts = accel.split('+').map((p) => p.trim().toLowerCase());
-    const result: ParsedKeybind = {
-      key: '',
-      ctrl: false,
-      meta: false,
-      shift: false,
-      alt: false,
-    };
-
-    for (const part of parts) {
-      switch (part) {
-        case 'ctrl':
-        case 'control':
-          result.ctrl = true;
-          break;
-        case 'meta':
-        case 'cmd':
-        case 'command':
-          result.meta = true;
-          break;
-        case 'shift':
-          result.shift = true;
-          break;
-        case 'alt':
-        case 'option':
-          result.alt = true;
-          break;
-        default:
-          result.key = part.toLowerCase();
-      }
-    }
-
-    return result;
-  }
-
-  /**
-   * Check if two keybinds match
-   */
-  private keybindsMatch(a: ParsedKeybind, b: ParsedKeybind): boolean {
-    return (
-      a.key === b.key &&
-      a.ctrl === b.ctrl &&
-      a.meta === b.meta &&
-      a.shift === b.shift &&
-      a.alt === b.alt
-    );
-  }
-
-  /**
-   * Format keybind for platform-specific display
-   */
-  formatForDisplay(keybind: string): string {
-    return keybind
-      .replace('CmdOrCtrl', this.isMac ? 'Cmd' : 'Ctrl')
-      .replace(/\+/g, ' + ')
-      .replace('Plus', '+')
-      .replace('Minus', '-')
-      .replace('ArrowRight', '→')
-      .replace('ArrowLeft', '←')
-      .replace('ArrowUp', '↑')
-      .replace('ArrowDown', '↓');
-  }
-
-  /**
-   * Find conflicting action for a keybind
-   */
-  findConflict(
-    keybind: string,
-    excludeAction?: string,
-  ): { actionId: string; displayName: string } | null {
-    if (!keybind || !this.currentSettings) return null;
-
-    for (const [actionId, config] of Object.entries(this.currentSettings.keybinds)) {
-      if (excludeAction && actionId === excludeAction) continue;
-
-      if (config.binds.includes(keybind)) {
-        return { actionId, displayName: config.displayName };
-      }
-    }
-
-    return null;
   }
 }

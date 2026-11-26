@@ -4,10 +4,9 @@ import { requestConfirmation } from '../app/dialogs';
 import { debugLog } from '../lib/debug-log';
 import { isMacPlatform } from '../lib/platform';
 import '../styles/dialogs.css';
+import { sameChord } from './accelerators';
 import { KeybindEditor } from './keybind-editor';
-import { KeybindManager } from './keybind-manager';
-import type { MoonightSettings } from './settings';
-import { type KeybindConfig, normalizeAnnotationDisplayName, SettingsManager } from './settings';
+import { type MoonightSettings, normalizeAnnotationDisplayName, SettingsManager } from './settings';
 
 // Initialize settings manager
 const settingsManager = new SettingsManager('settings');
@@ -16,8 +15,6 @@ let currentSettings: MoonightSettings;
 // Detect platform
 const isMac = isMacPlatform();
 
-// Initialize keybind manager and editor
-const keybindManager = new KeybindManager(isMac);
 let keybindEditor: KeybindEditor | null = null;
 
 // Switch between settings panels
@@ -221,7 +218,7 @@ function renderKeybinds(): void {
     const editButton = document.createElement('button');
     editButton.className = 'btn btn-secondary btn-sm';
     editButton.textContent = 'Edit';
-    editButton.onclick = () => startEditingKeybind(actionId, config);
+    editButton.onclick = () => startEditingKeybind(actionId, 0);
 
     keybindHeader.appendChild(keybindName);
     keybindHeader.appendChild(editButton);
@@ -244,7 +241,7 @@ function renderKeybinds(): void {
         keyBadge.className = 'key-badge';
         keyBadge.textContent = formatKeybindForDisplay(bind);
         keyBadge.style.cursor = 'pointer';
-        keyBadge.onclick = () => startEditingKeybind(actionId, config, index);
+        keyBadge.onclick = () => startEditingKeybind(actionId, index);
 
         // Remove button for this binding
         const removeBtn = document.createElement('button');
@@ -265,7 +262,7 @@ function renderKeybinds(): void {
       const addBtn = document.createElement('button');
       addBtn.className = 'keybind-add';
       addBtn.textContent = '+ Add binding';
-      addBtn.onclick = () => addKeybind(actionId);
+      addBtn.onclick = () => startEditingKeybind(actionId, config.binds.length);
       keybindKeys.appendChild(addBtn);
     }
 
@@ -288,52 +285,40 @@ function formatKeybindForDisplay(bind: string): string {
     .replace('ArrowDown', '↓');
 }
 
-async function resolveKeybindConflict(newKeybind: string, actionId: string): Promise<boolean> {
-  const conflict = keybindEditor?.findConflict(newKeybind, actionId);
-  if (!conflict) return true;
+async function saveKeybind(actionId: string, bindIndex: number, newKeybind: string): Promise<void> {
+  const { keybinds } = currentSettings;
+  const matches = (bind: string) => sameChord(bind, newKeybind, isMac);
+  const conflicts = Object.entries(keybinds).filter(
+    ([id, config]) => id !== actionId && config.binds.some(matches),
+  );
 
-  const confirmed = await requestConfirmation({
-    title: 'Replace keyboard shortcut?',
-    message: `This key combination is already used for "${conflict.displayName}". Replace it?`,
-    confirmLabel: 'Replace',
-  });
-  if (!confirmed) return false;
+  if (conflicts.length > 0) {
+    const names = conflicts.map(([, config]) => config.displayName).join(', ');
+    const confirmed = await requestConfirmation({
+      title: 'Replace keyboard shortcut?',
+      message: `This key combination is already used by ${names}. Replace it?`,
+      confirmLabel: 'Replace',
+    });
+    if (!confirmed || currentSettings.keybinds !== keybinds) return;
 
-  currentSettings.keybinds[conflict.actionId].binds = currentSettings.keybinds[
-    conflict.actionId
-  ].binds.filter((bind) => bind !== newKeybind);
-  return true;
-}
-
-// Start editing a keybind
-function startEditingKeybind(actionId: string, config: KeybindConfig, bindIndex: number = 0): void {
-  if (!keybindEditor) {
-    keybindEditor = new KeybindEditor(keybindManager, currentSettings, isMac);
+    for (const [, config] of conflicts) {
+      config.binds = config.binds.filter((bind) => !matches(bind));
+    }
   }
 
-  const currentBind = config.binds[bindIndex] || '';
+  keybinds[actionId].binds[bindIndex] = newKeybind;
+  await settingsManager.set('keybinds', keybinds);
+  renderKeybinds();
+  notifyMainKeybindsChanged();
+}
 
+function startEditingKeybind(actionId: string, bindIndex: number): void {
+  keybindEditor ??= new KeybindEditor();
+  const currentBind = currentSettings.keybinds[actionId].binds[bindIndex] ?? '';
   keybindEditor.startRecording(
     currentBind,
-    async (newKeybind) => {
-      if (!(await resolveKeybindConflict(newKeybind, actionId))) return;
-
-      // Update settings
-      if (config.binds[bindIndex]) {
-        config.binds[bindIndex] = newKeybind;
-      } else {
-        config.binds.push(newKeybind);
-      }
-
-      await settingsManager.set('keybinds', currentSettings.keybinds);
-      renderKeybinds();
-
-      // Notify main window to reload keybinds
-      notifyMainKeybindsChanged();
-    },
-    () => {
-      // Cancelled - do nothing
-    },
+    (newKeybind) => saveKeybind(actionId, bindIndex, newKeybind),
+    () => {},
   );
 }
 
@@ -343,27 +328,6 @@ async function removeKeybind(actionId: string, index: number): Promise<void> {
   await settingsManager.set('keybinds', currentSettings.keybinds);
   renderKeybinds();
   notifyMainKeybindsChanged();
-}
-
-// Add a new keybind
-function addKeybind(actionId: string): void {
-  if (!keybindEditor) {
-    keybindEditor = new KeybindEditor(keybindManager, currentSettings, isMac);
-  }
-
-  keybindEditor.startRecording(
-    '',
-    async (newKeybind) => {
-      if (!(await resolveKeybindConflict(newKeybind, actionId))) return;
-
-      // Add new binding
-      currentSettings.keybinds[actionId].binds.push(newKeybind);
-      await settingsManager.set('keybinds', currentSettings.keybinds);
-      renderKeybinds();
-      notifyMainKeybindsChanged();
-    },
-    () => {},
-  );
 }
 
 // Notify main window that keybinds have changed
