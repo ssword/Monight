@@ -59,13 +59,15 @@
   display: flex;
   flex-direction: column;
   justify-content: center;
-  min-width: 0;
-  flex: 0 1 auto;
+  min-width: min-content;
+  flex: 1 1 0;
   line-height: 1.2;
 }
 
 .file-name {
-  max-width: 100%;
+  /* Let the page count set the intrinsic width when it needs more room. */
+  contain: inline-size;
+  min-width: 72px;
   overflow: hidden;
   color: var(--text-primary);
   font-size: 13px;
@@ -83,10 +85,6 @@
 
 .page-status:empty {
   display: none;
-}
-
-.toolbar-spacer {
-  flex: 1 1 auto;
 }
 
 .toolbar-capsule {
@@ -241,9 +239,25 @@
   position: relative;
   display: flex;
   align-items: center;
-  flex: 0 1 200px;
-  min-width: 120px;
+  flex: 0 1 clamp(80px, calc(100vw - 655px), 200px);
+  min-width: 80px;
   height: 28px;
+}
+
+@media (max-width: 780px) {
+  #toolbar {
+    flex-wrap: wrap;
+    align-content: center;
+    height: auto;
+    min-height: var(--toolbar-height);
+    padding-block: 6px;
+    gap: 4px 6px;
+  }
+
+  .toolbar-search {
+    flex-grow: 1;
+    max-width: 200px;
+  }
 }
 
 .toolbar-search-icon {

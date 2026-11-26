@@ -22,6 +22,8 @@ declare global {
       readonly errorToasts: string[];
       /** The paths the next Open dialog returns. */
       chooseFiles(paths: readonly string[]): void;
+      /** Adds a PDF to the mock native filesystem. */
+      addFile(path: string, bytes: number[]): void;
       /** Runs a native menu item as a click on it would (View, Go, Tools, Edit). */
       runMenuCommand(id: string): Promise<void>;
       /** The PDF bytes last written over a Document's file by Save. */
@@ -191,6 +193,9 @@ async function mountReader(): Promise<void> {
     errorToasts,
     chooseFiles(paths) {
       chosenFiles = [...paths];
+    },
+    addFile(path, bytes) {
+      files.set(path, Uint8Array.from(bytes));
     },
     runMenuCommand: (id) => emit('reader-command', id),
     savedBytes: (path) => saved.get(path) ?? null,

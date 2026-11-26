@@ -6,6 +6,7 @@ import { verifyNavigation } from './verify-embedpdf-navigation.mjs';
 import { verifyReading } from './verify-embedpdf-reading.mjs';
 import { verifyScrolling } from './verify-embedpdf-scrolling.mjs';
 import { verifyTextMarkups } from './verify-embedpdf-text-markups.mjs';
+import { verifyReaderChromeLayout } from './verify-reader-chrome-layout.mjs';
 
 const port = 4178;
 const origin = `http://127.0.0.1:${port}`;
@@ -248,6 +249,7 @@ try {
     executablePath: process.env.WEBKIT_EXECUTABLE_PATH || undefined,
   });
   try {
+    await verifyReaderChromeLayout(webkitBrowser, origin);
     await verifyScrolling(webkitBrowser, origin);
     await verifyTextMarkups(await webkitBrowser.newPage(), origin);
   } finally {

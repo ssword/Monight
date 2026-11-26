@@ -3,7 +3,7 @@
 #tab-bar {
   display: flex;
   align-items: stretch;
-  height: 28px;
+  min-height: 28px;
   flex-shrink: 0;
   overflow: hidden;
   background-color: var(--bg-primary);
@@ -22,11 +22,7 @@
   min-width: 0;
   overflow-x: auto;
   overflow-y: hidden;
-  scrollbar-width: none;
-}
-
-.tab-list::-webkit-scrollbar {
-  display: none;
+  scrollbar-width: thin;
 }
 
 /* Individual Tab */
@@ -35,7 +31,9 @@
   display: flex;
   align-items: center;
   flex: 1 1 0;
-  min-width: 120px;
+  /* Keep the label and the save controls intact when the strip scrolls. */
+  min-width: max-content;
+  min-height: 27px;
   border-right: 1px solid var(--border-color);
   background-color: var(--bg-primary);
 }
@@ -52,10 +50,10 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 100%;
-  min-width: 0;
+  flex: 1 0 auto;
+  width: 5.25rem;
   height: 100%;
-  padding: 0 28px;
+  padding: 0 6px 0 28px;
   color: var(--text-secondary);
   background: transparent;
   border: none;

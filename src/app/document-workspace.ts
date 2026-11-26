@@ -336,6 +336,8 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
     const container = document.getElementById('tab-container');
     if (!container) return;
     const workspace = document.getElementById('document-workspace');
+    const previousActivePath =
+      container.querySelector<HTMLElement>('.tab.active')?.dataset.filePath;
     container.replaceChildren();
 
     for (const documentState of readingSession.documents) {
@@ -418,6 +420,12 @@ export function createDocumentWorkspace(options: DocumentWorkspaceOptions): Docu
         }
       }
       container.append(item);
+    }
+    if (readingSession.activeDocumentPath !== previousActivePath) {
+      container.querySelector('.tab-item.active')?.scrollIntoView?.({
+        block: 'nearest',
+        inline: 'nearest',
+      });
     }
   };
 
