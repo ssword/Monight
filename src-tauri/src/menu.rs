@@ -616,6 +616,15 @@ fn help_url(event_id: &str) -> Option<&'static str> {
     }
 }
 
+#[cfg(target_os = "macos")]
+pub fn disable_automatic_full_screen_item() {
+    use objc2_foundation::{ns_string, NSUserDefaults};
+
+    // Monight supplies its own Full Screen item so its shortcut can be customized.
+    NSUserDefaults::standardUserDefaults()
+        .setBool_forKey(false, ns_string!("NSFullScreenMenuItemEverywhere"));
+}
+
 /// Create the application menu
 pub fn create_menu(app: &AppHandle) -> Result<Menu<Wry>, tauri::Error> {
     // Create menu with platform-specific Settings placement

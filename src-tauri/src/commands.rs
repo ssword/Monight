@@ -750,6 +750,56 @@ pub fn write_original_pdf(
     ))
 }
 
+/// The manual zoom at which a PDF measures the same on screen as on paper.
+#[command]
+pub async fn actual_size_scale(window: tauri::WebviewWindow) -> Result<f64, String> {
+    #[cfg(target_os = "macos")]
+    {
+        use objc2_app_kit::NSWindow;
+        use tauri::async_runtime::channel;
+
+        let (sender, mut receiver) = channel(1);
+        window
+            .with_webview(move |webview| {
+                // SAFETY: Tauri supplies the NSWindow and runs this closure on the main thread.
+                let window = unsafe { webview.ns_window().cast::<NSWindow>().as_ref() };
+                let scale = window.and_then(macos_actual_size_scale).unwrap_or(1.0);
+                let _ = sender.try_send(scale);
+            })
+            .map_err(|error| error.to_string())?;
+        receiver
+            .recv()
+            .await
+            .ok_or_else(|| "Unable to read display size".into())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = window;
+        Ok(1.0)
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn macos_actual_size_scale(window: &objc2_app_kit::NSWindow) -> Option<f64> {
+    use objc2_core_graphics::CGDisplayScreenSize;
+    use objc2_foundation::{ns_string, NSNumber};
+
+    let screen = window.screen()?;
+    let display_id = screen
+        .deviceDescription()
+        .objectForKey(ns_string!("NSScreenNumber"))?
+        .downcast::<NSNumber>()
+        .ok()?
+        .unsignedIntValue();
+    let millimeters = CGDisplayScreenSize(display_id);
+    let points = screen.frame().size;
+    // AppKit points correspond to WebView CSS pixels. Comparing diagonals works
+    // for rotated displays and keeps the backing scale out of the calculation.
+    let scale = points.width.hypot(points.height) * 25.4
+        / (72.0 * millimeters.width.hypot(millimeters.height));
+    (scale.is_finite() && scale > 0.0).then_some(scale)
+}
+
 /// The frontend supplies the permission-checked, current prepared PDF bytes.
 #[command]
 pub async fn print_pdf(

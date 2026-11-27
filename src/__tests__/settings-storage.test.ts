@@ -334,7 +334,7 @@ describe('Preview shortcut defaults', () => {
       ViewTwoPages: ['CmdOrCtrl+3'],
       ResetZoom: ['CmdOrCtrl+0'],
       FitToPage: ['CmdOrCtrl+9'],
-      FitToWidth: ['CmdOrCtrl+Shift+W'],
+      FitToWidth: ['Cmd+8'],
       SidebarHidden: ['CmdOrCtrl+Alt+1'],
       SidebarThumbnails: ['CmdOrCtrl+Alt+2'],
       SidebarTableOfContents: ['CmdOrCtrl+Alt+3'],
@@ -361,6 +361,7 @@ describe('Preview shortcut defaults', () => {
     expect(bindsOf(settings.keybinds)).toMatchObject({
       ViewSinglePage: ['CmdOrCtrl+2'],
       SidebarThumbnails: ['CmdOrCtrl+Alt+2'],
+      FitToWidth: ['CmdOrCtrl+Shift+W'],
       Fullscreen: ['F11'],
       NextTab: ['Ctrl+Tab', 'Ctrl+PageDown'],
       PreviousTab: ['Ctrl+Shift+Tab', 'Ctrl+PageUp'],
@@ -413,6 +414,8 @@ describe('Preview shortcut defaults', () => {
     expect(bindsOf(settings.keybinds)).toMatchObject({
       OpenFile: ['CmdOrCtrl+O'],
       FitToPage: ['CmdOrCtrl+9'],
+      FitToWidth: ['Cmd+8'],
+      SwitchToTab8: [],
       ViewContinuous: ['CmdOrCtrl+1'],
       SidebarThumbnails: ['CmdOrCtrl+Alt+2'],
       Fullscreen: ['Ctrl+Cmd+F'],
@@ -422,6 +425,31 @@ describe('Preview shortcut defaults', () => {
       SwitchToTab9: [],
     });
     expect(settings.keybinds.FitToPage.displayName).toBe('Zoom to Fit');
+  });
+
+  it.each([
+    { width: ['CmdOrCtrl+Shift+W'], tab: [], expectedWidth: ['Cmd+8'] },
+    { width: ['CmdOrCtrl+Shift+W'], tab: ['CmdOrCtrl+8'], expectedWidth: [] },
+    { width: ['Alt+W'], tab: ['CmdOrCtrl+8'], expectedWidth: ['Alt+W'] },
+    { width: [], tab: [], expectedWidth: [] },
+  ])('upgrades macOS Zoom to Width from revision 7 with %j', async ({
+    width,
+    tab,
+    expectedWidth,
+  }) => {
+    store.reset({
+      storageSchemaVersion: SETTINGS_SCHEMA_VERSION,
+      keybindDefaultsVersion: 7,
+      keybinds: storedBeforePreview({ FitToWidth: width, SwitchToTab8: tab }),
+    });
+
+    const main = await new SettingsManager('main', { platform: 'mac' }).load();
+    const settings = await new SettingsManager('settings', { platform: 'mac' }).load();
+
+    for (const { keybinds } of [main, settings]) {
+      expect(keybinds.FitToWidth.binds).toEqual(expectedWidth);
+      expect(keybinds.SwitchToTab8.binds).toEqual(tab);
+    }
   });
 
   it('keeps every shortcut the reader rebound across the upgrade', async () => {

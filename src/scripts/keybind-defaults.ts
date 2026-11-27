@@ -252,8 +252,6 @@ export const KEYBIND_DEFAULTS_REVISIONS: readonly KeybindDefaultsRevision[] = [
     // Go menu shows Preview's keys; ← / → still turn pages. Show Magnifier's key
     // is left to text fields, like Delete's. Go ▸ Previous Item and Next Item
     // (#140) take ⌥↑ / ⌥↓. Edit ▸ Find ▸ Find Next and Find Previous (#135).
-    // Revision 7 is unreleased and shared by every parity feature: append
-    // defaults here, not a new revision.
     version: 7,
     binds: {
       PreviousPage: ['ArrowUp', 'ArrowLeft'],
@@ -270,6 +268,13 @@ export const KEYBIND_DEFAULTS_REVISIONS: readonly KeybindDefaultsRevision[] = [
       ToggleToolbar: ['CmdOrCtrl+Alt+T'],
       // View ▸ Bookmarks (#139).
       SidebarBookmarks: ['CmdOrCtrl+Alt+5'],
+    },
+  },
+  {
+    // Group Zoom to Width with Zoom to Fit and Actual Size on macOS (#154).
+    version: 8,
+    binds: {
+      FitToWidth: { mac: ['Cmd+8'], other: ['CmdOrCtrl+Shift+W'] },
     },
   },
 ];

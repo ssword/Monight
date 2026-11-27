@@ -146,6 +146,7 @@ export type ReaderAction =
   | { type: 'goToPreviousPage'; filePath?: string }
   | { type: 'settleReadingPosition'; filePath: string; readingPosition: ReadingPosition }
   | { type: 'setZoomIntent'; zoomIntent: ZoomIntent; filePath?: string }
+  | { type: 'actualSize'; filePath?: string }
   | { type: 'zoomIn'; filePath?: string }
   | { type: 'zoomOut'; filePath?: string }
   | { type: 'setViewMode'; viewMode: ViewMode; filePath?: string }
@@ -190,6 +191,8 @@ const withOptionalFilePath = <T extends { type: ReaderAction['type'] }>(
 ): T & { filePath?: string } => (filePath ? { ...action, filePath } : action);
 
 export const readerAction = {
+  actualSize: (filePath?: string): ReaderAction =>
+    withOptionalFilePath({ type: 'actualSize' }, filePath),
   zoomIn: (filePath?: string): ReaderAction => withOptionalFilePath({ type: 'zoomIn' }, filePath),
   zoomOut: (filePath?: string): ReaderAction => withOptionalFilePath({ type: 'zoomOut' }, filePath),
   setZoomIntent: (zoomIntent: ZoomIntent, filePath?: string): ReaderAction =>
@@ -251,6 +254,7 @@ interface CreateReaderActionsOptions {
   initialSession: PersistedReadingSession;
   defaultVisualState?: ReadingSessionVisualState;
   projection: ReaderProjection;
+  actualSizeScale?: () => Promise<number>;
   externalLinkAdapter?: ExternalLinkAdapter;
   printAdapter?: PrintAdapter;
   pdfSaveAdapter?: NativePdfSaveAdapter;
@@ -448,6 +452,7 @@ export function createReaderActions({
   initialSession,
   defaultVisualState = createDefaultVisualState(),
   projection,
+  actualSizeScale = async () => 1,
   externalLinkAdapter,
   printAdapter,
   pdfSaveAdapter,
@@ -1991,8 +1996,8 @@ export function createReaderActions({
         );
       }
 
-      if (action.type === 'setZoomIntent') {
-        if (!validZoomIntent(action.zoomIntent)) {
+      if (action.type === 'setZoomIntent' || action.type === 'actualSize') {
+        if (action.type === 'setZoomIntent' && !validZoomIntent(action.zoomIntent)) {
           return { status: 'no-op', revision: revision() };
         }
 
@@ -2005,10 +2010,14 @@ export function createReaderActions({
               expectedGeneration,
               options,
               async (current, projectionOptions) => {
+                const requestedIntent: ZoomIntent =
+                  action.type === 'actualSize'
+                    ? { kind: 'manual', scale: await actualSizeScale() }
+                    : action.zoomIntent;
                 if (
-                  action.zoomIntent.kind === 'manual' &&
+                  requestedIntent.kind === 'manual' &&
                   current.zoomIntent.kind === 'manual' &&
-                  current.zoomIntent.scale === action.zoomIntent.scale
+                  current.zoomIntent.scale === requestedIntent.scale
                 ) {
                   return null;
                 }
@@ -2017,7 +2026,7 @@ export function createReaderActions({
                 }
                 const zoomIntent = await projection.applyZoomIntent(
                   filePath,
-                  action.zoomIntent,
+                  requestedIntent,
                   projectionOptions,
                 );
                 return validZoomIntent(zoomIntent) ? { ...current, zoomIntent } : null;

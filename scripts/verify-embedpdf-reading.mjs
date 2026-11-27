@@ -5,6 +5,7 @@ import {
   menuItem,
   openDocuments,
   openReaderChrome,
+  pageImage,
   pageStatus,
   runMenuCommand,
   selectText,
@@ -112,7 +113,7 @@ export async function verifyReading(browser, origin) {
     'Monight reset zoom must win over EmbedPDF fit page',
   );
   assert.equal(
-    shortcut.actions.filter((action) => action.type === 'setZoomIntent').length,
+    shortcut.actions.filter((action) => action.type === 'actualSize').length,
     1,
     'A shortcut must execute only once',
   );
@@ -447,11 +448,13 @@ export async function verifyReading(browser, origin) {
   await page.close();
   console.log('EmbedPDF Reading Session contract passed');
   await verifyReadingChrome(browser, origin);
+  await verifyMacZoom(browser, origin);
 }
 
 /** The reader's own toolbar, View menu and Appearance drive the viewer; nothing ready-made renders. */
 export async function verifyReadingChrome(browser, origin) {
   const reader = await openReaderChrome(browser, origin, {
+    platform: 'Linux x86_64',
     permissions: ['clipboard-read', 'clipboard-write'],
   });
   const { page } = reader;
@@ -568,6 +571,48 @@ export async function verifyReadingChrome(browser, origin) {
     console.log(
       'EmbedPDF reader chrome: toolbar, View menu, Appearance, Copy, Slideshow and Print: PASS',
     );
+  } finally {
+    await reader.close();
+  }
+}
+
+export async function verifyMacZoom(browser, origin) {
+  const reader = await openReaderChrome(browser, origin, { platform: 'MacIntel' });
+  const { page } = reader;
+  try {
+    await openDocuments(page, ['/smoke/moon.pdf']);
+    const fitPage = async () => {
+      await runMenuCommand(page, 'view.zoom.fit');
+      await until(
+        async () =>
+          (await viewerState(page)).zoomLevel === 'fit-page' &&
+          (await pageImage(page).boundingBox())?.width < 800,
+        'Zoom to Fit did not shrink the page to the viewport',
+      );
+    };
+    const verifyActualSize = async (source) => {
+      await until(async () => {
+        const box = await pageImage(page).boundingBox();
+        // The Letter fixture is 612 × 792 PDF points. The mock display scale is 1.5.
+        return box && Math.abs(box.width - 918) < 1 && Math.abs(box.height - 1188) < 1;
+      }, `${source} did not render the PDF at 918 × 1188 CSS pixels`);
+    };
+
+    await fitPage();
+    await runMenuCommand(page, 'view.zoom.actual-size');
+    await verifyActualSize('View ▸ Actual Size');
+    await fitPage();
+    await page.keyboard.press('Meta+0');
+    await verifyActualSize('⌘0');
+
+    assert.equal((await menuItem(page, 'view.zoom.width'))?.accelerator, 'Cmd+8');
+    await page.keyboard.press('Meta+8');
+    await until(
+      async () => (await viewerState(page)).zoomLevel === 'fit-width',
+      '⌘8 did not fit the width',
+    );
+    await assertCleanRun(reader);
+    console.log('macOS zoom commands render Actual Size and use ⌘8 for Zoom to Width: PASS');
   } finally {
     await reader.close();
   }

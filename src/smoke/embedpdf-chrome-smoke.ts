@@ -116,6 +116,8 @@ function handleCommand(cmd: string, rawArgs: unknown): unknown {
       return false;
     case 'plugin:window|scale_factor':
       return 1;
+    case 'actual_size_scale':
+      return 1.5;
     case 'plugin:window|inner_size':
     case 'plugin:window|outer_size':
       return { width: window.innerWidth, height: window.innerHeight };

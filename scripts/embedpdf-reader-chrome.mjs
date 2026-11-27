@@ -4,11 +4,17 @@
 import assert from 'node:assert/strict';
 
 /** Opens the reader with its splash screen ready, blocking every request off the local origin. */
-export async function openReaderChrome(browser, origin, contextOptions = {}) {
+export async function openReaderChrome(browser, origin, { platform, ...contextOptions } = {}) {
   const context = await browser.newContext({
     viewport: { width: 1280, height: 900 },
     ...contextOptions,
   });
+  if (platform) {
+    await context.addInitScript(
+      (value) => Object.defineProperty(navigator, 'platform', { value }),
+      platform,
+    );
+  }
   const page = await context.newPage();
   const externalRequests = [];
   const errors = [];

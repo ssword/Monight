@@ -810,6 +810,11 @@ export async function initializeApplication(modules: ApplicationModules): Promis
         exitPresentation: async (options) =>
           (await presentationController?.exit(options)) ?? undefined,
       },
+      actualSizeScale: async () => {
+        if (!isMac) return 1;
+        const scale = await invoke<number>('actual_size_scale').catch(() => 1);
+        return Number.isFinite(scale) && scale > 0 ? scale : 1;
+      },
       externalLinkAdapter: modules.externalLinkAdapter,
       printAdapter: modules.browserPrintAdapter,
       pdfSaveAdapter: modules.pdfSaveAdapter,

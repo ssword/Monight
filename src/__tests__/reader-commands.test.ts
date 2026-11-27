@@ -96,7 +96,7 @@ describe('Reader Commands', () => {
   it.each([
     ['view.zoom.in', { type: 'zoomIn' }],
     ['view.zoom.out', { type: 'zoomOut' }],
-    ['view.zoom.actual-size', { type: 'setZoomIntent', zoomIntent: { kind: 'manual', scale: 1 } }],
+    ['view.zoom.actual-size', { type: 'actualSize' }],
     ['view.zoom.fit', { type: 'setZoomIntent', zoomIntent: { kind: 'fit-page' } }],
     ['view.zoom.width', { type: 'setZoomIntent', zoomIntent: { kind: 'fit-width' } }],
     ['view.mode.continuous', { type: 'setViewMode', viewMode: 'continuous' }],
@@ -590,7 +590,7 @@ describe('native menu state', () => {
       'view.sidebar.bookmarks': 'CmdOrCtrl+Alt+5',
       'view.zoom.actual-size': 'CmdOrCtrl+0',
       'view.zoom.fit': 'CmdOrCtrl+9',
-      'view.zoom.width': 'CmdOrCtrl+Shift+W',
+      'view.zoom.width': 'Cmd+8',
       'view.zoom.in': 'CmdOrCtrl+=',
       'view.zoom.out': 'CmdOrCtrl+-',
       'view.markup-toolbar': 'CmdOrCtrl+Shift+A',

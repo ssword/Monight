@@ -285,6 +285,9 @@ where
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    #[cfg(target_os = "macos")]
+    menu::disable_automatic_full_screen_item();
+
     let builder = tauri::Builder::default();
 
     #[cfg(any(target_os = "windows", target_os = "linux"))]
@@ -338,6 +341,7 @@ pub fn run() {
             menu::set_menu_submenu_items,
             commands::print_pdf,
             commands::fit_main_window_for_pdf,
+            commands::actual_size_scale,
             commands::take_external_open_payloads,
             commands::validate_open_path,
             commands::open_external_url,
