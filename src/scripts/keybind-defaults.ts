@@ -14,7 +14,8 @@
 //   { version: N + 1, binds: { GoBack: ['CmdOrCtrl+['], ... } }
 // On upgrade, `migrateKeybinds` gives each listed action its new default only
 // if the reader has not rebound it, and drops any new default that collides
-// with a binding the reader chose.
+// with a binding the reader chose. A revision can keep a free previous
+// default when none of its new chords is available.
 //
 // Gated defaults: an action behind a verification gate (KEYBIND_GATES, e.g.
 // PAGE_ROTATION_VERIFIED for Rotate) is listed in GATED_KEYBIND_ACTIONS and
@@ -67,6 +68,7 @@ interface KeybindDefaultsRevision {
   /** A revision introducing gated actions applies only once the gate is open. */
   readonly gate?: KeybindGate;
   readonly binds: Readonly<Record<string, PlatformBinds>>;
+  readonly keepPreviousOnCollision?: readonly string[];
 }
 
 type KeybindAction = Omit<KeybindConfig, 'binds'>;
@@ -273,6 +275,7 @@ export const KEYBIND_DEFAULTS_REVISIONS: readonly KeybindDefaultsRevision[] = [
   {
     // Group Zoom to Width with Zoom to Fit and Actual Size on macOS (#154).
     version: 8,
+    keepPreviousOnCollision: ['FitToWidth'],
     binds: {
       FitToWidth: { mac: ['Cmd+8'], other: ['CmdOrCtrl+Shift+W'] },
     },
@@ -381,8 +384,9 @@ export function keybindsNeedUpgrade(
  * Applies every pending revision (see pendingRevisions) to a stored keybind
  * map. An action whose stored bindings still equal the defaults of the version
  * it was stored under (or that is not stored at all) takes the revision's
- * defaults, minus any chord another action keeps; every other action keeps the
- * reader's bindings. Every action a revision names is written out, so a dropped
+ * defaults, minus any chord another action keeps. A revision may keep an
+ * available previous default when its replacement is taken. Customized
+ * actions keep the reader's bindings. Every action a revision names is written out, so a dropped
  * default stays dropped instead of being merged back from the defaults. Retired
  * actions and actions behind a closed gate are left out.
  */
@@ -410,10 +414,13 @@ export function migrateKeybinds(
       .filter(([id]) => !takesDefault.has(id))
       .flatMap(([, config]) => config.binds);
     keybinds = { ...keybinds };
+    const isAvailable = (bind: string) =>
+      !kept.some((keptBind) => sameChord(keptBind, bind, isMac));
     for (const id of takesDefault) {
-      const binds = forPlatform(revision.binds[id], platform).filter(
-        (bind) => !kept.some((keptBind) => sameChord(keptBind, bind, isMac)),
-      );
+      let binds = forPlatform(revision.binds[id], platform).filter(isAvailable);
+      if (binds.length === 0 && revision.keepPreviousOnCollision?.includes(id)) {
+        binds = (previous[id] ?? []).filter(isAvailable);
+      }
       const current = keybinds[id];
       keybinds[id] = current ? { ...current, binds } : configFor(id, binds);
     }
