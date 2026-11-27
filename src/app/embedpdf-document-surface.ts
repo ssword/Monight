@@ -7,12 +7,17 @@ import {
   DEFAULT_ANNOTATION_DISPLAY_NAME,
 } from '../reader/native-pdf-editing';
 import type { ReaderActionOptions } from '../reader/reader-actions';
-import type { DocumentSurface, DocumentSurfaceFactory } from './document-workspace';
+import type {
+  ActualSizeDisplay,
+  DocumentSurface,
+  DocumentSurfaceFactory,
+} from './document-workspace';
 import { createEmbedPdfViewerRuntime, type EmbedPdfViewerRuntime } from './embedpdf-viewer-runtime';
 
 type EmbedPdfViewerFactory = typeof createEmbedPdfViewerRuntime;
 
 interface CreateEmbedPdfDocumentSurfaceFactoryOptions {
+  readonly actualSizeDisplay?: ActualSizeDisplay;
   readonly assessEditing?: (bytes: Uint8Array) => Promise<string | null>;
   readonly getAnnotationDisplayName?: () => AnnotationDisplayName;
   readonly createViewer?: EmbedPdfViewerFactory;
@@ -23,6 +28,7 @@ export function createEmbedPdfDocumentSurfaceFactory({
   createViewer = createEmbedPdfViewerRuntime,
   requestPassword,
   assessEditing,
+  actualSizeDisplay,
   getAnnotationDisplayName = () => DEFAULT_ANNOTATION_DISPLAY_NAME,
 }: CreateEmbedPdfDocumentSurfaceFactoryOptions = {}): DocumentSurfaceFactory {
   return async ({ filePath, title, bytes, callbacks, signal }) => {
@@ -47,6 +53,7 @@ export function createEmbedPdfDocumentSurfaceFactory({
       viewer = await createViewer({
         target,
         callbacks,
+        actualSizeDisplay,
         requestPassword,
         readOnlyReason: readOnlyReason || null,
         annotationDisplayName: getAnnotationDisplayName(),

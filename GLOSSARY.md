@@ -41,7 +41,7 @@ The rotation a page carries in the PDF file itself. Changing it is an edit of th
 _Avoid_: View rotation, rotate view
 
 **Zoom Intent**:
-The reader's choice of a manual scale, fit width, or fit page. Fit choices are recalculated for the current viewport.
+The reader's choice of a manual scale, Actual Size, fit width, or fit page. Actual Size follows the current display. Fit choices follow the current viewport.
 _Avoid_: Zoom level, scale
 
 **Reader Action**:

@@ -757,7 +757,21 @@ export async function initializeApplication(modules: ApplicationModules): Promis
       viewMode: getInitialViewMode(),
     });
     const initialReadingSession = restoredReadingSession ?? EMPTY_READING_SESSION;
+    const displayChanges = new EventTarget();
+    let displayChangeTimer: ReturnType<typeof setTimeout> | undefined;
+    // A drag can deliver many move/resize events before the window settles.
+    const scheduleDisplayChange = () => {
+      clearTimeout(displayChangeTimer);
+      displayChangeTimer = setTimeout(() => displayChanges.dispatchEvent(new Event('change')), 100);
+    };
     const createSurface = modules.createDocumentSurface({
+      actualSizeDisplay: {
+        readZoom: () => invoke<number | null>('actual_size_zoom'),
+        onChange(listener) {
+          displayChanges.addEventListener('change', listener);
+          return () => displayChanges.removeEventListener('change', listener);
+        },
+      },
       requestPassword: requestPdfPassword,
       getAnnotationDisplayName: () =>
         currentSettings?.general.annotationDisplayName ?? DEFAULT_ANNOTATION_DISPLAY_NAME,
@@ -809,11 +823,6 @@ export async function initializeApplication(modules: ApplicationModules): Promis
         ...documentWorkspace.projection,
         exitPresentation: async (options) =>
           (await presentationController?.exit(options)) ?? undefined,
-      },
-      actualSizeScale: async () => {
-        if (!isMac) return 1;
-        const scale = await invoke<number>('actual_size_scale').catch(() => 1);
-        return Number.isFinite(scale) && scale > 0 ? scale : 1;
       },
       externalLinkAdapter: modules.externalLinkAdapter,
       printAdapter: modules.browserPrintAdapter,
@@ -1052,7 +1061,12 @@ export async function initializeApplication(modules: ApplicationModules): Promis
     };
     await currentWindow.onResized(() => {
       void refreshWindowFullScreen();
+      if (isMac) scheduleDisplayChange();
     });
+    if (isMac) {
+      await currentWindow.onMoved(scheduleDisplayChange);
+      await currentWindow.onScaleChanged(scheduleDisplayChange);
+    }
     await readerMenu.install();
     // Edit ▸ Undo and Redo also apply to a focused text field's own typing.
     document.addEventListener('focusin', syncReaderMenu);

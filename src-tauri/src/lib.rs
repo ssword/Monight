@@ -341,7 +341,7 @@ pub fn run() {
             menu::set_menu_submenu_items,
             commands::print_pdf,
             commands::fit_main_window_for_pdf,
-            commands::actual_size_scale,
+            commands::actual_size_zoom,
             commands::take_external_open_payloads,
             commands::validate_open_path,
             commands::open_external_url,

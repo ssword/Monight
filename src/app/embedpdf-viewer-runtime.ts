@@ -15,6 +15,7 @@ import EmbedPDF, {
   type ThumbnailCapability,
   type ViewportCapability,
   type ZoomCapability,
+  type ZoomLevel,
   ZoomMode,
 } from '@embedpdf/snippet';
 import type {
@@ -38,7 +39,7 @@ import type {
   RestorableReadingPosition,
   ZoomIntent,
 } from '../reader/reader-actions';
-import type { DocumentSurfaceCallbacks } from './document-workspace';
+import type { ActualSizeDisplay, DocumentSurfaceCallbacks } from './document-workspace';
 import { createEmbedPdfNativeAnnotationEditing } from './embedpdf-native-annotation-editing';
 import {
   captureEmbedPdfReadingPosition,
@@ -74,6 +75,7 @@ interface EmbedPdfOpenRequest {
 }
 
 interface CreateEmbedPdfViewerRequest {
+  readonly actualSizeDisplay?: ActualSizeDisplay;
   readonly readOnlyReason?: string | null;
   readonly annotationDisplayName: AnnotationDisplayName;
   readonly target: HTMLElement;
@@ -200,6 +202,7 @@ const waitForPresentationFrames = async (): Promise<void> => {
 export async function createEmbedPdfViewerRuntime({
   target,
   callbacks,
+  actualSizeDisplay,
   requestPassword,
   readOnlyReason = 'Native editing safety inspection is unavailable',
   annotationDisplayName,
@@ -261,6 +264,12 @@ export async function createEmbedPdfViewerRuntime({
   let pendingObservedPosition: ReadingPosition | null = null;
   let readingAnchor: ReadingPosition | null = null;
   let selectedZoomIntent: ZoomIntent | null = null;
+  let actualSizeZoom: number | null = null;
+  let actualSizeRequest = 0;
+  const leaveActualSize = () => {
+    actualSizeZoom = null;
+    actualSizeRequest += 1;
+  };
   let layoutEpoch = 0;
   let observationEpoch = 0;
   const projectionDepth = { page: 0, zoom: 0, viewMode: 0 };
@@ -514,13 +523,29 @@ export async function createEmbedPdfViewerRuntime({
       callbacks.stateChanged();
       // Relative zoom events carry the old numeric level plus the resulting
       // actual scale. Fit modes keep their symbolic intent across recalculation.
-      const intent = zoomIntentFromEmbedPdfLevel(
-        typeof event.level === 'number' ? event.newZoom : event.level,
-      );
+      if (
+        projectionDepth.zoom === 0 &&
+        actualSizeZoom !== null &&
+        (typeof event.level !== 'number' || event.newZoom !== actualSizeZoom)
+      ) {
+        leaveActualSize();
+      }
+      const intent: ZoomIntent =
+        actualSizeZoom !== null
+          ? { kind: 'actual-size' }
+          : zoomIntentFromEmbedPdfLevel(
+              typeof event.level === 'number' ? event.newZoom : event.level,
+            );
       const changed = JSON.stringify(intent) !== JSON.stringify(selectedZoomIntent);
       selectedZoomIntent = intent;
-      if (projectionDepth.zoom === 0 && changed) void callbacks.zoomIntentRequested(intent);
-      else if (projectionDepth.zoom === 0 && intent.kind !== 'manual' && readingAnchor) {
+      if (projectionDepth.zoom === 0 && changed) {
+        actualSizeRequest += 1;
+        void callbacks.zoomIntentRequested(intent);
+      } else if (
+        projectionDepth.zoom === 0 &&
+        (intent.kind === 'fit-page' || intent.kind === 'fit-width') &&
+        readingAnchor
+      ) {
         // EmbedPDF recalculates fit asynchronously after a resize. Its pixel
         // anchor can drift across page gaps; restore Monight's normalized anchor.
         const anchor = { ...readingAnchor };
@@ -571,6 +596,28 @@ export async function createEmbedPdfViewerRuntime({
       projectionDepth[kind] -= 1;
     }
   };
+  const setZoomLevel = (level: ZoomLevel): Promise<void> =>
+    // A viewer gesture already applied its zoom around the focal point.
+    level === zoomScope.getState().zoomLevel
+      ? Promise.resolve()
+      : withProjection('zoom', () => zoomScope.requestZoom(level));
+
+  const applyActualSize = async (): Promise<void> => {
+    const request = ++actualSizeRequest;
+    const zoom = (await actualSizeDisplay?.readZoom().catch(() => null)) ?? 1;
+    if (destroyed || request !== actualSizeRequest) return;
+    actualSizeZoom = zoom;
+    selectedZoomIntent = { kind: 'actual-size' };
+    await setZoomLevel(zoom);
+  };
+
+  const refreshActualSize = () => {
+    if (actualSizeZoom !== null && target.dataset.visible === 'true') {
+      void applyActualSize();
+    }
+  };
+  if (actualSizeDisplay) unsubscribers.push(actualSizeDisplay.onChange(refreshActualSize));
+
   unsubscribers.push(
     viewport.onViewportResize((event) => {
       if (destroyed || !documentObject || event.documentId !== documentId || !readingAnchor) return;
@@ -702,26 +749,29 @@ export async function createEmbedPdfViewerRuntime({
     pageRotations: () => documentObject?.pages.map(({ rotation }) => rotation) ?? [],
     currentPage: currentPageNumber,
     currentZoom: () => zoomScope.getState().currentZoomLevel,
-    zoomIntent: () => zoomIntentFromEmbedPdfLevel(zoomScope.getState().zoomLevel),
+    zoomIntent: () =>
+      actualSizeZoom === null
+        ? zoomIntentFromEmbedPdfLevel(zoomScope.getState().zoomLevel)
+        : { kind: 'actual-size' },
     viewMode: () => selectedViewMode,
     readingPosition: currentReadingPosition,
     goToPage: (pageNumber) =>
       withProjection('page', () => scrollToPosition({ page: pageNumber, location: 0 })),
     goToReadingPosition: (position) => withProjection('page', () => scrollToPosition(position)),
     setZoomIntent: (intent) => {
-      // A viewer interaction has already applied its zoom (including its gesture
-      // focal point). Committing that intent must not execute the zoom a second time.
-      if (
-        JSON.stringify(intent) ===
-        JSON.stringify(zoomIntentFromEmbedPdfLevel(zoomScope.getState().zoomLevel))
-      )
-        return Promise.resolve();
-      return withProjection('zoom', () =>
-        zoomScope.requestZoom(embedPdfZoomLevelFromIntent(intent)),
-      );
+      if (intent.kind === 'actual-size') return applyActualSize();
+      leaveActualSize();
+      selectedZoomIntent = intent;
+      return setZoomLevel(embedPdfZoomLevelFromIntent(intent));
     },
-    zoomIn: () => withProjection('zoom', () => zoomScope.zoomIn()),
-    zoomOut: () => withProjection('zoom', () => zoomScope.zoomOut()),
+    zoomIn: () => {
+      leaveActualSize();
+      return withProjection('zoom', () => zoomScope.zoomIn());
+    },
+    zoomOut: () => {
+      leaveActualSize();
+      return withProjection('zoom', () => zoomScope.zoomOut());
+    },
     setViewMode: (viewMode) =>
       withProjection('viewMode', () => {
         const layout = embedPdfLayoutForViewMode(viewMode);
@@ -731,12 +781,17 @@ export async function createEmbedPdfViewerRuntime({
         scrollScope.setScrollStrategy(layout.scrollStrategy);
         spreadScope.setSpreadMode(layout.spreadMode);
       }),
-    fitToPage: () => withProjection('zoom', () => zoomScope.requestZoom(ZoomMode.FitPage)),
+    fitToPage: () => {
+      leaveActualSize();
+      return withProjection('zoom', () => zoomScope.requestZoom(ZoomMode.FitPage));
+    },
     applyFilter(filterCss) {
       container.style.setProperty('--monight-reading-filter', filterCss);
     },
     setVisible(visible) {
+      const becameVisible = visible && target.dataset.visible !== 'true';
       target.dataset.visible = String(visible);
+      if (becameVisible) refreshActualSize();
     },
     async search(query, options) {
       if (options.isCancelled() || !query.trim()) return [];

@@ -64,7 +64,13 @@ export type DocumentSurfaceFactory = (
   request: DocumentSurfaceFactoryRequest,
 ) => Promise<DocumentSurface>;
 
+export interface ActualSizeDisplay {
+  readZoom(): Promise<number | null>;
+  onChange(listener: () => void): () => void;
+}
+
 export type DocumentSurfaceProvider = (options: {
+  actualSizeDisplay?: ActualSizeDisplay;
   requestPassword?: PdfPasswordRequester;
   getAnnotationDisplayName?: () => AnnotationDisplayName;
 }) => DocumentSurfaceFactory;

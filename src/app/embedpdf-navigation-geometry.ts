@@ -176,7 +176,9 @@ export function zoomIntentFromEmbedPdfLevel(level: ZoomLevel): ZoomIntent {
   return level === ZoomMode.FitWidth ? { kind: 'fit-width' } : { kind: 'fit-page' };
 }
 
-export function embedPdfZoomLevelFromIntent(intent: ZoomIntent): ZoomLevel {
+export function embedPdfZoomLevelFromIntent(
+  intent: Exclude<ZoomIntent, { kind: 'actual-size' }>,
+): ZoomLevel {
   if (intent.kind === 'manual') return intent.scale;
   return intent.kind === 'fit-width' ? ZoomMode.FitWidth : ZoomMode.FitPage;
 }

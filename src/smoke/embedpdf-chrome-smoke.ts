@@ -24,6 +24,9 @@ declare global {
       chooseFiles(paths: readonly string[]): void;
       /** Adds a PDF to the mock native filesystem. */
       addFile(path: string, bytes: number[]): void;
+      /** The current display's Actual Size zoom in the native substitute. */
+      readonly displayActualSizeZoom: number | null;
+      changeDisplay(zoom: number | null): Promise<void>;
       /** Runs a native menu item as a click on it would (View, Go, Tools, Edit). */
       runMenuCommand(id: string): Promise<void>;
       /** The PDF bytes last written over a Document's file by Save. */
@@ -46,6 +49,7 @@ const invocations: Invocation[] = [];
 const menuItems = new Map<string, Record<string, unknown>>();
 const errorToasts: string[] = [];
 let chosenFiles: string[] = [];
+let displayActualSizeZoom: number | null = 1.5;
 
 const bytesOf = (value: unknown): number[] =>
   Array.isArray(value) ? (value as number[]) : Array.from(new Uint8Array(value as ArrayBuffer));
@@ -116,8 +120,8 @@ function handleCommand(cmd: string, rawArgs: unknown): unknown {
       return false;
     case 'plugin:window|scale_factor':
       return 1;
-    case 'actual_size_scale':
-      return 1.5;
+    case 'actual_size_zoom':
+      return navigator.platform.startsWith('Mac') ? displayActualSizeZoom : null;
     case 'plugin:window|inner_size':
     case 'plugin:window|outer_size':
       return { width: window.innerWidth, height: window.innerHeight };
@@ -198,6 +202,13 @@ async function mountReader(): Promise<void> {
     },
     addFile(path, bytes) {
       files.set(path, Uint8Array.from(bytes));
+    },
+    get displayActualSizeZoom() {
+      return displayActualSizeZoom;
+    },
+    changeDisplay(zoom) {
+      displayActualSizeZoom = zoom;
+      return emit('tauri://move', { x: 2560, y: 0 });
     },
     runMenuCommand: (id) => emit('reader-command', id),
     savedBytes: (path) => saved.get(path) ?? null,

@@ -44,7 +44,7 @@ import { tabBarShown } from './tab-bar';
 export const READER_ACTION_COMMANDS = {
   zoomIn: () => readerAction.zoomIn(),
   zoomOut: () => readerAction.zoomOut(),
-  actualSize: () => readerAction.actualSize(),
+  actualSize: () => readerAction.setZoomIntent({ kind: 'actual-size' }),
   zoomToFit: () => readerAction.setZoomIntent({ kind: 'fit-page' }),
   zoomToWidth: () => readerAction.setZoomIntent({ kind: 'fit-width' }),
   previousPage: (): ReaderAction => ({ type: 'goToPreviousPage' }),
