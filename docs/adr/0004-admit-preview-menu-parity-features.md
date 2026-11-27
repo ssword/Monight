@@ -20,7 +20,9 @@ It lifts ADR 0003's deferral of Bookmarks. Contact Sheet remains deferred.
 
 - Go ▸ Previous Page / Next Page keep their names but list ↑ / ↓ first, so the menu shows Preview's keys. ← / → still work (keybind defaults revision 7).
 - The Window menu gains Show Previous Tab / Show Next Tab (⌃⇧⇥ / ⌃⇥) for Monight's in-window tabs, and a list of open Documents shown as `name.pdf (Page X of Y)`, with a checkmark on the active one; choosing one switches to it. On macOS the Window menu is registered as the app's windows menu, so the OS adds Fill, Center, Move & Resize, Full Screen Tile and Bring All to Front.
-- Enter Full Screen keeps ⌃⌘F on macOS, because a custom menu item cannot show 🌐F. Zoom to Width uses ⌘8 on macOS alongside ⌘9 for Zoom to Fit and ⌘0 for Actual Size. Windows and Linux use Ctrl+Shift+W for Zoom to Width.
+- The macOS View menu uses a single Full Screen command with the reader's shortcut, which defaults to ⌃⌘F. Monight opts out of the extra AppKit item for this run. The green window button remains available, and Slideshow stays separate.
+- Actual Size (⌘0) matches Preview's default for PDFs on macOS, where the size on screen matches the size on paper. It follows the window across displays. If macOS cannot provide usable physical dimensions, one PDF point is shown as one logical screen point. Windows and Linux also use that one-to-one zoom.
+- Zoom to Width uses ⌘8 on macOS alongside ⌘9 for Zoom to Fit and ⌘0 for Actual Size. If an existing assignment owns ⌘8, the upgrade keeps ⇧⌘W when available. Windows and Linux use Ctrl+Shift+W for Zoom to Width.
 
 ## Not admitted
 

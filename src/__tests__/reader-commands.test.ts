@@ -96,7 +96,7 @@ describe('Reader Commands', () => {
   it.each([
     ['view.zoom.in', { type: 'zoomIn' }],
     ['view.zoom.out', { type: 'zoomOut' }],
-    ['view.zoom.actual-size', { type: 'actualSize' }],
+    ['view.zoom.actual-size', { type: 'setZoomIntent', zoomIntent: { kind: 'actual-size' } }],
     ['view.zoom.fit', { type: 'setZoomIntent', zoomIntent: { kind: 'fit-page' } }],
     ['view.zoom.width', { type: 'setZoomIntent', zoomIntent: { kind: 'fit-width' } }],
     ['view.mode.continuous', { type: 'setViewMode', viewMode: 'continuous' }],

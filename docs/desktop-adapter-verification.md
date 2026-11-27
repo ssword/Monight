@@ -104,3 +104,31 @@ and does not supply the remaining smoke outcomes.
   visible WebView; the splash remains interactive while restoration continues. An early Quit skips
   the show. Reading Session, Reader Actions, and Document Intake contain no operating-system
   branches.
+
+## macOS View menu follow-up
+
+On 2026-11-27, Codex checked issues [#153](https://github.com/ssword/Monight/issues/153),
+[#154](https://github.com/ssword/Monight/issues/154), and
+[#155](https://github.com/ssword/Monight/issues/155) on Apple Silicon with macOS 27.2.1
+(26B131). The local Monight 0.6.0 builds used Tauri 2.11.2 and isolated application profiles.
+The original fix was `9014604`. The follow-up build `art.monight.view-review-qa` used that
+commit plus the local review fixes. Its executable SHA-256 was
+`f03273953577dfd18bc2fca1230a44453dc0c5186e891f806db244fe7113e64e`.
+
+- **Actual Size**. Open a PDF with a 360 × 360 point page and a centered 144 × 72 point
+  rectangle. On the same 2560 × 1440 external display, Preview and Monight both rendered
+  the rectangle at 216 × 108 pixels. The original fix matched from View ▸ Actual Size
+  and ⌘0. The follow-up matched again with ⌘0. The browser regression reproduces a window
+  move with a different display density and measures the rendered page after the move.
+  It also checks the one-to-one fallback when the display yields no usable physical size.
+  Rust tests cover the external and Retina screen dimensions, rotation, and invalid inputs.
+- **Zoom to Width**. In the original native build, Settings showed Cmd + 8 and ⌘8 fit the
+  page to the viewer width. Follow-up tests cover upgrades where Switch to Tab 8 or Find
+  already owns ⌘8, including the case where another binding owns ⇧⌘W as well.
+- **Full Screen**. The older app showed two Enter Full Screen items with distinct actions.
+  On the fresh follow-up profile, the live View menu had exactly one Enter Full Screen
+  item in windowed mode and exactly one Exit Full Screen item in fullscreen mode.
+  ⌃⌘F and the green window button entered fullscreen. The menu item exited it, and
+  Slideshow remained separately available with a PDF open. The preferences domain had
+  no persisted fullscreen override. The input driver could not send the physical
+  Globe/Fn key, so Globe+F remains unverified.

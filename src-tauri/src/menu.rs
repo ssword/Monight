@@ -618,11 +618,18 @@ fn help_url(event_id: &str) -> Option<&'static str> {
 
 #[cfg(target_os = "macos")]
 pub fn disable_automatic_full_screen_item() {
-    use objc2_foundation::{ns_string, NSUserDefaults};
+    use objc2::runtime::AnyObject;
+    use objc2_foundation::{ns_string, NSDictionary, NSNumber, NSUserDefaults};
 
-    // Monight supplies its own Full Screen item so its shortcut can be customized.
-    NSUserDefaults::standardUserDefaults()
-        .setBool_forKey(false, ns_string!("NSFullScreenMenuItemEverywhere"));
+    // Monight supplies its own configurable Full Screen item. Register the
+    // AppKit default for this run without writing to the user's preferences.
+    let disabled = NSNumber::numberWithBool(false);
+    let defaults = NSDictionary::from_slices(
+        &[ns_string!("NSFullScreenMenuItemEverywhere")],
+        &[&*disabled as &AnyObject],
+    );
+    // SAFETY: The dictionary contains a string key and a property-list boolean.
+    unsafe { NSUserDefaults::standardUserDefaults().registerDefaults(&defaults) };
 }
 
 /// Create the application menu

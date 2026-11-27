@@ -109,11 +109,11 @@ export async function verifyReading(browser, origin) {
   }));
   assert.deepEqual(
     shortcut.document.visualState.zoomIntent,
-    { kind: 'manual', scale: 1 },
+    { kind: 'actual-size' },
     'Monight reset zoom must win over EmbedPDF fit page',
   );
   assert.equal(
-    shortcut.actions.filter((action) => action.type === 'actualSize').length,
+    shortcut.actions.filter((action) => action.type === 'setZoomIntent').length,
     1,
     'A shortcut must execute only once',
   );
@@ -576,6 +576,7 @@ export async function verifyReadingChrome(browser, origin) {
   }
 }
 
+/** Verifies rendered macOS zoom commands and how Actual Size responds to a display change. */
 export async function verifyMacZoom(browser, origin) {
   const reader = await openReaderChrome(browser, origin, { platform: 'MacIntel' });
   const { page } = reader;
@@ -591,11 +592,14 @@ export async function verifyMacZoom(browser, origin) {
       );
     };
     const verifyActualSize = async (source) => {
+      const zoom = await page.evaluate(() => window.chromeSmoke.displayActualSizeZoom ?? 1);
+      // The Letter fixture is 612 × 792 PDF points.
+      const width = 612 * zoom;
+      const height = 792 * zoom;
       await until(async () => {
         const box = await pageImage(page).boundingBox();
-        // The Letter fixture is 612 × 792 PDF points. The mock display scale is 1.5.
-        return box && Math.abs(box.width - 918) < 1 && Math.abs(box.height - 1188) < 1;
-      }, `${source} did not render the PDF at 918 × 1188 CSS pixels`);
+        return box && Math.abs(box.width - width) < 1 && Math.abs(box.height - height) < 1;
+      }, `${source} did not render the PDF at ${width} × ${height} CSS pixels`);
     };
 
     await fitPage();
@@ -604,6 +608,10 @@ export async function verifyMacZoom(browser, origin) {
     await fitPage();
     await page.keyboard.press('Meta+0');
     await verifyActualSize('⌘0');
+    await page.evaluate(() => window.chromeSmoke.changeDisplay(1.75));
+    await verifyActualSize('Moving the reader to a different display');
+    await page.evaluate(() => window.chromeSmoke.changeDisplay(null));
+    await verifyActualSize('A display without usable physical dimensions');
 
     assert.equal((await menuItem(page, 'view.zoom.width'))?.accelerator, 'Cmd+8');
     await page.keyboard.press('Meta+8');

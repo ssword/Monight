@@ -183,7 +183,11 @@ describe('Reading Session store', () => {
     });
   });
 
-  it('preserves fit Zoom Intent in the current schema', async () => {
+  it.each([
+    'fit-width',
+    'fit-page',
+    'actual-size',
+  ])('restores %s as a Zoom Intent without a display-specific value', async (kind) => {
     const stored = {
       schemaVersion: 3,
       activeDocumentPath: '/docs/report.pdf',
@@ -201,7 +205,7 @@ describe('Reading Session store', () => {
               hue: 0,
               extraBrightness: 100,
             },
-            zoomIntent: { kind: 'fit-width' },
+            zoomIntent: { kind },
             viewMode: 'single',
           },
         },
@@ -216,7 +220,7 @@ describe('Reading Session store', () => {
 
     const session = await loadReadingSession(storage);
 
-    expect(session.documents[0].visualState?.zoomIntent).toEqual({ kind: 'fit-width' });
+    expect(session.documents[0].visualState?.zoomIntent).toEqual({ kind });
     expect(storage.write).not.toHaveBeenCalled();
   });
 

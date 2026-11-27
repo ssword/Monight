@@ -427,20 +427,18 @@ describe('Preview shortcut defaults', () => {
     expect(settings.keybinds.FitToPage.displayName).toBe('Zoom to Fit');
   });
 
-  it.each([
-    { width: ['CmdOrCtrl+Shift+W'], tab: [], expectedWidth: ['Cmd+8'] },
-    { width: ['CmdOrCtrl+Shift+W'], tab: ['CmdOrCtrl+8'], expectedWidth: [] },
-    { width: ['Alt+W'], tab: ['CmdOrCtrl+8'], expectedWidth: ['Alt+W'] },
-    { width: [], tab: [], expectedWidth: [] },
-  ])('upgrades macOS Zoom to Width from revision 7 with %j', async ({
-    width,
-    tab,
-    expectedWidth,
-  }) => {
+  it.each<{ changes: Record<string, string[]>; expectedWidth: string[] }>([
+    { changes: {}, expectedWidth: ['Cmd+8'] },
+    { changes: { SwitchToTab8: ['CmdOrCtrl+8'] }, expectedWidth: ['CmdOrCtrl+Shift+W'] },
+    { changes: { Find: ['CmdOrCtrl+8'] }, expectedWidth: ['CmdOrCtrl+Shift+W'] },
+    { changes: { Find: ['Cmd+8', 'Shift+Cmd+W'] }, expectedWidth: [] },
+    { changes: { FitToWidth: ['Alt+W'], SwitchToTab8: ['CmdOrCtrl+8'] }, expectedWidth: ['Alt+W'] },
+    { changes: { FitToWidth: [] }, expectedWidth: [] },
+  ])('upgrades macOS Zoom to Width from revision 7 with %j', async ({ changes, expectedWidth }) => {
     store.reset({
       storageSchemaVersion: SETTINGS_SCHEMA_VERSION,
       keybindDefaultsVersion: 7,
-      keybinds: storedBeforePreview({ FitToWidth: width, SwitchToTab8: tab }),
+      keybinds: storedBeforePreview({ SwitchToTab8: [], ...changes }),
     });
 
     const main = await new SettingsManager('main', { platform: 'mac' }).load();
@@ -448,7 +446,9 @@ describe('Preview shortcut defaults', () => {
 
     for (const { keybinds } of [main, settings]) {
       expect(keybinds.FitToWidth.binds).toEqual(expectedWidth);
-      expect(keybinds.SwitchToTab8.binds).toEqual(tab);
+      for (const [id, binds] of Object.entries(changes)) {
+        expect(keybinds[id].binds).toEqual(binds);
+      }
     }
   });
 

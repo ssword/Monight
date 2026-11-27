@@ -40,7 +40,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function parseZoomIntent(value: unknown, legacyZoom: unknown): ZoomIntent | null {
   if (isRecord(value)) {
-    if (value.kind === 'fit-width' || value.kind === 'fit-page') return { kind: value.kind };
+    if (value.kind === 'actual-size' || value.kind === 'fit-width' || value.kind === 'fit-page') {
+      return { kind: value.kind };
+    }
     if (
       value.kind === 'manual' &&
       typeof value.scale === 'number' &&

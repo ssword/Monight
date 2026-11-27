@@ -445,6 +445,40 @@ mod tests {
         );
     }
 
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn actual_size_uses_logical_display_points_and_handles_rotation() {
+        let expected = 1.5;
+        let points = (2560.0, 1440.0);
+        let millimeters = (602.074, 338.667);
+        for dimensions in [points, (points.1, points.0)] {
+            let zoom = actual_size_zoom_from_dimensions(dimensions, millimeters).unwrap();
+            assert!((zoom - expected).abs() < 0.001);
+        }
+        let retina = actual_size_zoom_from_dimensions((1470.0, 956.0), (290.568, 188.968)).unwrap();
+        assert!((retina - 1.7847).abs() < 0.001);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn actual_size_rejects_unusable_display_dimensions() {
+        let points = (2560.0, 1440.0);
+        for millimeters in [
+            (0.0, 330.0),
+            (600.0, -1.0),
+            (f64::NAN, 330.0),
+            (f64::INFINITY, 330.0),
+            (6.0, 3.3),
+            (6000.0, 3300.0),
+        ] {
+            assert_eq!(actual_size_zoom_from_dimensions(points, millimeters), None);
+        }
+        assert_eq!(
+            actual_size_zoom_from_dimensions((0.0, 0.0), (600.0, 330.0)),
+            None
+        );
+    }
+
     #[test]
     fn test_pdf_window_frame_uses_logical_width_on_retina() {
         let frame = calculate_pdf_window_frame(0, 48, 3456, 2112, 2.0);
@@ -750,9 +784,9 @@ pub fn write_original_pdf(
     ))
 }
 
-/// The manual zoom at which a PDF measures the same on screen as on paper.
+/// Returns the current display's physical-size zoom when its dimensions are usable.
 #[command]
-pub async fn actual_size_scale(window: tauri::WebviewWindow) -> Result<f64, String> {
+pub async fn actual_size_zoom(window: tauri::WebviewWindow) -> Result<Option<f64>, String> {
     #[cfg(target_os = "macos")]
     {
         use objc2_app_kit::NSWindow;
@@ -763,8 +797,7 @@ pub async fn actual_size_scale(window: tauri::WebviewWindow) -> Result<f64, Stri
             .with_webview(move |webview| {
                 // SAFETY: Tauri supplies the NSWindow and runs this closure on the main thread.
                 let window = unsafe { webview.ns_window().cast::<NSWindow>().as_ref() };
-                let scale = window.and_then(macos_actual_size_scale).unwrap_or(1.0);
-                let _ = sender.try_send(scale);
+                let _ = sender.try_send(window.and_then(macos_actual_size_zoom));
             })
             .map_err(|error| error.to_string())?;
         receiver
@@ -775,12 +808,12 @@ pub async fn actual_size_scale(window: tauri::WebviewWindow) -> Result<f64, Stri
     #[cfg(not(target_os = "macos"))]
     {
         let _ = window;
-        Ok(1.0)
+        Ok(None)
     }
 }
 
 #[cfg(target_os = "macos")]
-fn macos_actual_size_scale(window: &objc2_app_kit::NSWindow) -> Option<f64> {
+fn macos_actual_size_zoom(window: &objc2_app_kit::NSWindow) -> Option<f64> {
     use objc2_core_graphics::CGDisplayScreenSize;
     use objc2_foundation::{ns_string, NSNumber};
 
@@ -793,11 +826,29 @@ fn macos_actual_size_scale(window: &objc2_app_kit::NSWindow) -> Option<f64> {
         .unsignedIntValue();
     let millimeters = CGDisplayScreenSize(display_id);
     let points = screen.frame().size;
-    // AppKit points correspond to WebView CSS pixels. Comparing diagonals works
-    // for rotated displays and keeps the backing scale out of the calculation.
-    let scale = points.width.hypot(points.height) * 25.4
-        / (72.0 * millimeters.width.hypot(millimeters.height));
-    (scale.is_finite() && scale > 0.0).then_some(scale)
+    actual_size_zoom_from_dimensions(
+        (points.width, points.height),
+        (millimeters.width, millimeters.height),
+    )
+}
+
+#[cfg(target_os = "macos")]
+fn actual_size_zoom_from_dimensions(points: (f64, f64), millimeters: (f64, f64)) -> Option<f64> {
+    let (width_pt, height_pt) = points;
+    let (width_mm, height_mm) = millimeters;
+    if [width_pt, height_pt, width_mm, height_mm]
+        .into_iter()
+        .any(|dimension| !dimension.is_finite() || dimension <= 0.0)
+    {
+        return None;
+    }
+
+    // AppKit points correspond to WebView CSS pixels. Comparing diagonals
+    // handles rotated displays and keeps the backing scale out of the calculation.
+    let zoom = width_pt.hypot(height_pt) * 25.4 / (72.0 * width_mm.hypot(height_mm));
+    // Reject implausible logical densities from broken display metadata, while
+    // allowing a wide range of real displays and configurations (36–288 points/inch).
+    (0.5..=4.0).contains(&zoom).then_some(zoom)
 }
 
 /// The frontend supplies the permission-checked, current prepared PDF bytes.
